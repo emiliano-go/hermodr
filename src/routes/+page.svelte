@@ -168,9 +168,14 @@
     [
       {
         id: `theme-${activeTheme().id}`,
+        // The wallpaper is its own oversized layer behind everything, so a theme can move it cheaply.
         css:
           (activeTheme().wallpaper
-            ? `html, body, .stage { background: ${activeTheme().wallpaper} !important; }`
+            ? `html, body { background: transparent !important; }
+               .stage { isolation: isolate; }
+               body::before, .stage::before { content: ""; position: fixed; inset: -25%; z-index: -1;
+                 pointer-events: none; background: ${activeTheme().wallpaper}; }
+               .stage::before { position: absolute; }`
             : "") + (activeTheme().css ?? ""),
       },
       ...customization.extensions.filter((e) => e.enabled),

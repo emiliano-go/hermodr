@@ -66,18 +66,22 @@ const GLASS_WALLPAPER =
   "radial-gradient(900px 700px at 100% 100%, #0a84ff 0%, transparent 58%), " +
   "radial-gradient(700px 560px at 85% 8%, rgba(255, 55, 95, 0.45) 0%, transparent 60%), #0b0d1a";
 
-/** Translucent layers over a vivid wallpaper, blurred, with a specular top edge. */
+/**
+ * Translucent layers over a vivid wallpaper, with a specular top edge. Edges
+ * are inset shadows, never borders, so the theme does not move anything.
+ * Only small floating surfaces blur: the wallpaper is already soft, and
+ * re-blurring whole panels over a moving layer every frame is what lags.
+ */
 const GLASS_CSS = `
-.chats, .conversation header, .composer, .user-panel, .menu, .sheet, .modal, .intro-card,
-.reply-preview, .attach-menu, .account-menu, .card, .search, .day span {
-  backdrop-filter: blur(28px) saturate(180%);
-  -webkit-backdrop-filter: blur(28px) saturate(180%);
+.menu, .sheet, .modal, .intro-card, .attach-menu, .account-menu, .card {
+  backdrop-filter: blur(24px) saturate(170%);
+  -webkit-backdrop-filter: blur(24px) saturate(170%);
 }
-.menu, .sheet, .modal, .intro-card, .attach-menu, .account-menu, .search, .chip, .bubble, .embed, .quote {
-  border: 1px solid rgba(255, 255, 255, 0.14) !important;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 6px 24px rgba(0, 0, 0, 0.22) !important;
+.menu, .sheet, .modal, .intro-card, .attach-menu, .account-menu, .search, .chip, .bubble {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 6px 24px rgba(0, 0, 0, 0.22) !important;
 }
-.embed, .quote { border-left: 4px solid var(--embed-color, var(--accent)) !important; }
+.embed, .quote { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.16); }
 .bubble.first::before { display: none !important; }
 .bubble { border-radius: var(--radius-sm) !important; }
 .send.ready, .badge:not(.mention-badge) {
@@ -85,17 +89,18 @@ const GLASS_CSS = `
   color: #fff !important;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 4px 14px rgba(10, 132, 255, 0.45);
 }
-.composer > textarea { border-radius: 999px !important; border: 1px solid rgba(255, 255, 255, 0.12) !important; }
+.composer > textarea { border-radius: 999px !important; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12); }
 
-/* Motion: every duration scales with --motion-scale, so "Animations: Off" stills it. */
-html, body, .stage {
-  background-size: 160% 160%, 170% 170%, 150% 150% !important;
-  animation: glass-drift calc(36s * var(--motion-scale)) ease-in-out infinite alternate;
+/* The wallpaper layer moves by transform alone, which the compositor does without repainting. */
+body::before, .stage::before {
+  will-change: transform;
+  animation: glass-drift calc(40s * var(--motion-scale)) ease-in-out infinite alternate;
 }
+body:has(.backdrop, .sheet-backdrop)::before { animation-play-state: paused; }
 @keyframes glass-drift {
-  from { background-position: 0% 0%, 100% 100%, 90% 0%; }
-  50% { background-position: 35% 25%, 70% 60%, 40% 35%; }
-  to { background-position: 10% 45%, 45% 85%, 70% 70%; }
+  from { transform: translate3d(0, 0, 0) rotate(0deg) scale(1); }
+  50% { transform: translate3d(5%, -4%, 0) rotate(9deg) scale(1.1); }
+  to { transform: translate3d(-4%, 5%, 0) rotate(-7deg) scale(1.05); }
 }
 .bubble, .chip, .menu .item, .chat-row {
   background-image: linear-gradient(115deg, transparent 35%, rgba(255, 255, 255, 0.14) 50%, transparent 65%) !important;
@@ -118,9 +123,6 @@ html, body, .stage {
 }
 @keyframes glass-in {
   from { opacity: 0; transform: scale(0.9); filter: blur(8px); }
-}
-@media (prefers-reduced-motion: reduce) {
-  html, body, .stage, .menu, .sheet, .attach-menu, .account-menu { animation: none !important; }
 }
 `;
 
