@@ -2241,7 +2241,7 @@
       path: m.media_path!,
       thumb: m.media_thumb,
       kind: m.media_kind!,
-      caption: captionOf(m),
+      caption: plain(captionOf(m), mentionName),
       author: m.from_me ? "You" : senderLabel(m),
       avatar: who ? (avatars[who] ?? null) : null,
       timestamp: m.timestamp,
@@ -3040,7 +3040,9 @@
             <Icon name="pin" size={16} />
             <span class="pinned-text">
               <strong>{pinnedMessage.from_me ? "You" : senderLabel(pinnedMessage)}:</strong>
-              {pinnedMessage.media_kind ? captionOf(pinnedMessage) || MEDIA_LABELS[pinnedMessage.media_kind] : pinnedMessage.text}
+              {pinnedMessage.media_kind
+                ? plain(captionOf(pinnedMessage), mentionName) || MEDIA_LABELS[pinnedMessage.media_kind]
+                : plain(pinnedMessage.text, mentionName)}
             </span>
           </button>
         {/if}
