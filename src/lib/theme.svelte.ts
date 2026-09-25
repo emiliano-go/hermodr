@@ -86,6 +86,42 @@ const GLASS_CSS = `
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 4px 14px rgba(10, 132, 255, 0.45);
 }
 .composer > textarea { border-radius: 999px !important; border: 1px solid rgba(255, 255, 255, 0.12) !important; }
+
+/* Motion: every duration scales with --motion-scale, so "Animations: Off" stills it. */
+html, body, .stage {
+  background-size: 160% 160%, 170% 170%, 150% 150% !important;
+  animation: glass-drift calc(36s * var(--motion-scale)) ease-in-out infinite alternate;
+}
+@keyframes glass-drift {
+  from { background-position: 0% 0%, 100% 100%, 90% 0%; }
+  50% { background-position: 35% 25%, 70% 60%, 40% 35%; }
+  to { background-position: 10% 45%, 45% 85%, 70% 70%; }
+}
+.bubble, .chip, .menu .item, .chat-row {
+  background-image: linear-gradient(115deg, transparent 35%, rgba(255, 255, 255, 0.14) 50%, transparent 65%) !important;
+  background-size: 260% 100% !important;
+  background-repeat: no-repeat !important;
+  background-position: 120% 0 !important;
+  transition: background-position calc(0.9s * var(--motion-scale)) cubic-bezier(0.32, 0.72, 0, 1) !important;
+}
+.msg-row:hover .bubble, .chip:hover, .menu .item:hover, .chat-row:hover {
+  background-position: -20% 0 !important;
+}
+.icon, .chip, .send, .badge, .confirm-actions button {
+  transition: transform calc(0.4s * var(--motion-scale)) cubic-bezier(0.34, 1.56, 0.64, 1),
+    background-color calc(0.2s * var(--motion-scale)) ease !important;
+}
+.icon:hover, .chip:hover, .send:hover { transform: translateY(-1px) scale(1.06); }
+.icon:active, .chip:active, .send:active, .confirm-actions button:active { transform: scale(0.94) !important; }
+.menu, .sheet, .attach-menu, .account-menu {
+  animation: glass-in calc(0.38s * var(--motion-scale)) cubic-bezier(0.34, 1.4, 0.64, 1) both !important;
+}
+@keyframes glass-in {
+  from { opacity: 0; transform: scale(0.9); filter: blur(8px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  html, body, .stage, .menu, .sheet, .attach-menu, .account-menu { animation: none !important; }
+}
 `;
 
 /** Material 3: tonal surfaces, no borders or tails, pill controls and a FAB-like send button. */
