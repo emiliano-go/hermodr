@@ -1,6 +1,6 @@
 <script lang="ts">
   import Icon from "$lib/Icon.svelte";
-  import ThemePreview from "$lib/ThemePreview.svelte";
+  import ThemePreview, { type Scene } from "$lib/ThemePreview.svelte";
   import {
     TOKENS,
     activeTheme,
@@ -20,14 +20,15 @@
     ["2", "Slow"],
   ];
 
-  const SCENES = [
+  const SCENES: [Scene, string][] = [
     ["chat", "Chat"],
     ["signin", "Sign-in"],
-    ["dialog", "Dialogs & menus"],
-  ] as const;
-  let scene = $state<(typeof SCENES)[number][0]>("chat");
+    ["menu", "Menu"],
+    ["dialog", "Dialog"],
+  ];
+  let scene = $state<Scene>("chat");
   /** Keeps the preview in view while the controls below scroll. */
-  let pinned = $state(true);
+  let pinned = $state(false);
 
   let importing = $state(false);
   let importText = $state("");

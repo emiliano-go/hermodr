@@ -1,641 +1,1107 @@
 <script lang="ts">
-  import Icon from "$lib/Icon.svelte";
+  import Icon, { type IconName } from "$lib/Icon.svelte";
   import appIcon from "../../src-tauri/icons/128x128.png";
 
-  let { scene }: { scene: "chat" | "signin" | "dialog" } = $props();
+  export type Scene = "chat" | "signin" | "menu" | "dialog";
+  let { scene }: { scene: Scene } = $props();
 
-  const chats = [
-    { name: "Design team", text: "Ana: @You can you check the mockups?", time: "12:41", unread: 3, mention: true },
-    { name: "Mom", text: "Yes! Bringing dessert 🍰", time: "12:29", selected: true },
-    { name: "Diego", text: "See you tomorrow", time: "Yesterday", mine: true },
-    { name: "Book club", text: "📷 Photo", time: "Mon", unread: 12 },
-    { name: "Laura", text: "Thanks!", time: "Sun" },
+  // The real layout at a real window size, scaled down to the panel's width.
+  const STAGE_W = 1000;
+  const STAGE_H = 600;
+  let width = $state(STAGE_W);
+  const zoom = $derived(width / STAGE_W);
+
+  function hue(jid: string) {
+    let h = 0;
+    for (const c of jid) h = (h * 31 + c.charCodeAt(0)) % 360;
+    return h;
+  }
+  function initials(label: string) {
+    const words = label.replace(/[^\p{L}\p{N}\s]/gu, "").trim().split(/\s+/).filter(Boolean);
+    return words.length === 1 ? words[0].slice(0, 2).toUpperCase() : (words[0][0] + words[1][0]).toUpperCase();
+  }
+
+  type Row = { name: string; preview: string; time: string; unread?: number; mention?: boolean; active?: boolean; icon?: IconName };
+  const rows: Row[] = [
+    { name: "Design team", preview: "You: Will do 👍", time: "09:32", active: true },
+    { name: "Mom", preview: "Dinner at 8?", time: "09:05", unread: 2 },
+    { name: "Book club", preview: "Laura: Photo", time: "08:47", unread: 12, mention: true, icon: "image" },
+    { name: "Diego Pérez", preview: "You: See you tomorrow", time: "Yesterday" },
+    { name: "Laura", preview: "Thanks!", time: "Yesterday" },
+    { name: "Work", preview: "Ana: Standup moved to 10", time: "Mon" },
+    { name: "Family", preview: "Dad: 📍 Location", time: "Sun" },
+  ];
+
+  type Msg = {
+    who?: string;
+    mine?: boolean;
+    first?: boolean;
+    text: string;
+    time: string;
+    status?: "read" | "delivered";
+    quote?: { author: string; text: string };
+    forMe?: boolean;
+    hovered?: boolean;
+    replying?: boolean;
+  };
+  const messages: Msg[] = [
+    { who: "Ana", first: true, text: "Morning! The new mockups are up 🎨", time: "09:12" },
+    { who: "Ana", text: "Can someone check the header spacing?", time: "09:12", replying: true },
+    { mine: true, first: true, quote: { author: "Ana", text: "Can someone check the header spacing?" }, text: "On it, it looks tight on mobile", time: "09:14", status: "read" },
+    { who: "Diego", first: true, forMe: true, text: "", time: "09:20" },
+    { who: "Laura", first: true, hovered: true, text: "The brief is here: ", time: "09:31" },
+    { mine: true, first: true, text: "Will do 👍", time: "09:32", status: "delivered" },
   ];
 </script>
 
-<!-- Drawn with the live theme variables, so every edit shows here at once. -->
-<div class="pv" aria-hidden="true">
-  {#if scene === "chat"}
-    <div class="pv-app">
-      <aside class="pv-list">
-        <div class="pv-search"><Icon name="search" size={12} /> Search</div>
-        {#each chats as chat (chat.name)}
-          <div class="pv-row" class:selected={chat.selected}>
-            <span class="pv-avatar">{chat.name[0]}</span>
-            <span class="pv-row-text">
-              <span class="pv-row-top">
-                <span class="pv-name">{chat.name}</span>
-                <span class="pv-time" class:fresh={chat.unread}>{chat.time}</span>
-              </span>
-              <span class="pv-row-top">
-                <span class="pv-snippet">
-                  {#if chat.mine}<span class="pv-ticks">✓✓</span>{/if}{chat.text}
-                </span>
-                {#if chat.mention}<span class="pv-at">@</span>{/if}
-                {#if chat.unread}<span class="pv-badge">{chat.unread}</span>{/if}
-              </span>
-            </span>
+<!-- The app's own markup and styles, drawn with the live theme variables. -->
+<div class="frame" bind:clientWidth={width} style:height="{STAGE_H * zoom}px" aria-hidden="true">
+  <div class="stage" style:zoom style:width="{STAGE_W}px" style:height="{STAGE_H}px">
+    {#if scene === "signin"}
+      <div class="pairing">
+        <div class="intro-glow"></div>
+        <header class="intro-head">
+          <img class="intro-logo" src={appIcon} alt="" />
+          <div>
+            <h1>Hermóðr</h1>
+            <span class="intro-tag">WhatsApp, native on your desktop</span>
           </div>
-        {/each}
-      </aside>
-
-      <section class="pv-chat">
-        <header class="pv-head">
-          <span class="pv-avatar">M</span>
-          <span class="pv-head-text"><span class="pv-name">Mom</span><span class="pv-sub">online</span></span>
+          <span class="icon intro-settings"><Icon name="settings" size={18} /></span>
         </header>
-        <div class="pv-messages">
-          <span class="pv-day">Today</span>
-          <div class="pv-msg in">
-            <span class="pv-bubble">Are you coming for dinner? <span class="pv-meta">12:28</span></span>
+        <div class="intro-card resume">
+          <span class="resume-avatar" style="--hue: {hue('me')}">WA</span>
+          <h2>Signing in</h2>
+          <span class="resume-who">WhatsApp · +598 97 504 482</span>
+          <div class="resume-progress">
+            <div class="resume-status">
+              <span>Loading messages…</span>
+              <span class="resume-count">120 of 400 · 30%</span>
+            </div>
+            <div class="resume-bar determinate"><span style:width="30%"></span></div>
           </div>
-          <div class="pv-msg out">
-            <span class="pv-bubble">
-              <span class="pv-quote"><span class="pv-quote-who">Mom</span>Are you coming for dinner?</span>
-              Yes! Bringing dessert 🍰 <span class="pv-meta">12:29 <span class="pv-ticks">✓✓</span></span>
+        </div>
+        <p class="intro-foot">
+          Your messages stay end-to-end encrypted. History is kept only on this computer, within the limits
+          you set in Settings.
+        </p>
+      </div>
+    {:else}
+      <div class="layout">
+        <aside class="chats">
+          <header>
+            <h1 class="title">Chats</h1>
+            <span class="header-icons">
+              <span class="icon badge-host"><Icon name="at" size={18} /><span class="icon-badge">1</span></span>
+              <span class="icon"><Icon name="star" size={18} /></span>
             </span>
+          </header>
+          <div class="search"><Icon name="search" size={15} /><span class="placeholder">Search chats and contacts</span></div>
+          <div class="filters">
+            <span class="chip active">All</span>
+            <span class="chip">Unread<span class="chip-count">2</span></span>
+            <span class="chip">Groups</span>
           </div>
-          <div class="pv-msg in mention">
-            <span class="pv-bubble">
-              <span class="pv-sender">Diego</span>
-              <span class="pv-pill self">@You</span> said you'd bring the wine, ask
-              <span class="pv-pill">@Laura</span>
-              <span class="pv-meta">12:31</span>
+          <ul>
+            {#each rows as row (row.name)}
+              <li>
+                <div class="chat-row" class:active={row.active}>
+                  <span class="avatar" style="--hue: {hue(row.name)}">{initials(row.name)}</span>
+                  <span class="name">{row.name}</span>
+                  <span class="time" class:unread={row.unread}>{row.time}</span>
+                  <span class="preview"
+                    >{#if row.icon}<span class="preview-icon"><Icon name={row.icon} size={15} /></span>{/if}{row.preview}</span>
+                  <span class="badges">
+                    {#if row.mention}<span class="badge mention-badge">@</span>{/if}
+                    {#if row.unread}<span class="badge">{row.unread}</span>{/if}
+                  </span>
+                </div>
+              </li>
+            {/each}
+          </ul>
+          <footer class="user-panel">
+            <span class="me">
+              <span class="me-avatar-wrap">
+                <span class="me-avatar" style="--hue: {hue('me')}">WA</span>
+                <span class="presence online"></span>
+              </span>
+              <span class="me-text"><span class="me-name">WhatsApp</span><span class="me-status">Online</span></span>
             </span>
+            <span class="icon"><Icon name="settings" size={19} /></span>
+          </footer>
+        </aside>
+
+        <section class="conversation">
+          <header>
+            <div class="chat-heading">
+              <span class="avatar" style="--hue: {hue('Design team')}">DT</span>
+              <span class="chat-title">Design team<span class="chat-sub">Ana, Diego, Laura, You</span></span>
+            </div>
+            <div class="header-tools">
+              <span class="icon"><Icon name="search" size={18} /></span>
+              <span class="icon"><Icon name="at" size={18} /></span>
+              <span class="icon"><Icon name="sliders" size={18} /></span>
+            </div>
+          </header>
+
+          <div class="messages group">
+            <div class="day"><span>Today</span></div>
+            {#each messages as m, i (i)}
+              <div
+                class="msg-row"
+                class:first-row={m.first}
+                class:for-me={m.forMe}
+                class:hovered={m.hovered}
+                class:replying={m.replying && scene === "chat"}>
+                <div class="bubble inline-meta" class:mine={m.mine} class:first={m.first} class:menu-open={scene === "menu" && i === 2}>
+                  {#if m.first && !m.mine}
+                    <span class="sender-avatar"><span class="avatar" style="--hue: {hue(m.who!)}">{initials(m.who!)}</span></span>
+                    <span class="sender" style="--hue: {hue(m.who!)}">{m.who}</span>
+                  {/if}
+                  {#if m.quote}
+                    <span class="quote">
+                      <span class="quote-author">{m.quote.author}</span>
+                      <span class="quote-text">{m.quote.text}</span>
+                    </span>
+                  {/if}
+                  <span class="text"
+                    >{#if m.forMe}<span class="mention-pill self"
+                        ><span class="mention-initials" style="--hue: {hue('me')}">WA</span>@You</span
+                      > can you check the footer too? <span class="mention-pill"
+                        ><span class="mention-initials" style="--hue: {hue('Ana')}">AN</span>@Ana</span
+                      > says it's off{:else}{m.text}{#if m.hovered}<span class="link">example.com/brief</span>{/if}{/if}<span
+                      class="meta-spacer"
+                      class:mine={m.mine}></span></span>
+                  <span class="reply-btn"><Icon name="chevronDown" size={16} /></span>
+                  <span class="meta"
+                    >{m.time}{#if m.mine}<span class="ticks" class:read={m.status === "read"}>✓✓</span>{/if}</span>
+                </div>
+              </div>
+            {/each}
           </div>
-          <div class="pv-msg in hover">
-            <span class="pv-bubble">Recipe: <span class="pv-link">example.com/tiramisu</span> <span class="pv-meta">12:33</span></span>
+
+          {#if scene === "chat"}
+            <div class="reply-preview">
+              <span class="reply-body">
+                <span class="reply-to">Replying to Ana</span>
+                <span class="reply-snippet">Can someone check the header spacing?</span>
+              </span>
+              <span class="icon"><Icon name="x" size={16} /></span>
+            </div>
+          {/if}
+          <div class="composer">
+            <span class="icon attach"><Icon name="plus" size={22} /></span>
+            <span class="textarea">Type a message</span>
+            <div class="composer-tools">
+              <span class="icon tool-text">GIF</span>
+              <span class="icon"><Icon name="sticker" size={20} /></span>
+              <span class="icon"><Icon name="smile" size={20} /></span>
+            </div>
+            <span class="send ready"><Icon name="mic" size={19} /></span>
           </div>
-          <div class="pv-msg out jump">
-            <span class="pv-bubble">On my way <span class="pv-meta">12:40 <span class="pv-ticks">✓✓</span></span></span>
+        </section>
+      </div>
+
+      {#if scene === "menu"}
+        <div class="menu">
+          <div class="reactions">
+            {#each ["👍", "❤️", "😂", "😮", "😢", "🙏"] as emoji (emoji)}
+              <span class="reaction" class:mine={emoji === "❤️"}>{emoji}</span>
+            {/each}
+          </div>
+          {#each [["reply", "Reply"], ["copy", "Copy"], ["forward", "Forward"], ["star", "Star"], ["pin", "Pin"]] as [icon, label], i (label)}
+            <span class="item" class:hot={i === 1}><Icon name={icon as IconName} size={18} />{label}</span>
+          {/each}
+          <div class="sep"></div>
+          <span class="item danger"><Icon name="trash" size={18} />Delete</span>
+        </div>
+      {:else if scene === "dialog"}
+        <div class="sheet-backdrop">
+          <div class="sheet confirm">
+            <h2>Delete message?</h2>
+            <p class="hint">Delete it for everyone in this chat, or only from your devices.</p>
+            <div class="confirm-actions">
+              <span class="button danger">Delete for everyone</span>
+              <span class="button danger">Delete for me</span>
+              <span class="button hot">Cancel</span>
+            </div>
           </div>
         </div>
-        <div class="pv-replying">
-          <span class="pv-quote"><span class="pv-quote-who">Replying to Diego</span>said you'd bring the wine</span>
-        </div>
-        <footer class="pv-composer">
-          <span class="pv-input">Type a message</span>
-          <span class="pv-send"><Icon name="send" size={13} /></span>
-        </footer>
-      </section>
-    </div>
-  {:else if scene === "signin"}
-    <div class="pv-pairing">
-      <div class="pv-glow"></div>
-      <div class="pv-brand">
-        <img src={appIcon} alt="" />
-        <span><span class="pv-title">Hermóðr</span><span class="pv-sub">WhatsApp, native on your desktop</span></span>
-      </div>
-      <div class="pv-signin">
-        <span class="pv-avatar big">W</span>
-        <span class="pv-title">Signing in</span>
-        <span class="pv-sub">WhatsApp · +598 97 504 482</span>
-        <span class="pv-status"><span>Loading messages…</span><span class="pv-count">120 of 400 · 30%</span></span>
-        <span class="pv-bar"><span style:width="30%"></span></span>
-        <span class="pv-status"><span>Connecting to WhatsApp…</span></span>
-        <span class="pv-bar busy"><span></span></span>
-        <span class="pv-btn primary">Connect</span>
-      </div>
-      <span class="pv-foot">Your messages stay end-to-end encrypted.</span>
-    </div>
-  {:else}
-    <div class="pv-dialog-scene">
-      <div class="pv-backdrop-app">
-        {#each [0, 1, 2] as i (i)}
-          <div class="pv-msg {i % 2 ? 'out' : 'in'}"><span class="pv-bubble">Message {i + 1}</span></div>
-        {/each}
-        <div class="pv-menu">
-          <span class="pv-item"><Icon name="reply" size={13} /> Reply</span>
-          <span class="pv-item hot"><Icon name="forward" size={13} /> Forward</span>
-          <span class="pv-item"><Icon name="star" size={13} /> Star</span>
-          <span class="pv-sep"></span>
-          <span class="pv-item danger"><Icon name="trash" size={13} /> Delete</span>
-        </div>
-      </div>
-      <div class="pv-scrim"></div>
-      <div class="pv-dialog">
-        <span class="pv-title">Rename group</span>
-        <span class="pv-sub">Everyone in the group sees the new name.</span>
-        <span class="pv-field focused">Weekend plans</span>
-        <span class="pv-field">Add a description</span>
-        <span class="pv-error">Names can be at most 100 characters.</span>
-        <span class="pv-toggle"><span class="pv-switch on"></span> Only admins can edit</span>
-        <span class="pv-actions">
-          <span class="pv-btn danger">Leave group</span>
-          <span class="pv-spacer"></span>
-          <span class="pv-btn">Cancel</span>
-          <span class="pv-btn primary">Save</span>
-        </span>
-      </div>
-    </div>
-  {/if}
+      {/if}
+    {/if}
+  </div>
 </div>
 
 <style>
-  .pv {
-    height: 310px;
+  .frame {
+    position: relative;
     overflow: hidden;
     border: 1px solid var(--line-strong);
     border-radius: var(--radius-lg);
-    background: var(--chat-bg);
+    background: var(--bg);
+  }
+  .stage {
+    position: relative;
+    overflow: hidden;
+    background: var(--bg);
     color: var(--text);
-    font-family: var(--font);
-    font-size: calc(var(--font-size) * 0.86);
-    line-height: 1.35;
-    color-scheme: var(--scheme);
+    font-family: "Twemoji Country Flags", var(--font);
+    font-size: var(--font-size);
+    line-height: normal;
+    -webkit-font-smoothing: antialiased;
     user-select: none;
     pointer-events: none;
   }
-  .pv-avatar {
-    display: grid;
-    place-items: center;
-    flex: none;
-    width: 2.3em;
-    height: 2.3em;
-    border-radius: 50%;
-    background: var(--raised-2);
-    color: var(--muted);
-    font-weight: 600;
-  }
-  .pv-avatar.big {
-    width: 3.4em;
-    height: 3.4em;
-    font-size: 1.1em;
-  }
-  .pv-name {
-    font-weight: 500;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .pv-sub {
-    display: block;
-    color: var(--muted);
-    font-size: 0.86em;
-  }
-  .pv-title {
-    display: block;
-    font-weight: 600;
-    font-size: 1.15em;
+  .stage :global(*) {
+    transition: none !important;
   }
 
-  /* Chat scene */
-  .pv-app {
-    display: grid;
-    grid-template-columns: 38% 1fr;
-    grid-template-rows: minmax(0, 1fr);
-    height: 100%;
+  /* Everything below is copied from the app's own styles (+page.svelte and
+     MessageMenu.svelte); hover states are drawn with a class instead. */
+  .icon {
+    display: inline-grid;
+    place-items: center;
+    min-width: 32px;
+    min-height: 32px;
+    border-radius: 8px;
+    color: var(--muted);
   }
-  .pv-list {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
+  .layout {
+    display: grid;
+    grid-template-columns: 300px 1fr;
+    height: 100%;
     overflow: hidden;
-    padding: 8px 6px;
+  }
+  .chats {
+    position: relative;
+    overflow: hidden;
     background: var(--bg);
     border-right: 1px solid var(--line);
-    min-width: 0;
-  }
-  .pv-search {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-bottom: 6px;
-    padding: 5px 9px;
-    border-radius: var(--radius);
-    background: var(--raised);
-    color: var(--faint);
-  }
-  .pv-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px;
-    border-radius: var(--radius);
-  }
-  .pv-row.selected {
-    background: var(--raised-2);
-  }
-  .pv-row-text {
-    flex: 1;
-    min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 1px;
+    min-height: 0;
   }
-  .pv-row-top {
-    display: flex;
-    align-items: center;
-    gap: 5px;
+  .chats header,
+  .conversation header {
     min-width: 0;
-  }
-  .pv-row-top .pv-name {
-    flex: 1;
-  }
-  .pv-time {
-    font-size: 0.8em;
-    color: var(--faint);
-  }
-  .pv-time.fresh {
-    color: var(--accent-text);
-  }
-  .pv-snippet {
-    flex: 1;
-    min-width: 0;
-    color: var(--muted);
-    font-size: 0.9em;
-    white-space: nowrap;
+    height: 59px;
+    box-sizing: border-box;
+    flex: none;
     overflow: hidden;
-    text-overflow: ellipsis;
+    padding: 0 12px 0 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
   }
-  .pv-ticks {
-    color: var(--link);
-    margin-right: 3px;
-    font-size: 0.85em;
+  .chats header {
+    height: 64px;
   }
-  .pv-badge,
-  .pv-at {
-    display: grid;
-    place-items: center;
-    min-width: 1.5em;
-    height: 1.5em;
+  .conversation header {
+    background: var(--surface);
+  }
+  .header-icons {
+    display: flex;
+  }
+  .title {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 700;
+  }
+  .badge-host {
+    position: relative;
+  }
+  .icon-badge {
+    position: absolute;
+    top: 2px;
+    right: 0;
+    min-width: 16px;
+    height: 16px;
     padding: 0 4px;
     box-sizing: border-box;
     border-radius: 999px;
+    background: var(--mention);
+    color: var(--accent-ink);
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 16px;
+    text-align: center;
+  }
+  .search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 12px 8px;
+    padding: 0 12px;
+    height: 36px;
+    flex: none;
+    background: var(--surface);
+    border: 1px solid transparent;
+    border-radius: 999px;
+    color: var(--faint);
+  }
+  .search .placeholder {
+    color: var(--muted);
+  }
+  .filters {
+    display: flex;
+    gap: 8px;
+    padding: 0 12px 8px;
+    flex: none;
+  }
+  .chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--surface);
+    border-radius: 999px;
+    color: var(--muted);
+    font-size: 14px;
+    padding: 5px 12px;
+  }
+  .chip.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .chip-count {
+    font-size: 12px;
+  }
+  .chats ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    flex: 1;
+  }
+  .chat-row {
+    position: relative;
+    box-sizing: border-box;
+    width: 100%;
+    height: 72px;
+    min-width: 0;
+    overflow: hidden;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    grid-template-areas: "avatar name time" "avatar preview badge";
+    gap: 2px 15px;
+    padding: 0 15px 0 13px;
+    align-items: center;
+    align-content: center;
+  }
+  .chat-row::after {
+    content: "";
+    position: absolute;
+    left: 77px;
+    right: 0;
+    bottom: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .chat-row.active {
+    background: var(--raised);
+  }
+  .avatar {
+    grid-area: avatar;
+    flex: none;
+    width: 49px;
+    height: 49px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: hsl(var(--hue) 28% 24%);
+    color: hsl(var(--hue) 45% 80%);
+    font-size: 15px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+  }
+  .conversation header .avatar {
+    width: 40px;
+    height: 40px;
+    font-size: 14px;
+  }
+  .name {
+    grid-area: name;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 17px;
+    font-weight: 400;
+  }
+  .time {
+    grid-area: time;
+    color: var(--muted);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  .time.unread {
+    color: var(--accent);
+  }
+  .preview {
+    grid-area: preview;
+    min-width: 0;
+    color: var(--muted);
+    font-size: 14px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .preview-icon {
+    display: inline-flex;
+    vertical-align: -2px;
+    margin-right: 4px;
+  }
+  .badges {
+    grid-area: badge;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .badge {
+    display: grid;
+    place-items: center;
     background: var(--accent);
     color: var(--accent-ink);
-    font-size: 0.75em;
+    font-size: 12px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    border-radius: 999px;
+    height: 20px;
+    padding: 0 6px;
+    min-width: 20px;
+    box-sizing: border-box;
+  }
+  .badge.mention-badge {
+    background: var(--accent-soft);
+    color: var(--accent-text);
+    font-size: 11px;
     font-weight: 700;
   }
-  .pv-at {
-    background: var(--mention);
+  .user-panel {
+    position: relative;
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 62px;
+    box-sizing: border-box;
+    padding: 0 8px;
+    background: var(--surface);
   }
-  .pv-chat {
+  .me {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 6px;
+    border-radius: 8px;
+  }
+  .me-avatar-wrap {
+    position: relative;
+    flex: none;
+  }
+  .me-avatar {
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: hsl(var(--hue, 160) 28% 24%);
+    color: hsl(var(--hue, 160) 45% 80%);
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .presence {
+    position: absolute;
+    right: -1px;
+    bottom: -1px;
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    background: var(--faint);
+    box-shadow: 0 0 0 3px var(--surface);
+  }
+  .presence.online {
+    background: var(--accent);
+  }
+  .me-text {
     display: flex;
     flex-direction: column;
     min-width: 0;
-    min-height: 0;
+    line-height: 1.25;
   }
-  .pv-head {
+  .me-name {
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .me-status {
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .conversation {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
+    position: relative;
+    background: var(--chat-bg);
+  }
+  .chat-heading {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 6px 10px;
-    background: var(--surface);
-    border-bottom: 1px solid var(--line);
+    gap: 10px;
+    min-width: 0;
   }
-  .pv-head .pv-avatar {
-    width: 2em;
-    height: 2em;
+  .chat-title {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    font-size: 16px;
+    font-weight: 400;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
-  /* Anchored to the bottom like the real chat, so overflow clips the oldest message. */
-  .pv-messages {
+  .chat-sub {
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .header-tools {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: auto;
+    flex: none;
+  }
+  .messages {
     flex: 1;
+    overflow: hidden;
+    min-width: 0;
     min-height: 0;
+    --pad-l: clamp(16px, 7%, 90px);
+    --pad-r: clamp(16px, 7%, 90px);
+    padding: 12px 0 8px;
     display: flex;
     flex-direction: column;
     justify-content: flex-end;
-    gap: 3px;
-    padding: 8px 0;
-    overflow: hidden;
+    gap: 2px;
   }
-  .pv-day {
-    align-self: center;
-    margin-bottom: 4px;
-    padding: 2px 9px;
-    border-radius: var(--radius);
+  .messages.group {
+    --pad-l: max(56px, 7%);
+  }
+  .day {
+    display: flex;
+    justify-content: center;
+    margin: 12px 0 8px;
+  }
+  .day span {
     background: var(--surface);
     color: var(--muted);
-    font-size: 0.78em;
+    font-size: 12.5px;
+    padding: 5px 12px;
+    border-radius: var(--radius-sm);
+    box-shadow: 0 1px 0.5px rgba(11, 20, 26, 0.13);
   }
-  .pv-msg {
+  .msg-row {
     display: flex;
-    padding: 1px 10px;
+    flex-direction: column;
+    padding: 1px var(--pad-r) 1px var(--pad-l);
   }
-  .pv-msg.out {
-    justify-content: flex-end;
-  }
-  .pv-msg.mention {
-    background: var(--mention-soft);
-    box-shadow: inset 3px 0 var(--mention);
-  }
-  .pv-msg.hover {
+  .msg-row.hovered {
     background: var(--row-hover);
   }
-  .pv-msg.jump {
-    background: var(--jump-soft);
+  .msg-row.replying {
+    background: var(--replying-soft);
+    box-shadow: inset 3px 0 0 var(--replying);
   }
-  .pv-bubble {
-    max-width: 78%;
-    padding: 4px 8px;
-    border-radius: var(--radius-sm);
+  .msg-row.for-me {
+    background: var(--mention-soft);
+    box-shadow: inset 3px 0 0 var(--mention);
+  }
+  .bubble {
+    min-width: 0;
+    flex-shrink: 0;
+    align-self: flex-start;
+    position: relative;
+    max-width: 65%;
     background: var(--bubble);
-    box-shadow: 0 1px 0.5px rgba(0, 0, 0, 0.13);
+    border-radius: var(--radius-sm);
+    box-shadow: 0 1px 0.5px rgba(11, 20, 26, 0.13);
+    padding: 6px 7px 8px 9px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    line-height: 19px;
+    word-break: break-word;
+    overflow-wrap: anywhere;
   }
-  .out .pv-bubble {
+  .bubble.first {
+    margin-top: 10px;
+  }
+  .bubble.mine {
+    align-self: flex-end;
     background: var(--bubble-mine);
   }
-  .pv-sender {
-    display: block;
-    color: var(--accent-text);
-    font-size: 0.85em;
-    font-weight: 600;
+  .bubble.first:not(.mine) {
+    border-top-left-radius: 0;
   }
-  .pv-meta {
-    float: right;
-    margin: 0.35em 0 0 8px;
-    color: var(--muted);
-    font-size: 0.72em;
+  .bubble.first.mine {
+    border-top-right-radius: 0;
   }
-  .pv-quote {
-    display: block;
-    margin-bottom: 3px;
-    padding: 3px 7px;
-    border-radius: calc(var(--radius-sm) - 2px);
-    background: rgba(0, 0, 0, 0.12);
-    box-shadow: inset 3px 0 var(--replying);
-    color: var(--muted);
-    font-size: 0.86em;
+  .bubble.first::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    width: 9px;
+    height: 13px;
+    background: inherit;
   }
-  .pv-quote-who {
-    display: block;
-    color: var(--replying);
-    font-weight: 600;
+  .bubble.first:not(.mine)::before {
+    left: -8px;
+    clip-path: polygon(0 0, 100% 0, 100% 100%);
   }
-  .pv-pill {
-    padding: 0 3px;
-    border-radius: 4px;
-    background: var(--mention-pill-soft);
-    color: var(--mention-pill);
+  .bubble.first.mine::before {
+    right: -8px;
+    clip-path: polygon(0 0, 100% 0, 0 100%);
   }
-  .pv-pill.self {
-    background: var(--mention-self-soft);
-    color: var(--mention);
+  .bubble.inline-meta .meta {
+    position: absolute;
+    right: 7px;
+    bottom: 4px;
   }
-  .pv-link {
+  .meta-spacer {
+    display: inline-block;
+    width: 44px;
+    height: 1px;
+  }
+  .meta-spacer.mine {
+    width: 62px;
+  }
+  .sender-avatar {
+    position: absolute;
+    left: -38px;
+    top: 0;
+  }
+  .sender-avatar .avatar {
+    width: 28px;
+    height: 28px;
+    font-size: 11px;
+  }
+  .sender {
+    align-self: flex-start;
+    font-size: 12.8px;
+    font-weight: 500;
+    line-height: 22px;
+    color: hsl(var(--hue) 65% 68%);
+  }
+  .text {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .link {
     color: var(--link);
-    text-decoration: underline;
   }
-  .pv-replying {
-    padding: 5px 10px 0;
-    background: var(--surface);
-    border-top: 1px solid var(--line);
-  }
-  .pv-replying .pv-quote {
-    margin: 0;
-    background: var(--replying-soft);
-  }
-  .pv-composer {
-    display: flex;
+  .mention-pill {
+    display: inline-flex;
     align-items: center;
-    gap: 8px;
-    padding: 6px 10px;
-    background: var(--surface);
+    gap: 4px;
+    padding: 0 5px 0 2px;
+    border-radius: 4px;
+    vertical-align: bottom;
+    font-weight: 500;
+    color: var(--mention-pill);
+    background: var(--mention-pill-soft);
+    white-space: nowrap;
   }
-  .pv-input {
-    flex: 1;
-    padding: 5px 10px;
-    border-radius: var(--radius);
-    background: var(--raised);
-    color: var(--faint);
+  .mention-pill.self {
+    color: var(--mention);
+    background: var(--mention-self-soft);
   }
-  .pv-send {
+  .mention-initials {
     display: grid;
     place-items: center;
-    width: 2em;
-    height: 2em;
+    width: 16px;
+    height: 16px;
     border-radius: 50%;
-    background: var(--accent);
-    color: var(--accent-ink);
+    flex: none;
+    font-size: 8px;
+    background: hsl(var(--hue) 28% 24%);
+    color: hsl(var(--hue) 45% 80%);
+  }
+  .quote {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-areas: "author thumb" "text thumb";
+    align-items: center;
+    column-gap: 8px;
+    background: rgba(0, 0, 0, 0.18);
+    border-left: 4px solid var(--accent);
+    border-radius: 6px;
+    font-size: 13px;
+    line-height: 18px;
+    color: var(--muted);
+    padding: 5px 8px 6px;
+    margin-bottom: 2px;
+    overflow: hidden;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .quote-author {
+    grid-area: author;
+    display: block;
+    font-weight: 500;
+    color: var(--accent);
+  }
+  .quote-text {
+    grid-area: text;
+    min-width: 0;
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .meta {
+    font-size: 11px;
+    line-height: 15px;
+    font-variant-numeric: tabular-nums;
+    color: color-mix(in srgb, var(--text) 60%, transparent);
+    align-self: flex-end;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    white-space: nowrap;
+  }
+  .ticks {
+    font-size: 10px;
+    letter-spacing: -2px;
+  }
+  .ticks.read {
+    color: var(--link);
+  }
+  .reply-btn {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    z-index: 1;
+    display: flex;
+    padding: 3px;
+    border-radius: 999px;
+    color: var(--muted);
+    background: var(--bubble);
+    opacity: 0;
+  }
+  .bubble.mine .reply-btn {
+    background: var(--bubble-mine);
+  }
+  .bubble.menu-open .reply-btn {
+    opacity: 1;
+  }
+  .reply-preview {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0 14px;
+    padding: 8px 8px 8px 12px;
+    background: var(--surface);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .reply-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .reply-to {
+    color: var(--accent-text);
+    font-weight: 600;
+  }
+  .composer {
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    padding: 5px 16px 5px 10px;
+    min-height: 62px;
+    box-sizing: border-box;
+    background: var(--surface);
+    flex: none;
+  }
+  .composer > .textarea {
+    flex: 1;
+    align-self: center;
+    background: var(--raised);
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    padding: 9px 12px;
+    color: var(--faint);
+    line-height: 1.4;
+  }
+  .composer-tools {
+    display: flex;
+    align-items: center;
+    align-self: center;
+    gap: 2px;
+  }
+  .composer-tools .icon {
+    width: 38px;
+    height: 38px;
+  }
+  .tool-text {
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .attach,
+  .send {
+    width: 42px;
+    height: 42px;
+    margin-bottom: 5px;
+  }
+  .send {
+    flex: none;
+    display: grid;
+    place-items: center;
+    border-radius: 999px;
+    color: var(--muted);
+  }
+  .send.ready {
+    color: var(--accent);
   }
 
-  /* Sign-in scene */
-  .pv-pairing {
+  /* MessageMenu, opened on the reply above. */
+  .menu {
+    position: absolute;
+    left: 520px;
+    top: 250px;
+    z-index: 2;
+    min-width: 230px;
+    padding: 6px;
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+  }
+  .reactions {
+    display: flex;
+    gap: 2px;
+    padding: 2px 2px 6px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid var(--line-strong);
+  }
+  .reaction {
+    flex: 1;
+    height: 36px;
+    display: grid;
+    place-items: center;
+    border-radius: 8px;
+    font-size: 20px;
+  }
+  .reaction.mine {
+    background: var(--accent-soft);
+  }
+  .item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 14.5px;
+  }
+  .item :global(svg) {
+    color: var(--muted);
+  }
+  .item.hot {
+    background: var(--raised);
+  }
+  .item.danger,
+  .item.danger :global(svg) {
+    color: var(--danger);
+  }
+  .sep {
+    height: 1px;
+    margin: 4px 6px;
+    background: var(--line-strong);
+  }
+
+  /* Confirm sheet */
+  .sheet-backdrop {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    background: var(--scrim);
+    backdrop-filter: blur(2px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .sheet {
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow);
+    padding: 20px 22px;
+    width: 400px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .sheet.confirm h2 {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 600;
+  }
+  .hint {
+    margin: 0;
+    color: var(--faint);
+    font-size: 12px;
+    max-width: 44ch;
+    text-wrap: balance;
+  }
+  .confirm-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+  }
+  .confirm-actions .button {
+    padding: 8px 14px;
+    border-radius: 999px;
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .confirm-actions .button.hot {
+    background: var(--raised);
+  }
+  .confirm-actions .button.danger {
+    color: var(--danger);
+  }
+
+  /* Sign-in */
+  .pairing {
     position: relative;
     height: 100%;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 12px;
+    gap: 22px;
+    padding: 32px 24px;
+    box-sizing: border-box;
+    background: var(--chat-bg);
   }
-  .pv-glow {
+  .intro-glow {
     position: absolute;
     inset: 0;
     background:
       radial-gradient(60% 50% at 15% 10%, var(--accent-soft), transparent 70%),
       radial-gradient(50% 40% at 90% 90%, color-mix(in srgb, var(--link) 12%, transparent), transparent 70%);
   }
-  .pv-brand {
-    position: relative;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    width: 66%;
-  }
-  .pv-brand img {
-    width: 2.6em;
-    height: 2.6em;
-  }
-  .pv-signin {
+  .intro-head,
+  .intro-card,
+  .intro-foot {
     position: relative;
     box-sizing: border-box;
-    width: 66%;
+    width: min(920px, 100%);
+    flex: none;
+  }
+  .intro-head {
     display: flex;
-    flex-direction: column;
     align-items: center;
-    gap: 6px;
-    padding: 16px 22px;
-    border: 1px solid var(--line-strong);
+    gap: 14px;
+  }
+  .intro-logo {
+    width: 48px;
+    height: 48px;
     border-radius: 12px;
+  }
+  .intro-head h1 {
+    margin: 0;
+    font-size: 26px;
+    letter-spacing: -0.01em;
+  }
+  .intro-tag {
+    color: var(--muted);
+    font-size: 13.5px;
+  }
+  .intro-settings {
+    margin-left: auto;
+  }
+  .intro-card {
+    display: grid;
+    padding: 40px 44px;
+    border: 1px solid var(--line-strong);
+    border-radius: 16px;
     background: var(--surface);
     box-shadow: var(--shadow);
   }
-  .pv-status {
+  .intro-card.resume {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    gap: 10px;
+    width: min(460px, 100%);
+    text-align: center;
+  }
+  .intro-card.resume h2 {
+    margin: 8px 0 0;
+    font-size: 22px;
+    font-weight: 500;
+  }
+  .resume-avatar {
+    display: grid;
+    place-items: center;
+    width: 88px;
+    height: 88px;
+    border-radius: 50%;
+    background: var(--raised-2);
+    font-size: 30px;
+    font-weight: 600;
+    box-shadow: 0 0 0 4px var(--accent-soft);
+  }
+  .resume-who {
+    color: var(--muted);
+    font-size: 13.5px;
+  }
+  .resume-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: min(320px, 100%);
+    margin-top: 18px;
+  }
+  .resume-status {
     display: flex;
     justify-content: space-between;
-    width: 100%;
-    margin-top: 4px;
+    gap: 12px;
     color: var(--muted);
-    font-size: 0.86em;
+    font-size: 12.5px;
   }
-  .pv-count {
-    color: var(--faint);
+  .resume-count {
+    font-variant-numeric: tabular-nums;
   }
-  .pv-bar {
-    display: block;
-    width: 100%;
-    height: 5px;
+  .resume-bar {
+    height: 6px;
     border-radius: 999px;
     background: var(--raised);
     overflow: hidden;
   }
-  .pv-bar span {
+  .resume-bar span {
     display: block;
     height: 100%;
     border-radius: inherit;
     background: var(--accent);
   }
-  .pv-bar.busy span {
-    width: 40%;
-    animation: pv-busy calc(1.2s * var(--motion-scale, 1)) ease-in-out infinite;
-  }
-  @keyframes pv-busy {
-    from {
-      transform: translateX(-100%);
-    }
-    to {
-      transform: translateX(250%);
-    }
-  }
-  .pv-foot {
-    position: relative;
+  .intro-foot {
+    margin: 0;
     color: var(--faint);
-    font-size: 0.8em;
-  }
-
-  /* Buttons, shared by the sign-in and dialog scenes */
-  .pv-btn {
-    padding: 5px 12px;
-    border: 1px solid var(--line-strong);
-    border-radius: var(--radius);
-    background: var(--raised);
-    font-size: 0.92em;
-  }
-  .pv-btn.primary {
-    border-color: var(--accent);
-    background: var(--accent);
-    color: var(--accent-ink);
-    font-weight: 600;
-  }
-  .pv-signin .pv-btn {
-    margin-top: 6px;
-  }
-  .pv-btn.danger {
-    color: var(--danger);
-    background: var(--danger-soft);
-    border-color: transparent;
-  }
-
-  /* Dialog scene */
-  .pv-dialog-scene {
-    position: relative;
-    height: 100%;
-  }
-  .pv-backdrop-app {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    height: 100%;
-    padding: 14px 0;
-    box-sizing: border-box;
-  }
-  .pv-menu {
-    position: absolute;
-    left: 18px;
-    top: 58px;
-    z-index: 1;
-    display: flex;
-    flex-direction: column;
-    width: 130px;
-    padding: 4px;
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    background: var(--surface);
-    box-shadow: var(--shadow);
-  }
-  .pv-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 5px 8px;
-    border-radius: calc(var(--radius) - 2px);
-  }
-  .pv-item.hot {
-    background: var(--raised);
-  }
-  .pv-item.danger {
-    color: var(--danger);
-  }
-  .pv-sep {
-    height: 1px;
-    margin: 3px 0;
-    background: var(--line-soft);
-  }
-  .pv-scrim {
-    position: absolute;
-    inset: 0;
-    left: 45%;
-    background: var(--scrim);
-  }
-  .pv-dialog {
-    position: absolute;
-    top: 50%;
-    right: 5%;
-    transform: translateY(-50%);
-    width: 44%;
-    display: flex;
-    flex-direction: column;
-    gap: 7px;
-    padding: 14px 16px;
-    border: 1px solid var(--line);
-    border-radius: var(--radius-lg);
-    background: var(--bg);
-    box-shadow: var(--shadow);
-  }
-  .pv-dialog .pv-sub {
-    margin-bottom: 2px;
-  }
-  .pv-field {
-    padding: 5px 9px;
-    border: 1px solid var(--line-strong);
-    border-radius: var(--radius);
-    background: var(--surface);
-    color: var(--faint);
-  }
-  .pv-field.focused {
-    border-color: var(--accent);
-    color: var(--text);
-  }
-  .pv-error {
-    color: var(--danger);
-    font-size: 0.82em;
-  }
-  .pv-toggle {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 0.92em;
-  }
-  .pv-switch {
-    position: relative;
-    width: 26px;
-    height: 15px;
-    border-radius: 999px;
-    background: var(--raised-2);
-  }
-  .pv-switch::after {
-    content: "";
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 11px;
-    height: 11px;
-    border-radius: 50%;
-    background: #fff;
-  }
-  .pv-switch.on {
-    background: var(--accent);
-  }
-  .pv-switch.on::after {
-    left: 13px;
-  }
-  .pv-actions {
-    display: flex;
-    gap: 6px;
-    margin-top: 4px;
-  }
-  .pv-spacer {
-    flex: 1;
+    font-size: 12.5px;
+    text-align: center;
   }
 </style>
