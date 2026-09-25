@@ -192,6 +192,8 @@
     jid: string;
     name: string;
     number: string | null;
+    /** The member's reserved WhatsApp username, when they have one. */
+    username: string | null;
     label: string | null;
     admin: boolean;
   };
@@ -226,12 +228,21 @@
     // every member, which notifies them even with the chat muted.
     const all = selectedChat?.endsWith("@g.us")
       ? [
-          { jid: "@all", name: "all" },
-          { jid: "@all-override", name: "all-override" },
+          { jid: "@all", name: "all", username: null, number: null },
+          { jid: "@all-override", name: "all-override", username: null, number: null },
         ]
       : [];
-    return [...all, ...participants]
-      .filter((p) => p.name.toLowerCase().includes(needle))
+    // A member is found by nickname, reserved username or number, and inserted by nickname.
+    const members = participants.map((p) => ({
+      jid: p.jid,
+      name: /^\+?\d+$/.test(p.name) && p.username ? p.username : displayName(p.name, p.jid),
+      username: p.username,
+      number: p.number,
+    }));
+    return [...all, ...members]
+      .filter((p) =>
+        [p.name, p.username, p.number].some((field) => field?.toLowerCase().includes(needle)),
+      )
       .slice(0, 8);
   });
   let replyingTo: StoredMessage | null = $state(null);
@@ -2981,6 +2992,9 @@
                 onclick={() => selectMention(person)}
                 onmouseenter={() => (mentionIndex = i)}>
                 {person.name}
+                {#if person.username && person.username !== person.name}<span class="mention-handle"
+                    >@{person.username}</span
+                  >{/if}
               </button>
             {/each}
           </div>
@@ -5571,6 +5585,11 @@
   .mention.active,
   .mention:hover {
     background: var(--raised);
+  }
+  .mention-handle {
+    margin-left: 6px;
+    color: var(--muted);
+    font-size: 12.5px;
   }
   .composer {
     display: flex;
