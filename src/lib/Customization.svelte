@@ -113,7 +113,8 @@
   }
 
   async function exportTheme() {
-    await navigator.clipboard.writeText(JSON.stringify({ name: theme.name, tokens: theme.tokens }, null, 2));
+    const { name, tokens, css, wallpaper } = theme;
+    await navigator.clipboard.writeText(JSON.stringify({ name, tokens, css, wallpaper }, null, 2));
     copied = true;
     setTimeout(() => (copied = false), 1500);
   }
@@ -127,7 +128,14 @@
       for (const [key, value] of Object.entries(parsed.tokens)) {
         if (typeof value === "string") tokens[key] = value;
       }
-      const imported = { id: newId("theme"), name: String(parsed.name ?? "Imported"), tokens };
+      const text = (v: unknown) => (typeof v === "string" && v.trim() ? v : undefined);
+      const imported = {
+        id: newId("theme"),
+        name: String(parsed.name ?? "Imported"),
+        tokens,
+        css: text(parsed.css),
+        wallpaper: text(parsed.wallpaper),
+      };
       customization.themes.push(imported);
       customization.theme = imported.id;
       importText = "";
@@ -157,7 +165,11 @@
         class:active={option.id === theme.id}
         aria-pressed={option.id === theme.id}
         onclick={() => (customization.theme = option.id)}>
-        <span class="preview" style:background={o["chat-bg"]}>
+        <span
+          class="preview"
+          style:background={option.wallpaper
+            ? `linear-gradient(${o["chat-bg"]}, ${o["chat-bg"]}), ${option.wallpaper}`
+            : o["chat-bg"]}>
           <span class="p-side" style:background={o.bg} style:border-color={o.line}>
             {#each [0, 1, 2, 3] as i (i)}
               <span class="p-row">

@@ -43,7 +43,11 @@ export const TOKENS = [
 ] as const;
 
 export type Tokens = Record<string, string>;
-export type Theme = { id: string; name: string; tokens: Tokens };
+/**
+ * `css` is a structural layer (blur, shapes) that tokens alone cannot express;
+ * `wallpaper` is a CSS background drawn behind the translucent surfaces.
+ */
+export type Theme = { id: string; name: string; tokens: Tokens; css?: string; wallpaper?: string };
 export type Extension = { id: string; name: string; css: string; enabled: boolean };
 type Saved = { theme: string; themes: Theme[]; extensions: Extension[] };
 
@@ -56,6 +60,53 @@ const shape = {
   "motion-scale": "1",
   ease: "cubic-bezier(0.2, 0.8, 0.2, 1)",
 };
+
+const GLASS_WALLPAPER =
+  "radial-gradient(1100px 760px at 8% 0%, #5b3cc4 0%, transparent 62%), " +
+  "radial-gradient(900px 700px at 100% 100%, #0a84ff 0%, transparent 58%), " +
+  "radial-gradient(700px 560px at 85% 8%, rgba(255, 55, 95, 0.45) 0%, transparent 60%), #0b0d1a";
+
+/** Translucent layers over a vivid wallpaper, blurred, with a specular top edge. */
+const GLASS_CSS = `
+.chats, .conversation header, .composer, .user-panel, .menu, .sheet, .modal, .intro-card,
+.reply-preview, .attach-menu, .account-menu, .card, .search, .day span {
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+}
+.menu, .sheet, .modal, .intro-card, .attach-menu, .account-menu, .search, .chip, .bubble, .embed, .quote {
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 6px 24px rgba(0, 0, 0, 0.22) !important;
+}
+.embed, .quote { border-left: 4px solid var(--embed-color, var(--accent)) !important; }
+.bubble.first::before { display: none !important; }
+.bubble { border-radius: var(--radius-sm) !important; }
+.send.ready, .badge:not(.mention-badge) {
+  background: linear-gradient(180deg, #409cff, #0a84ff) !important;
+  color: #fff !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 4px 14px rgba(10, 132, 255, 0.45);
+}
+.composer > textarea { border-radius: 999px !important; border: 1px solid rgba(255, 255, 255, 0.12) !important; }
+`;
+
+/** Material 3: tonal surfaces, no borders or tails, pill controls and a FAB-like send button. */
+const MATERIAL_CSS = `
+.bubble { border-radius: var(--radius-sm) !important; box-shadow: none !important; }
+.bubble.first::before { display: none !important; }
+.bubble:not(.mine) { border-bottom-left-radius: 6px !important; }
+.bubble:not(.mine):not(.first) { border-top-left-radius: 6px !important; }
+.bubble.mine { border-bottom-right-radius: 6px !important; }
+.bubble.mine:not(.first) { border-top-right-radius: 6px !important; }
+.chats ul { padding: 0 8px !important; }
+.chat-row { border-radius: 16px !important; }
+.chat-row::after { display: none !important; }
+.chip { border-radius: 8px !important; box-shadow: inset 0 0 0 1px var(--line-strong); }
+.chip.active { box-shadow: none; }
+.send.ready { border-radius: 16px !important; background: var(--bubble-mine) !important; color: var(--accent-hover) !important; }
+.composer > textarea { border-radius: 28px !important; }
+.primary, .button.primary, .confirm-actions button { border-radius: 999px !important; }
+.day span { border-radius: 999px !important; box-shadow: none !important; }
+.quote, .embed { border-radius: 12px !important; }
+`;
 
 export const BUILT_IN: Theme[] = [
   {
@@ -178,6 +229,100 @@ export const BUILT_IN: Theme[] = [
       scheme: "dark",
     },
   },
+  {
+    id: "glass",
+    name: "Liquid Glass",
+    css: GLASS_CSS,
+    wallpaper: GLASS_WALLPAPER,
+    tokens: {
+      bg: "rgba(18, 20, 38, 0.42)",
+      "chat-bg": "rgba(10, 12, 26, 0.18)",
+      surface: "rgba(255, 255, 255, 0.08)",
+      raised: "rgba(255, 255, 255, 0.13)",
+      "raised-2": "rgba(255, 255, 255, 0.2)",
+      scrim: "rgba(4, 6, 16, 0.35)",
+      shadow: "0 10px 40px rgba(0, 0, 0, 0.35)",
+      bubble: "rgba(255, 255, 255, 0.12)",
+      "bubble-mine": "rgba(10, 132, 255, 0.55)",
+      text: "#f5f7ff",
+      muted: "rgba(235, 240, 255, 0.68)",
+      faint: "rgba(235, 240, 255, 0.45)",
+      link: "#7cd4ff",
+      mention: "#ffd60a",
+      "mention-soft": "rgba(255, 214, 10, 0.12)",
+      "mention-self-soft": "rgba(255, 214, 10, 0.26)",
+      "mention-pill": "#7cd4ff",
+      "mention-pill-soft": "rgba(124, 212, 255, 0.2)",
+      replying: "#64b5ff",
+      "replying-soft": "rgba(10, 132, 255, 0.18)",
+      "jump-soft": "rgba(10, 132, 255, 0.3)",
+      "row-hover": "rgba(255, 255, 255, 0.05)",
+      accent: "#0a84ff",
+      "accent-hover": "#409cff",
+      "accent-text": "#7cc0ff",
+      "accent-ink": "#ffffff",
+      "accent-soft": "rgba(10, 132, 255, 0.24)",
+      line: "rgba(255, 255, 255, 0.08)",
+      "line-soft": "rgba(255, 255, 255, 0.05)",
+      "line-strong": "rgba(255, 255, 255, 0.16)",
+      danger: "#ff453a",
+      "danger-soft": "rgba(255, 69, 58, 0.18)",
+      ...shape,
+      "radius-sm": "18px",
+      radius: "14px",
+      "radius-lg": "22px",
+      font: '"SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif',
+      ease: "cubic-bezier(0.32, 0.72, 0, 1)",
+      scheme: "dark",
+    },
+  },
+  {
+    id: "material",
+    name: "Material 3",
+    css: MATERIAL_CSS,
+    tokens: {
+      bg: "#171d19",
+      "chat-bg": "#0f1511",
+      surface: "#1b211d",
+      raised: "#252b27",
+      "raised-2": "#303632",
+      scrim: "rgba(0, 0, 0, 0.5)",
+      shadow: "0 1px 3px rgba(0, 0, 0, 0.3), 0 4px 8px 3px rgba(0, 0, 0, 0.15)",
+      bubble: "#252b27",
+      "bubble-mine": "#005139",
+      text: "#dfe4dd",
+      muted: "#bfc9c1",
+      faint: "#8a938c",
+      link: "#a4cddd",
+      mention: "#e7c26c",
+      "mention-soft": "rgba(231, 194, 108, 0.1)",
+      "mention-self-soft": "rgba(231, 194, 108, 0.22)",
+      "mention-pill": "#a4cddd",
+      "mention-pill-soft": "rgba(164, 205, 221, 0.16)",
+      replying: "#8bd6b4",
+      "replying-soft": "rgba(139, 214, 180, 0.14)",
+      "jump-soft": "rgba(139, 214, 180, 0.26)",
+      "row-hover": "rgba(223, 228, 221, 0.04)",
+      accent: "#8bd6b4",
+      "accent-hover": "#a6f2cf",
+      "accent-text": "#8bd6b4",
+      "accent-ink": "#003826",
+      "accent-soft": "rgba(139, 214, 180, 0.16)",
+      line: "#252b27",
+      "line-soft": "#1d231f",
+      "line-strong": "#404943",
+      danger: "#ffb4ab",
+      "danger-soft": "#5c1a17",
+      ...shape,
+      "radius-sm": "20px",
+      radius: "16px",
+      "radius-lg": "28px",
+      font: '"Google Sans Text", "Roboto Flex", Roboto, "Segoe UI", system-ui, sans-serif',
+      "font-size": "14.5px",
+      ease: "cubic-bezier(0.2, 0, 0, 1)",
+      scheme: "dark",
+    },
+  },
 ];
 
 const KEY = "hermodr.customization";
@@ -212,7 +357,7 @@ export function newId(prefix: string) {
 
 /** Copies a theme into an editable one and makes it active. */
 export function duplicate(theme: Theme, name = `${theme.name} copy`): Theme {
-  const copy = { id: newId("theme"), name, tokens: { ...theme.tokens } };
+  const copy = { id: newId("theme"), name, tokens: { ...theme.tokens }, css: theme.css, wallpaper: theme.wallpaper };
   customization.themes.push(copy);
   customization.theme = copy.id;
   return customization.themes[customization.themes.length - 1];

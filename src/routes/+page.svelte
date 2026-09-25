@@ -163,10 +163,19 @@
     saveCustomization();
   });
 
-  /** CSS extensions, kept from closing their own style element. */
+  /** The theme's own layer, then CSS extensions, kept from closing their style element. */
   const extensionCss = $derived(
-    customization.extensions
-      .filter((e) => e.enabled && e.css.trim())
+    [
+      {
+        id: `theme-${activeTheme().id}`,
+        css:
+          (activeTheme().wallpaper
+            ? `html, body, .stage { background: ${activeTheme().wallpaper} !important; }`
+            : "") + (activeTheme().css ?? ""),
+      },
+      ...customization.extensions.filter((e) => e.enabled),
+    ]
+      .filter((e) => e.css.trim())
       .map((e) => `<style data-extension="${e.id}">${e.css.replace(/<\/style/gi, "<\\/style")}</style>`)
       .join(""),
   );
