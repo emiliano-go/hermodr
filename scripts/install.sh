@@ -7,10 +7,11 @@
 #
 # HERMODR_VERSION=v0.1.0 pins a release; the default is the latest one.
 #
-# The download is pinned to the release's tag and checked against the SHA-256
-# digest GitHub computes for the asset, so a corrupted or swapped file aborts
-# the install before anything is replaced. There is no signature check: one
-# only helps if the signing key lives outside GitHub, which needs a key the
+# The download is pinned to the release's tag and checked against the release's
+# SHA256SUMS (written by scripts/build-release.sh) and the digest GitHub computes
+# for the asset; every source present must agree, and at least one must exist.
+# A mismatch aborts before anything is replaced. There is no signature check:
+# one only helps if the signing key lives outside GitHub, which needs a key the
 # maintainer holds. Until releases are signed, trust rests on GitHub and the
 # repository owner, as it does for the source.
 #
@@ -51,18 +52,36 @@ DIGEST="$(printf '%s' "$RELEASE" | grep -oE '"(name|digest)": *"[^"]*"' \
 DIGEST="${DIGEST#sha256:}"
 
 [ -n "$TAG" ] || die "could not read the release tag"
-printf '%s' "$DIGEST" | grep -qE '^[0-9a-f]{64}$' || die "release $TAG has no SHA-256 digest for $ASSET"
+DOWNLOAD="https://github.com/$REPO/releases/download/$TAG"
+SUMS="$(fetch "$DOWNLOAD/SHA256SUMS" 2>/dev/null || true)"
+listed() { printf '%s\n' "$SUMS" | awk -v f="$1" '$2 == f || $2 == "*" f { print $1; exit }'; }
+
+# Checks a downloaded file against every checksum source that covers it.
+verify() {
+  local file="$1" name="$2" api="$3" actual listed_sum checked=0
+  actual="$(sha256 "$file")"
+  listed_sum="$(listed "$name")"
+  if [ -n "$listed_sum" ]; then
+    [ "$actual" = "$listed_sum" ] || die "$name does not match SHA256SUMS in $TAG. Nothing was installed."
+    checked=1
+  fi
+  if printf '%s' "$api" | grep -qE '^[0-9a-f]{64}$'; then
+    [ "$actual" = "$api" ] || die "$name does not match GitHub's digest for $TAG. Nothing was installed."
+    checked=1
+  fi
+  [ "$checked" = 1 ]
+}
 
 mkdir -p "$BIN_DIR" "$APP_DIR" "$ICON_DIR"
 TMP="$(mktemp "$BIN_DIR/.hermodr.XXXXXX")"
-trap 'rm -f "$TMP"' EXIT
+ICON_TMP="$(mktemp "$ICON_DIR/.hermodr.XXXXXX")"
+trap 'rm -f "$TMP" "$ICON_TMP"' EXIT
 
 say "downloading $TAG"
-fetch -o "$TMP" "https://github.com/$REPO/releases/download/$TAG/$ASSET"
+fetch -o "$TMP" "$DOWNLOAD/$ASSET"
 
 say "verifying the download"
-ACTUAL="$(sha256 "$TMP")"
-[ "$ACTUAL" = "$DIGEST" ] || die "checksum mismatch for $ASSET: expected $DIGEST, got $ACTUAL. Nothing was installed."
+verify "$TMP" "$ASSET" "$DIGEST" || die "release $TAG publishes no checksum for $ASSET. Nothing was installed."
 
 chmod +x "$TMP"
 mv -f "$TMP" "$TARGET"
@@ -71,8 +90,14 @@ mv -f "$TMP" "$TARGET"
 ln -sf "$TARGET" "$BIN_DIR/whatsapp"
 
 say "installing the icon and desktop entry"
-fetch -o "$ICON_DIR/hermodr.png" \
-  "https://raw.githubusercontent.com/$REPO/$TAG/src-tauri/icons/icon.png"
+# The release's own icon when it lists one, else the tagged source's.
+if [ -n "$(listed hermodr.png)" ]; then
+  fetch -o "$ICON_TMP" "$DOWNLOAD/hermodr.png"
+  verify "$ICON_TMP" hermodr.png "" || die "the icon in $TAG has no checksum"
+else
+  fetch -o "$ICON_TMP" "https://raw.githubusercontent.com/$REPO/$TAG/src-tauri/icons/icon.png"
+fi
+mv -f "$ICON_TMP" "$ICON_DIR/hermodr.png"
 
 cat > "$APP_DIR/hermodr.desktop" <<DESKTOP
 [Desktop Entry]

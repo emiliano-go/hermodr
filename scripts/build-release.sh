@@ -31,4 +31,16 @@ export APPIMAGE_EXTRACT_AND_RUN=1
 
 say "building the release bundles"
 cd "$ROOT"
-exec pnpm tauri build "$@"
+pnpm tauri build "$@"
+
+# The files to upload to the GitHub release, named as scripts/install.sh expects,
+# with the SHA256SUMS it verifies them against.
+APPIMAGE="$(ls -t src-tauri/target/release/bundle/appimage/*.AppImage 2>/dev/null | head -n1 || true)"
+if [ -n "$APPIMAGE" ]; then
+  OUT="$ROOT/dist"
+  mkdir -p "$OUT"
+  cp "$APPIMAGE" "$OUT/Hermodr-x86_64.AppImage"
+  cp src-tauri/icons/icon.png "$OUT/hermodr.png"
+  (cd "$OUT" && sha256sum Hermodr-x86_64.AppImage hermodr.png > SHA256SUMS)
+  say "release assets in $OUT: upload Hermodr-x86_64.AppImage, hermodr.png and SHA256SUMS"
+fi
