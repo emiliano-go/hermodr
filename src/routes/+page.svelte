@@ -193,8 +193,10 @@
                  pointer-events: none; background: ${wallpaper}; }
                .stage::before { position: absolute; }`
             : "") +
+          // A picture stays still: moving it would re-filter every glass surface on each frame.
           (customization.background?.image
-            ? `.conversation, .pairing { background: color-mix(in srgb, var(--chat-bg) 55%, transparent) !important; }`
+            ? `.conversation, .pairing { background: color-mix(in srgb, var(--chat-bg) 55%, transparent) !important; }
+               body::before, .stage::before { animation: none !important; }`
             : "") +
           (activeTheme().css ?? ""),
       },
@@ -2521,21 +2523,24 @@
   {@html extensionCss}
 </svelte:head>
 
-<!-- The glass lens: shifts the backdrop by lensMap, strongest at the rim. Bounding-box units, so it fits any element. -->
+<!-- The glass lens: shifts the backdrop by lensMap, strongest at the rim. The shift is a share of
+     the element's size, so wide bars and bubbles take the gentler one. -->
 <svg width="0" height="0" aria-hidden="true" style="position: absolute">
-  <filter
-    id="liquid-glass"
-    x="0"
-    y="0"
-    width="1"
-    height="1"
-    primitiveUnits="objectBoundingBox"
-    color-interpolation-filters="sRGB">
-    <feImage href={lensMap("x")} x="0" y="0" width="1" height="1" preserveAspectRatio="none" result="dx" />
-    <feImage href={lensMap("y")} x="0" y="0" width="1" height="1" preserveAspectRatio="none" result="dy" />
-    <feComposite in="dx" in2="dy" operator="arithmetic" k2="1" k3="1" result="map" />
-    <feDisplacementMap in="SourceGraphic" in2="map" scale="0.14" xChannelSelector="R" yChannelSelector="G" />
-  </filter>
+  {#each [{ id: "liquid-glass", scale: 0.14 }, { id: "liquid-glass-wide", scale: 0.045 }] as { id, scale } (id)}
+    <filter
+      {id}
+      x="0"
+      y="0"
+      width="1"
+      height="1"
+      primitiveUnits="objectBoundingBox"
+      color-interpolation-filters="sRGB">
+      <feImage href={lensMap("x")} x="0" y="0" width="1" height="1" preserveAspectRatio="none" result="dx" />
+      <feImage href={lensMap("y")} x="0" y="0" width="1" height="1" preserveAspectRatio="none" result="dy" />
+      <feComposite in="dx" in2="dy" operator="arithmetic" k2="1" k3="1" result="map" />
+      <feDisplacementMap in="SourceGraphic" in2="map" {scale} xChannelSelector="R" yChannelSelector="G" />
+    </filter>
+  {/each}
 </svg>
 
 {#snippet runs(nodes: Inline[])}{#each nodes as n, i (i)}{#if n.kind === "text"}{n.text}{:else if n.kind === "link"}<a

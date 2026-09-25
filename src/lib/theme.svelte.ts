@@ -100,9 +100,14 @@ const GLASS_CSS = `
   backdrop-filter: blur(24px) saturate(170%);
   -webkit-backdrop-filter: blur(24px) saturate(170%);
 }
-/* The lens: engines without SVG backdrop filters (WebKitGTK) keep the plain blur above. */
-.menu, .sheet, .modal, .intro-card, .attach-menu, .account-menu, .card {
-  backdrop-filter: url(#liquid-glass) blur(6px) saturate(170%) brightness(1.06);
+/* The lens: engines without SVG backdrop filters (WebKitGTK) keep the plain blur above,
+   or none for the pieces below. */
+.menu, .sheet, .modal, .intro-card, .attach-menu, .account-menu, .card,
+.search, .chip, .day span, .send.ready {
+  backdrop-filter: url(#liquid-glass) blur(4px) saturate(170%) brightness(1.06);
+}
+.bubble, .conversation header, .composer > textarea, .reply-preview {
+  backdrop-filter: url(#liquid-glass-wide) blur(3px) saturate(160%) brightness(1.05);
 }
 .menu, .sheet, .modal, .intro-card, .attach-menu, .account-menu, .search, .chip, .bubble {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.22),
