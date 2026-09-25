@@ -38,6 +38,8 @@ export const TOKENS = [
   { key: "font", label: "Font family", group: "Shape and type" },
   { key: "font-size", label: "Font size", group: "Shape and type" },
   { key: "scheme", label: "Native controls (dark/light)", group: "Shape and type" },
+  { key: "motion-scale", label: "Animation length (1 normal, 0 off, 2 slower)", group: "Motion" },
+  { key: "ease", label: "Easing curve", group: "Motion" },
 ] as const;
 
 export type Tokens = Record<string, string>;
@@ -51,6 +53,8 @@ const shape = {
   "radius-lg": "10px",
   font: '"Segoe UI", "Helvetica Neue", system-ui, sans-serif',
   "font-size": "14.2px",
+  "motion-scale": "1",
+  ease: "cubic-bezier(0.2, 0.8, 0.2, 1)",
 };
 
 export const BUILT_IN: Theme[] = [
@@ -212,6 +216,12 @@ export function duplicate(theme: Theme, name = `${theme.name} copy`): Theme {
   customization.themes.push(copy);
   customization.theme = copy.id;
   return customization.themes[customization.themes.length - 1];
+}
+
+/** A Svelte transition length scaled by the active theme's `motion-scale`. */
+export function motion(ms: number): number {
+  const scale = Number.parseFloat(activeTheme().tokens["motion-scale"] ?? "1");
+  return Number.isFinite(scale) && scale >= 0 ? ms * scale : ms;
 }
 
 /** Writes the theme onto the document root, clearing tokens it does not set. */

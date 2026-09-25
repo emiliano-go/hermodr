@@ -2,6 +2,7 @@
 <script lang="ts" generics="S extends string">
   import type { Snippet } from "svelte";
   import { fade, scale } from "svelte/transition";
+  import { motion } from "$lib/theme.svelte";
   import { cubicOut } from "svelte/easing";
   import Icon from "$lib/Icon.svelte";
 
@@ -36,7 +37,7 @@
 <div
   class="backdrop"
   role="presentation"
-  transition:fade|global={{ duration: 160 }}
+  transition:fade|global={{ duration: motion(160) }}
   onclick={(e) => {
     if (e.target === e.currentTarget) onclose();
   }}>
@@ -45,7 +46,7 @@
     role="dialog"
     aria-modal="true"
     aria-label={label}
-    transition:scale|global={{ start: 0.94, duration: 200, easing: cubicOut }}>
+    transition:scale|global={{ start: 0.94, duration: motion(200), easing: cubicOut }}>
     <nav>
       {@render header()}
 
@@ -265,7 +266,7 @@
     border-radius: 999px;
     background: var(--raised-2);
     cursor: pointer;
-    transition: background-color 0.15s ease;
+    transition: background-color calc(0.15s * var(--motion-scale)) var(--ease);
   }
   .content :global(.switch::after) {
     content: "";
@@ -276,7 +277,7 @@
     height: 18px;
     border-radius: 50%;
     background: #fff;
-    transition: transform 0.15s ease;
+    transition: transform calc(0.15s * var(--motion-scale)) var(--ease);
   }
   .content :global(.switch:checked) {
     background: var(--accent);

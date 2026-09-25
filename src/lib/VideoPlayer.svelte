@@ -5,11 +5,13 @@
   let {
     src,
     gif = false,
+    autoplay = true,
     onerror,
   }: {
     src: string;
     /** GIFs loop silently and hide the sound controls. */
     gif?: boolean;
+    autoplay?: boolean;
     onerror?: () => void;
   } = $props();
 
@@ -164,7 +166,7 @@
   <video
     bind:this={video}
     {src}
-    autoplay
+    {autoplay}
     loop={looping}
     bind:paused
     bind:currentTime={current}
@@ -337,7 +339,7 @@
     padding: 18px 12px 8px;
     background: linear-gradient(transparent, var(--scrim));
     color: #fff;
-    transition: opacity 0.2s ease;
+    transition: opacity calc(0.2s * var(--motion-scale)) var(--ease);
   }
   .player.idle .controls {
     opacity: 0;
@@ -358,7 +360,7 @@
     border-radius: 2px;
     background: rgba(255, 255, 255, 0.22);
     overflow: hidden;
-    transition: height 0.12s ease;
+    transition: height calc(0.12s * var(--motion-scale)) var(--ease);
   }
   .bar:hover .track {
     height: 6px;
@@ -382,7 +384,7 @@
     border-radius: 50%;
     background: var(--accent);
     transform: scale(0);
-    transition: transform 0.12s ease;
+    transition: transform calc(0.12s * var(--motion-scale)) var(--ease);
   }
   .bar:hover .knob {
     transform: scale(1);
@@ -446,8 +448,8 @@
     width: 0;
     opacity: 0;
     transition:
-      width 0.15s ease,
-      opacity 0.15s ease;
+      width calc(0.15s * var(--motion-scale)) var(--ease),
+      opacity calc(0.15s * var(--motion-scale)) var(--ease);
     height: 4px;
     appearance: none;
     border-radius: 2px;

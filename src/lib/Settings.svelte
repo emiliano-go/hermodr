@@ -7,6 +7,7 @@
     warn_missing_video_preview: boolean;
     media_dir: string | null;
     send_typing: boolean;
+    send_receipts: boolean;
   };
   export type Account = { id: string; label: string; jid: string | null };
   export type Section =
@@ -72,6 +73,8 @@
   } = $props();
 
   let picker: HTMLInputElement | undefined = $state();
+  /** The account whose removal is waiting for confirmation. */
+  let removing = $state<string | null>(null);
   let pictureBusy = $state(false);
   /** Bumped per upload: the new picture reuses the old file name. */
   let pictureVersion = $state(0);
@@ -102,15 +105,19 @@
     });
   }
 
-  const NAV: { id: Section; label: string; group: string }[] = [
-    { id: "profile", label: "My profile", group: "User settings" },
+  // Profile and WhatsApp privacy live on the account, so they wait for pairing.
+  const NAV = $derived<{ id: Section; label: string; group: string }[]>([
+    ...(me ? [{ id: "profile" as Section, label: "My profile", group: "User settings" }] : []),
     { id: "accounts", label: "My accounts", group: "User settings" },
-    { id: "whatsapp", label: "WhatsApp privacy", group: "User settings" },
+    ...(me ? [{ id: "whatsapp" as Section, label: "WhatsApp privacy", group: "User settings" }] : []),
     { id: "privacy", label: "Storage & history", group: "App settings" },
     { id: "media", label: "Media", group: "App settings" },
     { id: "appearance", label: "Customization", group: "App settings" },
     { id: "about", label: "About", group: "Hermóðr" },
-  ];
+  ]);
+  $effect(() => {
+    if (!NAV.some((n) => n.id === section)) section = "accounts";
+  });
 
   // Edits stay local until saved, so leaving with unsaved changes is visible.
   let draft = $state<UiSettings>(untrack(() => structuredClone($state.snapshot(settings))));
@@ -307,6 +314,17 @@
             </div>
             <input class="switch" type="checkbox" bind:checked={draft.send_typing} />
           </label>
+          <label class="setting">
+            <div>
+              <span class="setting-title">Send read and played receipts</span>
+              <span class="setting-desc">
+                Off, nobody learns you read a message, heard a voice note or opened view-once media,
+                in groups too. Unlike WhatsApp's own read receipts setting below, you keep seeing
+                other people's.
+              </span>
+            </div>
+            <input class="switch" type="checkbox" bind:checked={draft.send_receipts} />
+          </label>
           {#if profile}
             {#each PRIVACY as item (item.category)}
               {@const value = profile.privacy[item.category] ?? ""}
@@ -350,8 +368,27 @@
                 {:else}
                   <button class="button" onclick={() => onswitch(account.id)}>Switch</button>
                 {/if}
-                <button class="button danger" onclick={() => onremove(account.id)}>Remove</button>
+                <button
+                  class="remove-account"
+                  title="Remove account"
+                  aria-label="Remove {account.label}"
+                  onclick={() => (removing = account.id)}><Icon name="trash" size={16} /></button>
               </div>
+              {#if removing === account.id}
+                <div class="remove-confirm" role="alert">
+                  <span>
+                    Remove <strong>{account.label}</strong>? Its session and history on this computer are
+                    deleted; the phone keeps everything.
+                  </span>
+                  <button class="button" onclick={() => (removing = null)}>Cancel</button>
+                  <button
+                    class="button danger"
+                    onclick={() => {
+                      removing = null;
+                      onremove(account.id);
+                    }}>Remove</button>
+                </div>
+              {/if}
             {/each}
           </div>
           <div class="actions-row">
@@ -395,8 +432,9 @@
             <div>
               <span class="setting-title">Download full history when pairing</span>
               <span class="setting-desc">
-                Pulls every past message the next time an account is linked. Off keeps only the
-                recent window.
+                The next time an account is linked, every chat comes over with its last couple of
+                days; anything older is fetched from your phone when you scroll up or open a reply
+                to it. Off asks for the recent window only, which can leave quiet chats out.
               </span>
             </div>
             <input class="switch" type="checkbox" bind:checked={draft.accept_full_history} />
@@ -502,8 +540,39 @@
     gap: 10px;
     padding: 12px 14px;
   }
-  .account + .account {
+  .account + .account,
+  .remove-confirm + .account {
     border-top: 1px solid var(--line);
+  }
+  .remove-account {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    flex: none;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--faint);
+    cursor: pointer;
+    transition:
+      color calc(0.15s * var(--motion-scale)) var(--ease),
+      background-color calc(0.15s * var(--motion-scale)) var(--ease);
+  }
+  .remove-account:hover {
+    color: var(--danger);
+    background: var(--danger-soft);
+  }
+  .remove-confirm {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px 12px 60px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .remove-confirm > span {
+    flex: 1;
   }
   .account-avatar {
     width: 36px;
@@ -569,7 +638,7 @@
     font-size: 11px;
     font-weight: 600;
     opacity: 0;
-    transition: opacity 0.15s ease;
+    transition: opacity calc(0.15s * var(--motion-scale)) var(--ease);
   }
   .picture-edit:hover .picture-overlay,
   .picture-edit:focus-visible .picture-overlay,

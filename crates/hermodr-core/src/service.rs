@@ -7,7 +7,7 @@
 use std::{
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
     },
     time::Duration,
@@ -25,6 +25,7 @@ use whatsapp_rust::{
     wacore::types::presence::{ChatPresence, ChatPresenceMedia, ReceiptType},
     wacore::types::events::Event,
     wacore_binary::builder::NodeBuilder,
+    wacore_binary::JidExt,
     CacheConfig,
     WAPatchName,
 };
@@ -33,6 +34,94 @@ use crate::{
     history::HistoryPolicy,
     store::{MessageStore, Retention, StoredMessage},
 };
+
+/// Asks the phone for `count` messages older than the oldest one stored in
+/// `chat`; they arrive later as a history sync.
+async fn fetch_older(client: &Arc<Client>, store: &MessageStore, chat: &str, count: i32) -> Result<()> {
+    let Some((id, from_me, timestamp)) = store.oldest_message(chat)? else {
+        return Ok(());
+    };
+    let jid: Jid = chat.parse()?;
+    let session = client
+        .fetch_message_history(&jid, &id, from_me, timestamp * 1000, count)
+        .await
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    eprintln!("[hermodr] asked the phone for {count} messages before {id} in {chat} (session {session})");
+    Ok(())
+}
+
+/// Whether a chat may pull its past again for an unknown quote: once a minute,
+/// so a burst of replies to the same old message asks the phone once.
+fn recall_allowed(chat: &str) -> bool {
+    use std::collections::HashMap;
+    use std::time::Instant;
+    static LAST: std::sync::OnceLock<Mutex<HashMap<String, Instant>>> = std::sync::OnceLock::new();
+    let mut last = LAST.get_or_init(Default::default).lock().unwrap();
+    let now = Instant::now();
+    if last.get(chat).is_some_and(|at| now.duration_since(*at) < Duration::from_secs(60)) {
+        return false;
+    }
+    last.insert(chat.to_string(), now);
+    true
+}
+
+/// What this device asks for when it links: named as Hermóðr on the phone's
+/// linked devices, and with full history a backfill of every chat but only
+/// its recent days, telling the phone older history will be asked for on
+/// demand (a reply to something older fetches that chat's past). Only read at
+/// pairing; an existing link keeps what it was paired with.
+use crate::store::is_placeholder_name;
+
+/// Stores the LID and phone forms of one sender when a message carries both.
+fn remember_lid_pn(store: &MessageStore, sender: &Jid, alt: Option<&Jid>) {
+    let Some(alt) = alt else { return };
+    let (lid, pn) = match (sender.is_lid(), alt.is_lid()) {
+        (true, false) => (sender, alt),
+        (false, true) => (alt, sender),
+        _ => return,
+    };
+    let _ = store.set_lid_pn(&lid.user, &pn.user);
+}
+
+/// The other address form of a bare user JID, from the session or our own record of it.
+async fn other_form(client: &Client, store: &MessageStore, bare: &Jid) -> Option<(String, String)> {
+    if let Ok(Some(entry)) = client.get_lid_pn_entry(bare).await {
+        let (lid, pn) = (entry.lid.to_string(), entry.phone_number.to_string());
+        let _ = store.set_lid_pn(&lid, &pn);
+        return Some((lid, pn));
+    }
+    store.lid_pn(&bare.user).ok().flatten()
+}
+
+fn pairing_props(full_history: bool) -> whatsapp_rust::wacore::store::DevicePropsOverride {
+    use wa::device_props::{HistorySyncConfig, PlatformType};
+    let props = whatsapp_rust::wacore::store::DevicePropsOverride::new()
+        .with_os("Hermóðr")
+        .with_platform_type(PlatformType::UWP);
+    if !full_history {
+        return props;
+    }
+    props.with_require_full_sync(true).with_history_sync_config(HistorySyncConfig {
+        full_sync_days_limit: Some(2),
+        recent_sync_days_limit: Some(2),
+        on_demand_ready: Some(true),
+        complete_on_demand_ready: Some(true),
+        // WhatsApp Web's own claims, which the library's default also makes.
+        inline_initial_payload_in_e2_ee_msg: Some(true),
+        support_bot_user_agent_chat_history: Some(true),
+        support_cag_reactions_and_polls: Some(true),
+        support_recent_sync_chunk_message_count_tuning: Some(true),
+        support_hosted_group_msg: Some(true),
+        support_biz_hosted_msg: Some(true),
+        support_fbid_bot_chat_history: Some(true),
+        support_message_association: Some(true),
+        support_call_log_history: Some(true),
+        support_group_history: Some(true),
+        support_manus_history: Some(true),
+        support_hatch_history: Some(true),
+        ..Default::default()
+    })
+}
 
 /// Builds the cache configuration for a given retention window.
 ///
@@ -136,6 +225,8 @@ pub enum ServiceEvent {
     QrCode { code: String },
     Connected,
     Disconnected,
+    /// WhatsApp revoked this device; the stored session can never sign in again.
+    LoggedOut,
     /// A message was received or sent and stored.
     ///
     /// Boxed because `StoredMessage` is far larger than the other variants, and
@@ -158,10 +249,14 @@ pub enum ServiceEvent {
     /// Someone started or stopped typing; `state` is `typing`, `recording` or
     /// `paused`.
     Typing { chat: String, sender: String, state: String },
+    /// A watched contact came online or went offline; `last_seen` when they share it.
+    Presence { jid: String, online: bool, last_seen: Option<i64> },
     /// A group member changed their tag; empty means they cleared it.
     MemberLabel { chat: String, jid: String, label: String },
     /// Reactions, stars or the pinned message of a chat changed.
     Marks { chat: String },
+    /// Bytes of an outgoing file sent so far, named by the caller's token.
+    UploadProgress { token: String, sent: u64, total: u64 },
 }
 
 /// The account's own profile and privacy, as the settings panel edits them.
@@ -186,6 +281,58 @@ pub struct SendOptions {
     pub view_once: bool,
     /// Present for a recorded voice note (an Ogg/Opus file).
     pub voice: Option<VoiceNote>,
+    /// Carries WhatsApp's "Forwarded" label.
+    pub forwarded: bool,
+    /// JIDs the caption mentions as `@<number>`.
+    pub mentions: Vec<String>,
+    /// Names the upload in [`ServiceEvent::UploadProgress`], when the caller wants progress.
+    pub progress: Option<String>,
+}
+
+/// Encrypted media handed to the uploader, reporting how far it has been read.
+struct ProgressSource {
+    data: Arc<[u8]>,
+    report: Arc<dyn Fn(u64) + Send + Sync>,
+}
+
+impl whatsapp_rust::wacore::upload::UploadSource for ProgressSource {
+    fn len(&self) -> u64 {
+        self.data.len() as u64
+    }
+
+    fn reader_from(&self, offset: u64) -> std::io::Result<Box<dyn std::io::Read + Send>> {
+        let mut cursor = std::io::Cursor::new(Arc::clone(&self.data));
+        cursor.set_position(offset.min(self.len()));
+        Ok(Box::new(CountingReader { inner: cursor, read: offset, report: Arc::clone(&self.report) }))
+    }
+}
+
+struct CountingReader {
+    inner: std::io::Cursor<Arc<[u8]>>,
+    read: u64,
+    report: Arc<dyn Fn(u64) + Send + Sync>,
+}
+
+impl std::io::Read for CountingReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.read += n as u64;
+        (self.report)(self.read);
+        Ok(n)
+    }
+}
+
+/// Marks a message context as forwarded, keeping anything already in it (a quote).
+fn forwarded_context(context: Option<Box<wa::ContextInfo>>) -> Box<wa::ContextInfo> {
+    let mut context = context.unwrap_or_default();
+    context.is_forwarded = Some(true);
+    context.forwarding_score = Some(context.forwarding_score.unwrap_or(0) + 1);
+    context
+}
+
+/// Whether a received message carries the "Forwarded" label.
+fn is_forwarded(message: &wa::Message) -> bool {
+    message_context(message).is_some_and(|c| c.is_forwarded == Some(true))
 }
 
 #[derive(Debug)]
@@ -204,6 +351,8 @@ pub struct Participant {
     pub name: String,
     /// Whether the member is a group admin.
     pub admin: bool,
+    /// Whether the member created the group (a super admin).
+    pub owner: bool,
     /// Phone number, when known.
     pub number: Option<String>,
     /// WhatsApp username, when the member has one.
@@ -234,6 +383,47 @@ pub struct GroupInfo {
     pub description: Option<String>,
     pub created_at: Option<u64>,
     pub participants: Vec<Participant>,
+    /// Whether members may report messages to the group's admins.
+    pub allow_admin_reports: bool,
+}
+
+/// What an invite link card shows about its group.
+#[derive(Debug, Clone, Serialize)]
+pub struct InviteInfo {
+    pub jid: String,
+    pub subject: Option<String>,
+    pub description: Option<String>,
+    pub size: u32,
+    pub created_at: Option<u64>,
+    /// Joining needs an admin's approval.
+    pub approval: bool,
+    pub community: bool,
+    /// We are already in it.
+    pub joined: bool,
+    pub picture: Option<String>,
+}
+
+/// What a profile card shows about someone.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct UserProfile {
+    pub jid: String,
+    /// Saved, push, business or user name; `None` when only the number is known.
+    pub name: Option<String>,
+    /// Phone number digits, when known.
+    pub number: Option<String>,
+    pub username: Option<String>,
+    pub about: Option<String>,
+    /// Verified business name, for business accounts.
+    pub business: Option<String>,
+}
+
+/// A message reported to a group's admins, with who reported it and when.
+#[derive(Debug, Clone, Serialize)]
+pub struct AdminReport {
+    pub id: String,
+    /// The message as stored here, when this device has it.
+    pub message: Option<StoredMessage>,
+    pub reporters: Vec<(String, u64)>,
 }
 
 /// How the service should behave for one account.
@@ -372,6 +562,7 @@ impl Service {
         let bot = Bot::builder()
             .with_backend(SqliteStore::new(config.session_path.to_string_lossy().as_ref()).await?)
             .with_history_sync_admission(policy)
+            .with_device_props(pairing_props(config.accept_full_history))
             .with_cache_config(cache_config_for(&config.retention))
             .on_qr_code({
                 let events = events.clone();
@@ -450,6 +641,7 @@ impl Service {
                 &[
                     EventKind::Messages,
                     EventKind::Disconnected,
+                    EventKind::LoggedOut,
                     EventKind::Receipt,
                     EventKind::ServerAck,
                     EventKind::ContactUpdate,
@@ -463,6 +655,7 @@ impl Service {
                     EventKind::ChatPresence,
                     EventKind::PictureUpdate,
                     EventKind::UndecryptableMessage,
+                    EventKind::Presence,
                 ],
                 move |event, _client| {
                     let store = store_for_events.clone();
@@ -511,10 +704,16 @@ impl Service {
                                     // match on their own. The source carries
                                     // the other form; copy the name across so
                                     // the saved one is what gets shown.
+                                    remember_lid_pn(
+                                        &store,
+                                        &inbound.info.source.sender,
+                                        inbound.info.source.sender_alt.as_ref(),
+                                    );
                                     if let Some(alt) =
                                         inbound.info.source.sender_alt.as_ref().map(|j| j.to_string())
                                     {
-                                        let known = store.name_for(&alt).ok().flatten();
+                                        let known =
+                                            store.name_for(&alt).ok().flatten().filter(|n| !is_placeholder_name(n));
                                         let is_saved = known.is_some();
                                         // Fall back to the phone number, never
                                         // the unreadable LID.
@@ -733,11 +932,29 @@ impl Service {
                                         continue;
                                     }
 
-                                    let auto_download = store
-                                        .chat_auto_download(&chat)
-                                        .ok()
-                                        .flatten()
-                                        .unwrap_or(auto_download_default);
+                                    if let Some((target, text)) = edit_of(&inbound.message) {
+                                        if let Ok(true) = store.apply_edit(&chat, &target, &text) {
+                                            if let Ok(updated) = store.message(&chat, &target) {
+                                                let _ = events.send(ServiceEvent::Message {
+                                                    message: Box::new(updated),
+                                                });
+                                            }
+                                            let _ = events.send(ServiceEvent::Marks { chat: chat.clone() });
+                                        }
+                                        continue;
+                                    }
+
+                                    // Stickers and voice notes are small and read as part
+                                    // of the conversation, so WhatsApp always fetches them.
+                                    let base = inbound.message.get_base_message();
+                                    let small = base.sticker_message.is_set()
+                                        || base.audio_message.as_option().is_some_and(|a| a.ptt == Some(true));
+                                    let auto_download = small
+                                        || store
+                                            .chat_auto_download(&chat)
+                                            .ok()
+                                            .flatten()
+                                            .unwrap_or(auto_download_default);
                                     let Some(mut message) = incoming_message(
                                         inbound,
                                         client.as_deref(),
@@ -753,6 +970,20 @@ impl Service {
                                     message.mentioned = mentions_me(&inbound.message, &own);
                                     if inbound.message.is_view_once() {
                                         let _ = store.set_view_once(&chat, &message.id, from_me);
+                                    }
+                                    if is_forwarded(&inbound.message) {
+                                        let _ = store.set_forwarded(&chat, &message.id);
+                                    }
+                                    // Pairing only brings recent days; a reply to something
+                                    // older pulls that chat's past so the quote can be opened.
+                                    if let (Some(quoted), Some(client)) = (message.reply_to_id.clone(), client.clone()) {
+                                        let quoted_chat = message.reply_to_chat.clone().unwrap_or_else(|| chat.clone());
+                                        if store.message(&quoted_chat, &quoted).is_err() && recall_allowed(&quoted_chat) {
+                                            let store = store.clone();
+                                            tokio::spawn(async move {
+                                                let _ = fetch_older(&client, &store, &quoted_chat, 50).await;
+                                            });
+                                        }
                                     }
                                     let _ = store.upsert(&message);
                                     let _ = events.send(ServiceEvent::Message { message: Box::new(message) });
@@ -770,6 +1001,10 @@ impl Service {
                                 connected.store(false, Ordering::SeqCst);
                                 let _ = events.send(ServiceEvent::Disconnected);
                             }
+                            Event::LoggedOut(_) => {
+                                connected.store(false, Ordering::SeqCst);
+                                let _ = events.send(ServiceEvent::LoggedOut);
+                            }
                             // A receipt names the messages it refers to, so the
                             // outgoing row can move to delivered or read.
                             Event::Receipt(receipt) => {
@@ -784,6 +1019,21 @@ impl Service {
                                     ReceiptType::Sent => Some("sent"),
                                     _ => None,
                                 };
+                                // Kept per recipient for the message info screen; our
+                                // own devices' receipts say nothing about the others.
+                                let kind = match receipt.r#type {
+                                    ReceiptType::Delivered => Some("delivered"),
+                                    ReceiptType::Read => Some("read"),
+                                    ReceiptType::Played => Some("played"),
+                                    _ => None,
+                                };
+                                if let Some(kind) = kind {
+                                    let recipient = receipt.source.sender.to_non_ad().to_string();
+                                    let at = receipt.timestamp.timestamp();
+                                    for id in receipt.message_ids.iter() {
+                                        let _ = store.record_receipt(id.as_str(), &recipient, kind, at);
+                                    }
+                                }
                                 if let Some(status) = status {
                                     let chat = receipt.source.chat.to_string();
                                     for id in receipt.message_ids.iter() {
@@ -877,22 +1127,35 @@ impl Service {
                                     return;
                                 };
                                 eprintln!(
-                                    "[hermodr] history sync type {} ({:?}): {} conversation(s), {} message(s)",
+                                    "[hermodr] history sync type {} ({:?}): {} conversation(s), {} message(s), {} push name(s), {} LID mapping(s)",
                                     sync.sync_type(),
                                     sync.peer_data_request_session_id(),
                                     history.conversations.len(),
                                     history.conversations.iter().map(|c| c.messages.len()).sum::<usize>(),
+                                    history.pushnames.len(),
+                                    history.phone_number_to_lid_mappings.len(),
                                 );
                                 let client = client_for_events.get().cloned();
                                 let own = client
                                     .as_deref()
                                     .and_then(|c| c.pn())
                                     .map(|j| j.to_non_ad().to_string());
+                                let mut names_learned = 0;
                                 for push in &history.pushnames {
                                     if let (Some(id), Some(name)) = (&push.id, &push.pushname) {
-                                        if !name.is_empty() {
-                                            let _ = store.set_name(id, name);
+                                        if !name.is_empty() && store.set_name(id, name).is_ok() {
+                                            names_learned += 1;
                                         }
+                                    }
+                                }
+                                let pair = |lid: Option<&str>, pn: Option<&str>| {
+                                    let (Some(lid), Some(pn)) = (lid, pn) else { return false };
+                                    let user = |j: &str| j.split(['@', ':']).next().unwrap_or(j).to_string();
+                                    store.set_lid_pn(&user(lid), &user(pn)).is_ok()
+                                };
+                                for mapping in &history.phone_number_to_lid_mappings {
+                                    if pair(mapping.lid_jid.as_deref(), mapping.pn_jid.as_deref()) {
+                                        names_learned += 1;
                                     }
                                 }
                                 let mut chats = Vec::new();
@@ -900,6 +1163,17 @@ impl Service {
                                     let chat = conversation.id.clone();
                                     if chat == "status@broadcast" {
                                         continue;
+                                    }
+                                    pair(conversation.lid_jid.as_deref(), conversation.pn_jid.as_deref());
+                                    if !chat.ends_with("@g.us") {
+                                        let name = conversation
+                                            .display_name
+                                            .as_deref()
+                                            .or(conversation.username.as_deref())
+                                            .filter(|n| !n.trim().is_empty());
+                                        if let Some(name) = name {
+                                            let _ = store.set_name(&chat, name);
+                                        }
                                     }
                                     if let Some(subject) =
                                         conversation.name.as_deref().filter(|n| !n.is_empty())
@@ -917,15 +1191,6 @@ impl Service {
                                         else {
                                             continue;
                                         };
-                                        // A stored row keeps its read state and
-                                        // downloaded file; upsert would reset both.
-                                        if store.message(&chat, &id).is_ok() {
-                                            continue;
-                                        }
-                                        if let Some(target) = revoke_target(message) {
-                                            let _ = store.revoke(&chat, &target);
-                                            continue;
-                                        }
                                         let from_me = key.from_me.unwrap_or(false);
                                         let sender = if from_me {
                                             own.clone().unwrap_or_else(|| chat.clone())
@@ -935,12 +1200,23 @@ impl Service {
                                                 .or_else(|| key.participant.clone())
                                                 .unwrap_or_else(|| chat.clone())
                                         };
+                                        // Learned even from rows we already have: a re-paired
+                                        // device gets its names back from this history.
                                         if let Some(push) =
                                             web.push_name.as_deref().filter(|p| !p.is_empty())
                                         {
-                                            if !from_me {
-                                                let _ = store.set_name(&sender, push);
+                                            if !from_me && store.set_name(&sender, push).is_ok() {
+                                                names_learned += 1;
                                             }
+                                        }
+                                        // A stored row keeps its read state and
+                                        // downloaded file; upsert would reset both.
+                                        if store.message(&chat, &id).is_ok() {
+                                            continue;
+                                        }
+                                        if let Some(target) = revoke_target(message) {
+                                            let _ = store.revoke(&chat, &target);
+                                            continue;
                                         }
                                         remember_structures(&store, &chat, &id, &sender, message);
                                         let envelope = Envelope {
@@ -971,6 +1247,9 @@ impl Service {
                                         chats.push(chat);
                                     }
                                 }
+                                if names_learned > 0 {
+                                    let _ = events.send(ServiceEvent::NamesUpdated { count: names_learned });
+                                }
                                 // Retention is left to the next live write, so
                                 // what was just loaded can be seen first.
                                 if !chats.is_empty() {
@@ -987,6 +1266,22 @@ impl Service {
                                     chat: update.source.chat.to_non_ad().to_string(),
                                     sender: update.source.sender.to_non_ad().to_string(),
                                     state: state.to_string(),
+                                });
+                            }
+                            Event::Presence(presence) => {
+                                // A chat is keyed by phone number; presence may name the LID.
+                                let mut jid = presence.from.to_non_ad();
+                                if jid.is_lid() {
+                                    if let Some(client) = client_for_events.get() {
+                                        if let Ok(Some(entry)) = client.get_lid_pn_entry(&jid).await {
+                                            jid = Jid::new(&*entry.phone_number, whatsapp_rust::wacore_binary::Server::Pn);
+                                        }
+                                    }
+                                }
+                                let _ = events.send(ServiceEvent::Presence {
+                                    jid: jid.to_string(),
+                                    online: !presence.unavailable,
+                                    last_seen: presence.last_seen.map(|t| t.timestamp()),
                                 });
                             }
                             Event::PictureUpdate(update) => {
@@ -1163,6 +1458,7 @@ impl Service {
             if !seen.insert(mention.clone()) {
                 continue;
             }
+            remember_lid_pn(&self.store, &member.jid, member.phone_number.as_ref().or(member.lid.as_ref()));
             let candidates = [
                 member.phone_number.as_ref(),
                 member.lid.as_ref(),
@@ -1176,17 +1472,27 @@ impl Service {
                 .or_else(|| mention.ends_with("@s.whatsapp.net").then(|| mention.clone()))
                 .map(|j| j.split('@').next().unwrap_or(&j).to_string());
             let username = member.username.as_ref().map(|u| u.to_string());
+            // WhatsApp's masked number for a member whose phone is hidden
+            // ("+598∙∙∙∙∙27"). Only a label of last resort; never stored as a
+            // name, or it would overwrite the member's real push name.
+            let masked = member
+                .details
+                .as_ref()
+                .and_then(|d| d.display_name.as_ref())
+                .map(|n| n.to_string())
+                .filter(|n| !n.trim().is_empty());
             // A name someone can read: saved/push name, then username, then the
-            // phone number, and only last the LID.
-            // A bare-number placeholder under one form must not hide a real
-            // name stored under the other.
+            // phone number, and only last the masked number or the LID.
+            // A placeholder under one form must not hide a real name stored
+            // under the other.
             let name = candidates
                 .into_iter()
                 .flatten()
                 .filter_map(|j| self.store.name_for(&j.to_string()).ok().flatten())
-                .find(|n| !n.trim_start_matches('+').chars().all(|c| c.is_ascii_digit()))
+                .find(|n| !is_placeholder_name(n))
                 .or_else(|| username.clone())
                 .or_else(|| number.clone())
+                .or(masked)
                 .unwrap_or_else(|| mention.split('@').next().unwrap_or(&mention).to_string());
             let label = member
                 .details
@@ -1198,10 +1504,40 @@ impl Service {
                 jid: mention.clone(),
                 name,
                 admin: member.is_admin(),
+                owner: member.is_super_admin(),
                 number,
                 username,
                 label,
             });
+        }
+        // Group metadata rarely carries usernames; one usync query fills them in,
+        // and gives members we only know by number a username or business name.
+        let jids: Vec<Jid> = participants.iter().filter_map(|p| p.jid.parse().ok()).collect();
+        if let Ok(infos) = self.client.contacts().get_user_info(&jids).await {
+            let numeric = |n: &str| is_placeholder_name(n);
+            for p in participants.iter_mut() {
+                let user = p.jid.split('@').next().unwrap_or_default();
+                let Some(info) = infos.values().find(|i| {
+                    i.jid.user == user
+                        || i.lid.as_ref().is_some_and(|l| l.user == user)
+                        || p.number.as_deref() == Some(i.jid.user.as_str())
+                }) else {
+                    continue;
+                };
+                if p.username.is_none() {
+                    p.username = info.username.as_ref().map(|u| u.to_string());
+                }
+                if numeric(&p.name) {
+                    if let Some(better) = info
+                        .verified_name
+                        .as_ref()
+                        .and_then(|v| v.name.clone())
+                        .or_else(|| p.username.clone())
+                    {
+                        p.name = better;
+                    }
+                }
+            }
         }
         participants.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
@@ -1210,6 +1546,7 @@ impl Service {
             description: metadata.description.clone(),
             created_at: metadata.creation_time,
             participants,
+            allow_admin_reports: metadata.allow_admin_reports,
         };
         self.group_cache
             .lock()
@@ -1355,7 +1692,7 @@ impl Service {
     /// our own addresses read as our push name. Falls back to the phone number
     /// digits, and leaves out JIDs nothing is known about.
     pub async fn names_for(&self, jids: &[String]) -> std::collections::HashMap<String, String> {
-        let numeric = |n: &str| n.trim_start_matches('+').chars().all(|c| c.is_ascii_digit());
+        let numeric = |n: &str| is_placeholder_name(n);
         let own: Vec<String> = [self.client.pn(), self.client.lid()]
             .into_iter()
             .flatten()
@@ -1363,6 +1700,7 @@ impl Service {
             .collect();
         let push_name = self.client.push_name();
         let mut out = std::collections::HashMap::new();
+        let mut unknown: Vec<(String, Jid)> = Vec::new();
         for jid in jids {
             let Ok(parsed) = jid.parse::<Jid>() else { continue };
             let bare = parsed.to_non_ad();
@@ -1374,13 +1712,13 @@ impl Service {
             let mut name = self.store.name_for(&key).ok().flatten();
             let mut number = bare.is_pn().then(|| bare.user.to_string());
             if name.as_deref().is_none_or(numeric) {
-                if let Ok(Some(entry)) = self.client.get_lid_pn_entry(&bare).await {
-                    number = Some(entry.phone_number.to_string());
+                if let Some((lid, pn)) = other_form(&self.client, &self.store, &bare).await {
                     let other = if bare.is_lid() {
-                        format!("{}@s.whatsapp.net", entry.phone_number)
+                        format!("{pn}@s.whatsapp.net")
                     } else {
-                        format!("{}@lid", entry.lid)
+                        format!("{lid}@lid")
                     };
+                    number = Some(pn);
                     if let Some(found) = self.store.name_for(&other).ok().flatten() {
                         if !numeric(&found) {
                             name = Some(found);
@@ -1388,12 +1726,106 @@ impl Service {
                     }
                 }
             }
-            let name = name.filter(|n| !numeric(n)).or(number);
-            if let Some(name) = name {
-                out.insert(jid.clone(), name);
+            match name.filter(|n| !numeric(n)) {
+                Some(name) => {
+                    out.insert(jid.clone(), name);
+                }
+                None => {
+                    if let Some(number) = number {
+                        out.insert(jid.clone(), number);
+                    }
+                    unknown.push((jid.clone(), bare));
+                }
+            }
+        }
+        // Push names only travel with messages; for anyone we have not heard
+        // from, the username or verified business name is the next best thing.
+        if !unknown.is_empty() {
+            let query: Vec<Jid> = unknown.iter().map(|(_, j)| j.clone()).collect();
+            if let Ok(infos) = self.client.contacts().get_user_info(&query).await {
+                for (asked, jid) in unknown {
+                    let info = infos.values().find(|i| {
+                        i.jid.user == jid.user || i.lid.as_ref().is_some_and(|l| l.user == jid.user)
+                    });
+                    let found = info.and_then(|i| {
+                        i.verified_name
+                            .as_ref()
+                            .and_then(|v| v.name.clone())
+                            .or_else(|| i.username.as_ref().map(|u| u.to_string()))
+                    });
+                    if let Some(found) = found.filter(|n| !n.trim().is_empty()) {
+                        let _ = self.store.set_name(&jid.to_string(), &found);
+                        out.insert(asked, found);
+                    } else {
+                        eprintln!("[hermodr] no name known for {jid} (shown as {:?})", out.get(&asked));
+                    }
+                }
             }
         }
         out
+    }
+
+    /// A group invite link's group, without joining it.
+    pub async fn invite_info(&self, link: &str) -> Result<InviteInfo> {
+        let group = self
+            .client
+            .groups()
+            .get_invite_info(link)
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let jid = group.id.to_string();
+        // Already a member when the chat is here.
+        let joined = self.store.chats()?.iter().any(|c| c.chat == jid);
+        let picture = self.avatar(&jid).await.ok().flatten();
+        Ok(InviteInfo {
+            size: group.size.unwrap_or(group.participants.len() as u32),
+            subject: group.subject,
+            description: group.description.filter(|d| !d.trim().is_empty()),
+            created_at: group.creation_time,
+            approval: group.membership_approval,
+            community: group.is_parent_group,
+            joined,
+            picture,
+            jid,
+        })
+    }
+
+    /// Joins through an invite link; `pending` when an admin has to approve.
+    pub async fn join_invite(&self, link: &str) -> Result<(String, bool)> {
+        use whatsapp_rust::JoinGroupResult;
+        let joined = self
+            .client
+            .groups()
+            .join_with_invite_code(link)
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let pending = matches!(joined, JoinGroupResult::PendingApproval(_));
+        Ok((joined.group_jid().to_string(), pending))
+    }
+
+    /// Everything a profile card shows about someone, fetched fresh.
+    pub async fn user_profile(&self, jid: &str) -> Result<UserProfile> {
+        let bare = jid.parse::<Jid>()?.to_non_ad();
+        let key = bare.to_string();
+        let mut profile = UserProfile { jid: key.clone(), ..Default::default() };
+        profile.number = if bare.is_pn() {
+            Some(bare.user.to_string())
+        } else {
+            other_form(&self.client, &self.store, &bare).await.map(|(_, pn)| pn)
+        };
+        if let Ok(infos) = self.client.contacts().get_user_info(std::slice::from_ref(&bare)).await {
+            if let Some(info) = infos.into_values().next() {
+                profile.about = info.status.filter(|s| !s.is_empty());
+                profile.username = info.username.map(|u| u.to_string());
+                profile.business = info.verified_name.and_then(|v| v.name);
+            }
+        }
+        profile.name = self
+            .names_for(std::slice::from_ref(&key))
+            .await
+            .remove(&key)
+            .filter(|n| !is_placeholder_name(n));
+        Ok(profile)
     }
 
     /// Chats, contacts and groups matching a query.
@@ -1516,7 +1948,7 @@ impl Service {
             .clone()
             .ok_or_else(|| anyhow::anyhow!("no media folder configured"))?;
         std::fs::create_dir_all(&dir)?;
-        let path = dir.join(format!("{}.{}", id, extension_for(media.kind, media.media_type)));
+        let path = dir.join(format!("{}.{}", id, media.extension()));
         std::fs::write(&path, &data)?;
         self.store
             .set_media_path(chat, id, &path.to_string_lossy())?;
@@ -1559,17 +1991,7 @@ impl Service {
     /// The request goes to our own primary device, and the messages arrive
     /// asynchronously through the normal event stream.
     pub async fn load_older(&self, chat: &str, count: i32) -> Result<()> {
-        let Some((id, from_me, timestamp)) = self.store.oldest_message(chat)? else {
-            return Ok(());
-        };
-        let jid: Jid = chat.parse()?;
-        let session = self
-            .client
-            .fetch_message_history(&jid, &id, from_me, timestamp * 1000, count)
-            .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        eprintln!("[hermodr] asked the phone for {count} messages before {id} in {chat} (session {session})");
-        Ok(())
+        fetch_older(&self.client, &self.store, chat, count).await
     }
 
     /// The key that names a message to the server: groups need its sender.
@@ -1700,16 +2122,33 @@ impl Service {
                     .unwrap_or_else(|| "file".into());
                 let gif = message.media_kind.as_deref() == Some("gif");
                 if message.media_kind.as_deref() == Some("sticker") {
-                    self.send_sticker(to_chat, bytes).await?;
+                    self.send_sticker_as(to_chat, bytes, true).await?;
                 } else {
-                    let options = SendOptions { gif, ..Default::default() };
+                    let options = SendOptions { gif, forwarded: true, ..Default::default() };
                     self.send_media(to_chat, &name, bytes, caption, None, options).await?;
                 }
             }
             None if message.media_kind.is_some() => {
                 anyhow::bail!("download the media before forwarding it")
             }
-            None => self.send_text(to_chat, message.text, Vec::new()).await?,
+            None => {
+                let to: Jid = to_chat.parse()?;
+                let to_self = self.is_self_jid(&to);
+                let content = wa::Message {
+                    extended_text_message: MessageField::some(wa::message::ExtendedTextMessage {
+                        text: Some(message.text.clone()),
+                        context_info: MessageField::some(*forwarded_context(None)),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                };
+                let result = self.client.send_message(to, content).await?;
+                self.store.set_forwarded(to_chat, &result.message_id)?;
+                let mut stored = self.own_message(to_chat, &result.message_id, message.text, "", to_self);
+                stored.media_kind = None;
+                self.store.upsert(&stored)?;
+                let _ = self.events.send(ServiceEvent::Message { message: Box::new(stored) });
+            }
         }
         Ok(())
     }
@@ -1718,7 +2157,6 @@ impl Service {
         self.store.marks(chat)
     }
 
-    /// A message we just sent, as the store keeps it until the server confirms.
     /// Marks a view-once message opened and deletes its media.
     pub fn open_view_once(&self, chat: &str, id: &str) -> Result<()> {
         if let Some(path) = self.store.open_view_once(chat, id)? {
@@ -1728,6 +2166,7 @@ impl Service {
         Ok(())
     }
 
+    /// A message we just sent, as the store keeps it until the server confirms.
     fn own_message(&self, chat: &str, id: &str, text: String, kind: &str, to_self: bool) -> StoredMessage {
         StoredMessage {
             chat: chat.to_string(),
@@ -1823,6 +2262,126 @@ impl Service {
         let stored = self.own_message(chat, &id, event.name, "event", to_self);
         self.store.upsert(&stored)?;
         let _ = self.events.send(ServiceEvent::Message { message: Box::new(stored) });
+        Ok(())
+    }
+
+    /// Edits or cancels one of our events. The edit is encrypted with the
+    /// event's secret, which is how WhatsApp sends event edits.
+    pub async fn edit_event(&self, chat: &str, id: &str, event: crate::store::NewEvent) -> Result<()> {
+        let def = self
+            .store
+            .event_secret(chat, id)?
+            .ok_or_else(|| anyhow::anyhow!("this event's key never reached this device"))?;
+        let own: Vec<String> = [self.client.pn(), self.client.lid()]
+            .into_iter()
+            .flatten()
+            .map(|j| j.to_non_ad().to_string())
+            .collect();
+        if !own.contains(&def.creator) {
+            anyhow::bail!("only the event's creator can change it");
+        }
+        let content = wa::Message {
+            event_message: MessageField::some(wa::message::EventMessage {
+                name: Some(event.name.clone()),
+                description: event.description.clone(),
+                start_time: event.start,
+                end_time: event.end,
+                join_link: event.link.clone(),
+                is_canceled: Some(event.canceled),
+                location: event
+                    .location
+                    .clone()
+                    .map(|name| wa::message::LocationMessage { name: Some(name), ..Default::default() })
+                    .into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let to: Jid = chat.parse()?;
+        self.client
+            .edit_message_encrypted(to, id, &def.secret, content)
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        self.store.save_event(chat, id, &def.creator, &event, None)?;
+        self.store.apply_edit(chat, id, &event.name)?;
+        let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
+        Ok(())
+    }
+
+    /// Who got, read and played one of our messages.
+    pub fn message_info(&self, id: &str) -> Result<Vec<crate::store::MessageReceipt>> {
+        self.store.receipts(id)
+    }
+
+    /// Starred messages across every chat, newest first.
+    pub fn starred_messages(&self) -> Result<Vec<StoredMessage>> {
+        self.store.starred_messages()
+    }
+
+    /// Messages that mention us, in one chat or all of them, newest first.
+    pub fn pings(&self, chat: Option<&str>) -> Result<Vec<StoredMessage>> {
+        self.store.pings(chat, 500)
+    }
+
+    /// Up to `limit` messages in a chat containing `query`, newest first.
+    pub fn search_messages(&self, chat: &str, query: &str, limit: u32) -> Result<Vec<StoredMessage>> {
+        if query.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        self.store.search_messages(chat, query.trim(), limit)
+    }
+
+    pub fn chat_retention(&self, chat: &str) -> Result<crate::store::ChatRetention> {
+        self.store.chat_retention(chat)
+    }
+
+    /// Sets a chat's own retention and applies it at once.
+    pub fn set_chat_retention(&self, chat: &str, retention: &crate::store::ChatRetention) -> Result<()> {
+        self.store.set_chat_retention(chat, retention)?;
+        self.store.enforce_retention()?;
+        Ok(())
+    }
+
+    /// The per chat auto download override, if one is set.
+    pub fn chat_auto_download(&self, chat: &str) -> Result<Option<bool>> {
+        self.store.chat_auto_download(chat)
+    }
+
+    /// Messages members reported to this group's admins. Only admins may ask.
+    pub async fn admin_reports(&self, chat: &str) -> Result<Vec<AdminReport>> {
+        let jid: Jid = chat.parse()?;
+        let reported = self
+            .client
+            .groups()
+            .get_reported_messages(jid)
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        Ok(reported
+            .reports
+            .into_iter()
+            .map(|report| AdminReport {
+                message: self.store.message(chat, &report.message_id).ok(),
+                reporters: report
+                    .reporters
+                    .into_iter()
+                    .map(|r| (r.phone_number.unwrap_or(r.jid).to_non_ad().to_string(), r.timestamp))
+                    .collect(),
+                id: report.message_id,
+            })
+            .collect())
+    }
+
+    /// Lets members report messages to the admins, or stops them.
+    pub async fn set_allow_admin_reports(&self, chat: &str, allow: bool) -> Result<()> {
+        let jid: Jid = chat.parse()?;
+        self.client
+            .groups()
+            .set_allow_admin_reports(jid, allow)
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        if let Some(info) = self.group_cache.lock().unwrap().get_mut(chat) {
+            info.allow_admin_reports = allow;
+        }
         Ok(())
     }
 
@@ -2052,9 +2611,50 @@ impl Service {
         self.media_dir.clone()
     }
 
-    /// Marks a chat's incoming messages as read. Returns how many changed.
-    pub fn mark_read(&self, chat: &str) -> Result<usize> {
-        self.store.mark_chat_read(chat)
+    /// Whether the account has read receipts turned off in its privacy
+    /// settings. The protocol client keeps this in sync with the server; when
+    /// true, read and played receipts must not be sent.
+    pub fn read_receipts_disabled(&self) -> bool {
+        self.client
+            .persistence_manager()
+            .get_device_snapshot()
+            .read_receipts_disabled
+    }
+
+    /// Marks a chat's incoming messages as read, and with `receipts` tells
+    /// their senders. Returns how many changed.
+    pub async fn mark_read(&self, chat: &str, receipts: bool) -> Result<usize> {
+        let unread = if receipts { self.store.unread_ids(chat)? } else { Vec::new() };
+        let changed = self.store.mark_chat_read(chat)?;
+        if unread.is_empty() {
+            return Ok(changed);
+        }
+        let to: Jid = chat.parse()?;
+        // A group receipt names the author, one receipt per author; a direct
+        // chat needs none.
+        let mut by_sender: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+        for (id, sender) in unread {
+            let key = if to.is_group() { sender } else { String::new() };
+            by_sender.entry(key).or_default().push(id);
+        }
+        for (sender, ids) in by_sender {
+            let sender = sender.parse::<Jid>().ok().map(|j| j.to_non_ad());
+            let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+            if let Err(e) = self.client.mark_as_read(&to, sender.as_ref(), &ids).await {
+                log::warn!("could not send read receipts: {e}");
+            }
+        }
+        Ok(changed)
+    }
+
+    /// Tells the sender that a voice note was played or view-once media opened.
+    pub async fn mark_played(&self, chat: &str, id: &str, sender: &str) -> Result<()> {
+        let to: Jid = chat.parse()?;
+        let sender = if to.is_group() { sender.parse::<Jid>().ok().map(|j| j.to_non_ad()) } else { None };
+        self.client
+            .mark_as_played(&to, sender.as_ref(), &[id])
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))
     }
 
     /// Sends a text message quoting an earlier one.
@@ -2154,7 +2754,7 @@ impl Service {
         reply: Option<(String, String, String)>,
         options: SendOptions,
     ) -> Result<Option<String>> {
-        let SendOptions { gif, view_once, voice } = options;
+        let SendOptions { gif, view_once, voice, forwarded, mentions, progress } = options;
         let to: Jid = chat.parse()?;
         let to_self = self.is_self_jid(&to);
         let file_name = file_name.to_string();
@@ -2173,7 +2773,10 @@ impl Service {
             _ => (MediaType::Document, "document"),
         };
 
-        let upload = self.client.upload(bytes.clone(), media_type, Default::default()).await?;
+        let upload = match progress {
+            Some(token) => self.upload_reporting(bytes.clone(), media_type, token).await?,
+            None => self.client.upload(bytes.clone(), media_type, Default::default()).await?,
+        };
 
         let mimetype = mime_for(&extension).map(str::to_string);
 
@@ -2202,6 +2805,14 @@ impl Service {
                 )))
             }
             None => None,
+        };
+        let context = if forwarded { Some(forwarded_context(context)) } else { context };
+        let context = if mentions.is_empty() {
+            context
+        } else {
+            let mut context = context.unwrap_or_default();
+            context.mentioned_jid = mentions;
+            Some(context)
         };
 
         let mut message = match kind {
@@ -2263,6 +2874,9 @@ impl Service {
         }
 
         let result = self.client.send_message(to, message).await?;
+        if forwarded {
+            self.store.set_forwarded(chat, &result.message_id)?;
+        }
         // The sender cannot reopen view-once media either, so no copy is kept.
         if view_once {
             self.store.set_view_once(chat, &result.message_id, true)?;
@@ -2313,8 +2927,59 @@ impl Service {
         Ok(warning)
     }
 
+    /// Uploads media while reporting its progress as [`ServiceEvent::UploadProgress`], about once per percent.
+    async fn upload_reporting(
+        &self,
+        bytes: Vec<u8>,
+        media_type: MediaType,
+        token: String,
+    ) -> Result<whatsapp_rust::upload::UploadResponse> {
+        use whatsapp_rust::wacore::upload::{encrypt_media_with_key_and_sidecar, EncryptedMediaInfo};
+        let file_length = bytes.len() as u64;
+        let enc = tokio::task::spawn_blocking(move || {
+            encrypt_media_with_key_and_sidecar(&bytes, media_type, None, None)
+        })
+        .await??;
+        let total = enc.data_to_upload.len() as u64;
+        let events = self.events.clone();
+        let last = Arc::new(AtomicU64::new(u64::MAX));
+        let report: Arc<dyn Fn(u64) + Send + Sync> = Arc::new(move |sent: u64| {
+            let percent = sent.saturating_mul(100) / total.max(1);
+            if last.swap(percent, Ordering::Relaxed) != percent {
+                let _ = events.send(ServiceEvent::UploadProgress { token: token.clone(), sent, total });
+            }
+        });
+        let source = ProgressSource { data: Arc::from(enc.data_to_upload), report };
+        let info = EncryptedMediaInfo {
+            media_key: enc.media_key,
+            file_sha256: enc.file_sha256,
+            file_enc_sha256: enc.file_enc_sha256,
+            file_length,
+            streaming_sidecar: enc.streaming_sidecar,
+        };
+        Ok(self.client.upload_stream(source, info, media_type).await?)
+    }
+
     /// Sends a picture as a sticker (see [`sticker_webp`]).
     pub async fn send_sticker(&self, chat: &str, bytes: Vec<u8>) -> Result<()> {
+        self.send_sticker_as(chat, bytes, false).await
+    }
+
+    /// Turns a picture into a sticker in the media folder without sending it.
+    pub fn save_sticker(&self, bytes: &[u8]) -> Result<String> {
+        let webp = sticker_webp(bytes)
+            .ok_or_else(|| anyhow::anyhow!("that file is not an image we can turn into a sticker"))?;
+        let dir = self
+            .media_dir()
+            .ok_or_else(|| anyhow::anyhow!("no media folder is configured"))?
+            .join("stickers");
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join(format!("saved-{}.webp", unix_now()));
+        std::fs::write(&path, webp)?;
+        Ok(path.to_string_lossy().into_owned())
+    }
+
+    async fn send_sticker_as(&self, chat: &str, bytes: Vec<u8>, forwarded: bool) -> Result<()> {
         let to: Jid = chat.parse()?;
         let to_self = self.is_self_jid(&to);
         let webp = sticker_webp(&bytes)
@@ -2335,11 +3000,19 @@ impl Service {
                 mimetype: Some("image/webp".into()),
                 width: Some(512),
                 height: Some(512),
+                context_info: if forwarded {
+                    MessageField::some(*forwarded_context(None))
+                } else {
+                    MessageField::none()
+                },
                 ..Default::default()
             }),
             ..Default::default()
         };
         let result = self.client.send_message(to, message).await?;
+        if forwarded {
+            self.store.set_forwarded(chat, &result.message_id)?;
+        }
 
         let media_path = self.media_dir().and_then(|dir| {
             std::fs::create_dir_all(&dir).ok()?;
@@ -2523,6 +3196,19 @@ fn member_label_change(message: &wa::Message) -> Option<String> {
     Some(protocol.member_label.as_option()?.label.clone().unwrap_or_default())
 }
 
+/// The edited message's id and its new text (or caption), if this message is an edit.
+fn edit_of(message: &wa::Message) -> Option<(String, String)> {
+    use wa::message::protocol_message::Type;
+    let protocol = message.get_base_message().protocol_message.as_option()?;
+    if protocol.r#type != Some(Type::MESSAGE_EDIT) {
+        return None;
+    }
+    let target = protocol.key.as_option()?.id.clone().filter(|id| !id.is_empty())?;
+    let edited = protocol.edited_message.as_option()?;
+    let text = edited.text_content().or_else(|| edited.get_caption())?.to_string();
+    Some((target, text))
+}
+
 /// The id of the message a revoke refers to, if this message is a revoke.
 fn revoke_target(message: &wa::Message) -> Option<String> {
     use wa::message::protocol_message::Type;
@@ -2648,6 +3334,25 @@ struct MediaInfo {
     downloadable: Box<dyn Downloadable + Send + Sync>,
     /// The small JPEG the message carries, available without downloading.
     thumb: Option<Vec<u8>>,
+    /// A document's own extension, so the file opens as what it is.
+    ext: Option<String>,
+}
+
+impl MediaInfo {
+    fn extension(&self) -> String {
+        self.ext.clone().unwrap_or_else(|| extension_for(self.kind, self.media_type).to_string())
+    }
+}
+
+/// A safe file extension from a document's name, or its MIME type for an SVG.
+fn document_extension(document: &wa::message::DocumentMessage) -> Option<String> {
+    let from_name = document
+        .file_name
+        .as_deref()
+        .and_then(|n| n.rsplit_once('.'))
+        .map(|(_, ext)| ext.to_ascii_lowercase())
+        .filter(|ext| (1..=8).contains(&ext.len()) && ext.chars().all(|c| c.is_ascii_alphanumeric()));
+    from_name.or_else(|| (document.mimetype.as_deref() == Some("image/svg+xml")).then(|| "svg".to_string()))
 }
 
 fn detect_media(message: &wa::Message) -> Option<MediaInfo> {
@@ -2657,6 +3362,7 @@ fn detect_media(message: &wa::Message) -> Option<MediaInfo> {
             media_type: MediaType::Image,
             downloadable: Box::new(image.clone()),
             thumb: image.jpeg_thumbnail.clone(),
+            ext: None,
         });
     }
     if let Some(video) = message.video_message.as_option() {
@@ -2670,6 +3376,7 @@ fn detect_media(message: &wa::Message) -> Option<MediaInfo> {
             media_type: MediaType::Video,
             downloadable: Box::new(video.clone()),
             thumb: video.jpeg_thumbnail.clone(),
+            ext: None,
         });
     }
     if let Some(audio) = message.audio_message.as_option() {
@@ -2678,6 +3385,7 @@ fn detect_media(message: &wa::Message) -> Option<MediaInfo> {
             media_type: MediaType::Audio,
             downloadable: Box::new(audio.clone()),
             thumb: None,
+            ext: None,
         });
     }
     if let Some(document) = message.document_message.as_option() {
@@ -2686,6 +3394,7 @@ fn detect_media(message: &wa::Message) -> Option<MediaInfo> {
             media_type: MediaType::Document,
             downloadable: Box::new(document.clone()),
             thumb: document.jpeg_thumbnail.clone(),
+            ext: document_extension(document),
         });
     }
     if let Some(sticker) = message.sticker_message.as_option() {
@@ -2694,6 +3403,7 @@ fn detect_media(message: &wa::Message) -> Option<MediaInfo> {
             media_type: MediaType::Sticker,
             downloadable: Box::new(sticker.clone()),
             thumb: None,
+            ext: None,
         });
     }
     None
@@ -2791,11 +3501,7 @@ async fn stored_message(
                 match client.download(media.downloadable.as_ref()).await {
                     Ok(bytes) => {
                         if std::fs::create_dir_all(dir).is_ok() {
-                            let path = dir.join(format!(
-                                "{}.{}",
-                                id,
-                                extension_for(media.kind, media.media_type)
-                            ));
+                            let path = dir.join(format!("{}.{}", id, media.extension()));
                             if std::fs::write(&path, &bytes).is_ok() {
                                 media_path = Some(path.to_string_lossy().to_string());
                             }

@@ -14,6 +14,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { fade } from "svelte/transition";
+  import { motion } from "$lib/theme.svelte";
   import { convertFileSrc, invoke } from "@tauri-apps/api/core";
   import Icon from "$lib/Icon.svelte";
   import VideoPlayer from "$lib/VideoPlayer.svelte";
@@ -118,7 +119,7 @@
 <svelte:window onkeydown={onKey} />
 
 {#if item}
-  <div class="viewer" role="dialog" aria-modal="true" aria-label="Media viewer" transition:fade={{ duration: 140 }}>
+  <div class="viewer" role="dialog" aria-modal="true" aria-label="Media viewer" transition:fade={{ duration: motion(140) }}>
     <header>
       <div class="who">
         {#if item.avatar}
@@ -302,7 +303,7 @@
     border-radius: 4px;
     user-select: none;
     cursor: zoom-in;
-    transition: transform 0.12s ease;
+    transition: transform calc(0.12s * var(--motion-scale)) var(--ease);
   }
   .media.zoomed {
     cursor: grab;

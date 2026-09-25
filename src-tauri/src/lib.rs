@@ -37,6 +37,10 @@ pub struct UiSettings {
     /// Whether others see "typing…" while we write.
     #[serde(default = "default_true")]
     pub send_typing: bool,
+    /// Whether senders learn we read or played their messages. Off covers
+    /// groups too, which WhatsApp's own read-receipt privacy does not.
+    #[serde(default = "default_true")]
+    pub send_receipts: bool,
 }
 
 fn default_true() -> bool {
@@ -47,11 +51,12 @@ impl Default for UiSettings {
     fn default() -> Self {
         Self {
             retention: Retention::default(),
-            accept_full_history: false,
+            accept_full_history: true,
             auto_download_media: true,
             media_dir: None,
             warn_missing_video_preview: true,
             send_typing: true,
+            send_receipts: true,
         }
     }
 }
@@ -222,7 +227,7 @@ fn config_for(app: &AppHandle, settings: &UiSettings, account: &str) -> ServiceC
     let base = account_base(app, account);
     let default_media = media_cache_dir(app);
     ServiceConfig {
-        session_path: base.join("session.db"),
+        session_path: session_path(&base),
         messages_path: base.join("messages.db"),
         retention: settings.retention,
         accept_full_history: settings.accept_full_history,
@@ -291,6 +296,8 @@ async fn start_service(app: &AppHandle, state: &AppState, account: &str) -> Resu
     let settings = state.settings.lock().unwrap().clone();
     let config = config_for(app, &settings, account);
 
+    remove_stale_sessions(&account_base(app, account), &config.session_path);
+
     let (service, mut events) = Service::start(config)
         .await
         .map_err(|e| format!("failed to start service: {e}"))?;
@@ -300,9 +307,16 @@ async fn start_service(app: &AppHandle, state: &AppState, account: &str) -> Resu
     // cannot slip through the gap between starting and subscribing.
     let emitter = app.clone();
     let service_for_events = service.clone();
+    let account_id = account.to_string();
     tauri::async_runtime::spawn(async move {
         loop {
             match events.recv().await {
+                Ok(ServiceEvent::LoggedOut) => {
+                    forget_session(&emitter, &account_id, &service_for_events);
+                    let _ = emitter.emit(SERVICE_EVENT, &ServiceEvent::LoggedOut);
+                    // Holding the service keeps its session database open.
+                    break;
+                }
                 Ok(event) => {
                     let _ = emitter.emit(SERVICE_EVENT, &event);
                 }
@@ -328,6 +342,54 @@ async fn start_service(app: &AppHandle, state: &AppState, account: &str) -> Resu
 
     *state.service.lock().unwrap() = Some(service);
     Ok(())
+}
+
+/// Names the account's current session file; absent means `session.db`.
+const SESSION_POINTER: &str = "session_name";
+
+fn session_path(base: &std::path::Path) -> PathBuf {
+    let name = std::fs::read_to_string(base.join(SESSION_POINTER)).unwrap_or_default();
+    base.join(match name.trim() {
+        "" => "session.db",
+        name => name,
+    })
+}
+
+/// Deletes session files other than `current`; one still held open is retried on a later start.
+fn remove_stale_sessions(base: &std::path::Path, current: &std::path::Path) {
+    let Some(current) = current.file_name().and_then(|n| n.to_str()) else { return };
+    let Ok(entries) = std::fs::read_dir(base) else { return };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if name.starts_with("session") && name.contains(".db") && name != current {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// Stops a revoked account's service and points it at a fresh session file.
+///
+/// The old file cannot be deleted yet: Windows keeps it locked until the
+/// library releases its connection pool.
+fn forget_session(app: &AppHandle, account: &str, service: &Arc<Service>) {
+    let state = app.state::<AppState>();
+    {
+        let mut slot = state.service.lock().unwrap();
+        if slot.as_ref().is_some_and(|s| Arc::ptr_eq(s, service)) {
+            *slot = None;
+        }
+    }
+    service.shutdown();
+    let mut file = state.accounts.lock().unwrap();
+    if let Some(entry) = file.accounts.iter_mut().find(|a| a.id == account) {
+        entry.jid = None;
+        save_accounts(app, &file);
+    }
+    let _ = std::fs::write(
+        account_base(app, account).join(SESSION_POINTER),
+        format!("session-{}.db", now_millis()),
+    );
 }
 
 /// Connects the active account, pairing by QR the first time.
@@ -481,8 +543,21 @@ async fn resolve_names(state: State<'_, AppState>) -> Result<usize, String> {
 
 /// Marks a chat as read. Returns how many messages were newly marked.
 #[tauri::command]
-fn mark_read(state: State<'_, AppState>, chat: String) -> Result<usize, String> {
-    state.service()?.mark_read(&chat).map_err(|e| e.to_string())
+async fn mark_read(state: State<'_, AppState>, chat: String) -> Result<usize, String> {
+    let service = state.service()?;
+    let receipts =
+        state.settings.lock().unwrap().send_receipts && !service.read_receipts_disabled();
+    service.mark_read(&chat, receipts).await.map_err(|e| e.to_string())
+}
+
+/// Sends a played receipt for a voice note or view-once media, unless receipts are off.
+#[tauri::command]
+async fn mark_played(state: State<'_, AppState>, chat: String, id: String, sender: String) -> Result<(), String> {
+    let service = state.service()?;
+    if !state.settings.lock().unwrap().send_receipts || service.read_receipts_disabled() {
+        return Ok(());
+    }
+    service.mark_played(&chat, &id, &sender).await.map_err(|e| e.to_string())
 }
 
 /// Sends a text message quoting an earlier one.
@@ -606,6 +681,8 @@ async fn send_media(
     reply_to_text: Option<String>,
     gif: Option<bool>,
     view_once: Option<bool>,
+    mentions: Option<Vec<String>>,
+    progress: Option<String>,
 ) -> Result<Option<String>, String> {
     let bytes = BASE64.decode(data.as_bytes()).map_err(|e| e.to_string())?;
     let reply = match (reply_to_id, reply_to_sender, reply_to_text) {
@@ -615,7 +692,9 @@ async fn send_media(
     let options = SendOptions {
         gif: gif.unwrap_or(false),
         view_once: view_once.unwrap_or(false),
-        voice: None,
+        mentions: mentions.unwrap_or_default(),
+        progress,
+        ..Default::default()
     };
     let service = state.service()?;
     service
@@ -644,9 +723,9 @@ async fn send_voice(
         _ => None,
     };
     let options = SendOptions {
-        gif: false,
         view_once: view_once.unwrap_or(false),
         voice: Some(VoiceNote { seconds, waveform }),
+        ..Default::default()
     };
     state
         .service()?
@@ -690,20 +769,101 @@ struct EventForm {
     end: Option<i64>,
     location: Option<String>,
     link: Option<String>,
+    #[serde(default)]
+    canceled: bool,
+}
+
+impl From<EventForm> for hermodr_core::NewEvent {
+    fn from(event: EventForm) -> Self {
+        Self {
+            name: event.name.trim().to_string(),
+            description: event.description.filter(|s| !s.trim().is_empty()),
+            start: event.start,
+            end: event.end,
+            location: event.location.filter(|s| !s.trim().is_empty()),
+            link: event.link.filter(|s| !s.trim().is_empty()),
+            canceled: event.canceled,
+        }
+    }
 }
 
 #[tauri::command]
 async fn create_event(state: State<'_, AppState>, chat: String, event: EventForm) -> Result<(), String> {
-    let event = hermodr_core::NewEvent {
-        name: event.name.trim().to_string(),
-        description: event.description.filter(|s| !s.trim().is_empty()),
-        start: event.start,
-        end: event.end,
-        location: event.location.filter(|s| !s.trim().is_empty()),
-        link: event.link.filter(|s| !s.trim().is_empty()),
-        canceled: false,
-    };
-    state.service()?.create_event(&chat, event).await.map_err(|e| e.to_string())
+    state.service()?.create_event(&chat, event.into()).await.map_err(|e| e.to_string())
+}
+
+/// Edits or cancels one of our events.
+#[tauri::command]
+async fn edit_event(state: State<'_, AppState>, chat: String, id: String, event: EventForm) -> Result<(), String> {
+    state.service()?.edit_event(&chat, &id, event.into()).await.map_err(|e| e.to_string())
+}
+
+/// Who got, read and played one of our messages.
+#[tauri::command]
+fn message_info(state: State<'_, AppState>, id: String) -> Result<Vec<hermodr_core::MessageReceipt>, String> {
+    state.service()?.message_info(&id).map_err(|e| e.to_string())
+}
+
+/// Starred messages across every chat, newest first.
+#[tauri::command]
+fn starred_messages(state: State<'_, AppState>) -> Result<Vec<StoredMessage>, String> {
+    state.service()?.starred_messages().map_err(|e| e.to_string())
+}
+
+/// Messages that mention us, in one chat or (without `chat`) all of them.
+#[tauri::command]
+fn pings(state: State<'_, AppState>, chat: Option<String>) -> Result<Vec<StoredMessage>, String> {
+    state.service()?.pings(chat.as_deref()).map_err(|e| e.to_string())
+}
+
+/// Up to `limit` (default 50) messages in one chat whose text contains `query`.
+#[tauri::command]
+fn search_messages(
+    state: State<'_, AppState>,
+    chat: String,
+    query: String,
+    limit: Option<u32>,
+) -> Result<Vec<StoredMessage>, String> {
+    state
+        .service()?
+        .search_messages(&chat, &query, limit.unwrap_or(50).clamp(1, 500))
+        .map_err(|e| e.to_string())
+}
+
+#[derive(serde::Serialize)]
+struct ChatSettings {
+    /// The chat's auto download override, `None` when it follows the global one.
+    auto_download: Option<bool>,
+    retention: hermodr_core::ChatRetention,
+}
+
+#[tauri::command]
+fn chat_settings(state: State<'_, AppState>, chat: String) -> Result<ChatSettings, String> {
+    let service = state.service()?;
+    Ok(ChatSettings {
+        auto_download: service.chat_auto_download(&chat).map_err(|e| e.to_string())?,
+        retention: service.chat_retention(&chat).map_err(|e| e.to_string())?,
+    })
+}
+
+#[tauri::command]
+fn set_chat_retention(
+    state: State<'_, AppState>,
+    chat: String,
+    retention: hermodr_core::ChatRetention,
+) -> Result<(), String> {
+    state.service()?.set_chat_retention(&chat, &retention).map_err(|e| e.to_string())
+}
+
+/// Messages reported to a group's admins.
+#[tauri::command]
+async fn admin_reports(state: State<'_, AppState>, chat: String) -> Result<Vec<hermodr_core::AdminReport>, String> {
+    state.service()?.admin_reports(&chat).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn set_allow_admin_reports(state: State<'_, AppState>, chat: String, allow: bool) -> Result<(), String> {
+    state.service()?.set_allow_admin_reports(&chat, allow).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -725,6 +885,13 @@ async fn respond_event(
 async fn send_sticker(state: State<'_, AppState>, chat: String, data: String) -> Result<(), String> {
     let bytes = BASE64.decode(data.as_bytes()).map_err(|e| e.to_string())?;
     state.service()?.send_sticker(&chat, bytes).await.map_err(|e| e.to_string())
+}
+
+/// Saves base64 image bytes as a sticker without sending it; returns its path.
+#[tauri::command]
+fn save_sticker(state: State<'_, AppState>, data: String) -> Result<String, String> {
+    let bytes = BASE64.decode(data.as_bytes()).map_err(|e| e.to_string())?;
+    state.service()?.save_sticker(&bytes).map_err(|e| e.to_string())
 }
 
 /// Stickers or GIFs already downloaded, newest first.
@@ -1053,6 +1220,31 @@ async fn avatar(state: State<'_, AppState>, jid: String) -> Result<Option<String
     state.service()?.avatar(&jid).await.map_err(|e| e.to_string())
 }
 
+/// Someone's profile card: names, number, username, about.
+#[tauri::command]
+async fn user_profile(state: State<'_, AppState>, jid: String) -> Result<hermodr_core::UserProfile, String> {
+    state.service()?.user_profile(&jid).await.map_err(|e| e.to_string())
+}
+
+/// The group behind an invite link, without joining it.
+#[tauri::command]
+async fn invite_info(state: State<'_, AppState>, link: String) -> Result<hermodr_core::InviteInfo, String> {
+    state.service()?.invite_info(&link).await.map_err(|e| e.to_string())
+}
+
+#[derive(serde::Serialize)]
+struct Joined {
+    jid: String,
+    /// An admin still has to approve the request.
+    pending: bool,
+}
+
+#[tauri::command]
+async fn join_invite(state: State<'_, AppState>, link: String) -> Result<Joined, String> {
+    let (jid, pending) = state.service()?.join_invite(&link).await.map_err(|e| e.to_string())?;
+    Ok(Joined { jid, pending })
+}
+
 /// Marks a view-once message opened and deletes its file.
 #[tauri::command]
 fn open_view_once(state: State<'_, AppState>, chat: String, id: String) -> Result<(), String> {
@@ -1173,6 +1365,20 @@ pub fn run() {
             names,
             send_voice,
             open_view_once,
+            mark_played,
+            starred_messages,
+            pings,
+            search_messages,
+            edit_event,
+            set_chat_retention,
+            chat_settings,
+            admin_reports,
+            set_allow_admin_reports,
+            save_sticker,
+            user_profile,
+            invite_info,
+            join_invite,
+            message_info,
             own_jid,
             send_typing,
             set_online,

@@ -4,6 +4,7 @@
 
 <script lang="ts">
   import { fade, scale } from "svelte/transition";
+  import { motion } from "$lib/theme.svelte";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import Icon from "$lib/Icon.svelte";
 
@@ -47,9 +48,9 @@
 <div
   class="backdrop"
   role="presentation"
-  transition:fade|global={{ duration: 140 }}
+  transition:fade|global={{ duration: motion(140) }}
   onclick={(e) => e.target === e.currentTarget && onclose()}>
-  <div class="dialog" role="dialog" aria-modal="true" aria-label={title} transition:scale|global={{ start: 0.96, duration: 160 }}>
+  <div class="dialog" role="dialog" aria-modal="true" aria-label={title} transition:scale|global={{ start: 0.96, duration: motion(160) }}>
     <header>
       <h2>{title}</h2>
       <button class="close" aria-label="Close" onclick={onclose}><Icon name="x" size={18} /></button>

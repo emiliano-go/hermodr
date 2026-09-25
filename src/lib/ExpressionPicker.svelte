@@ -5,8 +5,10 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import { fly } from "svelte/transition";
+  import { motion } from "$lib/theme.svelte";
   import { convertFileSrc, invoke } from "@tauri-apps/api/core";
   import Icon from "$lib/Icon.svelte";
+  import ImageCropper from "$lib/ImageCropper.svelte";
   import {
     GROUPS,
     loadEmojis,
@@ -143,9 +145,30 @@
   }
 
   async function uploadFile(file: File) {
+    if (tab === "sticker") {
+      making = file;
+      return;
+    }
     const data = await toBase64(file);
-    if (tab === "sticker") send(() => invoke("send_sticker", { chat, data }));
-    else send(() => invoke("send_media", { chat, name: file.name, data, gif: true }));
+    send(() => invoke("send_media", { chat, name: file.name, data, gif: true }));
+  }
+
+  /** A picture being cropped into a sticker. */
+  let making = $state<File | null>(null);
+  async function sendMade(file: File) {
+    making = null;
+    const data = await toBase64(file);
+    send(() => invoke("send_sticker", { chat, data }));
+  }
+  async function saveMade(file: File) {
+    making = null;
+    try {
+      const path = await invoke<string>("save_sticker", { data: await toBase64(file) });
+      toggleFavourite(path);
+      library.sticker = await invoke<string[]>("media_library", { kind: "sticker", prefer: favourites });
+    } catch (e) {
+      onerror(String(e));
+    }
   }
 
   function jumpTo(group: number) {
@@ -166,8 +189,8 @@
   class="picker"
   role="dialog"
   aria-label="Emoji, GIFs and stickers"
-  style="width: min({size.w}px, calc(100vw - 32px)); height: min({size.h}px, calc(100vh - 120px))"
-  transition:fly={{ y: 8, duration: 140 }}>
+  style="width: min({size.w}px, calc(100vw - 32px)); height: min({size.h}px, calc(100vh - 120px)); --picker-h: {size.h}px"
+  transition:fly={{ y: 8, duration: motion(140) }}>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="resize"
@@ -223,6 +246,18 @@
           {#if emojis.length === 0}<p class="empty">Loading emoji…</p>{/if}
         {/if}
       </div>
+    </div>
+  {:else if making}
+    <div class="maker">
+      <ImageCropper
+        file={making}
+        square
+        sizes={false}
+        applyLabel="Send sticker"
+        altLabel="Save"
+        onapply={sendMade}
+        onalt={saveMade}
+        oncancel={() => (making = null)} />
     </div>
   {:else}
     <div class="library">
@@ -295,6 +330,15 @@
     box-shadow: var(--shadow);
     overflow: hidden;
   }
+  .maker {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    padding: 12px;
+    overflow: auto;
+    /* Tabs and the cropper's controls take about this much of the picker. */
+    --crop-max-height: calc(min(var(--picker-h), 100vh - 120px) - 150px);
+  }
   .resize {
     position: absolute;
     top: 0;
@@ -316,7 +360,7 @@
     border-left: 2px solid var(--faint);
     border-top-left-radius: 3px;
     opacity: 0;
-    transition: opacity 0.15s ease;
+    transition: opacity calc(0.15s * var(--motion-scale)) var(--ease);
   }
   .picker:hover .resize::before {
     opacity: 1;

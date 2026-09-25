@@ -31,8 +31,8 @@ function flag(iso: string) {
 }
 
 /**
- * `59891954564` → `🇺🇾 91954564`: the country as a flag, then the national
- * number. `null` when the digits are not a phone number we can place.
+ * `59891954564` → `🇺🇾 +598 91954564`: the country as a flag and its calling
+ * code, then the national number. `null` when the digits cannot be placed.
  */
 export function phoneLabel(digits: string): string | null {
   if (!/^\d{7,15}$/.test(digits)) return null;
@@ -42,9 +42,14 @@ export function phoneLabel(digits: string): string | null {
     if (!iso) continue;
     // Kazakhstan shares +7 with Russia, on the 6xx and 7xx ranges.
     if (iso === "RU" && /^7[67]/.test(digits)) iso = "KZ";
-    return `${flag(iso)} ${digits.slice(length)}`;
+    return `${flag(iso)} +${digits.slice(0, length)} ${digits.slice(length)}`;
   }
   return null;
+}
+
+/** A number standing in for a name: bare digits, or a `+` label such as WhatsApp's masked `+598∙∙∙∙∙27`. */
+export function isPlaceholder(name: string): boolean {
+  return /^\+?\d+$/.test(name) || (name.startsWith("+") && !/\p{L}/u.test(name));
 }
 
 /**
@@ -52,7 +57,7 @@ export function phoneLabel(digits: string): string | null {
  * name is known. Only phone JIDs carry a number; a LID is left as it is.
  */
 export function displayName(name: string | null | undefined, jid: string): string {
-  if (name && !/^\+?\d+$/.test(name)) return name;
+  if (name && !isPlaceholder(name)) return name;
   const user = jid.split("@")[0].split(":")[0];
   const digits = name?.replace("+", "") ?? (jid.endsWith("@s.whatsapp.net") ? user : null);
   return (digits && phoneLabel(digits)) || name || user;
@@ -64,12 +69,12 @@ if (argv?.[1]?.endsWith("phone.ts")) {
   const assert = (ok: boolean, what: string) => {
     if (!ok) throw new Error(what);
   };
-  assert(phoneLabel("59891954564") === `${flag("UY")} 91954564`, "Uruguay");
-  assert(phoneLabel("447911123456") === `${flag("GB")} 7911123456`, "UK");
-  assert(phoneLabel("77011234567") === `${flag("KZ")} 7011234567`, "Kazakhstan");
+  assert(phoneLabel("59891954564") === `${flag("UY")} +598 91954564`, "Uruguay");
+  assert(phoneLabel("447911123456") === `${flag("GB")} +44 7911123456`, "UK");
+  assert(phoneLabel("77011234567") === `${flag("KZ")} +7 7011234567`, "Kazakhstan");
   assert(phoneLabel("12025550123") === "+1 2025550123", "NANP");
   assert(displayName("Joaquin", "598@s.whatsapp.net") === "Joaquin", "name wins");
   assert(displayName(null, "138947158093828@lid") === "138947158093828", "LID untouched");
-  assert(displayName(null, "59891954564:3@s.whatsapp.net") === `${flag("UY")} 91954564`, "device suffix");
+  assert(displayName(null, "59891954564:3@s.whatsapp.net") === `${flag("UY")} +598 91954564`, "device suffix");
   console.log("phone.ts ok");
 }

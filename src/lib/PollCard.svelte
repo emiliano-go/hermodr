@@ -255,6 +255,6 @@
     display: block;
     height: 100%;
     background: var(--accent);
-    transition: width 0.25s ease;
+    transition: width calc(0.25s * var(--motion-scale)) var(--ease);
   }
 </style>

@@ -24,6 +24,9 @@ export default defineConfig(() => ({
           port: 1421,
         }
       : undefined,
+    fs: {
+      allow: ["src-tauri/icons"],
+    },
     watch: {
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],

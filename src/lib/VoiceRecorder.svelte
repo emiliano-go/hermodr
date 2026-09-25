@@ -17,6 +17,7 @@
   } = $props();
 
   const LIVE_BARS = 36;
+  const PAUSE = -1;
   let recorder: MediaRecorder | null = null;
   let stream: MediaStream | null = null;
   let context: AudioContext | null = null;
@@ -42,9 +43,7 @@
       onerror("Microphone access was refused or no microphone is connected.");
       return oncancel();
     }
-    recorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus", audioBitsPerSecond: 32000 });
-    recorder.ondataavailable = (e) => e.data.size > 0 && chunks.push(e.data);
-    recorder.start(250);
+    startRecorder();
     context = new AudioContext();
     analyser = context.createAnalyser();
     analyser.fftSize = 1024;
@@ -66,7 +65,56 @@
     ready = true;
   });
 
+  function startRecorder() {
+    recorder = new MediaRecorder(stream!, { mimeType: "audio/webm;codecs=opus", audioBitsPerSecond: 32000 });
+    recorder.ondataavailable = (e) => e.data.size > 0 && chunks.push(e.data);
+    recorder.start(250);
+  }
+
+  /** Throws away what was recorded and starts again. */
+  function recordOver() {
+    stopPreview();
+    if (recorder && recorder.state !== "inactive") {
+      recorder.ondataavailable = null;
+      recorder.onstop = null;
+      recorder.stop();
+    }
+    chunks.length = 0;
+    history.length = 0;
+    live = [];
+    elapsed = 0;
+    paused = false;
+    lastTick = performance.now();
+    startRecorder();
+  }
+
+  let preview: HTMLAudioElement | undefined = $state();
+  let previewUrl: string | null = null;
+  let previewing = $state(false);
+  let previewAt = $state(0);
+
+  /** Plays what has been recorded so far; only offered while paused. */
+  async function togglePreview() {
+    if (!preview) return;
+    if (previewing) return stopPreview();
+    // Flush the chunk in progress so the preview reaches the pause.
+    recorder?.requestData();
+    await new Promise((r) => setTimeout(r, 60));
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    previewUrl = URL.createObjectURL(new Blob(chunks, { type: "audio/webm" }));
+    preview.src = previewUrl;
+    previewing = true;
+    await preview.play().catch(() => (previewing = false));
+  }
+  function stopPreview() {
+    preview?.pause();
+    previewing = false;
+    previewAt = 0;
+  }
+
   function release() {
+    stopPreview();
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
     clearInterval(timer);
     stream?.getTracks().forEach((t) => t.stop());
     void context?.close();
@@ -77,8 +125,14 @@
 
   function togglePause() {
     if (!recorder) return;
-    if (paused) recorder.resume();
-    else recorder.pause();
+    if (paused) {
+      stopPreview();
+      recorder.resume();
+    } else {
+      recorder.pause();
+      // A gap in the live levels marks where the recording was paused.
+      live = [...live, PAUSE].slice(-LIVE_BARS);
+    }
     paused = !paused;
   }
 
@@ -119,18 +173,58 @@
     return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
   }
   const top = $derived(Math.max(0.02, ...live));
+
+  function finishPreview() {
+    previewing = false;
+    previewAt = 0;
+  }
 </script>
 
 <div class="recorder" role="group" aria-label="Recording a voice message">
   <button type="button" class="icon" title="Discard" aria-label="Discard recording" onclick={cancel}>
     <Icon name="trash" size={20} />
   </button>
-  <span class="dot" class:paused></span>
-  <span class="time">{clock(elapsed)}</span>
-  <span class="levels" aria-hidden="true">
-    {#each Array(LIVE_BARS - live.length) as _, i (i)}<span class="level idle"></span>{/each}
-    {#each live as level, i (i)}<span class="level" style="height: {Math.max(8, (level / top) * 100)}%"></span>{/each}
-  </span>
+  {#if paused}
+    <button
+      type="button"
+      class="icon"
+      title="Record over"
+      aria-label="Discard and record again"
+      onclick={recordOver}><Icon name="back10" size={18} /></button>
+    <button
+      type="button"
+      class="icon preview"
+      title={previewing ? "Stop" : "Listen"}
+      aria-label={previewing ? "Stop listening" : "Listen to the recording"}
+      onclick={togglePreview}><Icon name={previewing ? "pause" : "play"} size={18} filled /></button>
+    <input
+      class="scrub"
+      type="range"
+      min="0"
+      max={elapsed}
+      step="0.05"
+      value={previewAt}
+      aria-label="Preview position"
+      oninput={(e) => {
+        if (preview) preview.currentTime = Number(e.currentTarget.value);
+      }} />
+    <span class="time">{clock(previewing ? previewAt : elapsed)}</span>
+  {:else}
+    <span class="dot"></span>
+    <span class="time">{clock(elapsed)}</span>
+    <span class="levels" aria-hidden="true">
+      {#each Array(LIVE_BARS - live.length) as _, i (i)}<span class="level idle"></span>{/each}
+      {#each live as level, i (i)}<span
+          class="level"
+          class:gap={level === PAUSE}
+          style="height: {level === PAUSE ? 100 : Math.max(8, (level / top) * 100)}%"></span
+        >{/each}
+    </span>
+  {/if}
+  <audio
+    bind:this={preview}
+    ontimeupdate={() => preview && (previewAt = preview.currentTime)}
+    onended={finishPreview}></audio>
   <button
     type="button"
     class="icon pause"
@@ -196,10 +290,6 @@
     background: var(--danger);
     animation: blink 1s ease-in-out infinite;
   }
-  .dot.paused {
-    animation: none;
-    opacity: 0.5;
-  }
   @keyframes blink {
     50% {
       opacity: 0.25;
@@ -225,6 +315,18 @@
   .level.idle {
     height: 3px;
     background: var(--faint);
+  }
+  .level.gap {
+    flex: 0 0 2px;
+    background: var(--danger);
+    opacity: 0.6;
+  }
+  .preview {
+    color: var(--accent);
+  }
+  .scrub {
+    width: 180px;
+    accent-color: var(--accent);
   }
   .send {
     display: grid;

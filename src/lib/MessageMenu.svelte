@@ -106,7 +106,7 @@
     box-shadow: var(--shadow);
     display: flex;
     flex-direction: column;
-    animation: pop 0.12s ease-out;
+    animation: pop calc(0.12s * var(--motion-scale)) ease-out;
   }
   @keyframes pop {
     from {
@@ -129,7 +129,7 @@
     background: transparent;
     font-size: 20px;
     cursor: pointer;
-    transition: transform 0.1s ease;
+    transition: transform calc(0.1s * var(--motion-scale)) var(--ease);
   }
   .reaction:hover {
     background: var(--raised);

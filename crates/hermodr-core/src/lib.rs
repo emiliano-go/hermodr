@@ -13,11 +13,12 @@ use anyhow::Result;
 
 pub use history::HistoryPolicy;
 pub use service::{
-    GroupInfo, Participant, Profile, SearchResult, SendOptions, Service, ServiceConfig,
+    AdminReport, GroupInfo, InviteInfo, UserProfile, Participant, Profile, SearchResult, SendOptions, Service, ServiceConfig,
     ServiceEvent, VoiceNote,
 };
 pub use store::{
-    ChatMarks, ChatSummary, MessageStore, NewEvent, Retention, StoredMessage, ViewOnce,
+    ChatMarks, ChatRetention, ChatSummary, MessageReceipt, MessageStore, NewEvent, Retention, StoredMessage,
+    ViewOnce,
 };
 
 /// Renders a pairing code as an SVG string for the UI to display.

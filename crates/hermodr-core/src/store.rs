@@ -12,6 +12,17 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 
 /// How much history to keep locally.
+/// A number standing in for a name: bare digits, or a `+`-prefixed phone label
+/// such as WhatsApp's masked `+598∙∙∙∙∙27`. Never a real contact or push name.
+pub fn is_placeholder_name(name: &str) -> bool {
+    let name = name.trim();
+    name.trim_start_matches('+').chars().all(|c| c.is_ascii_digit())
+        || (name.starts_with('+') && !name.chars().any(char::is_alphabetic))
+}
+
+/// [`is_placeholder_name`] for the `name` column, as far as GLOB can tell (Latin letters only).
+const PLACEHOLDER_SQL: &str = "(name NOT GLOB '*[^0-9+]*' OR (name GLOB '+*' AND name NOT GLOB '*[A-Za-z]*'))";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Retention {
     /// Drop messages older than this many hours. `None` keeps everything.
@@ -128,6 +139,69 @@ pub struct ChatSummary {
     pub pinned: bool,
 }
 
+/// The columns [`message_row`] reads, from `messages m` joined to `names n` on the sender.
+const MESSAGE_COLUMNS: &str = "m.chat, m.id, m.sender, m.timestamp, m.from_me, m.text,
+    n.name, m.media_kind, m.media_path, m.reply_to_id, m.reply_to_text,
+    m.read, m.revoked, m.status, m.reply_to_sender, m.mentioned,
+    m.preview_url, m.preview_title, m.preview_desc, m.preview_thumb,
+    m.reply_to_kind, m.reply_to_thumb, m.media_thumb, m.media_ref, m.reply_to_chat";
+
+fn message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
+    Ok(StoredMessage {
+        chat: row.get(0)?,
+        id: row.get(1)?,
+        sender: row.get(2)?,
+        sender_name: row.get(6)?,
+        timestamp: row.get(3)?,
+        from_me: row.get::<_, i32>(4)? != 0,
+        text: row.get(5)?,
+        media_kind: row.get(7)?,
+        media_path: row.get(8)?,
+        reply_to_id: row.get(9)?,
+        reply_to_text: row.get(10)?,
+        read: row.get::<_, i32>(11)? != 0,
+        revoked: row.get::<_, i32>(12)? != 0,
+        status: row.get(13)?,
+        reply_to_sender: row.get(14)?,
+        mentioned: row.get::<_, i32>(15)? != 0,
+        preview_url: row.get(16)?,
+        preview_title: row.get(17)?,
+        preview_desc: row.get(18)?,
+        preview_thumb: row.get(19)?,
+        reply_to_kind: row.get(20)?,
+        reply_to_thumb: row.get(21)?,
+        media_thumb: row.get(22)?,
+        media_ref: row.get(23)?,
+        reply_to_chat: row.get(24)?,
+    })
+}
+
+/// One recipient's receipts for a message we sent, as Unix times.
+#[derive(Debug, Clone, Serialize)]
+pub struct MessageReceipt {
+    pub recipient: String,
+    pub name: Option<String>,
+    pub delivered_at: Option<i64>,
+    pub read_at: Option<i64>,
+    pub played_at: Option<i64>,
+}
+
+/// A chat's own retention, overriding the global policy where set.
+/// `Some(0)` keeps without limit; `None` defers to the global setting.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatRetention {
+    pub max_age_hours: Option<i64>,
+    pub max_messages: Option<i64>,
+    /// Whether scrolling to the top asks the phone for older messages.
+    pub on_demand: bool,
+}
+
+impl Default for ChatRetention {
+    fn default() -> Self {
+        Self { max_age_hours: None, max_messages: None, on_demand: true }
+    }
+}
+
 /// Ordering for outgoing delivery states. Higher means further along; unknown
 /// states rank below everything so any known state replaces them.
 fn status_rank(s: &str) -> i32 {
@@ -213,6 +287,10 @@ pub struct ChatMarks {
     pub events: Vec<Event>,
     /// View-once messages and whether each was opened (or sent by us, which counts).
     pub view_once: Vec<ViewOnce>,
+    /// Ids of messages that arrived marked as forwarded.
+    pub forwarded: Vec<String>,
+    /// Ids of messages their sender edited.
+    pub edited: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -334,7 +412,20 @@ impl MessageStore {
                  response TEXT NOT NULL, PRIMARY KEY (chat, event, responder));
              CREATE TABLE IF NOT EXISTS view_once (
                  chat TEXT NOT NULL, id TEXT NOT NULL, opened INTEGER NOT NULL DEFAULT 0,
-                 PRIMARY KEY (chat, id));",
+                 PRIMARY KEY (chat, id));
+             CREATE TABLE IF NOT EXISTS forwarded (
+                 chat TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY (chat, id));
+             CREATE TABLE IF NOT EXISTS edited (
+                 chat TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY (chat, id));
+             CREATE TABLE IF NOT EXISTS receipts (
+                 id TEXT NOT NULL, recipient TEXT NOT NULL, delivered_at INTEGER,
+                 read_at INTEGER, played_at INTEGER, PRIMARY KEY (id, recipient));
+             CREATE TABLE IF NOT EXISTS chat_retention (
+                 jid TEXT PRIMARY KEY, max_age_hours INTEGER, max_messages INTEGER,
+                 on_demand INTEGER NOT NULL DEFAULT 1);
+             CREATE TABLE IF NOT EXISTS lid_pn (
+                 lid TEXT PRIMARY KEY, pn TEXT NOT NULL);
+             CREATE INDEX IF NOT EXISTS lid_pn_by_pn ON lid_pn (pn);",
         )?;
 
         // Per chat overrides. Absent means the global setting applies.
@@ -369,6 +460,13 @@ impl MessageStore {
         // Status updates were once stored as a chat. Drop them so the list stops
         // showing a "status" conversation.
         conn.execute("DELETE FROM messages WHERE chat = 'status@broadcast'", [])?;
+
+        // Masked group labels (`+598∙∙∙∙∙27`) were once stored as names, over the
+        // real push names. Dropping them lets the push names come back.
+        conn.execute(
+            "DELETE FROM names WHERE name GLOB '+*' AND name GLOB '*[^0-9+]*' AND name NOT GLOB '*[A-Za-z]*' AND saved = 0",
+            [],
+        )?;
 
         // Names learned from messages are keyed with the sender's device suffix
         // (`123:98@lid`), but participants are listed without one. Mirror every
@@ -479,9 +577,16 @@ impl MessageStore {
             return Ok(());
         }
         let conn = self.conn.lock().unwrap();
+        if is_placeholder_name(name) {
+            conn.execute("INSERT OR IGNORE INTO names (jid, name, saved) VALUES (?1, ?2, 0)", params![jid, name])?;
+            return Ok(());
+        }
         conn.execute(
-            "INSERT INTO names (jid, name, saved) VALUES (?1, ?2, 0)
-             ON CONFLICT(jid) DO UPDATE SET name = excluded.name WHERE saved = 0",
+            &format!(
+                "INSERT INTO names (jid, name, saved) VALUES (?1, ?2, 0)
+                 ON CONFLICT(jid) DO UPDATE SET name = excluded.name, saved = 0
+                 WHERE saved = 0 OR {PLACEHOLDER_SQL}"
+            ),
             params![jid, name],
         )?;
         Ok(())
@@ -581,49 +686,85 @@ impl MessageStore {
         Ok(name)
     }
 
+    /// Remembers that a LID user and a phone number are the same person.
+    ///
+    /// Kept here because the session's own mapping is lost when a device re-pairs.
+    pub fn set_lid_pn(&self, lid: &str, pn: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO lid_pn (lid, pn) VALUES (?1, ?2) ON CONFLICT(lid) DO UPDATE SET pn = excluded.pn",
+            params![lid, pn],
+        )?;
+        Ok(())
+    }
+
+    /// `(lid, pn)` user parts for either form of a user part.
+    pub fn lid_pn(&self, user: &str) -> Result<Option<(String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT lid, pn FROM lid_pn WHERE lid = ?1 OR pn = ?1 LIMIT 1",
+                params![user],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .ok())
+    }
+
     /// Messages in a chat, newest first.
     pub fn messages_for(&self, chat: &str, limit: u32) -> Result<Vec<StoredMessage>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT m.chat, m.id, m.sender, m.timestamp, m.from_me, m.text,
-                    n.name, m.media_kind, m.media_path, m.reply_to_id, m.reply_to_text,
-                    m.read, m.revoked, m.status, m.reply_to_sender, m.mentioned,
-                    m.preview_url, m.preview_title, m.preview_desc, m.preview_thumb,
-                    m.reply_to_kind, m.reply_to_thumb, m.media_thumb, m.media_ref, m.reply_to_chat
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {MESSAGE_COLUMNS}
              FROM messages m
              LEFT JOIN names n ON n.jid = m.sender
              WHERE m.chat = ?1
-             ORDER BY m.timestamp DESC LIMIT ?2",
-        )?;
-        let rows = stmt.query_map(params![chat, limit], |row| {
-            Ok(StoredMessage {
-                chat: row.get(0)?,
-                id: row.get(1)?,
-                sender: row.get(2)?,
-                sender_name: row.get(6)?,
-                timestamp: row.get(3)?,
-                from_me: row.get::<_, i32>(4)? != 0,
-                text: row.get(5)?,
-                media_kind: row.get(7)?,
-                media_path: row.get(8)?,
-                reply_to_id: row.get(9)?,
-                reply_to_text: row.get(10)?,
-                read: row.get::<_, i32>(11)? != 0,
-                revoked: row.get::<_, i32>(12)? != 0,
-                status: row.get(13)?,
-                reply_to_sender: row.get(14)?,
-                mentioned: row.get::<_, i32>(15)? != 0,
-                preview_url: row.get(16)?,
-                preview_title: row.get(17)?,
-                preview_desc: row.get(18)?,
-                preview_thumb: row.get(19)?,
-                reply_to_kind: row.get(20)?,
-                reply_to_thumb: row.get(21)?,
-                media_thumb: row.get(22)?,
-                media_ref: row.get(23)?,
-                reply_to_chat: row.get(24)?,
-            })
-        })?;
+             ORDER BY m.timestamp DESC LIMIT ?2"
+        ))?;
+        let rows = stmt.query_map(params![chat, limit], message_row)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    }
+
+    /// Messages that mention us, in one chat or all of them, newest first.
+    pub fn pings(&self, chat: Option<&str>, limit: u32) -> Result<Vec<StoredMessage>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {MESSAGE_COLUMNS}
+             FROM messages m
+             LEFT JOIN names n ON n.jid = m.sender
+             WHERE m.mentioned = 1 AND m.from_me = 0 AND (?1 IS NULL OR m.chat = ?1)
+             ORDER BY m.timestamp DESC LIMIT ?2"
+        ))?;
+        let rows = stmt.query_map(params![chat, limit], message_row)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    }
+
+    /// Messages in a chat whose text contains `query`, ignoring case, newest first.
+    pub fn search_messages(&self, chat: &str, query: &str, limit: u32) -> Result<Vec<StoredMessage>> {
+        let escaped = query.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+        let pattern = format!("%{}%", escaped.to_lowercase());
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {MESSAGE_COLUMNS}
+             FROM messages m
+             LEFT JOIN names n ON n.jid = m.sender
+             WHERE m.chat = ?1 AND lower(m.text) LIKE ?2 ESCAPE '\\'
+             ORDER BY m.timestamp DESC LIMIT ?3"
+        ))?;
+        let rows = stmt.query_map(params![chat, pattern, limit], message_row)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    }
+
+    /// Starred messages across every chat, newest first.
+    pub fn starred_messages(&self) -> Result<Vec<StoredMessage>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {MESSAGE_COLUMNS}
+             FROM stars s
+             JOIN messages m ON m.chat = s.chat AND m.id = s.id
+             LEFT JOIN names n ON n.jid = m.sender
+             ORDER BY m.timestamp DESC"
+        ))?;
+        let rows = stmt.query_map([], message_row)?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
     }
 
@@ -841,7 +982,109 @@ impl MessageStore {
             .query_map(params![chat], |r| Ok(ViewOnce { id: r.get(0)?, opened: r.get::<_, i32>(1)? != 0 }))?
             .collect::<rusqlite::Result<_>>()?;
 
-        Ok(ChatMarks { reactions, starred, pinned, polls, events, view_once })
+        let ids = |table: &str| -> Result<Vec<String>> {
+            conn.prepare(&format!("SELECT id FROM {table} WHERE chat = ?1"))?
+                .query_map(params![chat], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()
+                .map_err(Into::into)
+        };
+        let forwarded = ids("forwarded")?;
+        let edited = ids("edited")?;
+
+        Ok(ChatMarks { reactions, starred, pinned, polls, events, view_once, forwarded, edited })
+    }
+
+    /// Records when one recipient got, read or played one of our messages.
+    /// Reading implies delivery, and playing implies reading.
+    pub fn record_receipt(&self, id: &str, recipient: &str, kind: &str, at: i64) -> Result<()> {
+        let (delivered, read, played) = match kind {
+            "played" => (Some(at), Some(at), Some(at)),
+            "read" => (Some(at), Some(at), None),
+            _ => (Some(at), None, None),
+        };
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO receipts (id, recipient, delivered_at, read_at, played_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(id, recipient) DO UPDATE SET
+                 delivered_at = COALESCE(receipts.delivered_at, excluded.delivered_at),
+                 read_at = COALESCE(receipts.read_at, excluded.read_at),
+                 played_at = COALESCE(receipts.played_at, excluded.played_at)",
+            params![id, recipient, delivered, read, played],
+        )?;
+        Ok(())
+    }
+
+    /// Who got, read and played one of our messages, and when.
+    pub fn receipts(&self, id: &str) -> Result<Vec<MessageReceipt>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT r.recipient, n.name, r.delivered_at, r.read_at, r.played_at
+             FROM receipts r LEFT JOIN names n ON n.jid = r.recipient
+             WHERE r.id = ?1 ORDER BY COALESCE(r.read_at, r.delivered_at)",
+        )?;
+        let rows = stmt.query_map(params![id], |r| {
+            Ok(MessageReceipt {
+                recipient: r.get(0)?,
+                name: r.get(1)?,
+                delivered_at: r.get(2)?,
+                read_at: r.get(3)?,
+                played_at: r.get(4)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    }
+
+    pub fn set_forwarded(&self, chat: &str, id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("INSERT OR IGNORE INTO forwarded (chat, id) VALUES (?1, ?2)", params![chat, id])?;
+        Ok(())
+    }
+
+    /// Replaces a message's text (its caption, for media) after its sender edited it.
+    pub fn apply_edit(&self, chat: &str, id: &str, text: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "UPDATE messages SET text = ?3 WHERE chat = ?1 AND id = ?2",
+            params![chat, id, text],
+        )?;
+        if changed > 0 {
+            conn.execute("INSERT OR IGNORE INTO edited (chat, id) VALUES (?1, ?2)", params![chat, id])?;
+        }
+        Ok(changed > 0)
+    }
+
+    pub fn chat_retention(&self, jid: &str) -> Result<ChatRetention> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT max_age_hours, max_messages, on_demand FROM chat_retention WHERE jid = ?1",
+                params![jid],
+                |r| {
+                    Ok(ChatRetention {
+                        max_age_hours: r.get(0)?,
+                        max_messages: r.get(1)?,
+                        on_demand: r.get::<_, i32>(2)? != 0,
+                    })
+                },
+            )
+            .unwrap_or_default())
+    }
+
+    pub fn set_chat_retention(&self, jid: &str, retention: &ChatRetention) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        if *retention == ChatRetention::default() {
+            conn.execute("DELETE FROM chat_retention WHERE jid = ?1", params![jid])?;
+        } else {
+            conn.execute(
+                "INSERT INTO chat_retention (jid, max_age_hours, max_messages, on_demand)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(jid) DO UPDATE SET max_age_hours = excluded.max_age_hours,
+                     max_messages = excluded.max_messages, on_demand = excluded.on_demand",
+                params![jid, retention.max_age_hours, retention.max_messages, retention.on_demand as i32],
+            )?;
+        }
+        Ok(())
     }
 
     /// Records a view-once message; `opened` only ever moves from false to true.
@@ -1013,6 +1256,9 @@ impl MessageStore {
         conn.execute("DELETE FROM poll_votes WHERE chat = ?1 AND poll = ?2", params![chat, id])?;
         conn.execute("DELETE FROM event_responses WHERE chat = ?1 AND event = ?2", params![chat, id])?;
         conn.execute("DELETE FROM view_once WHERE chat = ?1 AND id = ?2", params![chat, id])?;
+        conn.execute("DELETE FROM forwarded WHERE chat = ?1 AND id = ?2", params![chat, id])?;
+        conn.execute("DELETE FROM edited WHERE chat = ?1 AND id = ?2", params![chat, id])?;
+        conn.execute("DELETE FROM receipts WHERE id = ?1", params![id])?;
         Ok(())
     }
 
@@ -1296,6 +1542,17 @@ impl MessageStore {
     ///
     /// Returns how many rows changed, so the caller can skip a refresh when
     /// nothing was unread.
+    /// Unread incoming messages in `chat` as `(id, sender)`, oldest first.
+    pub fn unread_ids(&self, chat: &str) -> Result<Vec<(String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, sender FROM messages
+             WHERE chat = ?1 AND read = 0 AND from_me = 0 ORDER BY timestamp",
+        )?;
+        let rows = stmt.query_map(params![chat], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    }
+
     pub fn mark_chat_read(&self, chat: &str) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
         let changed = conn.execute(
@@ -1312,29 +1569,73 @@ impl MessageStore {
     pub fn enforce_retention(&self) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
         let mut removed = 0;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
 
+        // Every chat keeps its newest message, whatever its age: a quiet chat
+        // must stay in the list with its last preview, not vanish.
+        const NOT_NEWEST: &str = "(chat, id) NOT IN (
+             SELECT chat, id FROM (
+                 SELECT chat, id, ROW_NUMBER() OVER (PARTITION BY chat ORDER BY timestamp DESC) AS rank
+                 FROM messages
+             ) WHERE rank = 1)";
+
+        // A chat with its own window or cap is only bound by that one.
         if let Some(oldest) = self.retention.oldest_allowed() {
             removed += conn.execute(
-                "DELETE FROM messages WHERE timestamp < ?1",
+                &format!(
+                    "DELETE FROM messages WHERE timestamp < ?1 AND chat NOT IN
+                         (SELECT jid FROM chat_retention WHERE max_age_hours IS NOT NULL)
+                     AND {NOT_NEWEST}"
+                ),
                 params![oldest],
             )?;
         }
+        removed += conn.execute(
+            &format!(
+                "DELETE FROM messages WHERE EXISTS (
+                     SELECT 1 FROM chat_retention r WHERE r.jid = messages.chat
+                     AND r.max_age_hours > 0 AND messages.timestamp < ?1 - r.max_age_hours * 3600)
+                 AND {NOT_NEWEST}"
+            ),
+            params![now],
+        )?;
 
-        if let Some(cap) = self.retention.max_messages_per_chat {
-            // Rank within each chat and drop everything past the cap.
-            removed += conn.execute(
-                "DELETE FROM messages WHERE (chat, id) IN (
-                     SELECT chat, id FROM (
-                         SELECT chat, id,
-                                ROW_NUMBER() OVER (
-                                    PARTITION BY chat ORDER BY timestamp DESC
-                                ) AS rank
-                         FROM messages
-                     ) WHERE rank > ?1
-                 )",
-                params![cap],
-            )?;
-        }
+        // Rank within each chat and drop everything past its cap.
+        removed += conn.execute(
+            "DELETE FROM messages WHERE (chat, id) IN (
+                 SELECT chat, id FROM (
+                     SELECT m.chat, m.id,
+                            ROW_NUMBER() OVER (PARTITION BY m.chat ORDER BY m.timestamp DESC) AS rank,
+                            COALESCE(r.max_messages, ?1) AS cap
+                     FROM messages m LEFT JOIN chat_retention r ON r.jid = m.chat
+                 ) WHERE cap > 0 AND rank > cap
+             )",
+            params![self.retention.max_messages_per_chat.map(|c| c as i64).unwrap_or(0)],
+        )?;
+
+        conn.execute(
+            "DELETE FROM forwarded WHERE NOT EXISTS (
+                 SELECT 1 FROM messages m WHERE m.chat = forwarded.chat AND m.id = forwarded.id)",
+            [],
+        )?;
+        conn.execute(
+            "DELETE FROM edited WHERE NOT EXISTS (
+                 SELECT 1 FROM messages m WHERE m.chat = edited.chat AND m.id = edited.id)",
+            [],
+        )?;
+        conn.execute(
+            "DELETE FROM view_once WHERE NOT EXISTS (
+                 SELECT 1 FROM messages m WHERE m.chat = view_once.chat AND m.id = view_once.id)",
+            [],
+        )?;
+        conn.execute(
+            "DELETE FROM receipts WHERE NOT EXISTS (
+                 SELECT 1 FROM messages m WHERE m.id = receipts.id)",
+            [],
+        )?;
 
         Ok(removed)
     }
@@ -1391,6 +1692,85 @@ mod tests {
             preview_thumb: None,
             status: None,
         }
+    }
+
+    #[test]
+    fn chat_retention_overrides_the_global_policy() {
+        let s = store(Retention { max_age_hours: Some(24), max_messages_per_chat: Some(1) });
+        for (chat, id, age) in [("a", "1", 1), ("a", "2", 2), ("a", "3", 48), ("b", "1", 1), ("b", "2", 48), ("c", "1", 1), ("c", "2", 3)] {
+            s.upsert(&msg(chat, id, age, "x")).unwrap();
+        }
+        let keep_all = ChatRetention { max_age_hours: Some(0), max_messages: Some(0), on_demand: true };
+        s.set_chat_retention("a", &keep_all).unwrap();
+        let two_hours = ChatRetention { max_age_hours: Some(2), max_messages: None, on_demand: true };
+        s.set_chat_retention("c", &two_hours).unwrap();
+        s.enforce_retention().unwrap();
+        assert_eq!(s.messages_for("a", 10).unwrap().len(), 3, "unlimited override");
+        assert_eq!(s.messages_for("b", 10).unwrap().len(), 1, "global policy");
+        // "c" keeps its own 2 h window but still falls back to the global cap.
+        assert_eq!(s.messages_for("c", 10).unwrap().len(), 1);
+        assert_eq!(s.chat_retention("a").unwrap(), keep_all);
+        s.set_chat_retention("a", &ChatRetention::default()).unwrap();
+        assert_eq!(s.chat_retention("a").unwrap(), ChatRetention::default());
+    }
+
+    #[test]
+    fn receipts_only_move_forward() {
+        let s = store(Retention::unlimited());
+        s.record_receipt("m", "a", "delivered", 10).unwrap();
+        s.record_receipt("m", "a", "read", 20).unwrap();
+        s.record_receipt("m", "a", "delivered", 30).unwrap();
+        s.record_receipt("m", "b", "played", 40).unwrap();
+        let got = s.receipts("m").unwrap();
+        let a = got.iter().find(|r| r.recipient == "a").unwrap();
+        assert_eq!((a.delivered_at, a.read_at, a.played_at), (Some(10), Some(20), None));
+        let b = got.iter().find(|r| r.recipient == "b").unwrap();
+        assert_eq!((b.delivered_at, b.read_at, b.played_at), (Some(40), Some(40), Some(40)));
+    }
+
+    #[test]
+    fn delete_message_clears_its_related_rows() {
+        let s = store(Retention::unlimited());
+        s.upsert(&msg("a", "1", 0, "hi")).unwrap();
+        s.set_forwarded("a", "1").unwrap();
+        s.apply_edit("a", "1", "edited").unwrap();
+        s.set_view_once("a", "1", true).unwrap();
+        s.record_receipt("1", "them", "read", 10).unwrap();
+
+        s.delete_message("a", "1").unwrap();
+
+        let marks = s.marks("a").unwrap();
+        assert!(marks.forwarded.is_empty());
+        assert!(marks.edited.is_empty());
+        assert!(marks.view_once.is_empty());
+        assert!(s.receipts("1").unwrap().is_empty());
+    }
+
+    #[test]
+    fn edits_replace_text_and_mark_the_message() {
+        let s = store(Retention::unlimited());
+        s.upsert(&msg("a", "1", 0, "old")).unwrap();
+        assert!(s.apply_edit("a", "1", "new").unwrap());
+        assert!(!s.apply_edit("a", "missing", "new").unwrap());
+        assert_eq!(s.messages_for("a", 1).unwrap()[0].text, "new");
+        assert_eq!(s.marks("a").unwrap().edited, vec!["1".to_string()]);
+    }
+
+    #[test]
+    fn pings_and_message_search() {
+        let s = store(Retention::unlimited());
+        let mut ping = msg("g", "1", 1, "hey @123 look");
+        ping.mentioned = true;
+        s.upsert(&ping).unwrap();
+        s.upsert(&msg("g", "2", 0, "100% done_ok")).unwrap();
+        let mut elsewhere = msg("h", "3", 0, "@123");
+        elsewhere.mentioned = true;
+        s.upsert(&elsewhere).unwrap();
+        assert_eq!(s.pings(Some("g"), 10).unwrap().len(), 1);
+        assert_eq!(s.pings(None, 10).unwrap().len(), 2);
+        assert_eq!(s.search_messages("g", "LOOK", 10).unwrap()[0].id, "1");
+        assert_eq!(s.search_messages("g", "0% d", 10).unwrap()[0].id, "2");
+        assert!(s.search_messages("g", "_", 10).unwrap().iter().all(|m| m.text.contains('_')));
     }
 
     #[test]
@@ -1492,6 +1872,25 @@ mod tests {
     }
 
     #[test]
+    fn push_names_replace_a_saved_number() {
+        let s = store(Retention::default());
+        s.set_saved_name("1@lid", "59899022028").unwrap();
+        s.set_name("1@lid", "Ana").unwrap();
+        assert_eq!(s.name_for("1@lid").unwrap().as_deref(), Some("Ana"));
+        s.set_saved_name("2@lid", "Bea").unwrap();
+        s.set_name("2@lid", "Other").unwrap();
+        assert_eq!(s.name_for("2@lid").unwrap().as_deref(), Some("Bea"));
+        // A masked group label never replaces a push name, and a push name replaces it.
+        s.set_name("3@lid", "Cata").unwrap();
+        s.set_name("3@lid", "+598∙∙∙∙∙27").unwrap();
+        assert_eq!(s.name_for("3@lid").unwrap().as_deref(), Some("Cata"));
+        s.set_name("4@lid", "+598∙∙∙∙∙41").unwrap();
+        s.set_name("4@lid", "Dani").unwrap();
+        assert_eq!(s.name_for("4@lid").unwrap().as_deref(), Some("Dani"));
+        assert!(is_placeholder_name("+598∙∙∙∙∙27") && is_placeholder_name("59899") && !is_placeholder_name("Ana"));
+    }
+
+    #[test]
     fn names_survive_message_pruning() {
         // A name is learned from a message but must outlive it, otherwise the
         // chat list falls back to a raw number once history ages out.
@@ -1499,11 +1898,26 @@ mod tests {
             max_age_hours: Some(1),
             max_messages_per_chat: None,
         });
+        s.upsert(&msg("a@s", "older", 72, "hello")).unwrap();
         s.upsert(&msg("a@s", "old", 48, "hi")).unwrap();
         s.set_name("a@s", "Alice").unwrap();
         s.enforce_retention().unwrap();
-        assert_eq!(s.count().unwrap(), 0);
+        assert_eq!(s.count().unwrap(), 1);
         assert_eq!(s.name_for("a@s").unwrap().as_deref(), Some("Alice"));
+    }
+
+    #[test]
+    fn quiet_chats_keep_their_newest_message() {
+        let s = store(Retention { max_age_hours: Some(24), max_messages_per_chat: None });
+        s.upsert(&msg("quiet@s", "1", 100, "first")).unwrap();
+        s.upsert(&msg("quiet@s", "2", 50, "last word")).unwrap();
+        s.upsert(&msg("busy@s", "1", 50, "old")).unwrap();
+        s.upsert(&msg("busy@s", "2", 1, "new")).unwrap();
+        s.enforce_retention().unwrap();
+        let chats = s.chats().unwrap();
+        assert_eq!(chats.len(), 2, "no chat vanishes from the list");
+        assert_eq!(s.messages_for("quiet@s", 9).unwrap()[0].text, "last word");
+        assert_eq!(s.messages_for("busy@s", 9).unwrap().len(), 1);
     }
 
     #[test]

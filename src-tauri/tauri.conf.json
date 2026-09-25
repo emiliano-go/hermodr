@@ -21,7 +21,8 @@
       "assetProtocol": {
         "enable": true,
         "scope": [
-          "$APPDATA/**"
+          "$APPDATA/**",
+          "$APPCACHE/**"
         ]
       }
     }

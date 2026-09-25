@@ -4,7 +4,13 @@
   import { listen } from "@tauri-apps/api/event";
   import AudioPlayer from "$lib/AudioPlayer.svelte";
   import VoiceRecorder, { type Recording } from "$lib/VoiceRecorder.svelte";
-  import { displayName as phoneName, phoneLabel } from "$lib/phone";
+  import StarredList, { type StarredItem } from "$lib/StarredList.svelte";
+  import MessageFinder, { type FoundItem } from "$lib/MessageFinder.svelte";
+  import ChatSettings, { type ChatRetention } from "$lib/ChatSettings.svelte";
+  import ProfileCard from "$lib/ProfileCard.svelte";
+  import MessageInfo from "$lib/MessageInfo.svelte";
+  import InviteCard, { inviteLink } from "$lib/InviteCard.svelte";
+  import { displayName as phoneName, isPlaceholder, phoneLabel } from "$lib/phone";
   import { polyfillCountryFlagEmojis } from "country-flag-emoji-polyfill";
   import flagFont from "country-flag-emoji-polyfill/dist/TwemojiCountryFlags.woff2?url";
 
@@ -13,8 +19,11 @@
   polyfillCountryFlagEmojis("Twemoji Country Flags", flagFont);
   import Icon, { type IconName } from "$lib/Icon.svelte";
   import Settings, { type Section } from "$lib/Settings.svelte";
-  import GroupInfo from "$lib/GroupInfo.svelte";
+  import GroupInfo, { type AdminReport } from "$lib/GroupInfo.svelte";
   import MediaViewer, { type ViewerItem } from "$lib/MediaViewer.svelte";
+  import VideoPlayer from "$lib/VideoPlayer.svelte";
+  import appIcon from "../../src-tauri/icons/128x128.png";
+  import ImageCropper from "$lib/ImageCropper.svelte";
   import MessageMenu, { type MenuItem } from "$lib/MessageMenu.svelte";
   import ChatPicker from "$lib/ChatPicker.svelte";
   import ExpressionPicker, { type PickerTab } from "$lib/ExpressionPicker.svelte";
@@ -23,7 +32,9 @@
   import EventCard, { type ChatEvent } from "$lib/EventCard.svelte";
   import CreateDialog from "$lib/CreateDialog.svelte";
   import { blocks, plain, type Inline } from "$lib/format";
-  import { activeTheme, applyTheme, customization, save as saveCustomization } from "$lib/theme.svelte";
+  import { activeTheme, applyTheme, customization, motion, save as saveCustomization } from "$lib/theme.svelte";
+  import { fly } from "svelte/transition";
+  import { cubicOut } from "svelte/easing";
 
   type StoredMessage = {
     chat: string;
@@ -82,10 +93,12 @@
       jid: string;
       name: string;
       admin: boolean;
+      owner: boolean;
       number: string | null;
       username: string | null;
       label: string | null;
     }[];
+    allow_admin_reports: boolean;
   };
   type Retention = {
     max_age_hours: number | null;
@@ -98,6 +111,7 @@
     warn_missing_video_preview: boolean;
     media_dir: string | null;
     send_typing: boolean;
+    send_receipts: boolean;
   };
   type ConnectionState = { started: boolean; connected: boolean; qr: string | null };
 
@@ -114,6 +128,8 @@
     | { kind: "qrCode"; code: string }
     | { kind: "connected" }
     | { kind: "disconnected" }
+    | { kind: "loggedOut" }
+    | { kind: "uploadProgress"; token: string; sent: number; total: number }
     | { kind: "message"; message: StoredMessage }
     | { kind: "retentionApplied"; removed: number }
     | { kind: "namesUpdated"; count: number }
@@ -122,6 +138,7 @@
     | { kind: "historyLoaded"; chats: string[] }
     | { kind: "avatarChanged"; jid: string }
     | { kind: "typing"; chat: string; sender: string; state: string }
+    | { kind: "presence"; jid: string; online: boolean; last_seen: number | null }
     | { kind: "memberLabel"; chat: string; jid: string; label: string }
     | { kind: "marks"; chat: string };
 
@@ -165,6 +182,10 @@
   let connected = $state(false);
   let connecting = $state(false);
   let started = $state(false);
+  /** Launch chooser, shown when several linked accounts could be signed into. */
+  let choosingAccount = $state(false);
+  /** True while a newly opened chat's messages load, so the old ones fade out. */
+  let switching = $state(false);
   let qrSvg = $state<string | null>(null);
   let chats: ChatSummary[] = $state([]);
   let selectedChat = $state<string | null>(null);
@@ -184,10 +205,14 @@
     jid: string;
     name: string;
     number: string | null;
+    /** The member's reserved WhatsApp username, when they have one. */
+    username: string | null;
     label: string | null;
     admin: boolean;
   };
   let participants: Member[] = $state([]);
+  /** Last member list per group, shown while a switch reloads it so the header does not flash. */
+  const memberCache: Record<string, Member[]> = {};
   /** Open mention query, or null while the autocomplete is closed. */
   let mentionQuery = $state<string | null>(null);
   /** Unread mentions in the open chat, oldest first, for jump-to-mention. */
@@ -218,22 +243,32 @@
     // every member, which notifies them even with the chat muted.
     const all = selectedChat?.endsWith("@g.us")
       ? [
-          { jid: "@all", name: "all" },
-          { jid: "@all-override", name: "all-override" },
+          { jid: "@all", name: "all", username: null, number: null },
+          { jid: "@all-override", name: "all-override", username: null, number: null },
         ]
       : [];
-    return [...all, ...participants]
-      .filter((p) => p.name.toLowerCase().includes(needle))
+    // A member is found by nickname, reserved username or number, and inserted by nickname.
+    const members = participants.map((p) => ({
+      jid: p.jid,
+      name: isPlaceholder(p.name) && p.username ? p.username : displayName(p.name, p.jid),
+      username: p.username,
+      number: p.number,
+    }));
+    return [...all, ...members]
+      .filter((p) =>
+        [p.name, p.username, p.number].some((field) => field?.toLowerCase().includes(needle)),
+      )
       .slice(0, 8);
   });
   let replyingTo: StoredMessage | null = $state(null);
   let settings: UiSettings = $state({
     retention: { max_age_hours: 24, max_messages_per_chat: 500 },
-    accept_full_history: false,
+    accept_full_history: true,
     auto_download_media: true,
     warn_missing_video_preview: true,
     media_dir: null,
     send_typing: true,
+    send_receipts: true,
   });
   let showSettings = $state(false);
   let showGroupInfo = $state(false);
@@ -390,15 +425,15 @@
     // The message row joins names on one address form only; the member list
     // resolves both, so it rescues senders whose name is keyed by the other.
     const own = message.sender_name;
-    const known = own && !/^\+?\d+$/.test(own) ? own : memberOf(message.sender)?.name;
-    return displayName(known && !/^\+?\d+$/.test(known) ? known : own, message.sender);
+    const known = own && !isPlaceholder(own) ? own : memberOf(message.sender)?.name;
+    return displayName(known && !isPlaceholder(known) ? known : own, message.sender);
   }
   /** Resolves a JID to a known name, falling back to the bare address. */
   function senderName(jid: string) {
     const b = bare(jid);
     const known = messages.find((m) => bare(m.sender) === b && m.sender_name)?.sender_name;
     const member = memberOf(jid)?.name;
-    return displayName(known && !/^\+?\d+$/.test(known) ? known : (member ?? known), jid);
+    return displayName(known && !isPlaceholder(known) ? known : (member ?? known), jid);
   }
   /** Author shown on a quote; our own messages read "You". */
   function quoteAuthor(jid: string | null) {
@@ -451,41 +486,61 @@
   }
 
   async function openChat(chat: string, jumpToMention = false, label: string | null = null) {
-    if (selectedChat !== chat) stopTyping();
+    if (selectedChat !== chat) {
+      stopTyping();
+      switching = true;
+    }
     selectedChat = chat;
     // One-to-one typing only arrives for contacts we are subscribed to.
     if (!chat.endsWith("@g.us")) invoke("watch_presence", { jid: chat }).catch(() => {});
     titleOverride = label;
     scrolledUp = false;
-    participants = [];
+    recall = null;
+    olderExhausted = false;
+    loadOnScroll = true;
+    invoke<{ retention: ChatRetention }>("chat_settings", { chat })
+      .then((s) => selectedChat === chat && (loadOnScroll = s.retention.on_demand))
+      .catch(() => {});
+    participants = memberCache[chat] ?? [];
     chosenMentions = [];
     mentionQuery = null;
     draft = drafts[chat] ?? "";
     showGroupInfo = false;
     groupInfo = null;
-    // Captured before the chat is marked read, since that clears them.
-    try {
-      mentionQueue = await invoke<string[]>("unread_mentions", { chat });
-    } catch {
-      mentionQueue = [];
-    }
-    mentionCursor = 0;
     try {
       messageLimit = PAGE;
-      messages = await invoke<StoredMessage[]>("messages", { chat, limit: messageLimit });
+      // Mentions are captured before the chat is marked read, since that clears them.
+      const [mentions, loaded] = await Promise.all([
+        invoke<string[]>("unread_mentions", { chat }).catch(() => [] as string[]),
+        invoke<StoredMessage[]>("messages", { chat, limit: messageLimit }),
+      ]);
+      // A quicker click on another chat has already taken over.
+      if (selectedChat !== chat) return;
+      mentionQueue = mentions;
+      mentionCursor = 0;
+      messages = loaded;
       await loadMarks();
+      scrollToBottom();
+      await tick();
+      switching = false;
       // Opening a conversation is what marks it seen.
       await invoke("mark_read", { chat });
       await refreshChats();
-      scrollToBottom();
     } catch (e) {
+      switching = false;
       error = String(e);
     }
     // Group members power the @ autocomplete; a one-to-one chat returns none.
     try {
-      participants = await invoke<Member[]>("participants", { chat });
+      const loaded = await invoke<Member[]>("participants", { chat });
+      memberCache[chat] = loaded;
+      if (selectedChat !== chat) return;
+      participants = loaded;
+      // Loading members stores their group display names, so numbers looked up
+      // before now may have a name; ask again.
+      forgetUnresolvedNames();
     } catch {
-      participants = [];
+      if (selectedChat === chat) participants = memberCache[chat] ?? [];
     }
     // Opening a chat is the obvious moment to start typing.
     await tick();
@@ -565,6 +620,13 @@
     showGroupInfo = false;
   }
 
+  /** Starts the account picked on the launch chooser. */
+  async function chooseAccount(id: string) {
+    choosingAccount = false;
+    if (id === activeAccount) await connect();
+    else await switchTo(id);
+  }
+
   async function switchTo(id: string) {
     if (id === activeAccount) return;
     try {
@@ -589,7 +651,6 @@
   }
 
   async function removeAccount(id: string) {
-    if (!window.confirm("Remove this account and its local data?")) return;
     try {
       if (id === activeAccount) {
         resetUi();
@@ -617,22 +678,76 @@
     }
   }
 
-  /** Asks the phone for older messages in the open chat. */
-  async function loadOlder() {
+  let chatSettingsOpen = $state(false);
+  /** Whether reaching the top of the open chat asks the phone for more. */
+  let loadOnScroll = $state(true);
+  /** Set once the phone had nothing older, so scrolling stops asking. */
+  let olderExhausted = false;
+  /**
+   * A recall walks back about a day, 50 messages per request, since the phone
+   * answers by count and not by time.
+   */
+  let recall: { chat: string; until: number; rounds: number; auto: boolean } | null = null;
+
+  /** Asks the phone for about a day of older messages in the open chat. */
+  /** Resolved whenever a recall ends, however it ends. */
+  let recallWaiters: (() => void)[] = [];
+  function settleRecall() {
+    const waiters = recallWaiters;
+    recallWaiters = [];
+    for (const done of waiters) done();
+  }
+  /** Asks the phone for the chat's previous day and waits until it has landed or given up. */
+  function recallDay(): Promise<void> {
+    if (!selectedChat || olderExhausted) return Promise.resolve();
+    const done = new Promise<void>((resolve) => recallWaiters.push(resolve));
+    if (!loadingOlder) void loadOlder();
+    return done;
+  }
+
+  async function loadOlder(auto = false) {
     if (!selectedChat || loadingOlder) return;
+    const oldest = messages.at(-1)?.timestamp ?? Math.floor(Date.now() / 1000);
+    recall = { chat: selectedChat, until: oldest - 86_400, rounds: 0, auto };
+    await requestOlder();
+  }
+
+  async function requestOlder() {
+    if (!selectedChat || !recall) return;
     loadingOlder = true;
+    const auto = recall.auto;
     // The phone answers asynchronously, or not at all when it has nothing
     // older or is offline, so the spinner gives up on its own.
     clearTimeout(olderTimer);
     olderTimer = setTimeout(() => {
       loadingOlder = false;
-      error = "Your phone did not answer. It has to be online for older messages to load.";
+      recall = null;
+      olderExhausted = true;
+      if (!auto) error = "Your phone did not answer. It has to be online for older messages to load.";
+      settleRecall();
     }, 15000);
     try {
       await invoke("load_older", { chat: selectedChat, count: 50 });
     } catch (e) {
       loadingOlder = false;
+      recall = null;
       error = String(e);
+      settleRecall();
+    }
+  }
+
+  /** After a batch lands: keep walking back until the day is covered. */
+  function continueRecall(added: number) {
+    const oldest = messages.at(-1)?.timestamp;
+    if (!recall || recall.chat !== selectedChat) {
+      settleRecall();
+      return;
+    }
+    if (added === 0) olderExhausted = true;
+    if (added > 0 && oldest && oldest > recall.until && ++recall.rounds < 10) void requestOlder();
+    else {
+      recall = null;
+      settleRecall();
     }
   }
 
@@ -812,9 +927,19 @@
       }
     }, 30);
   }
+  /** Asks again for every JID the core had no name for, once it may have learned some. */
+  function forgetUnresolvedNames() {
+    const kept: Record<string, string> = {};
+    for (const [jid, name] of Object.entries(learnedNames)) {
+      if (isPlaceholder(name)) requestedNames.delete(jid);
+      else kept[jid] = name;
+    }
+    for (const jid of requestedNames) if (!(jid in kept)) requestedNames.delete(jid);
+    learnedNames = kept;
+  }
   /** A name for a JID, asking the core when the given one is missing or a bare number. */
   function displayName(name: string | null | undefined, jid: string) {
-    if (!name || /^\+?\d+$/.test(name)) {
+    if (!name || isPlaceholder(name)) {
       const key = bare(jid);
       const learned = learnedNames[key];
       if (learned) return phoneName(learned, key);
@@ -831,7 +956,14 @@
       // Our own contact card may be saved under a nickname; show our push name.
       return { jid: own, name: displayName(null, own), self: true };
     }
-    if (member) return { jid: member.jid, name: displayName(member.name, member.jid), self: false };
+    if (member) {
+      // A push name seen on any of their messages here beats the member list's bare number.
+      const spoken = messages.find(
+        (m) => m.sender_name && !isPlaceholder(m.sender_name) && memberOf(m.sender) === member,
+      )?.sender_name;
+      const named = spoken ?? (isPlaceholder(member.name) ? null : member.name);
+      return { jid: member.jid, name: displayName(named, member.jid), self: false };
+    }
     const lid = `${user}@lid`;
     const pn = `${user}@s.whatsapp.net`;
     const lidName = displayName(null, lid);
@@ -839,6 +971,29 @@
     const lidKnown = !!learnedNames[lid] && !/^\d+$/.test(learnedNames[lid]);
     return lidKnown ? { jid: lid, name: lidName, self: false } : { jid: pn, name: pnName, self: false };
   }
+  /**
+   * `@Name` typed for a member, as older captions were sent, rewritten to the
+   * wire's `@<number>` so it draws as a mention tag too. Longest names first,
+   * so "Ana María" wins over "Ana".
+   */
+  function asWireMentions(text: string) {
+    if (!text.includes("@") || participants.length === 0) return text;
+    const named = participants
+      .filter((p) => p.name.length > 1 && !isPlaceholder(p.name))
+      .sort((a, b) => b.name.length - a.name.length);
+    for (const p of named) {
+      const token = `@${p.name}`;
+      if (text.includes(token)) text = text.split(token).join(`@${p.jid.split("@")[0]}`);
+    }
+    return text;
+  }
+  /** The profile card open beside a mention, name or picture. */
+  let profileCard = $state<{ jid: string; name: string; x: number; y: number; self: boolean } | null>(null);
+  function openProfile(jid: string, name: string, event: MouseEvent, self = false) {
+    event.stopPropagation();
+    profileCard = { jid: bare(jid), name, x: event.clientX, y: event.clientY, self };
+  }
+
   function mentionName(user: string) {
     return mentionTarget(user).name;
   }
@@ -854,14 +1009,31 @@
     for (const message of messages) if (!message.from_me) loadAvatar(bare(message.sender));
   });
 
+  /** Each account's own picture as last seen, so it shows before that account connects. */
+  function rememberedAvatar(id: string): string | null {
+    try {
+      return localStorage.getItem(`hermodr.avatar.${id}`);
+    } catch {
+      return null;
+    }
+  }
   const accountAvatars = $derived(
     Object.fromEntries(
       accountList.map((a) => {
         const jid = a.id === activeAccount ? (me ?? a.jid) : a.jid;
-        return [a.id, jid ? (avatars[jid] ?? null) : null];
+        return [a.id, (jid ? avatars[jid] : null) ?? rememberedAvatar(a.id)];
       }),
     ) as Record<string, string | null>,
   );
+  $effect(() => {
+    const own = activeAccount && me ? avatars[me] : null;
+    if (!own) return;
+    try {
+      localStorage.setItem(`hermodr.avatar.${activeAccount}`, own);
+    } catch {
+      // Storage may be unavailable; the picture then only shows once connected.
+    }
+  });
 
   /** Who is typing in each chat, until they pause or ten seconds pass. */
   let typing: Record<string, { sender: string; state: string }[]> = $state({});
@@ -877,6 +1049,25 @@
     }
   }
 
+  /** Online state of contacts we watch, as far as their privacy lets us see it. */
+  let presence: Record<string, { online: boolean; last_seen: number | null }> = $state({});
+  function presenceLabel(chat: string) {
+    const seen = presence[chat];
+    if (!seen) return null;
+    if (seen.online) return "online";
+    if (!seen.last_seen) return null;
+    const date = new Date(seen.last_seen * 1000);
+    const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const days = Math.floor((Date.now() - date.getTime()) / 86_400_000);
+    const day =
+      new Date().toDateString() === date.toDateString()
+        ? "today"
+        : days < 2
+          ? "yesterday"
+          : date.toLocaleDateString([], { day: "numeric", month: "short" });
+    return `last seen ${day} at ${time}`;
+  }
+
   function typingLabel(chat: string) {
     const who = typing[chat];
     if (!who?.length) return null;
@@ -884,7 +1075,7 @@
     if (!chat.endsWith("@g.us")) return `${verb}…`;
     if (who.length > 1) return `${who.length} people are ${verb}…`;
     const person = memberOf(who[0].sender);
-    const name = person && !/^\+?\d+$/.test(person.name) ? person.name : null;
+    const name = person && !isPlaceholder(person.name) ? person.name : null;
     return `${name ?? senderName(who[0].sender)} is ${verb}…`;
   }
 
@@ -977,6 +1168,9 @@
     if (!scroller) return;
     const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
     scrolledUp = distance > 120;
+    if (scroller.scrollTop < 80 && loadOnScroll && !olderExhausted && !loadingOlder && messages.length > 0) {
+      void loadOlder(true);
+    }
   }
 
   /** The `@…` token immediately before the caret, if the user is typing one. */
@@ -1163,12 +1357,14 @@
     if (!selectedChat) return;
     // With attachments staged, the typed text goes out as their caption.
     if (pending.length > 0) {
-      if (sendingMedia) return;
-      const caption = draft.trim();
+      // Mentions in a caption go out as `@<number>` with their JIDs, as in text.
+      const { text: caption, jids } = mentionPayload();
       draft = "";
       delete drafts[selectedChat];
+      chosenMentions = [];
+      mentionQuery = null;
       stopTyping();
-      await sendPending(caption);
+      await sendPending(caption, jids.filter((j) => j !== "@all"));
       return;
     }
     if (!draft.trim()) return;
@@ -1233,20 +1429,51 @@
     return canvas.toDataURL("image/jpeg", 0.7);
   }
 
+  /** Draws an SVG to a PNG whose longer side is Full HD, since WhatsApp cannot show SVGs. */
+  async function rasterizeSvg(file: File): Promise<File> {
+    const LONG_SIDE = 1920;
+    const url = URL.createObjectURL(file);
+    try {
+      const image = new Image();
+      image.src = url;
+      await image.decode();
+      // An SVG without width and height has no intrinsic size; treat it as square.
+      const naturalWidth = image.naturalWidth || LONG_SIDE;
+      const naturalHeight = image.naturalHeight || LONG_SIDE;
+      const scale = LONG_SIDE / Math.max(naturalWidth, naturalHeight);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(naturalHeight * scale));
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("no 2d context to draw the SVG");
+      context.imageSmoothingQuality = "high";
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise<Blob | null>((done) => canvas.toBlob(done, "image/png"));
+      if (!blob) throw new Error("the SVG could not be drawn");
+      return new File([blob], `${file.name.replace(/\.svg$/i, "")}.png`, { type: "image/png" });
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
   /** Stages a file for review rather than sending it straight away. */
   async function stageFile(file: File) {
     try {
+      if (file.type === "image/svg+xml" || /\.svg$/i.test(file.name)) file = await rasterizeSvg(file);
       const kind = file.type.startsWith("image/")
         ? "image"
         : file.type.startsWith("video/")
           ? "video"
           : "other";
 
-      let url = "";
-      if (kind === "image") url = await imagePreview(file);
-      else if (kind === "video") url = URL.createObjectURL(file);
-
-      pending = [...pending, { id: pendingSeq++, file, url, kind, caption: "" }];
+      // Staged before the preview is drawn, so Enter can send it straight away.
+      const id = pendingSeq++;
+      pending = [...pending, { id, file, url: kind === "video" ? URL.createObjectURL(file) : "", kind, caption: "" }];
+      composerInput?.focus();
+      if (kind === "image") {
+        const url = await imagePreview(file);
+        pending = pending.map((p) => (p.id === id ? { ...p, url } : p));
+      }
     } catch (e) {
       // Staging must never take the chat down with it.
       error = `Could not preview that file: ${e}`;
@@ -1261,7 +1488,7 @@
   }
 
   /** Media extensions that can be staged from a pasted file path. */
-  const PASTABLE = /\.(jpe?g|png|gif|webp|mp4|mov|m4v|webm|mkv|ogg|opus|mp3|m4a|aac|wav)$/i;
+  const PASTABLE = /\.(jpe?g|png|gif|webp|svg|mp4|mov|m4v|webm|mkv|ogg|opus|mp3|m4a|aac|wav)$/i;
 
   function mimeForName(name: string) {
     const extension = name.slice(name.lastIndexOf(".") + 1).toLowerCase();
@@ -1271,6 +1498,7 @@
       png: "image/png",
       gif: "image/gif",
       webp: "image/webp",
+      svg: "image/svg+xml",
       mp4: "video/mp4",
       mov: "video/mp4",
       m4v: "video/mp4",
@@ -1365,6 +1593,21 @@
     for (const file of Array.from(event.dataTransfer?.files ?? [])) void stageFile(file);
   }
 
+  let cropping = $state(false);
+  $effect(() => {
+    void previewId;
+    cropping = false;
+  });
+  /** Swaps a staged image for its cropped or resized version. */
+  async function replacePending(id: number, file: File) {
+    const item = pending.find((p) => p.id === id);
+    if (!item) return;
+    if (item.url.startsWith("blob:")) URL.revokeObjectURL(item.url);
+    item.file = file;
+    item.url = await imagePreview(file);
+    cropping = false;
+  }
+
   function removePending(id: number) {
     const item = pending.find((p) => p.id === id);
     if (item?.url.startsWith("blob:")) URL.revokeObjectURL(item.url);
@@ -1381,19 +1624,53 @@
   }
 
   /** Upload progress while attachments go out; also the double-send guard. */
-  let sendingMedia = $state<{ done: number; total: number; current: number } | null>(null);
+  /** Files on their way out, drawn at the end of their chat until the sent message replaces them. */
+  type Outgoing = {
+    token: string;
+    chat: string;
+    kind: "image" | "video" | "other";
+    url: string;
+    name: string;
+    caption: string;
+    /** 0 to 1, from the core's upload progress. */
+    progress: number;
+  };
+  let outgoing = $state<Outgoing[]>([]);
 
   /** `text` from the composer becomes the first attachment's caption, unless it has its own. */
-  async function sendPending(text = "") {
-    if (!selectedChat || pending.length === 0 || sendingMedia) return;
-    if (text && !pending[0].caption.trim()) pending[0].caption = text;
+  async function sendPending(text = "", mentions: string[] = []) {
+    if (!selectedChat || pending.length === 0) return;
+    const captioned = !!text && !pending[0].caption.trim();
+    if (captioned) pending[0].caption = text;
+    const firstId = pending[0].id;
     const chat = selectedChat;
     const items = [...pending];
     const reply = replyingTo;
-    sendingMedia = { done: 0, total: items.length, current: items[0].id };
-    try {
-      for (const item of items) {
-        sendingMedia = { ...sendingMedia, current: item.id };
+    const once = sendOnce;
+    // The tray empties at once; each file waits in the chat as a bubble instead.
+    pending = [];
+    previewId = null;
+    replyingTo = null;
+    sendOnce = false;
+    const batch: Outgoing[] = items.map((item) => ({
+      token: `upload-${item.id}-${Date.now()}`,
+      chat,
+      kind: item.kind,
+      url: item.url,
+      name: item.file.name,
+      caption: item.caption.trim(),
+      progress: 0,
+    }));
+    outgoing = [...outgoing, ...batch];
+    scrollToBottom();
+    const finish = (token: string) => {
+      const done = outgoing.find((o) => o.token === token);
+      if (done?.url.startsWith("blob:")) URL.revokeObjectURL(done.url);
+      outgoing = outgoing.filter((o) => o.token !== token);
+    };
+    for (const [i, item] of items.entries()) {
+      const { token } = batch[i];
+      try {
         const data = await base64Of(item.file);
         const warning = await enqueue(() =>
           invoke<string | null>("send_media", {
@@ -1404,24 +1681,24 @@
             replyToId: reply?.id ?? null,
             replyToSender: reply?.sender ?? null,
             replyToText: reply?.text ?? null,
-            viewOnce: sendOnce && item.kind !== "other",
+            viewOnce: once && item.kind !== "other",
+            mentions: captioned && item.id === firstId ? mentions : [],
+            progress: token,
           }),
         );
         if (warning && settings.warn_missing_video_preview) notice = warning;
-        // Sent items leave the tray at once, so a later failure cannot resend them.
-        removePending(item.id);
-        sendingMedia = { ...sendingMedia, done: sendingMedia.done + 1 };
+        if (selectedChat === chat) await reloadMessages();
+        finish(token);
+        if (selectedChat === chat) scrollToBottom();
+      } catch (e) {
+        error = String(e);
+        // What did not go out returns to the tray, so it can be sent again.
+        for (const rest of batch.slice(i)) outgoing = outgoing.filter((o) => o.token !== rest.token);
+        pending = [...items.slice(i), ...pending];
+        break;
       }
-      replyingTo = null;
-      sendOnce = false;
-      await reloadMessages();
-      await refreshChats();
-      scrollToBottom();
-    } catch (e) {
-      error = String(e);
-    } finally {
-      sendingMedia = null;
     }
+    await refreshChats();
   }
 
   /** Base64 keeps a file a single IPC value; fine for attachments and voice notes. */
@@ -1487,44 +1764,173 @@
         chat = null;
       }
     }
-    if (chat && chat !== selectedChat) await openChat(chat);
+    if (chat ?? selectedChat) await jumpTo(chat ?? selectedChat!, id);
+  }
+
+  /** Opens a chat at a message; one older than the loaded window offers to fetch it. */
+  async function jumpTo(chat: string, id: string) {
+    if (chat !== selectedChat) await openChat(chat);
     await tick();
-    if (scroller?.querySelector(`[data-id="${id}"]`)) {
-      scrollToMessage(id);
-      return;
-    }
-    // Older than the loaded window, so offer to fetch it.
-    if (chat ?? selectedChat) {
-      pendingJump = { chat: chat ?? selectedChat!, id };
+    if (scroller?.querySelector(`[data-id="${id}"]`)) scrollToMessage(id);
+    else {
+      pendingJump = { chat, id };
+      void loadAndJump();
     }
   }
 
-  /** Loads older messages, then retries the pending jump. */
-  async function loadAndJump() {
-    if (!pendingJump) return;
-    const { chat, id } = pendingJump;
-    pendingJump = null;
+  let starredItems = $state<StarredItem[] | null>(null);
+  let showStarred = $state(false);
+  async function openStarred() {
+    showStarred = true;
+    starredItems = null;
     try {
-      await invoke("load_older", { chat, count: 50 });
-      // The older messages arrive as events, so retry once they land.
-      window.setTimeout(async () => {
-        await reloadMessages();
-        if (scroller?.querySelector(`[data-id="${id}"]`)) scrollToMessage(id);
-        else error = "That message is still not loaded.";
-      }, 2000);
+      const found = await invoke<StoredMessage[]>("starred_messages");
+      starredItems = found.map((m) => ({
+        chat: m.chat,
+        id: m.id,
+        where: chatName(m.chat),
+        author: m.from_me ? "You" : displayName(m.sender_name, m.sender),
+        text: replyPreviewText(m),
+        timestamp: m.timestamp,
+        sender: m.sender,
+        fromMe: m.from_me,
+      }));
+    } catch (e) {
+      showStarred = false;
+      error = String(e);
+    }
+  }
+
+  /** Mentions of us (everywhere or in one chat), or a search inside one chat. */
+  let finder = $state<{
+    mode: "pings" | "search";
+    chat: string | null;
+    items: FoundItem[] | null;
+    /** Search only: the query shown, how far back the chat is loaded, and whether the phone may have older days. */
+    query?: string;
+    reach?: number | null;
+    more?: boolean;
+  } | null>(null);
+  const SEARCH_LIMIT = 500;
+  const unreadPings = $derived(chats.reduce((n, c) => n + c.mention_count, 0));
+
+  function found(m: StoredMessage, across: boolean): FoundItem {
+    return {
+      chat: m.chat,
+      id: m.id,
+      where: across ? chatName(m.chat) : null,
+      author: m.from_me ? "You" : displayName(m.sender_name, m.sender),
+      text: replyPreviewText(m),
+      timestamp: m.timestamp,
+      unread: !m.read && !m.from_me,
+    };
+  }
+
+  async function openPings(chat: string | null) {
+    finder = { mode: "pings", chat, items: null };
+    try {
+      const got = await invoke<StoredMessage[]>("pings", { chat });
+      if (finder?.mode === "pings" && finder.chat === chat) finder.items = got.map((m) => found(m, chat === null));
+    } catch (e) {
+      finder = null;
+      error = String(e);
+    }
+  }
+
+  /**
+   * Searches the open finder's chat. `more` first asks the phone for the
+   * previous 24 hours of the chat, then searches again over everything kept.
+   */
+  async function searchChat(query: string, more = false) {
+    const current = finder;
+    const chat = current?.chat;
+    if (!current || !chat) return;
+    if (more && chat === selectedChat) await recallDay();
+    if (finder !== current) return;
+    const reach = messages.at(-1)?.timestamp ?? null;
+    if (!query.trim()) {
+      Object.assign(current, { items: [], query, reach, more: false });
+      return;
+    }
+    if (!more) current.items = null;
+    try {
+      const got = await invoke<StoredMessage[]>("search_messages", { chat, query, limit: SEARCH_LIMIT });
+      if (finder !== current) return;
+      Object.assign(current, {
+        items: got.map((m) => found(m, false)),
+        query,
+        reach,
+        more: !olderExhausted,
+      });
     } catch (e) {
       error = String(e);
     }
   }
 
+  /** Walks the chat's past back from the phone until the pending jump's message lands. */
+  let seeking = $state(false);
+  async function loadAndJump() {
+    if (!pendingJump || seeking) return;
+    const { chat, id } = pendingJump;
+    seeking = true;
+    try {
+      // Ten rounds of 50 reach about 500 messages back before giving up.
+      for (let round = 0; round < 10 && selectedChat === chat; round++) {
+        const before = messages.length;
+        await invoke("load_older", { chat, count: 50 });
+        // The phone answers as a history sync event; give it a moment to land.
+        await new Promise((r) => setTimeout(r, 2500));
+        messageLimit += 50;
+        await reloadMessages(true);
+        await tick();
+        if (scroller?.querySelector(`[data-id="${id}"]`)) {
+          pendingJump = null;
+          scrollToMessage(id);
+          return;
+        }
+        if (messages.length === before) break;
+      }
+      error = "Your phone did not send that message; it may be older than it keeps, or deleted.";
+    } catch (e) {
+      error = String(e);
+    } finally {
+      seeking = false;
+      pendingJump = null;
+    }
+  }
+
+  /** An SVG file sent as a document, which is drawn in place like a picture. */
+  function isSvg(m: StoredMessage) {
+    return m.media_kind === "document" && /\.svg$/i.test(m.media_path ?? m.text.split("\n")[0].trim());
+  }
+
   /** Fetches a message's media on demand. */
-  async function downloadMedia(message: StoredMessage) {
-    if (!selectedChat) return;
+  // Stickers, voice notes and SVG files read as part of the conversation, so ones that
+  // arrived before automatic fetching are fetched as soon as they are shown.
+  const autoFetched = new Set<string>();
+  $effect(() => {
+    if (!connected) return;
+    for (const m of messages) {
+      if (m.media_path || !(m.media_kind === "sticker" || m.media_kind === "audio" || isSvg(m))) continue;
+      if (autoFetched.has(m.id) || marks.view_once.some((v) => v.id === m.id)) continue;
+      autoFetched.add(m.id);
+      void untrack(() => downloadMedia(m, true));
+    }
+  });
+
+  /** Media downloads in flight, so a second click does not start another. */
+  let downloading = $state<Record<string, true>>({});
+  /** `quiet` for background fetches, whose failures only matter once clicked. */
+  async function downloadMedia(message: StoredMessage, quiet = false) {
+    if (!selectedChat || downloading[message.id]) return;
+    downloading[message.id] = true;
     try {
       await invoke("download_media", { chat: selectedChat, id: message.id });
       await reloadMessages();
     } catch (e) {
-      error = String(e);
+      if (!quiet) error = String(e);
+    } finally {
+      delete downloading[message.id];
     }
   }
 
@@ -1535,8 +1941,19 @@
     polls: Poll[];
     events: ChatEvent[];
     view_once: { id: string; opened: boolean }[];
+    forwarded: string[];
+    edited: string[];
   };
-  const NO_MARKS: Marks = { reactions: [], starred: [], pinned: null, polls: [], events: [], view_once: [] };
+  const NO_MARKS: Marks = {
+    reactions: [],
+    starred: [],
+    pinned: null,
+    polls: [],
+    events: [],
+    view_once: [],
+    forwarded: [],
+    edited: [],
+  };
   /** Reactions, stars, the pinned message, polls and events of the open chat. */
   let marks = $state<Marks>(NO_MARKS);
 
@@ -1566,6 +1983,18 @@
     scrollToBottom();
   }
 
+  /** Our own event being edited in the create dialog. */
+  let editingEvent = $state<{ chat: string; event: ChatEvent } | null>(null);
+  async function saveEvent(chat: string, id: string, fields: object) {
+    await enqueue(() => invoke("edit_event", { chat, id, event: fields }));
+    await reloadMessages();
+    await loadMarks();
+  }
+  function eventFields(event: ChatEvent) {
+    const { name, description, start, end, location, link } = event;
+    return { name, description, start, end, location, link };
+  }
+
   /** Per message: each emoji with its count, and whether one of them is ours. */
   const reactionsFor = $derived.by(() => {
     const byMessage = new Map<string, { emoji: string; count: number; mine: boolean }[]>();
@@ -1583,6 +2012,8 @@
     return byMessage;
   });
   const starred = $derived(new Set(marks.starred));
+  const edited = $derived(new Set(marks.edited));
+  const forwarded = $derived(new Set(marks.forwarded));
   const pinnedMessage = $derived(
     marks.pinned ? (messages.find((m) => m.id === marks.pinned) ?? null) : null,
   );
@@ -1591,6 +2022,16 @@
   let menu = $state<{ x: number; y: number; message: StoredMessage } | null>(null);
   let forwarding = $state<StoredMessage | null>(null);
   let deleting = $state<StoredMessage | null>(null);
+  let reporting = $state<StoredMessage | null>(null);
+  /** Our message whose delivery and reads are shown; the version reloads it on new receipts. */
+  let infoFor = $state<StoredMessage | null>(null);
+  let infoVersion = $state(0);
+  // Later readers in a group change no status, so the open info refreshes itself.
+  $effect(() => {
+    if (!infoFor) return;
+    const timer = setInterval(() => (infoVersion += 1), 3000);
+    return () => clearInterval(timer);
+  });
 
   function target(m: StoredMessage) {
     return { chat: m.chat, id: m.id, sender: m.sender, fromMe: m.from_me };
@@ -1619,6 +2060,9 @@
         },
       },
     ];
+    if (m.from_me) {
+      items.push({ label: "Message info", icon: "check", action: () => (infoFor = m) });
+    }
     if (other) {
       items.push(
         {
@@ -1668,11 +2112,7 @@
         label: "Report to admins",
         icon: "flag",
         separated: true,
-        action: () => {
-          if (window.confirm("Report this message to the group's admins?")) {
-            act(() => invoke("report_message", { chat: m.chat, id: m.id }));
-          }
-        },
+        action: () => (reporting = m),
       });
     }
     items.push({
@@ -1740,11 +2180,17 @@
     if (!message) return;
     try {
       await invoke("open_view_once", { chat: message.chat, id: message.id });
+      markPlayed(message);
     } catch (e) {
       error = String(e);
     }
     await reloadMessages();
     await loadMarks();
+  }
+  /** Tells the sender a voice note was heard or view-once media opened; the core honours the receipts setting. */
+  function markPlayed(message: StoredMessage) {
+    if (message.from_me) return;
+    invoke("mark_played", { chat: message.chat, id: message.id, sender: message.sender }).catch(() => {});
   }
   const VIEW_ONCE_LABEL: Record<string, string> = { image: "Photo", video: "Video", audio: "Voice message" };
 
@@ -1755,6 +2201,7 @@
 
   /** Opens a downloaded media file in the desktop's default application. */
   async function openMedia(path: string) {
+    if (/\.svg$/i.test(path)) return;
     try {
       await invoke("open_path", { path });
     } catch (e) {
@@ -1824,6 +2271,18 @@
       ) {
         return;
       }
+      // Staged attachments go out on Enter even when focus left the composer.
+      if (
+        event.key === "Enter" &&
+        !event.shiftKey &&
+        pending.length > 0 &&
+        target?.tagName !== "BUTTON" &&
+        !target?.closest?.("[role=dialog]")
+      ) {
+        event.preventDefault();
+        void send();
+        return;
+      }
       if (event.key.length !== 1) return;
       composerInput.focus();
     };
@@ -1847,6 +2306,18 @@
             break;
           case "disconnected":
             connected = false;
+            break;
+          case "uploadProgress": {
+            const upload = outgoing.find((o) => o.token === payload.token);
+            if (upload) upload.progress = payload.total > 0 ? payload.sent / payload.total : 0;
+            break;
+          }
+          case "loggedOut":
+            connected = false;
+            started = false;
+            await showQr(null);
+            await loadAccounts();
+            await connect();
             break;
           case "message":
             if (syncPending > 0) syncSeen += 1;
@@ -1881,6 +2352,7 @@
           case "namesUpdated":
             // Address-book names arrived after the initial fetch, so the cached
             // display names are stale until both lists reload.
+            forgetUnresolvedNames();
             await refreshChats();
             await reloadMessages();
             break;
@@ -1902,7 +2374,9 @@
               if (loadingOlder) messageLimit += 50;
               loadingOlder = false;
               clearTimeout(olderTimer);
+              const before = messages.length;
               await reloadMessages(true);
+              continueRecall(messages.length - before);
             }
             break;
           case "avatarChanged":
@@ -1912,6 +2386,9 @@
             break;
           case "typing":
             setTyping(payload.chat, payload.sender, payload.state);
+            break;
+          case "presence":
+            presence[payload.jid] = { online: payload.online, last_seen: payload.last_seen };
             break;
           case "marks":
             if (payload.chat === selectedChat) await loadMarks();
@@ -1930,8 +2407,15 @@
 
       // Reuse a stored session automatically: pairing is only needed the very
       // first time, so the button should never be shown to a paired account.
-      await connect();
+      // With several linked accounts the user picks one first.
       await loadAccounts();
+      await syncState();
+      if (!started && accountList.filter((a) => a.jid).length > 1) {
+        choosingAccount = true;
+      } else {
+        await connect();
+        await loadAccounts();
+      }
     }
 
     setup();
@@ -1964,13 +2448,17 @@
         >{@render runs(n.children)}</s
       >{/if}{/each}{/snippet}
 
-{#snippet mentionPill(user: string)}{@const target = mentionTarget(user)}{@const picture = pictureOf(target.jid)}<span
+{#snippet mentionPill(user: string)}{@const target = mentionTarget(user)}{@const picture = pictureOf(target.jid)}<button
+    type="button"
     class="mention-pill"
     class:self={target.self}
+    onclick={(e) => openProfile(target.jid, target.name, e, target.self)}
+    ondblclick={(e) => e.stopPropagation()}
     >{#if picture}<img src={convertFileSrc(picture)} alt="" />{:else}<span
         class="mention-initials"
-        style="--hue: {hue(target.jid)}">{initials(target.name)}</span
-      >{/if}@{target.name}</span
+        style="--hue: {hue(target.jid)}"
+        >{#if /\p{L}/u.test(target.name)}{initials(target.name)}{:else}<Icon name="user" size={11} />{/if}</span
+      >{/if}@{target.name}</button
   >{/snippet}
 
 {#snippet lines(list: Inline[][])}{#each list as line, i (i)}{#if i > 0}<br />{/if}{@render runs(line)}{/each}{/snippet}
@@ -1978,7 +2466,7 @@
 <!-- WhatsApp formatting, with the time's reserved space after the last line. -->
 {#snippet formatted(text: string, mine: boolean)}
   <span class="text"
-    >{#each blocks(text) as block, i (i)}{#if block.kind === "pre"}<pre class="pre">{block.text}</pre
+    >{#each blocks(asWireMentions(text)) as block, i (i)}{#if block.kind === "pre"}<pre class="pre">{block.text}</pre
         >{:else if block.kind === "quote"}<span class="quote-block">{@render lines(block.lines)}</span
         >{:else if block.kind === "list"}{#if block.ordered}<ol class="fmt-list">
             {#each block.items as item, j (j)}<li>{@render runs(item)}</li>{/each}
@@ -2038,43 +2526,153 @@
 {/if}
 
 {#if !connected}
+  {@const stage = qrSvg ? 2 : started || connecting ? 1 : 0}
+  <!-- An account that paired before signs straight back in; pairing only shows if WhatsApp asks for a code. -->
+  {@const linked = !qrSvg ? accountList.find((a) => a.id === activeAccount && a.jid) : undefined}
   <div class="pairing">
-    <h1>Hermóðr</h1>
-    <p class="lede">
-      Link this device from WhatsApp &rsaquo; Linked devices &rsaquo; Link a device.
-    </p>
-
-    {#if accountList.length > 0}
-      <div class="account-bar">
-        {#each accountList as account (account.id)}
-          <button
-            class="account"
-            class:active={account.id === activeAccount}
-            title={account.label}
-            onclick={() => switchTo(account.id)}>{account.label}</button>
-        {/each}
-        <button
-          class="account add"
-          title="Manage accounts"
-          aria-label="Manage accounts"
-          onclick={() => openSettings("accounts")}><Icon name="settings" size={14} /></button>
+    <div class="intro-glow" aria-hidden="true"></div>
+    <header class="intro-head">
+      <img class="intro-logo" src={appIcon} alt="" />
+      <div>
+        <h1>Hermóðr</h1>
+        <span class="intro-tag">WhatsApp, native on your desktop</span>
       </div>
+      <button class="icon intro-settings" title="Settings" aria-label="Settings" onclick={() => openSettings("accounts")}>
+        <Icon name="settings" size={18} />
+      </button>
+    </header>
+
+    {#if choosingAccount}
+      <div class="intro-card resume">
+        <h2>Choose an account</h2>
+        <span class="resume-who">Several WhatsApp accounts are linked on this computer.</span>
+        <div class="account-choices">
+          {#each accountList.filter((a) => a.jid) as account (account.id)}
+            <button class="account-choice" onclick={() => chooseAccount(account.id)}>
+              {#if accountAvatars[account.id]}
+                <img class="choice-avatar" src={convertFileSrc(accountAvatars[account.id]!)} alt="" />
+              {:else}
+                <span class="choice-avatar">{initials(account.label)}</span>
+              {/if}
+              <span class="choice-text">
+                <strong>{account.label}</strong>
+                <small>{phoneName(null, account.jid!)}</small>
+              </span>
+              <Icon name="chevronRight" size={16} />
+            </button>
+          {/each}
+        </div>
+      </div>
+    {:else if linked}
+      <div class="intro-card resume">
+        {#if accountAvatars[linked.id]}
+          <img class="resume-avatar" src={convertFileSrc(accountAvatars[linked.id]!)} alt="" />
+        {:else}
+          <span class="resume-avatar">{initials(linked.label)}</span>
+        {/if}
+        <h2>{started || connecting ? "Signing in" : "Welcome back"}</h2>
+        <span class="resume-who">{linked.label} · {phoneName(null, linked.jid!)}</span>
+        {#if started || connecting}
+          <div class="resume-bar" aria-label="Connecting"><span></span></div>
+          <p class="hint">Connecting to WhatsApp and catching up on new messages…</p>
+        {:else}
+          <button class="primary" onclick={connect}>Connect</button>
+        {/if}
+        {#if accountList.length > 1}
+          <div class="account-bar">
+            {#each accountList as account (account.id)}
+              {#if account.id !== linked.id}
+                <button class="account" title="Switch to {account.label}" onclick={() => switchTo(account.id)}>
+                  {#if accountAvatars[account.id]}
+                    <img src={convertFileSrc(accountAvatars[account.id]!)} alt="" />
+                  {:else}
+                    <span class="account-initial">{initials(account.label)}</span>
+                  {/if}
+                  {account.label}
+                </button>
+              {/if}
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {:else}
+    <div class="intro-card">
+      <section class="intro-steps">
+        <h2>Link this computer</h2>
+        <ol>
+          <li><span class="num">1</span><span>Open <strong>WhatsApp</strong> on your phone.</span></li>
+          <li>
+            <span class="num">2</span><span>Tap <strong>Menu</strong> or <strong>Settings</strong>, then <strong>Linked devices</strong>.</span>
+          </li>
+          <li><span class="num">3</span><span>Tap <strong>Link a device</strong>.</span></li>
+          <li><span class="num">4</span><span>Point your phone at this screen to scan the code.</span></li>
+        </ol>
+        <!-- Each stage lights up as the connection actually reaches it. -->
+        <div class="intro-progress" aria-label="Connection progress">
+          {#each ["Connecting to WhatsApp", "Waiting for your phone", "Linked"] as label, i (label)}
+            <span class="stage" class:done={stage > i} class:current={stage === i + 1 || (stage === 0 && i === 0)}>
+              <span class="stage-dot"></span>{label}
+            </span>
+          {/each}
+        </div>
+        {#if accountList.length > 0}
+          <div class="intro-accounts">
+            <span class="intro-label">Accounts on this computer</span>
+            <div class="account-bar">
+              {#each accountList as account (account.id)}
+                <button
+                  class="account"
+                  class:active={account.id === activeAccount}
+                  title={account.label}
+                  onclick={() => switchTo(account.id)}>
+                  {#if accountAvatars[account.id]}
+                    <img src={convertFileSrc(accountAvatars[account.id]!)} alt="" />
+                  {:else}
+                    <span class="account-initial">{initials(account.label)}</span>
+                  {/if}
+                  {account.label}
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/if}
+      </section>
+
+      <section class="intro-code">
+        {#if qrSvg}
+          <div class="qr" aria-label="Pairing QR code">
+            {@html qrSvg}
+            <img class="qr-logo" src={appIcon} alt="" />
+          </div>
+          <p class="hint">The code refreshes by itself. Keep this window open while you scan.</p>
+        {:else if started || connecting}
+          <div class="qr qr-loading" aria-label="Preparing a pairing code"><span class="spinner"></span></div>
+          <p class="hint">Getting a pairing code from WhatsApp…</p>
+        {:else}
+          <div class="qr qr-idle"><Icon name="message" size={48} /></div>
+          <button class="primary" onclick={connect}>Start pairing</button>
+        {/if}
+      </section>
+    </div>
     {/if}
 
-    {#if qrSvg}
-      <div class="qr" aria-label="Pairing QR code">{@html qrSvg}</div>
-      <p class="hint">The code refreshes automatically.</p>
-    {:else if started || connecting}
-      <p class="hint">Connecting…</p>
-    {:else}
-      <button class="primary" onclick={connect}>Start pairing</button>
-    {/if}
+    <p class="intro-foot">
+      Your messages stay end-to-end encrypted. History is kept only on this computer, within the limits
+      you set in Settings.
+    </p>
   </div>
 {:else}
   <div class="layout" style="grid-template-columns: {layoutColumns}">
     <aside class="chats">
       <header>
         <h1 class="title">Chats</h1>
+        <button class="icon badge-host" title="Mentions" aria-label="Mentions" onclick={() => openPings(null)}>
+          <Icon name="at" size={18} />
+          {#if unreadPings > 0}<span class="icon-badge">{unreadPings > 99 ? "99+" : unreadPings}</span>{/if}
+        </button>
+        <button class="icon" title="Starred messages" aria-label="Starred messages" onclick={openStarred}>
+          <Icon name="star" size={18} />
+        </button>
       </header>
       <label class="search">
         <Icon name="search" size={15} />
@@ -2282,16 +2880,44 @@
               <button class="chat-title" title="Group info" onclick={openGroupInfo}>
                 {title}
                 <span class="chat-sub" class:typing={typingNow}
-                  >{typingNow ?? subtitle ?? "Click for group info"}</span
+                  >{typingNow ?? subtitle ?? " "}</span
                 >
               </button>
             {:else}
               {@render avatarFor(selectedChat, title)}
               <span class="chat-title">
                 {title}
-                {#if typingNow}<span class="chat-sub typing">{typingNow}</span>{/if}
+                {#if typingNow}<span class="chat-sub typing">{typingNow}</span
+                  >{:else if presenceLabel(selectedChat)}<span class="chat-sub">{presenceLabel(selectedChat)}</span>{/if}
               </span>
             {/if}
+          </div>
+          <div class="header-tools">
+            <button
+              class="icon"
+              title="Search in this chat"
+              aria-label="Search in this chat"
+              onclick={() =>
+                (finder = {
+                  mode: "search",
+                  chat: selectedChat,
+                  items: [],
+                  reach: messages.at(-1)?.timestamp ?? null,
+                  more: !olderExhausted,
+                })}
+              ><Icon name="search" size={18} /></button>
+            {#if selectedChat.endsWith("@g.us")}
+              <button
+                class="icon"
+                title="Your mentions in this group"
+                aria-label="Your mentions in this group"
+                onclick={() => openPings(selectedChat)}><Icon name="at" size={18} /></button>
+            {/if}
+            <button
+              class="icon"
+              title="Chat settings"
+              aria-label="Chat settings"
+              onclick={() => (chatSettingsOpen = true)}><Icon name="sliders" size={18} /></button>
           </div>
           {#if mentionQueue.length > 0}
             <button class="jump-mention" title="Jump to mention" onclick={jumpNextMention}>
@@ -2313,11 +2939,12 @@
 
         <div
           class="messages"
+          class:switching
           class:group={selectedChat.endsWith("@g.us")}
           bind:this={scroller}
           onscroll={onScroll}>
           {#if messages.length > 0}
-            <button class="load-older" onclick={loadOlder} disabled={loadingOlder}>
+            <button class="load-older" onclick={() => loadOlder()} disabled={loadingOlder}>
               {loadingOlder ? "Asking your phone…" : "Load older messages"}
             </button>
           {/if}
@@ -2378,14 +3005,23 @@
               class:inline-meta={inlineMeta}
               class:has-reactions={!!reactions}
               class:sticker-only={message.media_kind === "sticker" &&
-                !!message.media_path &&
                 !message.reply_to_text &&
                 !showSender}
               class:menu-open={menu?.message.id === message.id}
+              class:edited={edited.has(message.id)}
               data-id={message.id}>
               {#if showSender}
-                <span class="sender-avatar">{@render avatarFor(bare(message.sender), senderLabel(message))}</span>
-                <span class="sender" style="--hue: {hue(message.sender)}">{senderLabel(message)}</span>
+                <button
+                  type="button"
+                  class="sender-avatar"
+                  title="Profile"
+                  onclick={(e) => openProfile(message.sender, senderLabel(message), e)}
+                  >{@render avatarFor(bare(message.sender), senderLabel(message))}</button>
+                <button
+                  type="button"
+                  class="sender"
+                  style="--hue: {hue(message.sender)}"
+                  onclick={(e) => openProfile(message.sender, senderLabel(message), e)}>{senderLabel(message)}</button>
                 {#if memberOf(message.sender)?.label}
                   <span class="member-label">{memberOf(message.sender)?.label}</span>
                 {/if}
@@ -2394,6 +3030,9 @@
               {#if message.revoked}
                 <span class="revoked">This message was deleted<span class="meta-spacer"></span></span>
               {:else}
+                {#if forwarded.has(message.id)}
+                  <span class="forwarded-mark"><Icon name="forward" size={13} /> Forwarded</span>
+                {/if}
                 {#if message.reply_to_text}
                   <button
                     type="button"
@@ -2448,6 +3087,14 @@
                   {/if}
                 {:else if message.media_kind === "sticker" && message.media_path}
                   <img class="sticker" src={convertFileSrc(message.media_path)} alt="Sticker" />
+                {:else if message.media_kind === "sticker"}
+                  <!-- Fetched on its own when shown; the placeholder keeps the sticker's space. -->
+                  <button
+                    class="sticker sticker-pending"
+                    title={downloading[message.id] ? "Loading sticker" : "Load sticker"}
+                    onclick={() => downloadMedia(message)}>
+                    {#if downloading[message.id]}<span class="spinner"></span>{:else}<Icon name="sticker" size={28} />{/if}
+                  </button>
                 {:else if message.media_kind === "image" && (message.media_path || message.media_thumb)}
                   <button
                     class="media-button"
@@ -2458,6 +3105,24 @@
                       src={convertFileSrc((message.media_path ?? message.media_thumb)!)}
                       alt={message.text}
                     />
+                    {#if !message.media_path}
+                      <span class="media-overlay">
+                        <span class="media-fetch">
+                          {#if downloading[message.id]}<span class="spinner"></span>{:else}<Icon name="download" size={22} />{/if}
+                        </span>
+                      </span>
+                    {/if}
+                  </button>
+                {:else if ["image", "video", "gif"].includes(message.media_kind ?? "") && !message.media_path}
+                  <button
+                    class="media-stub"
+                    title="Download"
+                    disabled={!!downloading[message.id]}
+                    onclick={() => downloadMedia(message)}>
+                    <span class="media-fetch">
+                      {#if downloading[message.id]}<span class="spinner"></span>{:else}<Icon name="download" size={22} />{/if}
+                    </span>
+                    <span>{message.media_kind === "image" ? "Photo" : message.media_kind === "gif" ? "GIF" : "Video"}</span>
                   </button>
                 {:else if (message.media_kind === "video" || message.media_kind === "gif") &&
                 (message.media_path || message.media_thumb)}
@@ -2478,7 +3143,24 @@
                     path={message.media_path}
                     avatar={voiceFrom ? pictureOf(voiceFrom) : null}
                     mine={message.from_me}
+                    onplayed={() => markPlayed(message)}
                     initials={initials(message.from_me ? "You" : senderLabel(message))} />
+                {:else if message.media_kind === "audio"}
+                  <!-- Not downloaded yet: the note's own row, with the download where play will be. -->
+                  <button
+                    class="voice-pending"
+                    title="Download voice message"
+                    disabled={!!downloading[message.id]}
+                    onclick={() => downloadMedia(message)}>
+                    <span class="voice-pending-icon">
+                      {#if downloading[message.id]}<span class="spinner"></span>{:else}<Icon
+                          name="download"
+                          size={18} />{/if}
+                    </span>
+                    <span class="voice-pending-bars" aria-hidden="true">
+                      {#each Array(34) as _, i (i)}<span style="height: {20 + ((i * 37) % 60)}%"></span>{/each}
+                    </span>
+                  </button>
                 {:else if message.media_kind === "poll"}
                   <PollCard
                     poll={marks.polls.find((p) => p.id === message.id)}
@@ -2488,12 +3170,27 @@
                     onvote={(options) =>
                       act(() => invoke("vote_poll", { chat: message.chat, id: message.id, options }))} />
                 {:else if message.media_kind === "event"}
+                  {@const event = marks.events.find((e) => e.id === message.id)}
                   <EventCard
-                    event={marks.events.find((e) => e.id === message.id)}
+                    {event}
                     title={message.text}
                     onopenurl={openUrl}
                     onrespond={(response) =>
-                      act(() => invoke("respond_event", { chat: message.chat, id: message.id, response }))} />
+                      act(() => invoke("respond_event", { chat: message.chat, id: message.id, response }))}
+                    onedit={message.from_me && event
+                      ? () => (editingEvent = { chat: message.chat, event })
+                      : undefined}
+                    oncancel={message.from_me && event
+                      ? () =>
+                          act(() =>
+                            saveEvent(message.chat, message.id, { ...eventFields(event), canceled: true }),
+                          )
+                      : undefined} />
+                {:else if isSvg(message) && message.media_path}
+                  <!-- An <img> never runs an SVG's scripts, so drawing it in place is safe. -->
+                  <span class="svg-file">
+                    <img class="media" src={convertFileSrc(message.media_path)} alt={message.text} />
+                  </span>
                 {:else if message.media_kind && (message.media_path || message.media_thumb)}
                   <button
                     class="file"
@@ -2509,14 +3206,22 @@
                   {@render formatted(caption, message.from_me)}
                 {/if}
 
-                {#if message.media_kind && !message.media_path && !viewOnce && message.media_kind !== "poll" && message.media_kind !== "event"}
+                {#if message.media_kind && !message.media_path && !viewOnce && !["poll", "event", "audio", "sticker", "image", "video", "gif"].includes(message.media_kind)}
                   <button class="download" onclick={() => downloadMedia(message)}>
                     <Icon name="download" size={14} />
                     Download {message.media_kind}
                   </button>
                 {/if}
 
-                {#if message.preview_url}
+                {@const invite = inviteLink(message.text)}
+                {#if invite}
+                  <InviteCard
+                    link={invite}
+                    onopen={async (jid) => {
+                      await refreshChats();
+                      void openChat(jid);
+                    }} />
+                {:else if message.preview_url}
                   <button
                     class="preview-card"
                     title="Open link"
@@ -2552,6 +3257,7 @@
               >
               <span class="meta">
                 {#if starred.has(message.id)}<span class="star"><Icon name="star" size={11} /></span>{/if}
+                {#if edited.has(message.id)}<span class="edited-mark">Edited</span>{/if}
                 {formatTime(message.timestamp)}
                 {#if message.from_me}
                   <span
@@ -2581,13 +3287,44 @@
             </div>
             </div>
           {/each}
+          {#each outgoing.filter((o) => o.chat === selectedChat) as upload (upload.token)}
+            <div class="msg-row" in:fly={{ y: 48, duration: motion(260), easing: cubicOut }}>
+              <div class="bubble mine first outgoing-upload" class:media-only={upload.kind !== "other" && !upload.caption}>
+                <div class="upload-visual" class:file-upload={upload.kind === "other" || !upload.url}>
+                  {#if upload.kind === "image" && upload.url}
+                    <img class="media" src={upload.url} alt={upload.name} />
+                  {:else if upload.kind === "video" && upload.url}
+                    <!-- svelte-ignore a11y_media_has_caption -->
+                    <video class="media" src={upload.url} preload="metadata" muted></video>
+                  {:else}
+                    <span class="upload-name"><Icon name="file" size={20} />{upload.name}</span>
+                  {/if}
+                  <span class="upload-ring" aria-label="Uploading, {Math.round(upload.progress * 100)}%">
+                    <svg viewBox="0 0 48 48" width="48" height="48">
+                      <circle class="ring-track" cx="24" cy="24" r="20" />
+                      <circle
+                        class="ring-fill"
+                        class:spinning={upload.progress === 0}
+                        cx="24"
+                        cy="24"
+                        r="20"
+                        stroke-dasharray="125.66"
+                        stroke-dashoffset={125.66 * (1 - (upload.progress || 0.12))} />
+                    </svg>
+                    <span class="ring-label">{upload.progress > 0 ? `${Math.round(upload.progress * 100)}%` : ""}</span>
+                  </span>
+                </div>
+                {#if upload.caption}<span class="upload-caption">{upload.caption}</span>{/if}
+              </div>
+            </div>
+          {/each}
           {#if typing[selectedChat]?.length}
             {@const typer = typing[selectedChat][0]}
             <div class="bubble typing-bubble first">
               {#if isGroupChat}
                 <span class="sender-avatar">{@render avatarFor(typer.sender, senderName(typer.sender))}</span>
                 <span class="sender" style="--hue: {hue(typer.sender)}">
-                  {memberOf(typer.sender)?.name && !/^\+?\d+$/.test(memberOf(typer.sender)!.name)
+                  {memberOf(typer.sender)?.name && !isPlaceholder(memberOf(typer.sender)!.name)
                     ? memberOf(typer.sender)!.name
                     : senderName(typer.sender)}
                 </span>
@@ -2635,15 +3372,8 @@
         {#if pending.length > 0}
           <div class="pending">
             {#each pending as item (item.id)}
-              <div
-                class="pending-item"
-                class:waiting={sendingMedia && sendingMedia.current !== item.id}
-                class:uploading={sendingMedia?.current === item.id}>
-                <button
-                  class="pending-thumb"
-                  title="Preview and caption"
-                  disabled={!!sendingMedia}
-                  onclick={() => (previewId = item.id)}>
+              <div class="pending-item">
+                <button class="pending-thumb" title="Preview and caption" onclick={() => (previewId = item.id)}>
                   {#if item.kind === "image"}
                     <img src={item.url} alt={item.file.name} />
                   {:else if item.kind === "video"}
@@ -2662,19 +3392,11 @@
                   class="icon remove"
                   title="Remove"
                   aria-label="Remove"
-                  disabled={!!sendingMedia}
                   onclick={() => removePending(item.id)}><Icon name="x" size={12} /></button
                 >
               </div>
             {/each}
-            <span class="pending-status">
-              {#if sendingMedia}
-                <span class="spinner"></span>
-                Sending {sendingMedia.done + 1} of {sendingMedia.total}…
-              {:else}
-                Type a caption below, then send.
-              {/if}
-            </span>
+            <span class="pending-status">Type a caption below, then press Enter.</span>
           </div>
         {/if}
 
@@ -2688,6 +3410,9 @@
                 onclick={() => selectMention(person)}
                 onmouseenter={() => (mentionIndex = i)}>
                 {person.name}
+                {#if person.username && person.username !== person.name}<span class="mention-handle"
+                    >@{person.username}</span
+                  >{/if}
               </button>
             {/each}
           </div>
@@ -2830,8 +3555,7 @@
               class="send ready"
               type="submit"
               title="Send"
-              aria-label="Send"
-              disabled={!!sendingMedia}><Icon name="send" size={18} /></button>
+              aria-label="Send"><Icon name="send" size={18} /></button>
           {/if}
           {/if}
         </form>
@@ -2866,6 +3590,15 @@
 
 {#if creating}
   <CreateDialog kind={creating} oncreate={create} onclose={() => (creating = null)} />
+{/if}
+
+{#if editingEvent}
+  {@const { chat, event } = editingEvent}
+  <CreateDialog
+    kind="event"
+    initial={event}
+    oncreate={(value) => saveEvent(chat, event.id, value as object)}
+    onclose={() => (editingEvent = null)} />
 {/if}
 
 {#if forwarding}
@@ -2903,6 +3636,113 @@
       </div>
     </div>
   </div>
+{/if}
+
+{#if reporting}
+  {@const m = reporting}
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <div
+    class="sheet-backdrop"
+    role="presentation"
+    onclick={(e) => e.target === e.currentTarget && (reporting = null)}>
+    <div class="sheet confirm" role="dialog" aria-modal="true" aria-label="Report message">
+      <h2>Report to admins?</h2>
+      <p class="hint">The group's admins see this message and that you reported it. WhatsApp is not told.</p>
+      <div class="confirm-actions">
+        <button
+          class="danger"
+          onclick={() => {
+            reporting = null;
+            act(() => invoke("report_message", { chat: m.chat, id: m.id }));
+          }}>Report</button>
+        <button onclick={() => (reporting = null)}>Cancel</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if chatSettingsOpen && selectedChat}
+  <ChatSettings
+    chat={selectedChat}
+    title={chats.find((c) => c.chat === selectedChat) ? chatLabel(chats.find((c) => c.chat === selectedChat)!) : displayName(null, selectedChat)}
+    globalAutoDownload={settings.auto_download_media}
+    picture={avatars[selectedChat] ?? null}
+    onchange={async (retention) => {
+      loadOnScroll = retention.on_demand;
+      await reloadMessages();
+      await refreshChats();
+    }}
+    onclose={() => (chatSettingsOpen = false)} />
+{/if}
+
+{#if infoFor}
+  {@const m = infoFor}
+  <MessageInfo
+    id={m.id}
+    sentAt={m.timestamp}
+    preview={replyPreviewText(m)}
+    voice={m.media_kind === "audio"}
+    group={m.chat.endsWith("@g.us")}
+    audience={m.chat === selectedChat ? Math.max(0, participants.length - 1) : 0}
+    version={infoVersion}
+    namer={(name, jid) => (name && !isPlaceholder(name) ? name : senderName(jid))}
+    picture={(jid) => pictureOf(bare(jid))}
+    onclose={() => (infoFor = null)} />
+{/if}
+
+{#if profileCard}
+  {@const card = profileCard}
+  <ProfileCard
+    jid={card.jid}
+    x={card.x}
+    y={card.y}
+    name={card.name}
+    self={card.self}
+    picture={pictureOf(card.jid)}
+    tag={memberOf(card.jid)?.label ?? null}
+    onmessage={(jid) => {
+      profileCard = null;
+      void openChat(jid);
+    }}
+    onclose={() => (profileCard = null)} />
+{/if}
+
+{#if showStarred}
+  <StarredList
+    items={starredItems}
+    onopen={(item) => {
+      showStarred = false;
+      void jumpTo(item.chat, item.id);
+    }}
+    onunstar={(item) =>
+      act(async () => {
+        await invoke("star", {
+          target: { chat: item.chat, id: item.id, sender: item.sender, fromMe: item.fromMe },
+          starred: false,
+        });
+        starredItems = starredItems?.filter((i) => i !== item) ?? null;
+      })}
+    onclose={() => (showStarred = false)} />
+{/if}
+
+{#if finder}
+  {@const inChat = finder.chat ? chatName(finder.chat) : null}
+  <MessageFinder
+    title={finder.mode === "search" ? "Search messages" : inChat ? "Your mentions" : "Mentions"}
+    subtitle={finder.mode === "search" && finder.reach
+      ? `${inChat} · searched back to ${new Date(finder.reach * 1000).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" })}`
+      : (inChat ?? (finder.mode === "pings" ? "Every message that pinged you" : null))}
+    moreLabel="Load the previous day"
+    placeholder={finder.mode === "search" ? "Search this chat" : "Filter mentions"}
+    items={finder.items}
+    empty={finder.mode === "search" ? "Type to search the messages kept on this computer." : "Nobody has mentioned you yet."}
+    onquery={finder.mode === "search" ? (q) => searchChat(q) : undefined}
+    onmore={finder.mode === "search" && finder.more ? () => searchChat(finder?.query ?? "", true) : undefined}
+    onopen={(item) => {
+      finder = null;
+      void jumpTo(item.chat, item.id);
+    }}
+    onclose={() => (finder = null)} />
 {/if}
 
 {#if onceOpen && onceOpen.media_kind !== "audio" && onceOpen.media_path}
@@ -2954,6 +3794,12 @@
     }}
     {me}
     namer={displayName}
+    onreports={() => invoke<AdminReport[]>("admin_reports", { chat: selectedChat })}
+    onallowreports={(allow) => invoke("set_allow_admin_reports", { chat: selectedChat, allow })}
+    onjump={(id) => {
+      showGroupInfo = false;
+      if (selectedChat) void jumpTo(selectedChat, id);
+    }}
     onlabel={async (label) => {
       await invoke("set_member_label", { chat: selectedChat, label });
       const user = me?.split("@")[0];
@@ -2978,11 +3824,18 @@
       role="dialog"
       aria-modal="true"
       aria-label="Attachment preview">
-      {#if previewItem.kind === "image"}
+      {#if previewItem.kind === "image" && cropping}
+        <ImageCropper
+          file={previewItem.file}
+          onapply={(file) => void replacePending(previewItem!.id, file)}
+          oncancel={() => (cropping = false)} />
+      {:else if previewItem.kind === "image"}
         <img class="preview-large" src={previewItem.url} alt={previewItem.file.name} />
+        <button class="ghost crop-button" onclick={() => (cropping = true)}>Crop or resize</button>
       {:else if previewItem.kind === "video"}
-        <!-- svelte-ignore a11y_media_has_caption -->
-        <video class="preview-large" src={previewItem.url} controls></video>
+        <div class="preview-video">
+          <VideoPlayer src={previewItem.url} autoplay={false} />
+        </div>
       {:else}
         <span class="file-icon large"><Icon name="file" size={56} /></span>
       {/if}
@@ -3001,9 +3854,8 @@
 
 {#if pendingJump}
   <div class="notice">
-    <span>That message is not loaded yet.</span>
-    <button class="link" onclick={loadAndJump}>Load older</button>
-    <button class="icon" title="Dismiss" onclick={() => (pendingJump = null)}>×</button>
+    <span class="spinner"></span>
+    <span>Fetching older messages from your phone to find it…</span>
   </div>
 {/if}
 
@@ -3088,6 +3940,8 @@
     --radius-lg: 10px;
     --font: "Segoe UI", "Helvetica Neue", system-ui, sans-serif;
     --font-size: 14.2px;
+    --motion-scale: 1;
+    --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
     color-scheme: var(--scheme, dark);
   }
   :global(html, body) {
@@ -3107,10 +3961,10 @@
   }
   :global(button) {
     transition:
-      background-color 0.15s ease,
-      color 0.15s ease,
-      opacity 0.15s ease,
-      transform 0.1s ease;
+      background-color calc(0.15s * var(--motion-scale)) var(--ease),
+      color calc(0.15s * var(--motion-scale)) var(--ease),
+      opacity calc(0.15s * var(--motion-scale)) var(--ease),
+      transform calc(0.1s * var(--motion-scale)) var(--ease);
   }
   :global(button:not(:disabled):active) {
     transform: translateY(1px);
@@ -3155,18 +4009,313 @@
     color: var(--muted);
   }
   .pairing {
+    position: relative;
     height: 100%;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 22px;
+    padding: 32px 24px;
+    box-sizing: border-box;
+    overflow: auto;
+    background: var(--chat-bg);
+  }
+  .intro-glow {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(60% 50% at 15% 10%, var(--accent-soft), transparent 70%),
+      radial-gradient(50% 40% at 90% 90%, color-mix(in srgb, var(--link) 12%, transparent), transparent 70%);
+  }
+  .intro-head,
+  .intro-card,
+  .intro-foot {
+    position: relative;
+    box-sizing: border-box;
+    width: min(920px, 100%);
+    flex: none;
+  }
+  .intro-head {
+    display: flex;
+    align-items: center;
     gap: 14px;
-    padding: 24px;
+  }
+  .intro-logo {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+  }
+  .intro-head h1 {
+    margin: 0;
+    font-size: 26px;
+    letter-spacing: -0.01em;
+  }
+  .intro-tag {
+    color: var(--muted);
+    font-size: 13.5px;
+  }
+  .intro-settings {
+    margin-left: auto;
+  }
+  .intro-card {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 40px;
+    padding: 40px 44px;
+    border: 1px solid var(--line-strong);
+    border-radius: 16px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    animation: intro-in calc(0.35s * var(--motion-scale)) var(--ease) both;
+  }
+  @keyframes intro-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+  }
+  @media (max-width: 760px) {
+    .intro-card {
+      grid-template-columns: 1fr;
+      padding: 28px 22px;
+    }
+  }
+  .intro-card.resume {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    gap: 10px;
+    width: min(460px, 100%);
     text-align: center;
   }
-  .pairing h1 {
-    margin: 0;
+  .intro-card.resume h2 {
+    margin: 8px 0 0;
     font-size: 22px;
+    font-weight: 500;
+  }
+  .resume-avatar {
+    display: grid;
+    place-items: center;
+    width: 88px;
+    height: 88px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: var(--raised-2);
+    font-size: 30px;
+    font-weight: 600;
+    box-shadow: 0 0 0 4px var(--accent-soft);
+  }
+  .resume-who {
+    color: var(--muted);
+    font-size: 13.5px;
+  }
+  .account-choices {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+    margin-top: 16px;
+  }
+  .account-choice {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--raised);
+    color: var(--text);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition:
+      background calc(0.15s * var(--motion-scale)),
+      border-color calc(0.15s * var(--motion-scale)),
+      transform calc(0.15s * var(--motion-scale));
+  }
+  .account-choice:hover {
+    background: var(--raised-2);
+    border-color: var(--accent);
+  }
+  .account-choice:active {
+    transform: scale(0.99);
+  }
+  .choice-avatar {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: var(--raised-2);
+    font-weight: 600;
+  }
+  .choice-text {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .choice-text small {
+    color: var(--muted);
+  }
+  .resume-bar {
+    width: 220px;
+    height: 4px;
+    margin-top: 10px;
+    border-radius: 999px;
+    background: var(--raised);
+    overflow: hidden;
+  }
+  .resume-bar span {
+    display: block;
+    width: 40%;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--accent);
+    animation: indeterminate 1.2s ease-in-out infinite;
+  }
+  @keyframes indeterminate {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(250%);
+    }
+  }
+  .intro-card.resume .account-bar {
+    margin-top: 14px;
+    justify-content: center;
+  }
+  .intro-card.resume .account {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .intro-card.resume .account img {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    object-fit: cover;
+  }
+  .intro-steps h2 {
+    margin: 0 0 18px;
+    font-size: 24px;
+    font-weight: 400;
+  }
+  .intro-steps ol {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    font-size: 15px;
+    line-height: 1.45;
+  }
+  .intro-steps li {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+  }
+  .intro-steps .num {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    border: 1px solid var(--line-strong);
+    color: var(--muted);
+    font-size: 12.5px;
+  }
+  .intro-progress {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 18px;
+    margin-top: 26px;
+    font-size: 12.5px;
+    color: var(--faint);
+  }
+  .stage {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .stage-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--line-strong);
+  }
+  .stage.current {
+    color: var(--text);
+  }
+  .stage.current .stage-dot {
+    background: var(--accent);
+    box-shadow: 0 0 0 4px var(--accent-soft);
+    animation: blink-dot 1.4s ease-in-out infinite;
+  }
+  .stage.done {
+    color: var(--muted);
+  }
+  .stage.done .stage-dot {
+    background: var(--accent);
+  }
+  @keyframes blink-dot {
+    50% {
+      box-shadow: 0 0 0 7px transparent;
+    }
+  }
+  .intro-accounts {
+    margin-top: 26px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .intro-label {
+    font-size: 12px;
+    color: var(--faint);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .intro-accounts .account-bar {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+  .intro-accounts .account {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .intro-accounts .account img,
+  .account-initial {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    object-fit: cover;
+  }
+  .account-initial {
+    display: grid;
+    place-items: center;
+    background: var(--raised-2);
+    font-size: 10px;
+  }
+  .intro-code {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    text-align: center;
+    max-width: 280px;
+  }
+  .intro-foot {
+    margin: 0;
+    color: var(--faint);
+    font-size: 12.5px;
+    text-align: center;
   }
   .lede {
     margin: 0;
@@ -3182,10 +4331,40 @@
     text-wrap: balance;
   }
   .qr {
+    position: relative;
     background: var(--bg);
     padding: 12px;
-    border-radius: 10px;
+    border-radius: 12px;
     line-height: 0;
+  }
+  .qr-logo {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 44px;
+    height: 44px;
+    transform: translate(-50%, -50%);
+    border-radius: 10px;
+    border: 4px solid var(--bg);
+    background: var(--bg);
+  }
+  .qr-loading,
+  .qr-idle {
+    display: grid;
+    place-items: center;
+    width: 264px;
+    height: 264px;
+    box-sizing: border-box;
+    color: var(--faint);
+  }
+  .qr-loading {
+    background: linear-gradient(100deg, var(--bg) 40%, var(--raised) 50%, var(--bg) 60%) 0 0 / 300% 100%;
+    animation: shimmer 1.4s linear infinite;
+  }
+  @keyframes shimmer {
+    to {
+      background-position: -150% 0;
+    }
   }
   .layout {
     display: grid;
@@ -3212,6 +4391,33 @@
     align-items: center;
     gap: 10px;
     min-width: 0;
+  }
+  .header-tools {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: auto;
+    flex: none;
+  }
+  .badge-host {
+    position: relative;
+  }
+  .icon-badge {
+    position: absolute;
+    top: 2px;
+    right: 0;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    box-sizing: border-box;
+    border-radius: 999px;
+    background: var(--mention);
+    color: var(--accent-ink);
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 16px;
+    text-align: center;
+    pointer-events: none;
   }
   .heading-avatar {
     flex: none;
@@ -3354,6 +4560,13 @@
     color: var(--mention-pill);
     background: var(--mention-pill-soft);
     white-space: nowrap;
+    border: 0;
+    font: inherit;
+    line-height: inherit;
+    cursor: pointer;
+  }
+  .mention-pill:hover {
+    text-decoration: underline;
   }
   .mention-pill.self {
     color: var(--mention);
@@ -3686,6 +4899,11 @@
     position: absolute;
     left: -38px;
     top: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: none;
+    cursor: pointer;
   }
   .sender-avatar .avatar {
     width: 28px;
@@ -3937,6 +5155,21 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
+    transition:
+      opacity calc(0.22s * var(--motion-scale)) var(--ease),
+      transform calc(0.22s * var(--motion-scale)) var(--ease);
+  }
+  .messages.switching {
+    opacity: 0;
+    transform: translateY(8px);
+    transition-duration: calc(0.08s * var(--motion-scale));
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .messages,
+    .messages.switching {
+      transition: none;
+      transform: none;
+    }
   }
   .messages > .bubble {
     margin-left: var(--pad-l);
@@ -3946,11 +5179,11 @@
     display: flex;
     flex-direction: column;
     padding: 1px var(--pad-r) 1px var(--pad-l);
-    transition: background-color 0.6s ease;
+    transition: background-color calc(0.6s * var(--motion-scale)) var(--ease);
   }
   .msg-row:hover {
     background: var(--row-hover);
-    transition-duration: 0.15s;
+    transition-duration: calc(0.15s * var(--motion-scale));
   }
   /* The message a reply is being drafted to. */
   .msg-row.replying {
@@ -3968,7 +5201,7 @@
   /* The message a quote or mention jump landed on. */
   .msg-row.jumped {
     background: var(--jump-soft);
-    transition-duration: 0.15s;
+    transition-duration: calc(0.15s * var(--motion-scale));
   }
   .sync-banner {
     flex: none;
@@ -3994,7 +5227,7 @@
   .sync-bar {
     height: 100%;
     background: var(--accent);
-    transition: width 0.2s ease;
+    transition: width calc(0.2s * var(--motion-scale)) var(--ease);
   }
   .bubble {
     max-width: 70%;
@@ -4072,6 +5305,24 @@
   .meta-spacer.mine {
     width: 62px;
   }
+  .bubble.edited .meta-spacer {
+    width: 86px;
+  }
+  .bubble.edited .meta-spacer.mine {
+    width: 104px;
+  }
+  .edited-mark {
+    font-style: italic;
+  }
+  .forwarded-mark {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 2px;
+    color: var(--muted);
+    font-size: 12.5px;
+    font-style: italic;
+  }
   /* The time sits on the picture instead of below it. */
   .bubble.media-only .meta {
     position: absolute;
@@ -4083,10 +5334,22 @@
     color: #eef0f2;
   }
   .sender {
+    align-self: flex-start;
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
     font-size: 12.8px;
     font-weight: 500;
     line-height: 22px;
     color: hsl(var(--hue) 65% 68%);
+    text-align: left;
+  }
+  button.sender {
+    cursor: pointer;
+  }
+  button.sender:hover {
+    text-decoration: underline;
   }
   .member-label {
     margin-top: -4px;
@@ -4132,6 +5395,46 @@
     object-fit: contain;
     border-radius: 6px;
     display: block;
+  }
+  .voice-pending {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 280px;
+    max-width: 100%;
+    padding: 6px 2px;
+    border: 0;
+    background: none;
+    color: inherit;
+    cursor: pointer;
+  }
+  .voice-pending:disabled {
+    cursor: progress;
+  }
+  .voice-pending-icon {
+    display: grid;
+    place-items: center;
+    width: 38px;
+    height: 38px;
+    flex: none;
+    border-radius: 50%;
+    border: 2px solid var(--accent);
+    color: var(--accent);
+  }
+  .voice-pending:hover:not(:disabled) .voice-pending-icon {
+    background: var(--accent-soft);
+  }
+  .voice-pending-bars {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    height: 24px;
+  }
+  .voice-pending-bars span {
+    flex: 1;
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--text) 22%, transparent);
   }
   .once {
     display: flex;
@@ -4263,6 +5566,115 @@
     text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
     pointer-events: none;
   }
+  .upload-visual {
+    position: relative;
+    display: grid;
+    place-items: center;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .upload-visual .media {
+    display: block;
+    max-width: 280px;
+    max-height: 320px;
+    filter: brightness(0.7);
+  }
+  .upload-visual.file-upload {
+    min-width: 220px;
+    min-height: 72px;
+    gap: 8px;
+    padding: 10px;
+  }
+  .upload-name {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .upload-ring {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+  }
+  .file-upload .upload-ring {
+    position: static;
+  }
+  .upload-ring svg {
+    grid-area: 1 / 1;
+    transform: rotate(-90deg);
+    border-radius: 50%;
+    background: var(--scrim);
+  }
+  .upload-ring circle {
+    fill: none;
+    stroke-width: 3.5;
+  }
+  .ring-track {
+    stroke: rgba(255, 255, 255, 0.2);
+  }
+  .ring-fill {
+    stroke: #fff;
+    stroke-linecap: round;
+    transition: stroke-dashoffset calc(0.25s * var(--motion-scale)) linear;
+  }
+  .ring-fill.spinning {
+    transform-origin: 24px 24px;
+    animation: spin 0.9s linear infinite;
+  }
+  .ring-label {
+    grid-area: 1 / 1;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .upload-caption {
+    display: block;
+    padding: 6px 4px 2px;
+  }
+  .svg-file .media {
+    width: 280px;
+    max-width: 100%;
+    max-height: 320px;
+    object-fit: contain;
+    padding: 8px;
+    box-sizing: border-box;
+    background: repeating-conic-gradient(var(--raised) 0 25%, var(--raised-2) 0 50%) 0 0 / 16px 16px;
+  }
+  .media-fetch {
+    display: grid;
+    place-items: center;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: var(--scrim);
+    color: #fff;
+    font-size: 0;
+    text-shadow: none;
+  }
+  .media-stub {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 260px;
+    max-width: 100%;
+    aspect-ratio: 4 / 3;
+    border: 0;
+    border-radius: 8px;
+    background: linear-gradient(135deg, var(--raised), var(--raised-2));
+    color: var(--muted);
+    font: inherit;
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  .media-stub:hover .media-fetch {
+    background: var(--accent);
+  }
   .download {
     align-self: flex-start;
     display: flex;
@@ -4327,6 +5739,16 @@
     height: 160px;
     object-fit: contain;
     display: block;
+  }
+  .sticker-pending {
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: 18px;
+    color: var(--faint);
+    cursor: pointer;
+    background: linear-gradient(100deg, var(--surface) 40%, var(--raised) 50%, var(--surface) 60%) 0 0 / 300% 100%;
+    animation: shimmer 1.4s linear infinite;
   }
   /* Stickers float free of a bubble, as in WhatsApp. */
   .bubble.sticker-only {
@@ -4571,10 +5993,10 @@
     animation: blink 1.2s infinite ease-in-out;
   }
   .dots i:nth-child(2) {
-    animation-delay: 0.15s;
+    animation-delay: calc(0.15s * var(--motion-scale));
   }
   .dots i:nth-child(3) {
-    animation-delay: 0.3s;
+    animation-delay: calc(0.3s * var(--motion-scale));
   }
   @keyframes blink {
     0%,
@@ -4669,25 +6091,6 @@
     color: var(--text);
     cursor: pointer;
   }
-  .pending-item.waiting {
-    opacity: 0.45;
-  }
-  /* The attachment in flight gets a spinner over its thumbnail. */
-  .pending-item.uploading .pending-thumb::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    margin: auto;
-    width: 26px;
-    height: 26px;
-    border-radius: 50%;
-    border: 3px solid rgba(255, 255, 255, 0.3);
-    border-top-color: #fff;
-    animation: spin 0.8s linear infinite;
-  }
-  .pending-item.uploading .pending-thumb {
-    filter: brightness(0.7);
-  }
   .pending-status {
     align-self: center;
     display: flex;
@@ -4761,6 +6164,18 @@
     max-height: 60vh;
     border-radius: 8px;
     object-fit: contain;
+  }
+  /* VideoPlayer sizes itself to a size container. */
+  .preview-video {
+    width: 100%;
+    height: 50vh;
+    container-type: size;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .crop-button {
+    align-self: center;
   }
   .quote-author {
     grid-area: author;
@@ -4861,6 +6276,11 @@
   .mention.active,
   .mention:hover {
     background: var(--raised);
+  }
+  .mention-handle {
+    margin-left: 6px;
+    color: var(--muted);
+    font-size: 12.5px;
   }
   .composer {
     display: flex;
