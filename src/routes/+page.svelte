@@ -4493,6 +4493,10 @@
   .badge-host {
     position: relative;
   }
+  /* Keeps the mentions button beside the starred one instead of centred. */
+  .chats header .badge-host {
+    margin-left: auto;
+  }
   .icon-badge {
     position: absolute;
     top: 2px;
