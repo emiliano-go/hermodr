@@ -79,6 +79,7 @@
     "allow-flush-media",
     "allow-clear-history",
     "allow-frontend-log",
+    "allow-group-kinds",
     "allow-open-log",
     "allow-download-media",
     "allow-set-chat-auto-download"

@@ -287,6 +287,8 @@ pub enum ServiceEvent {
     Presence { jid: String, online: bool, last_seen: Option<i64> },
     /// A group member changed their tag; empty means they cleared it.
     MemberLabel { chat: String, jid: String, label: String },
+    /// A group's settings, admins, members or name changed.
+    GroupChanged { chat: String },
     /// Reactions, stars or the pinned message of a chat changed.
     Marks { chat: String },
     /// Bytes of an outgoing file sent so far, named by the caller's token.
@@ -419,6 +421,29 @@ pub struct GroupInfo {
     pub participants: Vec<Participant>,
     /// Whether members may report messages to the group's admins.
     pub allow_admin_reports: bool,
+    /// Only admins can send messages (announcement mode).
+    pub announce: bool,
+    /// Only admins can edit the group's name, picture and description.
+    pub locked: bool,
+    /// A community's parent group, which has no conversation of its own.
+    pub community: bool,
+    /// The community's announcement group.
+    pub announcements: bool,
+    /// The community this group belongs to, and that community's name.
+    pub parent: Option<String>,
+    pub parent_name: Option<String>,
+    /// We are an admin of this group.
+    pub admin: bool,
+    /// We may send messages here.
+    pub can_send: bool,
+}
+
+/// How a group sits in a community, for the chat list.
+#[derive(Debug, Clone, Serialize)]
+pub struct GroupKind {
+    pub community: bool,
+    pub announcements: bool,
+    pub parent: Option<String>,
 }
 
 /// What an invite link card shows about its group.
@@ -550,7 +575,8 @@ pub struct Service {
     /// Shared with the event handler, which patches member tags as they change.
     group_cache: std::sync::Arc<Mutex<std::collections::HashMap<String, GroupInfo>>>,
     /// Every group the account is in, `(jid, subject)`, filled on first search.
-    groups_cache: Mutex<Vec<(String, String)>>,
+    /// Shared with the event handler, which drops it when any group changes.
+    groups_cache: Arc<Mutex<Vec<whatsapp_rust::GroupOverview>>>,
 }
 
 impl Service {
@@ -606,6 +632,8 @@ impl Service {
         let media_dir_for_events = media_dir.clone();
         let group_cache: Arc<Mutex<std::collections::HashMap<String, GroupInfo>>> = Arc::default();
         let group_cache_for_events = group_cache.clone();
+        let groups_cache: Arc<Mutex<Vec<whatsapp_rust::GroupOverview>>> = Arc::default();
+        let groups_cache_for_events = groups_cache.clone();
 
         let bot = Bot::builder()
             .with_backend(SqliteStore::new(config.session_path.to_string_lossy().as_ref()).await?)
@@ -704,6 +732,7 @@ impl Service {
                     EventKind::PictureUpdate,
                     EventKind::UndecryptableMessage,
                     EventKind::Presence,
+                    EventKind::GroupUpdate,
                 ],
                 move |event, _client| {
                     let store = store_for_events.clone();
@@ -712,6 +741,7 @@ impl Service {
                     let client_for_events = client_for_events.clone();
                     let media_dir = media_dir_for_events.clone();
                     let group_cache = group_cache_for_events.clone();
+                    let groups_cache = groups_cache_for_events.clone();
                     async move {
                         match event.as_ref() {
                             Event::Messages(batch) => {
@@ -1398,6 +1428,19 @@ impl Service {
                                     let _ = events.send(ServiceEvent::Message { message: Box::new(message) });
                                 }
                             }
+                            // Settings, admins, members or the name changed: what we
+                            // cached about the group (who may send, who is admin) is stale.
+                            Event::GroupUpdate(update) => {
+                                use whatsapp_rust::wacore::stanza::groups::GroupNotificationAction;
+                                let chat = update.group_jid.to_non_ad().to_string();
+                                log::debug!("group {chat} changed: {:?}", update.action);
+                                group_cache.lock().unwrap().remove(&chat);
+                                groups_cache.lock().unwrap().clear();
+                                if let GroupNotificationAction::Subject { subject, .. } = update.action.as_ref() {
+                                    store.set_name(&chat, subject).logged();
+                                }
+                                let _ = events.send(ServiceEvent::GroupChanged { chat });
+                            }
                             Event::UndecryptableMessage(stub) => {
                                 log::warn!(
                                     "could not decrypt message {} in {} from {} ({:?})",
@@ -1450,7 +1493,7 @@ impl Service {
                 nameless: Mutex::default(),
                 resolving: AtomicBool::new(false),
                 group_cache,
-                groups_cache: Mutex::new(Vec::new()),
+                groups_cache,
             },
             initial_rx,
         ))
@@ -1638,12 +1681,42 @@ impl Service {
         }
         participants.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
+        // Whether we are an admin, matched in whichever form the group lists us.
+        let own: Vec<String> = [self.client.pn(), self.client.lid()]
+            .into_iter()
+            .flatten()
+            .map(|j| j.to_non_ad().to_string())
+            .collect();
+        let admin = metadata.participants.iter().any(|m| {
+            m.is_admin()
+                && [Some(&m.jid), m.phone_number.as_ref(), m.lid.as_ref()]
+                    .into_iter()
+                    .flatten()
+                    .any(|j| own.contains(&j.to_non_ad().to_string()))
+        });
+        let parent = metadata.parent_group_jid.as_ref().map(|j| j.to_string());
+        let parent_name = match &parent {
+            Some(jid) => match self.store.name_for(jid).ok().flatten() {
+                Some(name) => Some(name),
+                None => self.group_overviews().await.into_iter().find(|(id, _)| id == jid).map(|(_, s)| s),
+            },
+            None => None,
+        };
+        let community = metadata.is_parent_group;
         let info = GroupInfo {
             subject: metadata.subject.clone(),
             description: metadata.description.clone(),
             created_at: metadata.creation_time,
             participants,
             allow_admin_reports: metadata.allow_admin_reports,
+            announce: metadata.is_announcement,
+            locked: metadata.is_locked,
+            community,
+            announcements: metadata.is_default_sub_group,
+            parent,
+            parent_name,
+            admin,
+            can_send: !community && (!metadata.is_announcement || admin),
         };
         self.group_cache
             .lock()
@@ -1970,7 +2043,7 @@ impl Service {
     }
 
     /// Every group the account is in, fetched once and cached.
-    async fn group_overviews(&self) -> Vec<(String, String)> {
+    async fn participating(&self) -> Vec<whatsapp_rust::GroupOverview> {
         {
             let cache = self.groups_cache.lock().unwrap();
             if !cache.is_empty() {
@@ -1979,15 +2052,44 @@ impl Service {
         }
         match self.client.groups().list_participating().await {
             Ok(groups) => {
-                let pairs: Vec<(String, String)> = groups
-                    .into_iter()
-                    .filter_map(|g| g.subject.map(|s| (g.id.to_string(), s)))
-                    .collect();
-                *self.groups_cache.lock().unwrap() = pairs.clone();
-                pairs
+                *self.groups_cache.lock().unwrap() = groups.clone();
+                groups
             }
-            Err(_) => Vec::new(),
+            Err(e) => {
+                log::warn!("could not list groups: {e}");
+                Vec::new()
+            }
         }
+    }
+
+    /// Every group the account is in, as `(jid, subject)`.
+    async fn group_overviews(&self) -> Vec<(String, String)> {
+        self.participating()
+            .await
+            .into_iter()
+            .filter_map(|g| g.subject.map(|s| (g.id.to_string(), s)))
+            .collect()
+    }
+
+    /// Community parents and subgroups among the account's groups; plain groups are left out.
+    pub async fn group_kinds(&self) -> std::collections::HashMap<String, GroupKind> {
+        use whatsapp_rust::{GroupHierarchy, SubgroupKind};
+        self.participating()
+            .await
+            .into_iter()
+            .filter_map(|g| {
+                let kind = match g.hierarchy {
+                    GroupHierarchy::Community => GroupKind { community: true, announcements: false, parent: None },
+                    GroupHierarchy::Subgroup { parent, kind } => GroupKind {
+                        community: false,
+                        announcements: kind == SubgroupKind::Announcement,
+                        parent: Some(parent.to_string()),
+                    },
+                    _ => return None,
+                };
+                Some((g.id.to_string(), kind))
+            })
+            .collect()
     }
 
     /// Pins or unpins a chat, mirroring it to the account.

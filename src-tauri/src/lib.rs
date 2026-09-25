@@ -1089,6 +1089,14 @@ async fn group_info(
         .map_err(|e| e.to_string())
 }
 
+/// Community parents and subgroups among the account's groups, by JID.
+#[tauri::command]
+async fn group_kinds(
+    state: State<'_, AppState>,
+) -> Result<std::collections::HashMap<String, hermodr_core::GroupKind>, String> {
+    Ok(state.service()?.group_kinds().await)
+}
+
 /// Opens an http(s) URL in the desktop's default browser.
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
@@ -1488,6 +1496,7 @@ pub fn run() {
             read_file,
             participants,
             group_info,
+            group_kinds,
             set_pinned,
             unread_mentions,
             avatar,

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-group-kinds"
+description = "Enables the group_kinds command without any pre-configured scope."
+commands.allow = ["group_kinds"]
+
+[[permission]]
+identifier = "deny-group-kinds"
+description = "Denies the group_kinds command without any pre-configured scope."
+commands.deny = ["group_kinds"]
