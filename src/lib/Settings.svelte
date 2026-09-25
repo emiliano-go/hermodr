@@ -73,6 +73,8 @@
   } = $props();
 
   let picker: HTMLInputElement | undefined = $state();
+  /** The account whose removal is waiting for confirmation. */
+  let removing = $state<string | null>(null);
   let pictureBusy = $state(false);
   /** Bumped per upload: the new picture reuses the old file name. */
   let pictureVersion = $state(0);
@@ -366,8 +368,27 @@
                 {:else}
                   <button class="button" onclick={() => onswitch(account.id)}>Switch</button>
                 {/if}
-                <button class="button danger" onclick={() => onremove(account.id)}>Remove</button>
+                <button
+                  class="remove-account"
+                  title="Remove account"
+                  aria-label="Remove {account.label}"
+                  onclick={() => (removing = account.id)}><Icon name="trash" size={16} /></button>
               </div>
+              {#if removing === account.id}
+                <div class="remove-confirm" role="alert">
+                  <span>
+                    Remove <strong>{account.label}</strong>? Its session and history on this computer are
+                    deleted; the phone keeps everything.
+                  </span>
+                  <button class="button" onclick={() => (removing = null)}>Cancel</button>
+                  <button
+                    class="button danger"
+                    onclick={() => {
+                      removing = null;
+                      onremove(account.id);
+                    }}>Remove</button>
+                </div>
+              {/if}
             {/each}
           </div>
           <div class="actions-row">
@@ -518,8 +539,39 @@
     gap: 10px;
     padding: 12px 14px;
   }
-  .account + .account {
+  .account + .account,
+  .remove-confirm + .account {
     border-top: 1px solid var(--line);
+  }
+  .remove-account {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    flex: none;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--faint);
+    cursor: pointer;
+    transition:
+      color 0.15s ease,
+      background-color 0.15s ease;
+  }
+  .remove-account:hover {
+    color: var(--danger);
+    background: var(--danger-soft);
+  }
+  .remove-confirm {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px 12px 60px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .remove-confirm > span {
+    flex: 1;
   }
   .account-avatar {
     width: 36px;

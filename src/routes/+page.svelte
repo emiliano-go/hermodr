@@ -18,6 +18,7 @@
   import GroupInfo, { type AdminReport } from "$lib/GroupInfo.svelte";
   import MediaViewer, { type ViewerItem } from "$lib/MediaViewer.svelte";
   import VideoPlayer from "$lib/VideoPlayer.svelte";
+  import appIcon from "../../src-tauri/icons/128x128.png";
   import ImageCropper from "$lib/ImageCropper.svelte";
   import MessageMenu, { type MenuItem } from "$lib/MessageMenu.svelte";
   import ChatPicker from "$lib/ChatPicker.svelte";
@@ -603,7 +604,6 @@
   }
 
   async function removeAccount(id: string) {
-    if (!window.confirm("Remove this account and its local data?")) return;
     try {
       if (id === activeAccount) {
         resetUi();
@@ -1731,6 +1731,7 @@
   let menu = $state<{ x: number; y: number; message: StoredMessage } | null>(null);
   let forwarding = $state<StoredMessage | null>(null);
   let deleting = $state<StoredMessage | null>(null);
+  let reporting = $state<StoredMessage | null>(null);
 
   function target(m: StoredMessage) {
     return { chat: m.chat, id: m.id, sender: m.sender, fromMe: m.from_me };
@@ -1808,11 +1809,7 @@
         label: "Report to admins",
         icon: "flag",
         separated: true,
-        action: () => {
-          if (window.confirm("Report this message to the group's admins?")) {
-            act(() => invoke("report_message", { chat: m.chat, id: m.id }));
-          }
-        },
+        action: () => (reporting = m),
       });
     }
     items.push({
@@ -2190,10 +2187,12 @@
 
 {#if !connected}
   {@const stage = qrSvg ? 2 : started || connecting ? 1 : 0}
+  <!-- An account that paired before signs straight back in; pairing only shows if WhatsApp asks for a code. -->
+  {@const linked = !qrSvg ? accountList.find((a) => a.id === activeAccount && a.jid) : undefined}
   <div class="pairing">
     <div class="intro-glow" aria-hidden="true"></div>
     <header class="intro-head">
-      <img class="intro-logo" src="/favicon.png" alt="" />
+      <img class="intro-logo" src={appIcon} alt="" />
       <div>
         <h1>Hermóðr</h1>
         <span class="intro-tag">WhatsApp, native on your desktop</span>
@@ -2203,6 +2202,39 @@
       </button>
     </header>
 
+    {#if linked}
+      <div class="intro-card resume">
+        {#if accountAvatars[linked.id]}
+          <img class="resume-avatar" src={convertFileSrc(accountAvatars[linked.id]!)} alt="" />
+        {:else}
+          <span class="resume-avatar">{initials(linked.label)}</span>
+        {/if}
+        <h2>{started || connecting ? "Signing in" : "Welcome back"}</h2>
+        <span class="resume-who">{linked.label} · {phoneName(null, linked.jid!)}</span>
+        {#if started || connecting}
+          <div class="resume-bar" aria-label="Connecting"><span></span></div>
+          <p class="hint">Connecting to WhatsApp and catching up on new messages…</p>
+        {:else}
+          <button class="primary" onclick={connect}>Connect</button>
+        {/if}
+        {#if accountList.length > 1}
+          <div class="account-bar">
+            {#each accountList as account (account.id)}
+              {#if account.id !== linked.id}
+                <button class="account" title="Switch to {account.label}" onclick={() => switchTo(account.id)}>
+                  {#if accountAvatars[account.id]}
+                    <img src={convertFileSrc(accountAvatars[account.id]!)} alt="" />
+                  {:else}
+                    <span class="account-initial">{initials(account.label)}</span>
+                  {/if}
+                  {account.label}
+                </button>
+              {/if}
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {:else}
     <div class="intro-card">
       <section class="intro-steps">
         <h2>Link this computer</h2>
@@ -2247,7 +2279,7 @@
         {#if qrSvg}
           <div class="qr" aria-label="Pairing QR code">
             {@html qrSvg}
-            <img class="qr-logo" src="/favicon.png" alt="" />
+            <img class="qr-logo" src={appIcon} alt="" />
           </div>
           <p class="hint">The code refreshes by itself. Keep this window open while you scan.</p>
         {:else if started || connecting}
@@ -2259,6 +2291,7 @@
         {/if}
       </section>
     </div>
+    {/if}
 
     <p class="intro-foot">
       Your messages stay end-to-end encrypted. History is kept only on this computer, within the limits
@@ -3150,6 +3183,29 @@
   </div>
 {/if}
 
+{#if reporting}
+  {@const m = reporting}
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <div
+    class="sheet-backdrop"
+    role="presentation"
+    onclick={(e) => e.target === e.currentTarget && (reporting = null)}>
+    <div class="sheet confirm" role="dialog" aria-modal="true" aria-label="Report message">
+      <h2>Report to admins?</h2>
+      <p class="hint">The group's admins see this message and that you reported it. WhatsApp is not told.</p>
+      <div class="confirm-actions">
+        <button
+          class="danger"
+          onclick={() => {
+            reporting = null;
+            act(() => invoke("report_message", { chat: m.chat, id: m.id }));
+          }}>Report</button>
+        <button onclick={() => (reporting = null)}>Cancel</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 {#if chatSettingsOpen && selectedChat}
   <ChatSettings
     chat={selectedChat}
@@ -3513,6 +3569,73 @@
       grid-template-columns: 1fr;
       padding: 28px 22px;
     }
+  }
+  .intro-card.resume {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    gap: 10px;
+    width: min(460px, 100%);
+    text-align: center;
+  }
+  .intro-card.resume h2 {
+    margin: 8px 0 0;
+    font-size: 22px;
+    font-weight: 500;
+  }
+  .resume-avatar {
+    display: grid;
+    place-items: center;
+    width: 88px;
+    height: 88px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: var(--raised-2);
+    font-size: 30px;
+    font-weight: 600;
+    box-shadow: 0 0 0 4px var(--accent-soft);
+  }
+  .resume-who {
+    color: var(--muted);
+    font-size: 13.5px;
+  }
+  .resume-bar {
+    width: 220px;
+    height: 4px;
+    margin-top: 10px;
+    border-radius: 999px;
+    background: var(--raised);
+    overflow: hidden;
+  }
+  .resume-bar span {
+    display: block;
+    width: 40%;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--accent);
+    animation: indeterminate 1.2s ease-in-out infinite;
+  }
+  @keyframes indeterminate {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(250%);
+    }
+  }
+  .intro-card.resume .account-bar {
+    margin-top: 14px;
+    justify-content: center;
+  }
+  .intro-card.resume .account {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .intro-card.resume .account img {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    object-fit: cover;
   }
   .intro-steps h2 {
     margin: 0 0 18px;
