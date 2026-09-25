@@ -61,6 +61,8 @@
     preview_title: string | null;
     preview_desc: string | null;
     preview_thumb: string | null;
+    preview_site: string | null;
+    preview_color: string | null;
     status: string | null;
   };
   type ChatSummary = {
@@ -588,6 +590,9 @@
     composerInput?.focus();
   }
 
+
+  /** Link embeds whose image is large enough to draw under the text. */
+  let wideEmbeds = $state<Record<string, boolean>>({});
 
   function hostOf(url: string) {
     try {
@@ -3276,27 +3281,30 @@
                       void openChat(jid);
                     }} />
                 {:else if message.preview_url}
-                  <button
-                    class="preview-card"
-                    title="Open link"
-                    onclick={() => openUrl(message.preview_url!)}>
+                  {@const url = message.preview_url}
+                  {@const provider = message.preview_site?.trim() || hostOf(url)}
+                  {@const title = message.preview_title?.trim() !== provider ? message.preview_title?.trim() : null}
+                  {@const desc = message.preview_desc?.trim() !== url ? message.preview_desc?.trim() : null}
+                  <!-- As Discord draws embeds: a small image sits beside the text, a large one under it. -->
+                  <div class="embed" class:wide={wideEmbeds[message.id]} style:--embed-color={message.preview_color}>
+                    <div class="embed-body">
+                      <span class="embed-provider">{provider}</span>
+                      {#if title}
+                        <button type="button" class="embed-title" title={url} onclick={() => openUrl(url)}>{title}</button>
+                      {/if}
+                      {#if desc}<span class="embed-desc">{desc}</span>{/if}
+                    </div>
                     {#if message.preview_thumb}
-                      <img
-                        class="preview-thumb"
-                        src={mediaSrc(message.preview_thumb)}
-                        alt=""
-                      />
+                      <button type="button" class="embed-image" title={url} onclick={() => openUrl(url)}>
+                        <img
+                          src={mediaSrc(message.preview_thumb)}
+                          alt=""
+                          onload={(e) => {
+                            if ((e.currentTarget as HTMLImageElement).naturalWidth >= 300) wideEmbeds[message.id] = true;
+                          }} />
+                      </button>
                     {/if}
-                    <span class="preview-body">
-                      {#if message.preview_title}
-                        <span class="preview-title">{message.preview_title}</span>
-                      {/if}
-                      {#if message.preview_desc}
-                        <span class="preview-desc">{message.preview_desc}</span>
-                      {/if}
-                      <span class="preview-host">{hostOf(message.preview_url)}</span>
-                    </span>
-                  </button>
+                  </div>
                 {/if}
               {/if}
 
@@ -4564,49 +4572,75 @@
     color: var(--link);
     cursor: pointer;
   }
-  .preview-card {
+  .embed {
     display: flex;
-    gap: 8px;
-    align-items: flex-start;
-    text-align: left;
-    background: var(--surface);
-    border: 0;
-    border-radius: 6px;
-    padding: 8px;
+    gap: 16px;
+    max-width: 432px;
     margin-top: 4px;
-    color: inherit;
-    font: inherit;
-    cursor: pointer;
-    max-width: 100%;
-  }
-  .preview-thumb {
-    width: 64px;
-    height: 64px;
-    object-fit: cover;
+    padding: 10px 14px 14px 12px;
+    box-sizing: border-box;
+    background: rgba(0, 0, 0, 0.18);
+    border-left: 4px solid var(--embed-color, var(--accent));
     border-radius: 4px;
-    flex: none;
   }
-  .preview-body {
+  .embed.wide {
+    flex-direction: column;
+    gap: 10px;
+  }
+  .embed-body {
+    flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 2px;
-    min-width: 0;
+    gap: 6px;
   }
-  .preview-title {
-    font-weight: 500;
-  }
-  .preview-desc {
+  .embed-provider {
     font-size: 12px;
     color: var(--muted);
-    overflow: hidden;
-    display: -webkit-box;
-    line-clamp: 2;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
   }
-  .preview-host {
-    font-size: 11px;
-    color: var(--faint);
+  .embed-title {
+    align-self: flex-start;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--link);
+    font: inherit;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 20px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .embed-title:hover {
+    text-decoration: underline;
+  }
+  .embed-desc {
+    font-size: 13.5px;
+    line-height: 18px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .embed-image {
+    flex: none;
+    align-self: flex-start;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    background: none;
+    overflow: hidden;
+    cursor: pointer;
+  }
+  .embed-image img {
+    display: block;
+    width: 80px;
+    height: 80px;
+    object-fit: cover;
+  }
+  .embed.wide .embed-image img {
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    max-height: 300px;
   }
   /* Keep the spaces the sender typed, and wrap long tokens. */
   .text {
