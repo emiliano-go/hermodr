@@ -1042,7 +1042,11 @@ impl Service {
                                 // Bound the store right after writes so the
                                 // limit holds even if the process stops.
                                 let pruning = std::time::Instant::now();
-                                let removed = match store.enforce_retention() {
+                                let mut touched: Vec<String> =
+                                    batch.messages.iter().map(|m| m.info.source.chat.to_string()).collect();
+                                touched.sort_unstable();
+                                touched.dedup();
+                                let removed = match store.enforce_retention_for(&touched) {
                                     Ok(removed) => removed,
                                     Err(e) => {
                                         log::error!("retention failed: {e}");
@@ -3485,8 +3489,10 @@ async fn stored_message(
             // Download when a destination and a client are available. A failure
             // still records the message, so the text and metadata are not lost.
             if let (Some(client), Some(dir)) = (client, media_dir) {
+                let started = std::time::Instant::now();
                 match client.download(media.downloadable.as_ref()).await {
                     Ok(bytes) => {
+                        log::debug!("downloaded {id} {} ({} KB) in {:?}", media.kind, bytes.len() / 1024, started.elapsed());
                         if std::fs::create_dir_all(dir).is_ok() {
                             let path = dir.join(format!("{}.{}", id, media.extension()));
                             if std::fs::write(&path, &bytes).is_ok() {

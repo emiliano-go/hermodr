@@ -371,6 +371,15 @@ pub struct ViewOnce {
 pub struct MessageStore {
     conn: Mutex<Connection>,
     retention: Retention,
+    /// When retention last covered every chat (unix seconds).
+    last_full_prune: std::sync::atomic::AtomicI64,
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 /// Returns up to `pages` free pages (0: all of them) to the filesystem. The
@@ -446,6 +455,8 @@ impl MessageStore {
              );
              CREATE INDEX IF NOT EXISTS idx_messages_chat_time
                  ON messages (chat, timestamp DESC);
+             -- Receipts and server acks name a message by id alone.
+             CREATE INDEX IF NOT EXISTS idx_messages_id ON messages (id);
              -- Display names, learned from message push names and group queries.
              -- Kept separately from messages because one JID has one name and
              -- it should survive pruning of the messages that revealed it.
@@ -608,6 +619,7 @@ impl MessageStore {
         Ok(Self {
             conn: Mutex::new(conn),
             retention,
+            last_full_prune: std::sync::atomic::AtomicI64::new(0),
         })
     }
 
@@ -1659,82 +1671,101 @@ impl MessageStore {
         Ok(changed)
     }
 
-    /// Applies the retention policy, returning how many messages were dropped.
-    ///
-    /// Called after writes rather than on a timer so the bound holds even if the
-    /// process is interrupted.
+    /// Applies the retention policy to every chat, returning how many messages
+    /// were dropped.
     pub fn enforce_retention(&self) -> Result<usize> {
+        self.prune(None)
+    }
+
+    /// Retention after a live batch: only the chats it wrote to, which stays
+    /// cheap on a large store, plus a pass over everything at most hourly so
+    /// quiet chats still age out. Called after writes rather than on a timer
+    /// so the bound holds even if the process is interrupted.
+    pub fn enforce_retention_for(&self, chats: &[String]) -> Result<usize> {
+        let now = unix_now();
+        if now - self.last_full_prune.load(std::sync::atomic::Ordering::Relaxed) >= 3600 {
+            self.last_full_prune.store(now, std::sync::atomic::Ordering::Relaxed);
+            return self.prune(None);
+        }
+        self.prune(Some(chats))
+    }
+
+    fn prune(&self, chats: Option<&[String]>) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
-        let mut removed = 0;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+        let json = chats.map(|c| serde_json::to_string(c).unwrap_or_default());
+        // Scoped statements filter on the (chat, timestamp) index instead of reading every row.
+        let (scope, scope_m) = if json.is_some() {
+            ("chat IN (SELECT value FROM json_each(:scope))", "m.chat IN (SELECT value FROM json_each(:scope))")
+        } else {
+            ("1", "1")
+        };
+        let run = |sql: &str, extra: &[(&str, &dyn rusqlite::ToSql)]| -> rusqlite::Result<usize> {
+            let mut params = extra.to_vec();
+            if let Some(json) = &json {
+                params.push((":scope", json));
+            }
+            conn.execute(sql, params.as_slice())
+        };
 
         // Every chat keeps its newest message, whatever its age: a quiet chat
         // must stay in the list with its last preview, not vanish.
-        const NOT_NEWEST: &str = "(chat, id) NOT IN (
-             SELECT chat, id FROM (
-                 SELECT chat, id, ROW_NUMBER() OVER (PARTITION BY chat ORDER BY timestamp DESC) AS rank
-                 FROM messages
-             ) WHERE rank = 1)";
+        let not_newest = format!(
+            "(chat, id) NOT IN (
+                 SELECT chat, id FROM (
+                     SELECT chat, id, ROW_NUMBER() OVER (PARTITION BY chat ORDER BY timestamp DESC) AS rank
+                     FROM messages WHERE {scope}
+                 ) WHERE rank = 1)"
+        );
+        let mut removed = 0;
 
         // A chat with its own window or cap is only bound by that one.
         if let Some(oldest) = self.retention.oldest_allowed() {
-            removed += conn.execute(
+            removed += run(
                 &format!(
-                    "DELETE FROM messages WHERE timestamp < ?1 AND chat NOT IN
+                    "DELETE FROM messages WHERE {scope} AND timestamp < :oldest AND chat NOT IN
                          (SELECT jid FROM chat_retention WHERE max_age_hours IS NOT NULL)
-                     AND {NOT_NEWEST}"
+                     AND {not_newest}"
                 ),
-                params![oldest],
+                &[(":oldest", &oldest)],
             )?;
         }
-        removed += conn.execute(
+        removed += run(
             &format!(
-                "DELETE FROM messages WHERE EXISTS (
+                "DELETE FROM messages WHERE {scope} AND EXISTS (
                      SELECT 1 FROM chat_retention r WHERE r.jid = messages.chat
-                     AND r.max_age_hours > 0 AND messages.timestamp < ?1 - r.max_age_hours * 3600)
-                 AND {NOT_NEWEST}"
+                     AND r.max_age_hours > 0 AND messages.timestamp < :now - r.max_age_hours * 3600)
+                 AND {not_newest}"
             ),
-            params![now],
+            &[(":now", &unix_now())],
         )?;
 
         // Rank within each chat and drop everything past its cap.
-        removed += conn.execute(
-            "DELETE FROM messages WHERE (chat, id) IN (
-                 SELECT chat, id FROM (
-                     SELECT m.chat, m.id,
-                            ROW_NUMBER() OVER (PARTITION BY m.chat ORDER BY m.timestamp DESC) AS rank,
-                            COALESCE(r.max_messages, ?1) AS cap
-                     FROM messages m LEFT JOIN chat_retention r ON r.jid = m.chat
-                 ) WHERE cap > 0 AND rank > cap
-             )",
-            params![self.retention.max_messages_per_chat.map(|c| c as i64).unwrap_or(0)],
+        removed += run(
+            &format!(
+                "DELETE FROM messages WHERE (chat, id) IN (
+                     SELECT chat, id FROM (
+                         SELECT m.chat, m.id,
+                                ROW_NUMBER() OVER (PARTITION BY m.chat ORDER BY m.timestamp DESC) AS rank,
+                                COALESCE(r.max_messages, :cap) AS cap
+                         FROM messages m LEFT JOIN chat_retention r ON r.jid = m.chat
+                         WHERE {scope_m}
+                     ) WHERE cap > 0 AND rank > cap
+                 )"
+            ),
+            &[(":cap", &self.retention.max_messages_per_chat.map(|c| c as i64).unwrap_or(0))],
         )?;
 
-        conn.execute(
-            "DELETE FROM forwarded WHERE NOT EXISTS (
-                 SELECT 1 FROM messages m WHERE m.chat = forwarded.chat AND m.id = forwarded.id)",
-            [],
-        )?;
-        conn.execute(
-            "DELETE FROM edited WHERE NOT EXISTS (
-                 SELECT 1 FROM messages m WHERE m.chat = edited.chat AND m.id = edited.id)",
-            [],
-        )?;
-        conn.execute(
-            "DELETE FROM view_once WHERE NOT EXISTS (
-                 SELECT 1 FROM messages m WHERE m.chat = view_once.chat AND m.id = view_once.id)",
-            [],
-        )?;
-        conn.execute(
-            "DELETE FROM receipts WHERE NOT EXISTS (
-                 SELECT 1 FROM messages m WHERE m.id = receipts.id)",
-            [],
-        )?;
-
+        // State attached to messages only goes stale when messages go.
         if removed > 0 {
+            conn.execute_batch(
+                "DELETE FROM forwarded WHERE NOT EXISTS (
+                     SELECT 1 FROM messages m WHERE m.chat = forwarded.chat AND m.id = forwarded.id);
+                 DELETE FROM edited WHERE NOT EXISTS (
+                     SELECT 1 FROM messages m WHERE m.chat = edited.chat AND m.id = edited.id);
+                 DELETE FROM view_once WHERE NOT EXISTS (
+                     SELECT 1 FROM messages m WHERE m.chat = view_once.chat AND m.id = view_once.id);
+                 DELETE FROM receipts WHERE NOT EXISTS (SELECT 1 FROM messages m WHERE m.id = receipts.id);",
+            )?;
             reclaim(&conn, 2_000)?;
         }
         Ok(removed)
@@ -1791,6 +1822,22 @@ mod tests {
             text: text.into(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn scoped_retention_only_touches_the_given_chats() {
+        let s = store(Retention { max_age_hours: None, max_messages_per_chat: Some(1) });
+        for chat in ["a@s", "b@s"] {
+            s.insert_message(&msg(chat, "old", 2, "x")).unwrap();
+            s.insert_message(&msg(chat, "new", 1, "y")).unwrap();
+        }
+        // The first call is the hourly full pass; mark it done to test the scoped one.
+        s.last_full_prune.store(unix_now(), std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(s.enforce_retention_for(&["a@s".to_string()]).unwrap(), 1);
+        assert_eq!(s.messages_for("a@s", 10).unwrap().len(), 1);
+        assert_eq!(s.messages_for("b@s", 10).unwrap().len(), 2);
+        assert_eq!(s.enforce_retention().unwrap(), 1);
+        assert_eq!(s.messages_for("b@s", 10).unwrap().len(), 1);
     }
 
     #[test]
