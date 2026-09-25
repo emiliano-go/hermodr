@@ -3160,13 +3160,6 @@
             {/if}
             <button
               class="icon"
-              class:active={chatHidden}
-              title={chatHidden ? "Typing and read receipts hidden here" : "Hide typing and read receipts here"}
-              aria-label="Hide typing and read receipts here"
-              aria-pressed={chatHidden}
-              onclick={toggleChatPrivacy}><Icon name={chatHidden ? "eyeOff" : "eye"} size={18} /></button>
-            <button
-              class="icon"
               title="Chat settings"
               aria-label="Chat settings"
               onclick={() => (chatSettingsOpen = true)}><Icon name="sliders" size={18} /></button>
@@ -3767,6 +3760,14 @@
             placeholder={pending.length > 0 ? "Add a caption (optional)" : "Type a message"}
           ></textarea>
           <div class="composer-tools">
+            <button
+              type="button"
+              class="icon"
+              class:active={chatHidden}
+              title={chatHidden ? "Typing and read receipts hidden here" : "Hide typing and read receipts here"}
+              aria-label="Hide typing and read receipts here"
+              aria-pressed={chatHidden}
+              onclick={toggleChatPrivacy}><Icon name={chatHidden ? "eyeOff" : "eye"} size={20} /></button>
             <button
               type="button"
               class="icon tool-text"
@@ -6076,8 +6077,7 @@
     width: 38px;
     height: 38px;
   }
-  .composer-tools .icon.active,
-  .header-tools .icon.active {
+  .composer-tools .icon.active {
     color: var(--accent);
   }
   .once-toggle {
