@@ -287,9 +287,11 @@
           oninput={(e) => (tagDraft = e.currentTarget.value)}
           onkeydown={(e) => e.key === "Enter" && saveTag()} />
         <button
-          class="button primary"
+          class="tag-add"
+          title={self?.label ? "Save tag" : "Add tag"}
+          aria-label={self?.label ? "Save tag" : "Add tag"}
           disabled={tagBusy || tagValue.trim() === (self?.label ?? "")}
-          onclick={saveTag}>{tagBusy ? "Saving…" : "Save"}</button>
+          onclick={saveTag}><Icon name={self?.label ? "check" : "plus"} size={16} /></button>
       </div>
       {#if tagError}<p class="error-text">{tagError}</p>{/if}
     </div>
@@ -302,24 +304,20 @@
       <input class="switch" type="checkbox" checked={pinned} onchange={onpin} />
     </label>
 
+    {#if info.admin || self?.admin}
     <label class="setting">
       <div>
         <span class="setting-title">Reports to admins</span>
-        <span class="setting-desc">
-          {self?.admin
-            ? "Lets members report messages to this group's admins, not to WhatsApp."
-            : info.allow_admin_reports
-              ? "Members can report messages to the admins from a message's menu."
-              : "The admins have turned reports off in this group."}
-        </span>
+        <span class="setting-desc">Lets members report messages to this group's admins, not to WhatsApp.</span>
       </div>
       <input
         class="switch"
         type="checkbox"
         checked={info.allow_admin_reports}
-        disabled={!self?.admin || allowBusy}
+        disabled={allowBusy}
         onchange={(e) => setAllow(e.currentTarget.checked)} />
     </label>
+    {/if}
   {:else if section === "reports"}
     <h2>Reported messages</h2>
     <p class="lede">Messages members reported to the admins. Only admins see this.</p>
@@ -642,12 +640,38 @@
     background: var(--mention-self-soft);
     color: var(--text);
   }
+  /* One field with its add button inside, on the right. */
   .tag-row {
+    position: relative;
     display: flex;
-    gap: 8px;
   }
   .tag-row .field {
     flex: 1;
+    padding-right: 44px;
+  }
+  .tag-add {
+    position: absolute;
+    top: 50%;
+    right: 6px;
+    transform: translateY(-50%);
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius);
+    background: var(--accent);
+    color: var(--accent-ink);
+    cursor: pointer;
+  }
+  .tag-add:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+  .tag-add:disabled {
+    background: transparent;
+    color: var(--faint);
+    cursor: default;
   }
   .message {
     display: grid;
