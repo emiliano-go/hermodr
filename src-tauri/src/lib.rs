@@ -5,6 +5,7 @@
 //! the history, memory, or compositing problems of that approach apply.
 
 use std::{
+    io::Write as _,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -1320,14 +1321,61 @@ fn set_settings(app: AppHandle, state: State<'_, AppState>, settings: UiSettings
     Ok(())
 }
 
+/// Copies log output to stderr and to the log file. The file is unbuffered so
+/// a line written before an abort is on disk.
+struct Tee(std::fs::File);
+
+impl std::io::Write for Tee {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let _ = std::io::stderr().write_all(buf);
+        self.0.write_all(buf)?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
+/// Sends logs and panics to `<app data>/hermodr.log` as well as stderr, which
+/// is discarded when the app is launched from a desktop entry. The file starts
+/// over once it passes 5 MB.
+fn init_logging(dir: &std::path::Path) {
+    // History sync and peer requests fail silently otherwise. RUST_LOG overrides.
+    let mut builder = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(
+        "warn,whatsapp_rust::history_sync=info,whatsapp_rust::pdo=info",
+    ));
+    let path = dir.join("hermodr.log");
+    let fresh = std::fs::metadata(&path).is_ok_and(|m| m.len() > 5 << 20);
+    let _ = std::fs::create_dir_all(dir);
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(!fresh)
+        .truncate(fresh)
+        .open(&path);
+    if let Ok(file) = file {
+        if let Ok(panics) = file.try_clone() {
+            let default = std::panic::take_hook();
+            std::panic::set_hook(Box::new(move |info| {
+                let thread = std::thread::current();
+                let _ = writeln!(
+                    &panics,
+                    "[{} ms] panic in thread '{}': {info}\n{}",
+                    now_millis(),
+                    thread.name().unwrap_or("<unnamed>"),
+                    std::backtrace::Backtrace::force_capture(),
+                );
+                default(info);
+            }));
+        }
+        builder.target(env_logger::Target::Pipe(Box::new(Tee(file))));
+    }
+    builder.init();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // History sync and peer requests fail silently otherwise. RUST_LOG overrides.
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(
-        "warn,whatsapp_rust::history_sync=info,whatsapp_rust::pdo=info",
-    ))
-    .init();
-
     // WebKitGTK's DMA-BUF renderer fails to create GBM buffers under Wayland
     // (Hyprland), aborting with "Gdk Error 71". This affects our own UI webview
     // as much as it did the old one.
@@ -1338,6 +1386,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .setup(|app| {
+            init_logging(&data_dir(app.handle()));
             let accounts = load_accounts(app.handle());
             migrate_media(app.handle(), &accounts);
 

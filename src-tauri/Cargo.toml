@@ -38,5 +38,8 @@ windows-sys = { version = "0.61", features = ["Win32_UI_Shell", "Win32_UI_Window
 codegen-units = 16
 lto = "thin"
 opt-level = 3
+# Kept: unwinding would leave poisoned state mutexes behind in a half-working
+# app. The panic hook logs before the abort.
 panic = "abort"
-strip = true
+# Symbol names stay so the logged backtrace is readable.
+strip = "debuginfo"
