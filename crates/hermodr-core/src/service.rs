@@ -72,6 +72,22 @@ fn recall_allowed(chat: &str) -> bool {
 /// pairing; an existing link keeps what it was paired with.
 use crate::store::is_placeholder_name;
 
+/// For store writes that must not stop the event loop but must not vanish
+/// either: a failure is logged with the calling line.
+trait Logged {
+    fn logged(self);
+}
+
+impl<T> Logged for Result<T> {
+    #[track_caller]
+    fn logged(self) {
+        if let Err(e) = self {
+            let at = std::panic::Location::caller();
+            log::error!("store write failed at {}:{}: {e:#}", at.file(), at.line());
+        }
+    }
+}
+
 /// Stores the LID and phone forms of one sender when a message carries both.
 fn remember_lid_pn(store: &MessageStore, sender: &Jid, alt: Option<&Jid>) {
     let Some(alt) = alt else { return };
@@ -80,14 +96,14 @@ fn remember_lid_pn(store: &MessageStore, sender: &Jid, alt: Option<&Jid>) {
         (false, true) => (alt, sender),
         _ => return,
     };
-    let _ = store.set_lid_pn(&lid.user, &pn.user);
+    store.set_lid_pn(&lid.user, &pn.user).logged();
 }
 
 /// The other address form of a bare user JID, from the session or our own record of it.
 async fn other_form(client: &Client, store: &MessageStore, bare: &Jid) -> Option<(String, String)> {
     if let Ok(Some(entry)) = client.get_lid_pn_entry(bare).await {
         let (lid, pn) = (entry.lid.to_string(), entry.phone_number.to_string());
-        let _ = store.set_lid_pn(&lid, &pn);
+        store.set_lid_pn(&lid, &pn).logged();
         return Some((lid, pn));
     }
     store.lid_pn(&bare.user).ok().flatten()
@@ -755,9 +771,9 @@ impl Service {
                                             alt.split('@').next().unwrap_or(&alt).to_string()
                                         });
                                         if is_saved {
-                                            let _ = store.set_saved_name(&sender, &name);
+                                            store.set_saved_name(&sender, &name).logged();
                                             if !is_group && !from_me {
-                                                let _ = store.set_saved_name(&chat, &name);
+                                                store.set_saved_name(&chat, &name).logged();
                                             }
                                         } else {
                                             // The bare number is only a placeholder;
@@ -767,17 +783,17 @@ impl Service {
                                                 store.name_for(jid).ok().flatten().is_none()
                                             };
                                             if unnamed(&sender) {
-                                                let _ = store.set_name(&sender, &name);
+                                                store.set_name(&sender, &name).logged();
                                             }
                                             if !is_group && !from_me && unnamed(&chat) {
-                                                let _ = store.set_name(&chat, &name);
+                                                store.set_name(&chat, &name).logged();
                                             }
                                         }
                                     }
 
                                     if !push_name.is_empty() {
                                         // Push names never override a saved one.
-                                        let _ = store.set_name(&sender, &push_name);
+                                        store.set_name(&sender, &push_name).logged();
                                         // A participant's JID has no device suffix
                                         // while a message's sender does, so store
                                         // the bare form too or the group member
@@ -789,7 +805,7 @@ impl Service {
                                                 server
                                             );
                                             if bare != sender {
-                                                let _ = store.set_name(&bare, &push_name);
+                                                store.set_name(&bare, &push_name).logged();
                                             }
                                         }
                                         // A one-to-one chat is named after its
@@ -798,7 +814,7 @@ impl Service {
                                         // never name a chat after us, which is
                                         // what turned a group into our own name.
                                         if !is_group && !from_me {
-                                            let _ = store.set_name(&chat, &push_name);
+                                            store.set_name(&chat, &push_name).logged();
                                         }
                                     }
 
@@ -862,7 +878,7 @@ impl Service {
                                                         .cloned()
                                                         .collect();
                                                     let who = if from_me { "@me".to_string() } else { voter.to_string() };
-                                                    let _ = store.set_poll_vote(&chat, &poll_id, &who, &chosen);
+                                                    store.set_poll_vote(&chat, &poll_id, &who, &chosen).logged();
                                                     let _ = events.send(ServiceEvent::Marks { chat: chat.clone() });
                                                 }
                                                 Err(e) => log::warn!("could not open a vote on poll {poll_id}: {e}"),
@@ -895,7 +911,7 @@ impl Service {
                                             match opened {
                                                 Some(answer) => {
                                                     let who = if from_me { "@me".to_string() } else { responder };
-                                                    let _ = store.set_event_response(&chat, &event_id, &who, response_name(answer.response));
+                                                    store.set_event_response(&chat, &event_id, &who, response_name(answer.response)).logged();
                                                     let _ = events.send(ServiceEvent::Marks { chat: chat.clone() });
                                                 }
                                                 None => log::warn!("could not open an RSVP to event {event_id}"),
@@ -914,7 +930,7 @@ impl Service {
                                                 inbound.info.source.sender.to_non_ad().to_string()
                                             };
                                             let emoji = reaction.text.clone().unwrap_or_default();
-                                            let _ = store.set_reaction(&chat, &target, &who, &emoji);
+                                            store.set_reaction(&chat, &target, &who, &emoji).logged();
                                             let _ = events.send(ServiceEvent::Marks { chat: chat.clone() });
                                         }
                                         continue;
@@ -923,10 +939,9 @@ impl Service {
                                         use wa::message::pin_in_chat_message::Type;
                                         let target = pin.key.as_option().and_then(|k| k.id.clone());
                                         let pinned = pin.r#type == Some(Type::PIN_FOR_ALL);
-                                        let _ = store.set_message_pin(
-                                            &chat,
-                                            target.as_deref().filter(|_| pinned),
-                                        );
+                                        store
+                                            .set_message_pin(&chat, target.as_deref().filter(|_| pinned))
+                                            .logged();
                                         let _ = events.send(ServiceEvent::Marks { chat: chat.clone() });
                                         continue;
                                     }
@@ -1003,10 +1018,10 @@ impl Service {
                                     // resolves them when drawn, so later names apply.
                                     message.local.mentioned = mentions_me(&inbound.message, &own);
                                     if inbound.message.is_view_once() {
-                                        let _ = store.set_view_once(&chat, &message.header.id, from_me);
+                                        store.set_view_once(&chat, &message.header.id, from_me).logged();
                                     }
                                     if is_forwarded(&inbound.message) {
-                                        let _ = store.set_forwarded(&chat, &message.header.id);
+                                        store.set_forwarded(&chat, &message.header.id).logged();
                                     }
                                     // Pairing only brings recent days; a reply to something
                                     // older pulls that chat's past so the quote can be opened.
@@ -1015,7 +1030,7 @@ impl Service {
                                         if store.message(&quoted_chat, &quoted).is_err() && recall_allowed(&quoted_chat) {
                                             let store = store.clone();
                                             tokio::spawn(async move {
-                                                let _ = fetch_older(&client, &store, &quoted_chat, 50).await;
+                                                fetch_older(&client, &store, &quoted_chat, 50).await.logged();
                                             });
                                         }
                                     }
@@ -1080,7 +1095,7 @@ impl Service {
                                     let recipient = receipt.source.sender.to_non_ad().to_string();
                                     let at = receipt.timestamp.timestamp();
                                     for id in receipt.message_ids.iter() {
-                                        let _ = store.record_receipt(id.as_str(), &recipient, kind, at);
+                                        store.record_receipt(id.as_str(), &recipient, kind, at).logged();
                                     }
                                 }
                                 if let Some(status) = status {
@@ -1151,11 +1166,11 @@ impl Service {
                                     .as_deref()
                                     .or(update.action.first_name.as_deref());
                                 if let Some(name) = name.filter(|n| !n.trim().is_empty()) {
-                                    let _ = store.set_saved_name(&update.jid.to_string(), name);
+                                    store.set_saved_name(&update.jid.to_string(), name).logged();
                                 }
                             }
                             Event::ContactRemoved(removed) => {
-                                let _ = store.clear_saved_name(&removed.jid.to_string());
+                                store.clear_saved_name(&removed.jid.to_string()).logged();
                             }
                             // Progress for the initial catch-up, so the UI can
                             // show how much of the backlog is still arriving.
@@ -1224,14 +1239,14 @@ impl Service {
                                             .or(conversation.username.as_deref())
                                             .filter(|n| !n.trim().is_empty());
                                         if let Some(name) = name {
-                                            let _ = store.set_name(&chat, name);
+                                            store.set_name(&chat, name).logged();
                                         }
                                     }
                                     if let Some(subject) =
                                         conversation.name.as_deref().filter(|n| !n.is_empty())
                                     {
                                         if chat.ends_with("@g.us") {
-                                            let _ = store.set_name(&chat, subject);
+                                            store.set_name(&chat, subject).logged();
                                         }
                                     }
                                     let mut added = false;
@@ -1267,7 +1282,7 @@ impl Service {
                                             continue;
                                         }
                                         if let Some(target) = revoke_target(message) {
-                                            let _ = store.revoke(&chat, &target);
+                                            store.revoke(&chat, &target).logged();
                                             continue;
                                         }
                                         remember_structures(&store, &chat, &id, &sender, message);
@@ -1374,7 +1389,7 @@ impl Service {
                                     local: LocalState { read: from_me, ..Default::default() },
                                     ..Default::default()
                                 };
-                                let _ = store.set_view_once(&chat, &id, from_me);
+                                store.set_view_once(&chat, &id, from_me).logged();
                                 if store.insert_message(&message).is_ok() {
                                     let _ = events.send(ServiceEvent::Message { message: Box::new(message) });
                                 }
@@ -1393,7 +1408,7 @@ impl Service {
                             Event::PinUpdate(pin) => {
                                 let pinned = pin.action.pinned.unwrap_or(false);
                                 let jid = pin.jid.to_non_ad().to_string();
-                                let _ = store.set_pinned(&jid, pinned);
+                                store.set_pinned(&jid, pinned).logged();
                             }
                             _ => {}
                         }
@@ -1803,7 +1818,7 @@ impl Service {
                                 .or_else(|| i.username.as_ref().map(|u| u.to_string()))
                         });
                         if let Some(found) = found.filter(|n| !n.trim().is_empty()) {
-                            let _ = self.store.set_name(&jid.to_string(), &found);
+                            self.store.set_name(&jid.to_string(), &found).logged();
                             out.insert(asked.clone(), found);
                             learned += 1;
                         } else {
@@ -3156,10 +3171,10 @@ fn message_secret(message: &wa::Message) -> Option<Vec<u8>> {
 fn remember_structures(store: &MessageStore, chat: &str, id: &str, creator: &str, message: &wa::Message) {
     let secret = message_secret(message);
     if let Some((name, options, multi)) = poll_of(message) {
-        let _ = store.save_poll(chat, id, creator, &name, &options, multi, secret.as_deref());
+        store.save_poll(chat, id, creator, &name, &options, multi, secret.as_deref()).logged();
     }
     if let Some(event) = event_of(message) {
-        let _ = store.save_event(chat, id, creator, &event, secret.as_deref());
+        store.save_event(chat, id, creator, &event, secret.as_deref()).logged();
     }
 }
 
@@ -3673,14 +3688,14 @@ fn backfill_lid_names(session_path: &std::path::Path, store: &MessageStore) {
         };
         match by_phone.get(phone.as_str()) {
             Some(name) => {
-                let _ = store.set_saved_name(&address, name);
-                let _ = store.set_saved_name(&format!("{bare}@lid"), name);
+                store.set_saved_name(&address, name).logged();
+                store.set_saved_name(&format!("{bare}@lid"), name).logged();
             }
             // Without a saved name, show the phone number instead of the LID,
             // which nobody can read.
             None => {
-                let _ = store.set_name(&address, phone);
-                let _ = store.set_name(&format!("{bare}@lid"), phone);
+                store.set_name(&address, phone).logged();
+                store.set_name(&format!("{bare}@lid"), phone).logged();
             }
         }
     }
