@@ -102,6 +102,7 @@
     subject: string | null;
     description: string | null;
     created_at: number | null;
+    owner: string | null;
     participants: {
       jid: string;
       name: string;

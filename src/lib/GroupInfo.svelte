@@ -12,6 +12,7 @@
     subject: string | null;
     description: string | null;
     created_at: number | null;
+    owner: string | null;
     participants: Member[];
     allow_admin_reports: boolean;
     announce: boolean;
@@ -236,7 +237,8 @@
           {info.community ? "Community" : info.announcements ? "Announcements" : "Group"} · {info.participants
             .length} members{#if info.parent_name}
             · in {info.parent_name}{/if}{#if info.created_at}
-            · created {new Date(info.created_at * 1000).toLocaleDateString()}{/if}
+            · created {new Date(info.created_at * 1000).toLocaleDateString()}{/if}{#if info.owner}
+            · owned by {info.owner}{/if}
         </span>
       </div>
     </div>

@@ -418,6 +418,8 @@ pub struct GroupInfo {
     pub subject: Option<String>,
     pub description: Option<String>,
     pub created_at: Option<u64>,
+    /// Name of whoever created the group.
+    pub owner: Option<String>,
     pub participants: Vec<Participant>,
     /// Whether members may report messages to the group's admins.
     pub allow_admin_reports: bool,
@@ -1702,11 +1704,40 @@ impl Service {
             },
             None => None,
         };
+        // The creator may have left, so a member's name comes first, then anything known.
+        let creator: Vec<String> = [metadata.creator.as_ref(), metadata.creator_pn.as_ref()]
+            .into_iter()
+            .flatten()
+            .map(|j| j.to_non_ad().to_string())
+            .collect();
+        let owner = metadata
+            .participants
+            .iter()
+            .find(|m| {
+                [Some(&m.jid), m.phone_number.as_ref(), m.lid.as_ref()]
+                    .into_iter()
+                    .flatten()
+                    .any(|j| creator.contains(&j.to_non_ad().to_string()))
+            })
+            .and_then(|m| {
+                let jid = m.jid.to_non_ad().to_string();
+                participants.iter().find(|p| p.jid == jid)
+            })
+            .map(|p| p.name.clone())
+            .or_else(|| {
+                creator
+                    .iter()
+                    .filter_map(|j| self.store.name_for(j).ok().flatten())
+                    .find(|n| !is_placeholder_name(n))
+            })
+            .or_else(|| metadata.creator_username.clone())
+            .or_else(|| metadata.creator_pn.as_ref().map(|j| format!("+{}", j.user)));
         let community = metadata.is_parent_group;
         let info = GroupInfo {
             subject: metadata.subject.clone(),
             description: metadata.description.clone(),
             created_at: metadata.creation_time,
+            owner,
             participants,
             allow_admin_reports: metadata.allow_admin_reports,
             announce: metadata.is_announcement,
