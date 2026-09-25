@@ -1387,71 +1387,43 @@ impl MessageStore {
     /// One summary per chat, most recently active first.
     pub fn chats(&self) -> Result<Vec<ChatSummary>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT m.chat,
-                    MAX(m.timestamp) AS last_message_at,
-                    COUNT(*) AS message_count,
-                    n.name,
-                    SUM(CASE WHEN m.read = 0 AND m.from_me = 0 THEN 1 ELSE 0 END)
-                        AS unread_count,
-                    SUM(CASE WHEN m.read = 0 AND m.from_me = 0 AND m.mentioned = 1
-                        THEN 1 ELSE 0 END) AS mention_count,
-                    MAX(CASE WHEN p.jid IS NOT NULL THEN 1 ELSE 0 END) AS pinned
-             FROM messages m
-             LEFT JOIN names n ON n.jid = m.chat
-             LEFT JOIN pins p ON p.jid = m.chat
-             GROUP BY m.chat ORDER BY pinned DESC, last_message_at DESC",
+        let mut stmt = conn.prepare_cached(
+            // The preview row is one index seek per chat; a window over every
+            // message would copy the whole table into a temporary sort.
+            "SELECT g.chat, g.last_message_at, g.message_count, n.name, g.unread_count,
+                    g.mention_count, p.jid IS NOT NULL AS pinned,
+                    m.text, m.from_me, s.name, m.sender, m.media_kind
+             FROM (SELECT chat,
+                          MAX(timestamp) AS last_message_at,
+                          COUNT(*) AS message_count,
+                          SUM(read = 0 AND from_me = 0) AS unread_count,
+                          SUM(read = 0 AND from_me = 0 AND mentioned = 1) AS mention_count
+                   FROM messages GROUP BY chat) g
+             JOIN messages m ON m.rowid =
+                  (SELECT rowid FROM messages WHERE chat = g.chat ORDER BY timestamp DESC LIMIT 1)
+             LEFT JOIN names n ON n.jid = g.chat
+             LEFT JOIN names s ON s.jid = m.sender
+             LEFT JOIN pins p ON p.jid = g.chat
+             ORDER BY pinned DESC, g.last_message_at DESC",
         )?;
-        let rows = stmt.query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, i64>(2)?,
-                row.get::<_, Option<String>>(3)?,
-                row.get::<_, i64>(4)?,
-                row.get::<_, i64>(5)?,
-                row.get::<_, i64>(6)?,
-            ))
-        })?;
-
-        let mut summaries = Vec::new();
-        for row in rows {
-            let (chat, last_message_at, message_count, display_name, unread_count, mention_count, pinned) = row?;
-            // The preview is fetched separately so the aggregate query stays simple.
-            let (last_text, last_from_me, last_sender_name, last_sender, last_media_kind) = conn
-                .query_row(
-                    "SELECT m.text, m.from_me, n.name, m.sender, m.media_kind
-                     FROM messages m
-                     LEFT JOIN names n ON n.jid = m.sender
-                     WHERE m.chat = ?1
-                     ORDER BY m.timestamp DESC LIMIT 1",
-                    params![chat],
-                    |r| {
-                        Ok((
-                            r.get::<_, String>(0)?,
-                            r.get::<_, i32>(1)? != 0,
-                            r.get::<_, Option<String>>(2)?,
-                            r.get::<_, String>(3)?,
-                            r.get::<_, Option<String>>(4)?,
-                        ))
-                    },
-                )
-                .unwrap_or_default();
-            summaries.push(ChatSummary {
-                chat,
-                display_name,
-                last_message_at,
-                last_text,
-                last_from_me,
-                last_sender_name,
-                last_sender,
-                last_media_kind,
-                message_count,
-                unread_count,
-                mention_count,
-                pinned: pinned != 0,
-            });
-        }
+        let summaries = stmt
+            .query_map([], |row| {
+                Ok(ChatSummary {
+                    chat: row.get(0)?,
+                    last_message_at: row.get(1)?,
+                    message_count: row.get(2)?,
+                    display_name: row.get(3)?,
+                    unread_count: row.get(4)?,
+                    mention_count: row.get(5)?,
+                    pinned: row.get::<_, i64>(6)? != 0,
+                    last_text: row.get(7)?,
+                    last_from_me: row.get::<_, i64>(8)? != 0,
+                    last_sender_name: row.get(9)?,
+                    last_sender: row.get(10)?,
+                    last_media_kind: row.get(11)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(summaries)
     }
 

@@ -472,6 +472,42 @@
     }
   }
 
+  /** Coalesces an event burst into at most one chat-list reload per 200 ms. */
+  let chatsQueued = false;
+  function queueRefreshChats() {
+    if (chatsQueued) return;
+    chatsQueued = true;
+    setTimeout(() => {
+      chatsQueued = false;
+      void refreshChats();
+    }, 200);
+  }
+
+  /** The same for the open chat; `markRead` marks what arrived as seen if the window has focus. */
+  let messagesQueued: { chat: string; follow: boolean; markRead: boolean } | null = null;
+  function queueReloadMessages(follow: boolean, markRead: boolean) {
+    if (!selectedChat) return;
+    if (messagesQueued?.chat === selectedChat) {
+      messagesQueued.follow ||= follow;
+      messagesQueued.markRead ||= markRead;
+      return;
+    }
+    const queued = (messagesQueued = { chat: selectedChat, follow, markRead });
+    setTimeout(async () => {
+      if (messagesQueued === queued) messagesQueued = null;
+      if (selectedChat !== queued.chat) return;
+      await reloadMessages();
+      if (queued.follow) scrollToBottom();
+      if (queued.markRead && document.hasFocus()) {
+        await invoke("mark_read", { chat: queued.chat }).catch(() => {});
+        queueRefreshChats();
+      }
+    }, 100);
+  }
+
+  /** When each unnamed group's subject was last asked for; the core backs off failed ones. */
+  const askedSubjects = new Map<string, number>();
+
   /**
    * Group subjects need a network query. Runs after the list is already
    * rendered so a slow query cannot delay showing new messages.
@@ -2325,36 +2361,36 @@
             if (!payload.message.from_me) {
               setTyping(payload.message.chat, bare(payload.message.sender), "paused");
             }
-            // Refresh the list first (cheap), then the conversation, so the
-            // open chat updates immediately rather than after a network query.
-            await refreshChats();
+            queueRefreshChats();
             if (payload.message.chat === selectedChat) {
-              await reloadMessages();
               // Follow the stream when already at the bottom, but never yank
               // the view down while reading older messages.
-              if (payload.message.from_me || !scrolledUp) scrollToBottom();
-              // Seen while open, but only if the window is actually focused.
-              if (!payload.message.from_me && document.hasFocus()) {
-                await invoke("mark_read", { chat: selectedChat });
-                await refreshChats();
-              }
+              queueReloadMessages(payload.message.from_me || !scrolledUp, !payload.message.from_me);
             }
             // A group seen for the first time has no name yet; look it up in
             // the background so the list stops showing a raw number.
-            if (!payload.message.from_me) resolveNames();
+            if (
+              !payload.message.from_me &&
+              payload.message.chat.endsWith("@g.us") &&
+              Date.now() - (askedSubjects.get(payload.message.chat) ?? 0) > 30_000 &&
+              !chats.find((c) => c.chat === payload.message.chat)?.display_name
+            ) {
+              askedSubjects.set(payload.message.chat, Date.now());
+              resolveNames();
+            }
             break;
           case "retentionApplied":
             if (payload.removed > 0) {
-              await refreshChats();
-              await reloadMessages();
+              queueRefreshChats();
+              queueReloadMessages(false, false);
             }
             break;
           case "namesUpdated":
             // Address-book names arrived after the initial fetch, so the cached
             // display names are stale until both lists reload.
             forgetUnresolvedNames();
-            await refreshChats();
-            await reloadMessages();
+            queueRefreshChats();
+            queueReloadMessages(false, false);
             break;
           case "syncing":
             syncPending = payload.pending;
@@ -2363,8 +2399,8 @@
           case "synced":
             // The backlog is in; refresh so the lists include everything the
             // burst delivered.
-            await refreshChats();
-            await reloadMessages();
+            queueRefreshChats();
+            queueReloadMessages(false, false);
             syncPending = 0;
             syncSeen = 0;
             break;
