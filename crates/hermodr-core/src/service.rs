@@ -2611,6 +2611,16 @@ impl Service {
         self.media_dir.clone()
     }
 
+    /// Whether the account has read receipts turned off in its privacy
+    /// settings. The protocol client keeps this in sync with the server; when
+    /// true, read and played receipts must not be sent.
+    pub fn read_receipts_disabled(&self) -> bool {
+        self.client
+            .persistence_manager()
+            .get_device_snapshot()
+            .read_receipts_disabled
+    }
+
     /// Marks a chat's incoming messages as read, and with `receipts` tells
     /// their senders. Returns how many changed.
     pub async fn mark_read(&self, chat: &str, receipts: bool) -> Result<usize> {

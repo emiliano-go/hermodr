@@ -2201,6 +2201,7 @@
 
   /** Opens a downloaded media file in the desktop's default application. */
   async function openMedia(path: string) {
+    if (/\.svg$/i.test(path)) return;
     try {
       await invoke("open_path", { path });
     } catch (e) {
@@ -3187,9 +3188,9 @@
                       : undefined} />
                 {:else if isSvg(message) && message.media_path}
                   <!-- An <img> never runs an SVG's scripts, so drawing it in place is safe. -->
-                  <button class="media-button svg-file" title="Open" onclick={() => openMedia(message.media_path!)}>
+                  <span class="svg-file">
                     <img class="media" src={convertFileSrc(message.media_path)} alt={message.text} />
-                  </button>
+                  </span>
                 {:else if message.media_kind && (message.media_path || message.media_thumb)}
                   <button
                     class="file"

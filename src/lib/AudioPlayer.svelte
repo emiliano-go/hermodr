@@ -144,7 +144,12 @@
     if (playingNow && playingNow !== audio) playingNow.pause();
     playingNow = audio;
     audio.playbackRate = rate;
-    await audio.play().catch(() => (failed = true));
+    try {
+      await audio.play();
+    } catch {
+      failed = true;
+      return;
+    }
     if (!heard) {
       heard = true;
       rememberHeard(path);

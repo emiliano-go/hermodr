@@ -362,7 +362,7 @@ fn remove_stale_sessions(base: &std::path::Path, current: &std::path::Path) {
     for entry in entries.flatten() {
         let name = entry.file_name();
         let Some(name) = name.to_str() else { continue };
-        if name.starts_with("session") && name.contains(".db") && !name.starts_with(current) {
+        if name.starts_with("session") && name.contains(".db") && name != current {
             let _ = std::fs::remove_file(entry.path());
         }
     }
@@ -544,17 +544,20 @@ async fn resolve_names(state: State<'_, AppState>) -> Result<usize, String> {
 /// Marks a chat as read. Returns how many messages were newly marked.
 #[tauri::command]
 async fn mark_read(state: State<'_, AppState>, chat: String) -> Result<usize, String> {
-    let receipts = state.settings.lock().unwrap().send_receipts;
-    state.service()?.mark_read(&chat, receipts).await.map_err(|e| e.to_string())
+    let service = state.service()?;
+    let receipts =
+        state.settings.lock().unwrap().send_receipts && !service.read_receipts_disabled();
+    service.mark_read(&chat, receipts).await.map_err(|e| e.to_string())
 }
 
 /// Sends a played receipt for a voice note or view-once media, unless receipts are off.
 #[tauri::command]
 async fn mark_played(state: State<'_, AppState>, chat: String, id: String, sender: String) -> Result<(), String> {
-    if !state.settings.lock().unwrap().send_receipts {
+    let service = state.service()?;
+    if !state.settings.lock().unwrap().send_receipts || service.read_receipts_disabled() {
         return Ok(());
     }
-    state.service()?.mark_played(&chat, &id, &sender).await.map_err(|e| e.to_string())
+    service.mark_played(&chat, &id, &sender).await.map_err(|e| e.to_string())
 }
 
 /// Sends a text message quoting an earlier one.
@@ -823,7 +826,7 @@ fn search_messages(
 ) -> Result<Vec<StoredMessage>, String> {
     state
         .service()?
-        .search_messages(&chat, &query, limit.unwrap_or(50))
+        .search_messages(&chat, &query, limit.unwrap_or(50).clamp(1, 500))
         .map_err(|e| e.to_string())
 }
 

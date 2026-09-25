@@ -464,7 +464,7 @@ impl MessageStore {
         // Masked group labels (`+598∙∙∙∙∙27`) were once stored as names, over the
         // real push names. Dropping them lets the push names come back.
         conn.execute(
-            "DELETE FROM names WHERE name GLOB '+*' AND name GLOB '*[^0-9+]*' AND name NOT GLOB '*[A-Za-z]*'",
+            "DELETE FROM names WHERE name GLOB '+*' AND name GLOB '*[^0-9+]*' AND name NOT GLOB '*[A-Za-z]*' AND saved = 0",
             [],
         )?;
 
@@ -1256,6 +1256,9 @@ impl MessageStore {
         conn.execute("DELETE FROM poll_votes WHERE chat = ?1 AND poll = ?2", params![chat, id])?;
         conn.execute("DELETE FROM event_responses WHERE chat = ?1 AND event = ?2", params![chat, id])?;
         conn.execute("DELETE FROM view_once WHERE chat = ?1 AND id = ?2", params![chat, id])?;
+        conn.execute("DELETE FROM forwarded WHERE chat = ?1 AND id = ?2", params![chat, id])?;
+        conn.execute("DELETE FROM edited WHERE chat = ?1 AND id = ?2", params![chat, id])?;
+        conn.execute("DELETE FROM receipts WHERE id = ?1", params![id])?;
         Ok(())
     }
 
@@ -1613,6 +1616,27 @@ impl MessageStore {
             params![self.retention.max_messages_per_chat.map(|c| c as i64).unwrap_or(0)],
         )?;
 
+        conn.execute(
+            "DELETE FROM forwarded WHERE NOT EXISTS (
+                 SELECT 1 FROM messages m WHERE m.chat = forwarded.chat AND m.id = forwarded.id)",
+            [],
+        )?;
+        conn.execute(
+            "DELETE FROM edited WHERE NOT EXISTS (
+                 SELECT 1 FROM messages m WHERE m.chat = edited.chat AND m.id = edited.id)",
+            [],
+        )?;
+        conn.execute(
+            "DELETE FROM view_once WHERE NOT EXISTS (
+                 SELECT 1 FROM messages m WHERE m.chat = view_once.chat AND m.id = view_once.id)",
+            [],
+        )?;
+        conn.execute(
+            "DELETE FROM receipts WHERE NOT EXISTS (
+                 SELECT 1 FROM messages m WHERE m.id = receipts.id)",
+            [],
+        )?;
+
         Ok(removed)
     }
 
@@ -1702,6 +1726,24 @@ mod tests {
         assert_eq!((a.delivered_at, a.read_at, a.played_at), (Some(10), Some(20), None));
         let b = got.iter().find(|r| r.recipient == "b").unwrap();
         assert_eq!((b.delivered_at, b.read_at, b.played_at), (Some(40), Some(40), Some(40)));
+    }
+
+    #[test]
+    fn delete_message_clears_its_related_rows() {
+        let s = store(Retention::unlimited());
+        s.upsert(&msg("a", "1", 0, "hi")).unwrap();
+        s.set_forwarded("a", "1").unwrap();
+        s.apply_edit("a", "1", "edited").unwrap();
+        s.set_view_once("a", "1", true).unwrap();
+        s.record_receipt("1", "them", "read", 10).unwrap();
+
+        s.delete_message("a", "1").unwrap();
+
+        let marks = s.marks("a").unwrap();
+        assert!(marks.forwarded.is_empty());
+        assert!(marks.edited.is_empty());
+        assert!(marks.view_once.is_empty());
+        assert!(s.receipts("1").unwrap().is_empty());
     }
 
     #[test]
