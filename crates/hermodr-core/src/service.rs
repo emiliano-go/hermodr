@@ -504,6 +504,9 @@ pub struct Service {
     /// a late subscriber would otherwise miss entirely.
     qr: Arc<Mutex<Option<String>>>,
     connected: Arc<AtomicBool>,
+    /// Groups whose subject query failed: when to retry, and the wait that set it.
+    subject_backoff: Mutex<std::collections::HashMap<String, (std::time::Instant, Duration)>>,
+    resolving: AtomicBool,
     /// Group metadata for this run, so opening a chat does not re-query the
     /// server and trip its rate limit. Group membership changes rarely enough
     /// that a session-lifetime cache is fine.
@@ -1378,6 +1381,8 @@ impl Service {
                 media_dir,
                 qr: qr_state,
                 connected: connected_state,
+                subject_backoff: Mutex::default(),
+                resolving: AtomicBool::new(false),
                 group_cache,
                 groups_cache: Mutex::new(Vec::new()),
             },
@@ -1408,15 +1413,41 @@ impl Service {
     /// Only groups need a query: a one-to-one chat is named after its contact,
     /// whose name arrives with the message itself. Returns how many were
     /// resolved, so the caller can refresh only when something changed.
+    /// A failed group waits before its next query, twice as long each time up to
+    /// half an hour; overlapping calls return 0 at once.
     pub async fn resolve_missing_names(&self) -> Result<usize> {
+        if self.resolving.swap(true, Ordering::SeqCst) {
+            return Ok(0);
+        }
+        let result = self.resolve_untried_groups().await;
+        self.resolving.store(false, Ordering::SeqCst);
+        result
+    }
+
+    async fn resolve_untried_groups(&self) -> Result<usize> {
+        let now = std::time::Instant::now();
+        let due: Vec<String> = {
+            let backoff = self.subject_backoff.lock().unwrap();
+            self.store
+                .chats()?
+                .into_iter()
+                .filter(|c| c.display_name.is_none() && c.chat.ends_with("@g.us"))
+                .map(|c| c.chat)
+                .filter(|chat| backoff.get(chat).map_or(true, |(retry_at, _)| *retry_at <= now))
+                .collect()
+        };
         let mut resolved = 0;
-        for chat in self.store.chats()? {
-            if chat.display_name.is_some() || !chat.chat.ends_with("@g.us") {
-                continue;
-            }
-            if let Some(subject) = fetch_group_subject(&self.client, &chat.chat).await {
-                self.store.set_name(&chat.chat, &subject)?;
+        for chat in due {
+            if let Some(subject) = fetch_group_subject(&self.client, &chat).await {
+                self.store.set_name(&chat, &subject)?;
+                self.subject_backoff.lock().unwrap().remove(&chat);
                 resolved += 1;
+            } else {
+                let mut backoff = self.subject_backoff.lock().unwrap();
+                let wait = backoff
+                    .get(&chat)
+                    .map_or(Duration::from_secs(30), |(_, last)| (*last * 2).min(Duration::from_secs(30 * 60)));
+                backoff.insert(chat, (std::time::Instant::now() + wait, wait));
             }
         }
         Ok(resolved)
