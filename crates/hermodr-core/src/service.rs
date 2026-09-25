@@ -1701,6 +1701,8 @@ impl Service {
                 title: p.title.clone(),
                 desc: p.description.clone(),
                 thumb: thumbnail,
+                site: p.site.clone(),
+                color: p.color.clone(),
             };
         }
         self.store.insert_message(&message)?;
@@ -3599,6 +3601,7 @@ fn link_preview(message: &wa::Message) -> LinkCard {
         title: text.title.clone(),
         desc: text.description.clone(),
         thumb: text.jpeg_thumbnail.as_deref().map(thumb_uri),
+        ..Default::default()
     }
 }
 
@@ -3732,6 +3735,10 @@ struct LinkPreview {
     title: Option<String>,
     description: Option<String>,
     thumbnail: Option<Vec<u8>>,
+    /// `og:site_name`, shown above the title.
+    site: Option<String>,
+    /// The page's `theme-color`, for the embed's side bar.
+    color: Option<String>,
 }
 
 /// The first http(s) URL in a piece of text.
@@ -3744,37 +3751,233 @@ fn first_url(text: &str) -> Option<String> {
     Some(rest[..end].to_string())
 }
 
-/// Fetches the Open Graph metadata for a URL, and its image when it is a JPEG.
+/// Fetches a page's Open Graph / Twitter card metadata and its image, the way
+/// Discord's embeds do.
 ///
-/// Blocking; call it from `spawn_blocking`. The image is only attached when it
-/// is already a JPEG and reasonably small, since WhatsApp's thumbnail field
-/// takes JPEG bytes and we do not re-encode here.
+/// Blocking; call it from `spawn_blocking`. Discord's crawler user agent is what
+/// sites with rich embeds (fxtwitter, fixupx, YouTube…) answer with full cards.
 fn fetch_link_preview(url: &str) -> Option<LinkPreview> {
-    let mut response = ureq::get(url).call().ok()?;
-    let html = response.body_mut().read_to_string().ok()?;
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .max_redirects(0)
+        .timeout_global(Some(Duration::from_secs(10)))
+        .user_agent("Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)")
+        .build()
+        .into();
+    let mut response = fetch_public(&agent, url)?;
+    let html = response.body_mut().with_config().limit(3 << 20).read_to_string().ok()?;
+    let meta = meta_tags(&html);
+    let get = |keys: &[&str]| keys.iter().find_map(|k| meta.get(*k)).filter(|v| !v.trim().is_empty()).cloned();
 
-    let meta = |property: &str| -> Option<String> {
-        let needle = format!("property=\"{property}\"");
-        let rest = &html[html.find(&needle)?..];
-        let content_at = rest.find("content=\"")? + "content=\"".len();
-        let value = &rest[content_at..];
-        Some(value[..value.find('"')?].to_string())
-    };
-
-    let image = meta("og:image").filter(|src| src.starts_with("http"));
+    let title = get(&["og:title", "twitter:title"]).or_else(|| html_title(&html));
+    let image = get(&["og:image", "og:image:url", "twitter:image", "twitter:image:src"])
+        .filter(|src| src.starts_with("http"));
     let thumbnail = image.and_then(|src| {
-        let mut response = ureq::get(&src).call().ok()?;
-        let bytes = response.body_mut().read_to_vec().ok()?;
-        let is_jpeg = bytes.starts_with(&[0xFF, 0xD8, 0xFF]);
-        (is_jpeg && bytes.len() < 300_000).then_some(bytes)
+        let mut response = fetch_public(&agent, &src)?;
+        let bytes = response.body_mut().with_config().limit(8 << 20).read_to_vec().ok()?;
+        link_thumbnail(&bytes)
+    });
+    let color = get(&["theme-color"]).filter(|c| {
+        let c = c.trim();
+        (c.starts_with('#') && c.len() <= 9 && c[1..].chars().all(|d| d.is_ascii_hexdigit())) || c.starts_with("rgb")
     });
 
     Some(LinkPreview {
         url: url.to_string(),
-        title: meta("og:title"),
-        description: meta("og:description"),
+        title,
+        description: get(&["og:description", "twitter:description", "description"]),
         thumbnail,
+        site: get(&["og:site_name", "application-name"]),
+        color,
     })
+}
+
+/// GETs `url`, following up to five redirects, but only to hosts on the public
+/// internet, so a link cannot make us reach the local network.
+/// The check resolves separately from the request, so DNS rebinding can still race it.
+fn fetch_public(agent: &ureq::Agent, url: &str) -> Option<ureq::http::Response<ureq::Body>> {
+    let mut url = url.to_string();
+    for _ in 0..5 {
+        let uri: ureq::http::Uri = url.parse().ok()?;
+        let https = match uri.scheme_str() {
+            Some("https") => true,
+            Some("http") => false,
+            _ => return None,
+        };
+        let port = uri.port_u16().unwrap_or(if https { 443 } else { 80 });
+        if !is_public_host(uri.host()?, port) {
+            log::warn!("link preview: {} is not a public address, skipped", uri.host()?);
+            return None;
+        }
+        let response = agent.get(&url).call().ok()?;
+        if !response.status().is_redirection() {
+            return Some(response);
+        }
+        let location = response.headers().get("location")?.to_str().ok()?;
+        url = if location.starts_with("http://") || location.starts_with("https://") {
+            location.to_string()
+        } else if location.starts_with('/') {
+            format!("{}://{}{location}", uri.scheme_str()?, uri.authority()?)
+        } else {
+            return None;
+        };
+    }
+    None
+}
+
+/// Whether every address `host` resolves to is on the public internet.
+fn is_public_host(host: &str, port: u16) -> bool {
+    use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
+    let public_v4 = |ip: Ipv4Addr| {
+        let [a, b, ..] = ip.octets();
+        !(ip.is_private()
+            || ip.is_loopback()
+            || ip.is_link_local()
+            || ip.is_unspecified()
+            || ip.is_broadcast()
+            || ip.is_multicast()
+            || ip.is_documentation()
+            || (a == 100 && (b & 0xc0) == 64))
+    };
+    let Ok(addrs) = (host, port).to_socket_addrs() else { return false };
+    let mut any = false;
+    for addr in addrs {
+        any = true;
+        let public = match addr.ip() {
+            IpAddr::V4(ip) => public_v4(ip),
+            IpAddr::V6(ip) => match ip.to_ipv4_mapped() {
+                Some(v4) => public_v4(v4),
+                None => {
+                    let first = ip.segments()[0];
+                    !(ip.is_loopback()
+                        || ip.is_unspecified()
+                        || ip.is_multicast()
+                        || (first & 0xfe00) == 0xfc00
+                        || (first & 0xffc0) == 0xfe80)
+                }
+            },
+        };
+        if !public {
+            return false;
+        }
+    }
+    any
+}
+
+/// `<meta>` contents keyed by their lower-cased `property` or `name`; the first wins.
+fn meta_tags(html: &str) -> std::collections::HashMap<String, String> {
+    let lower = html.to_ascii_lowercase();
+    let mut out = std::collections::HashMap::new();
+    let mut at = 0;
+    while let Some(found) = lower[at..].find("<meta") {
+        let start = at + found;
+        let Some(len) = lower[start..].find('>') else { break };
+        let tag = &html[start..start + len];
+        at = start + len;
+        let key = tag_attr(tag, "property").or_else(|| tag_attr(tag, "name"));
+        if let (Some(key), Some(content)) = (key, tag_attr(tag, "content")) {
+            out.entry(key.to_ascii_lowercase()).or_insert_with(|| decode_entities(content));
+        }
+    }
+    out
+}
+
+/// An attribute's value in one HTML tag, quoted either way or bare.
+fn tag_attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+    let lower = tag.to_ascii_lowercase();
+    let bytes = lower.as_bytes();
+    let skip_space = |mut j: usize| {
+        while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+            j += 1;
+        }
+        j
+    };
+    let mut from = 0;
+    while let Some(found) = lower[from..].find(name) {
+        let i = from + found;
+        from = i + name.len();
+        if i == 0 || !bytes[i - 1].is_ascii_whitespace() {
+            continue;
+        }
+        let j = skip_space(from);
+        if bytes.get(j) != Some(&b'=') {
+            continue;
+        }
+        let j = skip_space(j + 1);
+        return match *bytes.get(j)? {
+            quote @ (b'"' | b'\'') => {
+                let len = tag[j + 1..].find(quote as char)?;
+                Some(&tag[j + 1..j + 1 + len])
+            }
+            _ => {
+                let len = tag[j..]
+                    .find(|c: char| c.is_ascii_whitespace() || c == '/')
+                    .unwrap_or(tag.len() - j);
+                Some(&tag[j..j + len])
+            }
+        };
+    }
+    None
+}
+
+/// The document's `<title>`, when there is no card title.
+fn html_title(html: &str) -> Option<String> {
+    let lower = html.to_ascii_lowercase();
+    let open = lower.find("<title")?;
+    let start = open + lower[open..].find('>')? + 1;
+    let end = start + lower[start..].find("</title")?;
+    Some(decode_entities(html[start..end].trim())).filter(|t| !t.is_empty())
+}
+
+/// Decodes the HTML entities that show up in meta tags.
+fn decode_entities(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(amp) = rest.find('&') {
+        out.push_str(&rest[..amp]);
+        rest = &rest[amp..];
+        let Some(semi) = rest[..rest.len().min(10)].find(';') else {
+            out.push('&');
+            rest = &rest[1..];
+            continue;
+        };
+        let entity = &rest[1..semi];
+        let decoded = match entity {
+            "amp" => Some('&'),
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "quot" => Some('"'),
+            "apos" => Some('\''),
+            "nbsp" => Some('\u{a0}'),
+            _ => entity
+                .strip_prefix("#x")
+                .or_else(|| entity.strip_prefix("#X"))
+                .and_then(|h| u32::from_str_radix(h, 16).ok())
+                .or_else(|| entity.strip_prefix('#').and_then(|d| d.parse().ok()))
+                .and_then(char::from_u32),
+        };
+        match decoded {
+            Some(c) => {
+                out.push(c);
+                rest = &rest[semi + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// A link's image as the JPEG a message carries: any format, at most 512 px.
+fn link_thumbnail(bytes: &[u8]) -> Option<Vec<u8>> {
+    let image = image::load_from_memory(bytes).ok()?.thumbnail(512, 512);
+    let mut out = Vec::new();
+    image::DynamicImage::ImageRgb8(image.to_rgb8())
+        .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Jpeg)
+        .ok()?;
+    Some(out)
 }
 
 /// A small JPEG preview for an outgoing attachment.
@@ -3979,6 +4182,24 @@ fn mime_for(extension: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn link_metadata_is_read_like_discord() {
+        let html = r##"<html><head><title>Fallback &amp; title</title>
+            <meta content='Darel on X' property="og:title">
+            <meta name=twitter:description content="He said &quot;wild&quot; &#8212; 12 replies">
+            <META PROPERTY="og:site_name" CONTENT="FixupX" />
+            <meta name="theme-color" content="#1DA1F2"></head></html>"##;
+        let meta = meta_tags(html);
+        assert_eq!(meta.get("og:title").map(String::as_str), Some("Darel on X"));
+        assert_eq!(meta.get("twitter:description").map(String::as_str), Some("He said \"wild\" — 12 replies"));
+        assert_eq!(meta.get("og:site_name").map(String::as_str), Some("FixupX"));
+        assert_eq!(meta.get("theme-color").map(String::as_str), Some("#1DA1F2"));
+        assert_eq!(html_title(html).as_deref(), Some("Fallback & title"));
+        assert!(!is_public_host("127.0.0.1", 80));
+        assert!(!is_public_host("192.168.1.10", 80));
+        assert!(!is_public_host("::1", 80));
+    }
 
     #[test]
     fn vacuum_waits_for_a_large_freelist_and_a_week() {

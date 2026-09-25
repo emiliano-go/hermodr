@@ -147,6 +147,12 @@ pub struct LinkCard {
     pub desc: Option<String>,
     #[serde(rename = "preview_thumb")]
     pub thumb: Option<String>,
+    /// Site name; empty for received links, whose preview does not carry it.
+    #[serde(rename = "preview_site")]
+    pub site: Option<String>,
+    /// The page's theme colour, for the embed's side bar.
+    #[serde(rename = "preview_color")]
+    pub color: Option<String>,
 }
 
 /// What this device knows about a message beyond its content.
@@ -193,7 +199,8 @@ const MESSAGE_COLUMNS: &str = "m.chat, m.id, m.sender, m.timestamp, m.from_me, m
     n.name, m.media_kind, m.media_path, m.reply_to_id, m.reply_to_text,
     m.read, m.revoked, m.status, m.reply_to_sender, m.mentioned,
     m.preview_url, m.preview_title, m.preview_desc, m.preview_thumb,
-    m.reply_to_kind, m.reply_to_thumb, m.media_thumb, m.media_ref, m.reply_to_chat";
+    m.reply_to_kind, m.reply_to_thumb, m.media_thumb, m.media_ref, m.reply_to_chat,
+    m.preview_site, m.preview_color";
 
 fn message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
     Ok(StoredMessage {
@@ -225,6 +232,8 @@ fn message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
             title: row.get(17)?,
             desc: row.get(18)?,
             thumb: row.get(19)?,
+            site: row.get(25)?,
+            color: row.get(26)?,
         },
         local: LocalState {
             read: row.get::<_, i32>(11)? != 0,
@@ -470,6 +479,8 @@ impl MessageStore {
             "preview_title",
             "preview_desc",
             "preview_thumb",
+            "preview_site",
+            "preview_color",
         ] {
             if !existing.iter().any(|c| c == column) {
                 conn.execute(&format!("ALTER TABLE messages ADD COLUMN {column} TEXT"), [])?;
@@ -640,9 +651,10 @@ impl MessageStore {
                   media_kind, media_path, reply_to_id, reply_to_text, reply_to_sender,
                   read, revoked, mentioned, status,
                   preview_url, preview_title, preview_desc, preview_thumb,
-                  reply_to_kind, reply_to_thumb, media_thumb, media_ref, reply_to_chat)
+                  reply_to_kind, reply_to_thumb, media_thumb, media_ref, reply_to_chat,
+                  preview_site, preview_color)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                     ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)
+                     ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)
              ON CONFLICT(chat, id) DO UPDATE SET
                  sender = excluded.sender,
                  timestamp = excluded.timestamp,
@@ -658,7 +670,7 @@ impl MessageStore {
                  read = MAX(read, excluded.read),
                  revoked = excluded.revoked,
                  mentioned = MAX(mentioned, excluded.mentioned),
-                 status = CASE WHEN ?25 > (CASE status WHEN 'pending' THEN 0 WHEN 'sent' THEN 1
+                 status = CASE WHEN ?27 >(CASE status WHEN 'pending' THEN 0 WHEN 'sent' THEN 1
                                            WHEN 'delivered' THEN 2 WHEN 'read' THEN 3 ELSE -1 END)
                           THEN excluded.status ELSE status END,
                  preview_url = excluded.preview_url,
@@ -669,7 +681,9 @@ impl MessageStore {
                  reply_to_thumb = excluded.reply_to_thumb,
                  media_thumb = COALESCE(media_thumb, excluded.media_thumb),
                  media_ref = COALESCE(excluded.media_ref, media_ref),
-                 reply_to_chat = excluded.reply_to_chat
+                 reply_to_chat = excluded.reply_to_chat,
+                 preview_site = excluded.preview_site,
+                 preview_color = excluded.preview_color
              WHERE revoked = 0",
             params![
                 message.header.chat,
@@ -696,6 +710,8 @@ impl MessageStore {
                 message.media.thumb,
                 message.media.locator,
                 message.quote.chat,
+                message.link.site,
+                message.link.color,
                 message.local.status.as_deref().map(status_rank).unwrap_or(-1),
             ],
         )?;
