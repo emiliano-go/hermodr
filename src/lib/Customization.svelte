@@ -107,6 +107,24 @@
     setTokens({ "radius-sm": `${Math.max(0, r - 0.5)}px`, radius: `${r}px`, "radius-lg": `${r + 2}px` });
   }
 
+  let picturePicker: HTMLInputElement | undefined = $state();
+
+  /** Downscales to 1920 px JPEG so the picture fits in local storage with the themes. */
+  async function setBackground(file: File | undefined) {
+    if (!file) return;
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, 1920 / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext("2d")!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    customization.background = {
+      image: canvas.toDataURL("image/jpeg", 0.82),
+      dim: customization.background?.dim ?? 0.25,
+    };
+    if (picturePicker) picturePicker.value = "";
+  }
+
   function removeTheme(id: string) {
     customization.themes = customization.themes.filter((th) => th.id !== id);
     if (customization.theme === id) customization.theme = "dark";
@@ -286,6 +304,48 @@
         </label>
       </div>
     </div>
+
+    <div class="quick">
+      <div class="q-text">
+        <span class="q-title">Background picture</span>
+        <span class="hint">Behind the chat, and behind everything in Liquid Glass.</span>
+      </div>
+      {#if customization.background?.image}
+        <img class="bg-thumb" src={customization.background.image} alt="" />
+      {/if}
+      <input
+        class="file"
+        type="file"
+        accept="image/*"
+        bind:this={picturePicker}
+        onchange={(e) => setBackground(e.currentTarget.files?.[0])} />
+      <button class="ghost" onclick={() => picturePicker?.click()}>
+        {customization.background?.image ? "Change" : "Choose…"}
+      </button>
+      {#if customization.background?.image}
+        <button class="ghost" onclick={() => (customization.background = null)}>Remove</button>
+      {/if}
+    </div>
+
+    {#if customization.background?.image}
+      <div class="quick">
+        <div class="q-text">
+          <span class="q-title">Darken picture</span>
+          <span class="hint">Keeps text readable over bright pictures.</span>
+        </div>
+        <div class="slider">
+          <input
+            type="range"
+            min="0"
+            max="0.85"
+            step="0.05"
+            value={customization.background.dim}
+            aria-label="Darken picture"
+            oninput={(e) => customization.background && (customization.background.dim = Number(e.currentTarget.value))} />
+          <span class="readout">{Math.round(customization.background.dim * 100)} %</span>
+        </div>
+      </div>
+    {/if}
 
     <div class="quick">
       <div class="q-text">
@@ -759,6 +819,16 @@
     display: flex;
     align-items: center;
     gap: 10px;
+  }
+  .file {
+    display: none;
+  }
+  .bg-thumb {
+    width: 56px;
+    height: 36px;
+    object-fit: cover;
+    border-radius: 6px;
+    box-shadow: 0 0 0 1px var(--line-strong);
   }
   input[type="range"] {
     width: 170px;

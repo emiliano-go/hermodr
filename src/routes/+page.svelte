@@ -170,20 +170,33 @@
     saveCustomization();
   });
 
+  /** The user's background picture, else the theme's wallpaper, as a CSS background. */
+  const wallpaper = $derived.by(() => {
+    const picture = customization.background;
+    if (!picture?.image) return activeTheme().wallpaper ?? null;
+    const dim = `rgba(0, 0, 0, ${picture.dim})`;
+    return `linear-gradient(${dim}, ${dim}), url("${picture.image}") center / cover no-repeat, #000`;
+  });
+
   /** The theme's own layer, then CSS extensions, kept from closing their style element. */
   const extensionCss = $derived(
     [
       {
         id: `theme-${activeTheme().id}`,
-        // The wallpaper is its own oversized layer behind everything, so a theme can move it cheaply.
+        // The wallpaper is its own oversized layer behind everything, so a theme can move it
+        // cheaply. A picture also shows through the chat, which is otherwise opaque.
         css:
-          (activeTheme().wallpaper
+          (wallpaper
             ? `html, body { background: transparent !important; }
                .stage { isolation: isolate; }
                body::before, .stage::before { content: ""; position: fixed; inset: -25%; z-index: -1;
-                 pointer-events: none; background: ${activeTheme().wallpaper}; }
+                 pointer-events: none; background: ${wallpaper}; }
                .stage::before { position: absolute; }`
-            : "") + (activeTheme().css ?? ""),
+            : "") +
+          (customization.background?.image
+            ? `.conversation, .pairing { background: color-mix(in srgb, var(--chat-bg) 55%, transparent) !important; }`
+            : "") +
+          (activeTheme().css ?? ""),
       },
       ...customization.extensions.filter((e) => e.enabled),
     ]
