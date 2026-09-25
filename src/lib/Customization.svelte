@@ -9,6 +9,11 @@
     duplicate,
     isBuiltIn,
     newId,
+    appPicture,
+    pictureDataUrl,
+    removeAppPicture,
+    setAppPicture,
+    type Density,
     type Theme,
   } from "$lib/theme.svelte";
 
@@ -109,21 +114,29 @@
 
   let picturePicker: HTMLInputElement | undefined = $state();
 
-  /** Downscales to 1920 px JPEG so the picture fits in local storage with the themes. */
   async function setBackground(file: File | undefined) {
     if (!file) return;
-    const bitmap = await createImageBitmap(file);
-    const scale = Math.min(1, 1920 / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(bitmap.width * scale);
-    canvas.height = Math.round(bitmap.height * scale);
-    canvas.getContext("2d")!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    customization.background = {
-      image: canvas.toDataURL("image/jpeg", 0.82),
-      dim: customization.background?.dim ?? 0.25,
-    };
+    await setAppPicture(await pictureDataUrl(file));
     if (picturePicker) picturePicker.value = "";
   }
+
+  let pictureUrl = $state<string | null>(null);
+  $effect(() => {
+    void customization.background?.v;
+    if (!customization.background) {
+      pictureUrl = null;
+      return;
+    }
+    appPicture()
+      .then((url) => (pictureUrl = url ?? null))
+      .catch(() => {});
+  });
+
+  const DENSITIES: [Density, string][] = [
+    ["compact", "Compact"],
+    ["comfortable", "Comfortable"],
+    ["cozy", "Cozy"],
+  ];
 
   function removeTheme(id: string) {
     customization.themes = customization.themes.filter((th) => th.id !== id);
@@ -310,8 +323,8 @@
         <span class="q-title">Background picture</span>
         <span class="hint">Behind the chat, and behind everything in Liquid Glass.</span>
       </div>
-      {#if customization.background?.image}
-        <img class="bg-thumb" src={customization.background.image} alt="" />
+      {#if pictureUrl}
+        <img class="bg-thumb" src={pictureUrl} alt="" />
       {/if}
       <input
         class="file"
@@ -320,14 +333,14 @@
         bind:this={picturePicker}
         onchange={(e) => setBackground(e.currentTarget.files?.[0])} />
       <button class="ghost" onclick={() => picturePicker?.click()}>
-        {customization.background?.image ? "Change" : "Choose…"}
+        {customization.background ? "Change" : "Choose…"}
       </button>
-      {#if customization.background?.image}
-        <button class="ghost" onclick={() => (customization.background = null)}>Remove</button>
+      {#if customization.background}
+        <button class="ghost" onclick={() => removeAppPicture()}>Remove</button>
       {/if}
     </div>
 
-    {#if customization.background?.image}
+    {#if customization.background}
       <div class="quick">
         <div class="q-text">
           <span class="q-title">Darken picture</span>
@@ -362,6 +375,40 @@
           aria-label="Text size"
           oninput={(e) => setTokens({ "font-size": `${e.currentTarget.value}px` })} />
         <span class="readout">{px("font-size", 14.2).toFixed(1)} px</span>
+      </div>
+    </div>
+
+    <div class="quick">
+      <div class="q-text">
+        <span class="q-title">Density</span>
+        <span class="hint">How tightly the chat list and messages are packed.</span>
+      </div>
+      <div class="segmented" role="radiogroup" aria-label="Density">
+        {#each DENSITIES as [value, label] (value)}
+          <button
+            role="radio"
+            aria-checked={(customization.density ?? "comfortable") === value}
+            class:active={(customization.density ?? "comfortable") === value}
+            onclick={() => (customization.density = value)}>{label}</button>
+        {/each}
+      </div>
+    </div>
+
+    <div class="quick">
+      <div class="q-text">
+        <span class="q-title">Chat list width</span>
+        <span class="hint">Also set by dragging the list's right edge.</span>
+      </div>
+      <div class="slider">
+        <input
+          type="range"
+          min="180"
+          max="640"
+          step="10"
+          value={customization.listWidth ?? 300}
+          aria-label="Chat list width"
+          oninput={(e) => (customization.listWidth = Number(e.currentTarget.value))} />
+        <span class="readout">{customization.listWidth ?? 300} px</span>
       </div>
     </div>
 

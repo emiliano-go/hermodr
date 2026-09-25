@@ -35,7 +35,9 @@
   import { blocks, plain, type Inline } from "$lib/format";
   import {
     activeTheme,
+    appPicture,
     applyTheme,
+    chatPicture,
     customization,
     lensMap,
     motion,
@@ -171,12 +173,24 @@
     saveCustomization();
   });
 
+  /** The app's background picture, loaded from IndexedDB. */
+  let appPictureUrl = $state<string | null>(null);
+  $effect(() => {
+    void customization.background?.v;
+    if (!customization.background) {
+      appPictureUrl = null;
+      return;
+    }
+    appPicture()
+      .then((url) => (appPictureUrl = url ?? null))
+      .catch(() => {});
+  });
+
   /** The user's background picture, else the theme's wallpaper, as a CSS background. */
   const wallpaper = $derived.by(() => {
-    const picture = customization.background;
-    if (!picture?.image) return activeTheme().wallpaper ?? null;
-    const dim = `rgba(0, 0, 0, ${picture.dim})`;
-    return `linear-gradient(${dim}, ${dim}), url("${picture.image}") center / cover no-repeat, #000`;
+    if (!appPictureUrl || !customization.background) return activeTheme().wallpaper ?? null;
+    const dim = `rgba(0, 0, 0, ${customization.background.dim})`;
+    return `linear-gradient(${dim}, ${dim}), url("${appPictureUrl}") center / cover no-repeat, #000`;
   });
 
   /** The theme's own layer, then CSS extensions, kept from closing their style element. */
@@ -195,7 +209,7 @@
                .stage::before { position: absolute; }`
             : "") +
           // A picture stays still: moving it would re-filter every glass surface on each frame.
-          (customization.background?.image
+          (appPictureUrl
             ? `.conversation, .pairing { background: color-mix(in srgb, var(--chat-bg) 55%, transparent) !important; }
                body::before, .stage::before { animation: none !important; }`
             : "") +
@@ -229,6 +243,30 @@
   let qrSvg = $state<string | null>(null);
   let chats: ChatSummary[] = $state([]);
   let selectedChat = $state<string | null>(null);
+
+  /** The open chat's own background picture, loaded from IndexedDB. */
+  let chatPictureUrl = $state<string | null>(null);
+  $effect(() => {
+    const jid = selectedChat;
+    const meta = jid ? customization.chatBackgrounds?.[jid] : undefined;
+    if (!jid || !meta) {
+      chatPictureUrl = null;
+      return;
+    }
+    let live = true;
+    void meta.v;
+    chatPicture(jid)
+      .then((url) => live && (chatPictureUrl = url ?? null))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  });
+  const chatPictureCss = $derived.by(() => {
+    if (!chatPictureUrl || !selectedChat) return "";
+    const dim = `rgba(0, 0, 0, ${customization.chatBackgrounds?.[selectedChat]?.dim ?? 0.25})`;
+    return `<style data-chat-picture>.conversation { background: linear-gradient(${dim}, ${dim}), url("${chatPictureUrl}") center / cover no-repeat !important; }</style>`;
+  });
   let messages: StoredMessage[] = $state([]);
   /** Offline-backlog progress: how many were announced and how many arrived. */
   let syncPending = $state(0);
@@ -315,38 +353,37 @@
   let showGroupInfo = $state(false);
   let groupInfo: GroupInfo | null = $state(null);
   let groupInfoError = $state<string | null>(null);
-  /** Sidebar widths, adjustable by dragging their edges. */
-  const WIDTH_KEY = "hermodr.sidebarWidth";
-  let leftWidth = $state(
-    (() => {
-      try {
-        return Number(localStorage.getItem(WIDTH_KEY)) || 300;
-      } catch {
-        return 300;
-      }
-    })(),
-  );
-  let layoutColumns = $derived(`${leftWidth}px 1fr`);
+  // The chat list width is a customization setting; older builds kept it under its own key.
+  if (customization.listWidth === undefined) {
+    try {
+      customization.listWidth = Number(localStorage.getItem("hermodr.sidebarWidth")) || 300;
+    } catch {
+      customization.listWidth = 300;
+    }
+  }
+  let layoutColumns = $derived(`${customization.listWidth ?? 300}px 1fr`);
 
   function startResize(event: MouseEvent) {
     event.preventDefault();
     const startX = event.clientX;
-    const startWidth = leftWidth;
+    const startWidth = customization.listWidth ?? 300;
     const onMove = (e: MouseEvent) => {
-      leftWidth = Math.max(180, Math.min(640, startWidth + e.clientX - startX));
+      customization.listWidth = Math.max(180, Math.min(640, startWidth + e.clientX - startX));
     };
     const onUp = () => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
-      try {
-        localStorage.setItem(WIDTH_KEY, String(leftWidth));
-      } catch {
-        // Only the remembered width is lost.
-      }
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
   }
+
+  $effect(() => {
+    const root = document.documentElement.classList;
+    root.toggle("density-compact", customization.density === "compact");
+    root.toggle("density-cozy", customization.density === "cozy");
+  });
+
   let error = $state<string | null>(null);
 
   let scroller: HTMLDivElement | undefined = $state();
@@ -2523,6 +2560,7 @@
 <svelte:head>
   <title>Hermóðr</title>
   {@html extensionCss}
+  {@html chatPictureCss}
 </svelte:head>
 
 <!-- The glass lens: shifts the backdrop by lensMap, strongest at the rim. The map stretches to
@@ -4071,6 +4109,49 @@
   :global(*) {
     scrollbar-width: thin;
     scrollbar-color: var(--raised-2) transparent;
+  }
+  /* Density: comfortable is the default look; compact and cozy scale rows and bubbles. */
+  :global(html.density-compact) .chat-row {
+    height: 60px;
+  }
+  :global(html.density-compact) .chat-row .avatar {
+    width: 42px;
+    height: 42px;
+    font-size: 14px;
+  }
+  :global(html.density-compact) .chat-row::after {
+    left: 70px;
+  }
+  :global(html.density-compact) .messages {
+    gap: 1px;
+  }
+  :global(html.density-compact) .bubble {
+    padding: 4px 6px 5px 8px;
+    line-height: 18px;
+  }
+  :global(html.density-compact) .bubble.first {
+    margin-top: 6px;
+  }
+  :global(html.density-cozy) .chat-row {
+    height: 82px;
+  }
+  :global(html.density-cozy) .chat-row .avatar {
+    width: 54px;
+    height: 54px;
+    font-size: 16px;
+  }
+  :global(html.density-cozy) .chat-row::after {
+    left: 82px;
+  }
+  :global(html.density-cozy) .messages {
+    gap: 4px;
+  }
+  :global(html.density-cozy) .bubble {
+    padding: 8px 10px 10px 12px;
+    line-height: 21px;
+  }
+  :global(html.density-cozy) .bubble.first {
+    margin-top: 14px;
   }
   /* Animations off (setting or OS): nothing moves, whatever its duration. */
   :global(html.no-motion *),

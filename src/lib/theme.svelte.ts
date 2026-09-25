@@ -49,9 +49,73 @@ export type Tokens = Record<string, string>;
  */
 export type Theme = { id: string; name: string; tokens: Tokens; css?: string; wallpaper?: string };
 export type Extension = { id: string; name: string; css: string; enabled: boolean };
-/** A picture behind the app, as a downscaled data URL, darkened by `dim` (0–1). */
-export type Background = { image: string; dim: number };
-type Saved = { theme: string; themes: Theme[]; extensions: Extension[]; background?: Background | null };
+/**
+ * The picture behind the app, stored in IndexedDB, darkened by `dim` (0–1);
+ * `v` changes when the picture does. `image` is where older builds kept it.
+ */
+export type Background = { dim: number; v?: number; image?: string };
+export type Density = "compact" | "comfortable" | "cozy";
+type Saved = {
+  theme: string;
+  themes: Theme[];
+  extensions: Extension[];
+  background?: Background | null;
+  density?: Density;
+  /** Chat list width in pixels. */
+  listWidth?: number;
+  /** Chats with their own picture, stored in IndexedDB; `v` changes when the picture does. */
+  chatBackgrounds?: Record<string, { dim: number; v: number }>;
+};
+
+/** A picture file downscaled to `max` px as a JPEG data URL. */
+export async function pictureDataUrl(file: File, max = 1920): Promise<string> {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  canvas.getContext("2d")!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.82);
+}
+
+// Per-chat pictures live in IndexedDB: several would overflow localStorage,
+// and a failed save there would also drop theme changes.
+function pictureStore<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const open = indexedDB.open("hermodr-pictures", 1);
+    open.onupgradeneeded = () => open.result.createObjectStore("pictures");
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const request = run(open.result.transaction("pictures", mode).objectStore("pictures"));
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    };
+  });
+}
+const APP_PICTURE = "*app";
+export const appPicture = () => pictureStore<string | undefined>("readonly", (s) => s.get(APP_PICTURE));
+export async function setAppPicture(image: string) {
+  await pictureStore("readwrite", (s) => s.put(image, APP_PICTURE));
+  customization.background = { dim: customization.background?.dim ?? 0.25, v: Date.now() };
+}
+export async function removeAppPicture() {
+  await pictureStore("readwrite", (s) => s.delete(APP_PICTURE));
+  customization.background = null;
+}
+
+export const chatPicture = (jid: string) => pictureStore<string | undefined>("readonly", (s) => s.get(jid));
+export async function setChatPicture(jid: string, image: string) {
+  await pictureStore("readwrite", (s) => s.put(image, jid));
+  customization.chatBackgrounds = {
+    ...customization.chatBackgrounds,
+    [jid]: { dim: customization.chatBackgrounds?.[jid]?.dim ?? 0.25, v: Date.now() },
+  };
+}
+export async function removeChatPicture(jid: string) {
+  await pictureStore("readwrite", (s) => s.delete(jid));
+  const { [jid]: _, ...rest } = customization.chatBackgrounds ?? {};
+  customization.chatBackgrounds = rest;
+}
 
 /**
  * Displacement map for the glass lens, one axis per colour channel: 128 is
@@ -410,6 +474,10 @@ function load(): Saved {
 }
 
 export const customization: Saved = $state(load());
+
+// Older builds kept the app picture in localStorage; move it to IndexedDB.
+const legacyPicture = customization.background?.image;
+if (legacyPicture) void setAppPicture(legacyPicture).catch(() => {});
 
 export function allThemes(): Theme[] {
   return [...BUILT_IN, ...customization.themes];
