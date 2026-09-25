@@ -8,7 +8,7 @@
 use std::{path::Path, sync::Mutex};
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 /// How much history to keep locally.
@@ -425,7 +425,8 @@ impl MessageStore {
                  on_demand INTEGER NOT NULL DEFAULT 1);
              CREATE TABLE IF NOT EXISTS lid_pn (
                  lid TEXT PRIMARY KEY, pn TEXT NOT NULL);
-             CREATE INDEX IF NOT EXISTS lid_pn_by_pn ON lid_pn (pn);",
+             CREATE INDEX IF NOT EXISTS lid_pn_by_pn ON lid_pn (pn);
+             CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);",
         )?;
 
         // Per chat overrides. Absent means the global setting applies.
@@ -499,6 +500,24 @@ impl MessageStore {
             conn: Mutex::new(conn),
             retention,
         })
+    }
+
+    /// A bookkeeping value, such as when maintenance last ran.
+    pub fn meta(&self, key: &str) -> Result<Option<i64>> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row("SELECT value FROM meta WHERE key = ?1", [key], |row| row.get(0))
+            .optional()?)
+    }
+
+    pub fn set_meta(&self, key: &str, value: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO meta (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
     }
 
     /// Records a message, replacing any existing row with the same id.

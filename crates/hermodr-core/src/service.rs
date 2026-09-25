@@ -164,7 +164,11 @@ fn cache_config_for(retention: &Retention) -> CacheConfig {
 /// Rows with no message timestamp, or with the "never expires" marker, are left
 /// untouched: their age cannot be established, and discarding them could break
 /// decryption for a message we still keep.
-fn reclaim_oversized_secrets(session_path: &Path, retention: &Retention) -> Result<usize> {
+fn reclaim_oversized_secrets(
+    session_path: &Path,
+    retention: &Retention,
+    store: &MessageStore,
+) -> Result<usize> {
     let Some(hours) = retention.max_age_hours else {
         return Ok(0);
     };
@@ -201,16 +205,30 @@ fn reclaim_oversized_secrets(session_path: &Path, retention: &Retention) -> Resu
 
     // SQLite reuses freed pages rather than returning them to the filesystem,
     // so the file stays large after a bulk delete and a later run would find
-    // nothing left to remove. Compacting whenever a meaningful freelist has
-    // built up covers both the profile that deletes now and the one that was
-    // already pruned by an earlier build. This runs before the bot starts, so
-    // there is no concurrent access to disturb.
+    // nothing left to remove. Compacting on the freelist rather than on this
+    // run's deletions covers the profile an earlier build already pruned. This
+    // runs before the bot starts, so there is no concurrent access to disturb.
     let free_pages: i64 = conn.query_row("PRAGMA freelist_count", [], |row| row.get(0))?;
-    if removed > 0 || free_pages > 1_000 {
+    let pages: i64 = conn.query_row("PRAGMA page_count", [], |row| row.get(0))?;
+    let last = store.meta(SESSION_VACUUM_KEY)?.unwrap_or(0);
+    if should_vacuum(free_pages, pages, now - last) {
+        log::info!("compacting the session database: {free_pages} of {pages} pages free");
+        let started = std::time::Instant::now();
         conn.execute_batch("VACUUM")?;
+        store.set_meta(SESSION_VACUUM_KEY, now)?;
+        log::info!("session database compacted in {:?}", started.elapsed());
     }
 
     Ok(removed)
+}
+
+/// `meta` key holding when the session database was last compacted (unix seconds).
+const SESSION_VACUUM_KEY: &str = "session_vacuum_at";
+
+/// VACUUM rewrites the whole file, so it waits for at least 1000 free pages
+/// making up a fifth of the file, and runs at most once a week.
+fn should_vacuum(free_pages: i64, pages: i64, since_last_secs: i64) -> bool {
+    free_pages > 1_000 && free_pages * 5 >= pages && since_last_secs >= 7 * 86_400
 }
 
 /// Events the UI reacts to.
@@ -531,7 +549,7 @@ impl Service {
         let (events, initial_rx) = broadcast::channel(256);
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
 
-        if let Ok(removed) = reclaim_oversized_secrets(&config.session_path, &config.retention) {
+        if let Ok(removed) = reclaim_oversized_secrets(&config.session_path, &config.retention, &store) {
             if removed > 0 {
                 println!("[service] reclaimed {removed} stale decryption secret(s)");
             }
@@ -4047,6 +4065,15 @@ fn mime_for(extension: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vacuum_waits_for_a_large_freelist_and_a_week() {
+        let week = 7 * 86_400;
+        assert!(should_vacuum(5_000, 10_000, week));
+        assert!(!should_vacuum(5_000, 10_000, week - 1));
+        assert!(!should_vacuum(900, 1_000, week));
+        assert!(!should_vacuum(1_500, 100_000, week));
+    }
 
     #[test]
     fn events_serialize_for_the_ui() {
