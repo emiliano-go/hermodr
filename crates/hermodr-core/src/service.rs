@@ -418,8 +418,9 @@ pub struct GroupInfo {
     pub subject: Option<String>,
     pub description: Option<String>,
     pub created_at: Option<u64>,
-    /// Name of whoever created the group.
+    /// Name and address of whoever created the group.
     pub owner: Option<String>,
+    pub owner_jid: Option<String>,
     pub participants: Vec<Participant>,
     /// Whether members may report messages to the group's admins.
     pub allow_admin_reports: bool,
@@ -1729,7 +1730,7 @@ impl Service {
             .flatten()
             .map(|j| j.to_non_ad().to_string())
             .collect();
-        let owner = metadata
+        let member = metadata
             .participants
             .iter()
             .find(|m| {
@@ -1741,7 +1742,9 @@ impl Service {
             .and_then(|m| {
                 let jid = m.jid.to_non_ad().to_string();
                 participants.iter().find(|p| p.jid == jid)
-            })
+            });
+        let owner_jid = member.map(|p| p.jid.clone()).or_else(|| creator.first().cloned());
+        let owner = member
             .map(|p| p.name.clone())
             .or_else(|| {
                 creator
@@ -1757,6 +1760,7 @@ impl Service {
             description: metadata.description.clone(),
             created_at: metadata.creation_time,
             owner,
+            owner_jid,
             participants,
             allow_admin_reports: metadata.allow_admin_reports,
             announce: metadata.is_announcement,

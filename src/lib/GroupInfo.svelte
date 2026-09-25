@@ -13,6 +13,7 @@
     description: string | null;
     created_at: number | null;
     owner: string | null;
+    owner_jid: string | null;
     participants: Member[];
     allow_admin_reports: boolean;
     announce: boolean;
@@ -50,6 +51,7 @@
     onpin,
     onopenurl,
     onmessage,
+    onprofile,
     onlabel,
     me,
     namer = displayName,
@@ -69,6 +71,8 @@
     onpin: () => void;
     onopenurl: (url: string) => void;
     onmessage: (jid: string) => void;
+    /** Opens someone's profile card at the click. */
+    onprofile: (jid: string, name: string, event: MouseEvent) => void;
     /** Sets our own tag in this group; empty clears it. */
     onlabel: (label: string) => Promise<void>;
     /** Our own JID, to find ourselves in the member list. */
@@ -235,10 +239,12 @@
         <h2>{info.subject ?? title}</h2>
         <span class="muted">
           {info.community ? "Community" : info.announcements ? "Announcements" : "Group"} · {info.participants
-            .length} members{#if info.parent_name}
-            · in {info.parent_name}{/if}{#if info.created_at}
-            · created {new Date(info.created_at * 1000).toLocaleDateString()}{/if}{#if info.owner}
-            · owned by {info.owner}{/if}
+            .length} members{#if info.parent_name}{" · "}in {info.parent_name}{/if}{#if info.created_at}{" · "}created
+            {new Date(info.created_at * 1000).toLocaleDateString()}{/if}{#if info.owner}{" · "}owned by
+            {#if info.owner_jid}{@const owner = info.owner_jid}<button
+                class="owner"
+                onclick={(e) => onprofile(owner, info.owner ?? owner, e)}>{info.owner}</button
+              >{:else}{info.owner}{/if}{/if}
         </span>
       </div>
     </div>
@@ -650,6 +656,17 @@
   .tag-row .field {
     flex: 1;
     padding-right: 44px;
+  }
+  .owner {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--accent);
+    font: inherit;
+    cursor: pointer;
+  }
+  .owner:hover {
+    text-decoration: underline;
   }
   .tag-add {
     position: absolute;

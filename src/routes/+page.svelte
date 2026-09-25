@@ -103,6 +103,7 @@
     description: string | null;
     created_at: number | null;
     owner: string | null;
+    owner_jid: string | null;
     participants: {
       jid: string;
       name: string;
@@ -3958,6 +3959,7 @@
     tag={memberOf(card.jid)?.label ?? null}
     onmessage={(jid) => {
       profileCard = null;
+      showGroupInfo = false;
       void openChat(jid);
     }}
     onclose={() => (profileCard = null)} />
@@ -4048,6 +4050,7 @@
       showGroupInfo = false;
       openChat(bare(jid));
     }}
+    onprofile={(jid, name, e) => openProfile(jid, name, e)}
     {me}
     namer={displayName}
     onreports={() => invoke<AdminReport[]>("admin_reports", { chat: selectedChat })}
