@@ -3757,12 +3757,16 @@ fn first_url(text: &str) -> Option<String> {
 /// Blocking; call it from `spawn_blocking`. Discord's crawler user agent is what
 /// sites with rich embeds (fxtwitter, fixupx, YouTube…) answer with full cards.
 fn fetch_link_preview(url: &str) -> Option<LinkPreview> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
+    let config = ureq::Agent::config_builder()
         .max_redirects(0)
         .timeout_global(Some(Duration::from_secs(10)))
         .user_agent("Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)")
-        .build()
-        .into();
+        .build();
+    let agent = ureq::Agent::with_parts(
+        config,
+        ureq::unversioned::transport::DefaultConnector::new(),
+        PublicResolver::default(),
+    );
     let mut response = fetch_public(&agent, url)?;
     let html = response.body_mut().with_config().limit(3 << 20).read_to_string().ok()?;
     let meta = meta_tags(&html);
@@ -3791,21 +3795,38 @@ fn fetch_link_preview(url: &str) -> Option<LinkPreview> {
     })
 }
 
-/// GETs `url`, following up to five redirects, but only to hosts on the public
-/// internet, so a link cannot make us reach the local network.
-/// The check resolves separately from the request, so DNS rebinding can still race it.
+/// Resolves like the default resolver but keeps only public addresses, so the
+/// address that was checked is the one connected to (no DNS-rebinding window).
+#[derive(Debug, Default)]
+struct PublicResolver(ureq::unversioned::resolver::DefaultResolver);
+
+impl ureq::unversioned::resolver::Resolver for PublicResolver {
+    fn resolve(
+        &self,
+        uri: &ureq::http::Uri,
+        config: &ureq::config::Config,
+        timeout: ureq::unversioned::transport::NextTimeout,
+    ) -> Result<ureq::unversioned::resolver::ResolvedSocketAddrs, ureq::Error> {
+        let resolved = self.0.resolve(uri, config, timeout)?;
+        let mut public = self.0.empty();
+        for addr in resolved.iter().filter(|a| is_public_ip(a.ip())) {
+            public.push(*addr);
+        }
+        if public.is_empty() {
+            log::warn!("link preview: {} has no public address, skipped", uri.host().unwrap_or("?"));
+            return Err(ureq::Error::HostNotFound);
+        }
+        Ok(public)
+    }
+}
+
+/// GETs `url` over http(s), following up to five redirects. The agent's
+/// resolver keeps it on the public internet, redirects included.
 fn fetch_public(agent: &ureq::Agent, url: &str) -> Option<ureq::http::Response<ureq::Body>> {
     let mut url = url.to_string();
     for _ in 0..5 {
         let uri: ureq::http::Uri = url.parse().ok()?;
-        let https = match uri.scheme_str() {
-            Some("https") => true,
-            Some("http") => false,
-            _ => return None,
-        };
-        let port = uri.port_u16().unwrap_or(if https { 443 } else { 80 });
-        if !is_public_host(uri.host()?, port) {
-            log::warn!("link preview: {} is not a public address, skipped", uri.host()?);
+        if !matches!(uri.scheme_str(), Some("http" | "https")) {
             return None;
         }
         let response = agent.get(&url).call().ok()?;
@@ -3824,9 +3845,10 @@ fn fetch_public(agent: &ureq::Agent, url: &str) -> Option<ureq::http::Response<u
     None
 }
 
-/// Whether every address `host` resolves to is on the public internet.
-fn is_public_host(host: &str, port: u16) -> bool {
-    use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
+/// Whether an address is on the public internet: not loopback, private,
+/// link-local, carrier-grade NAT, documentation, multicast or unspecified.
+fn is_public_ip(ip: std::net::IpAddr) -> bool {
+    use std::net::{IpAddr, Ipv4Addr};
     let public_v4 = |ip: Ipv4Addr| {
         let [a, b, ..] = ip.octets();
         !(ip.is_private()
@@ -3838,29 +3860,20 @@ fn is_public_host(host: &str, port: u16) -> bool {
             || ip.is_documentation()
             || (a == 100 && (b & 0xc0) == 64))
     };
-    let Ok(addrs) = (host, port).to_socket_addrs() else { return false };
-    let mut any = false;
-    for addr in addrs {
-        any = true;
-        let public = match addr.ip() {
-            IpAddr::V4(ip) => public_v4(ip),
-            IpAddr::V6(ip) => match ip.to_ipv4_mapped() {
-                Some(v4) => public_v4(v4),
-                None => {
-                    let first = ip.segments()[0];
-                    !(ip.is_loopback()
-                        || ip.is_unspecified()
-                        || ip.is_multicast()
-                        || (first & 0xfe00) == 0xfc00
-                        || (first & 0xffc0) == 0xfe80)
-                }
-            },
-        };
-        if !public {
-            return false;
-        }
+    match ip {
+        IpAddr::V4(ip) => public_v4(ip),
+        IpAddr::V6(ip) => match ip.to_ipv4_mapped() {
+            Some(v4) => public_v4(v4),
+            None => {
+                let first = ip.segments()[0];
+                !(ip.is_loopback()
+                    || ip.is_unspecified()
+                    || ip.is_multicast()
+                    || (first & 0xfe00) == 0xfc00
+                    || (first & 0xffc0) == 0xfe80)
+            }
+        },
     }
-    any
 }
 
 /// `<meta>` contents keyed by their lower-cased `property` or `name`; the first wins.
@@ -4196,9 +4209,11 @@ mod tests {
         assert_eq!(meta.get("og:site_name").map(String::as_str), Some("FixupX"));
         assert_eq!(meta.get("theme-color").map(String::as_str), Some("#1DA1F2"));
         assert_eq!(html_title(html).as_deref(), Some("Fallback & title"));
-        assert!(!is_public_host("127.0.0.1", 80));
-        assert!(!is_public_host("192.168.1.10", 80));
-        assert!(!is_public_host("::1", 80));
+        for private in ["127.0.0.1", "192.168.1.10", "10.0.0.2", "100.64.0.1", "169.254.1.1", "::1", "fd00::1", "::ffff:10.0.0.1"] {
+            assert!(!is_public_ip(private.parse().unwrap()), "{private}");
+        }
+        assert!(is_public_ip("1.1.1.1".parse().unwrap()));
+        assert!(is_public_ip("2606:4700::1111".parse().unwrap()));
     }
 
     #[test]
