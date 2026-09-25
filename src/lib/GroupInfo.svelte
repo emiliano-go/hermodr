@@ -12,6 +12,13 @@
     description: string | null;
     created_at: number | null;
     participants: Member[];
+    allow_admin_reports: boolean;
+  };
+  export type AdminReport = {
+    id: string;
+    message: { text: string; sender: string; sender_name: string | null; timestamp: number } | null;
+    /** Reporter JID and Unix time of each report. */
+    reporters: [string, number][];
   };
 </script>
 
@@ -36,6 +43,9 @@
     onlabel,
     me,
     namer = displayName,
+    onreports,
+    onallowreports,
+    onjump,
     onclose,
   }: {
     jid: string;
@@ -55,6 +65,11 @@
     me: string | null;
     /** Readable name for a member; the default formats bare numbers only. */
     namer?: (name: string | null, jid: string) => string;
+    /** Messages members reported to the admins; only admins may ask. */
+    onreports: () => Promise<AdminReport[]>;
+    onallowreports: (allow: boolean) => Promise<void>;
+    /** Shows a reported message in the conversation. */
+    onjump: (id: string) => void;
     onclose: () => void;
   } = $props();
 
@@ -79,7 +94,7 @@
     }
   }
 
-  type Section = "overview" | "members";
+  type Section = "overview" | "members" | "reports";
   let section = $state<Section>("overview");
   const nav = $derived<{ id: Section; label: string; group: string }[]>([
     { id: "overview", label: "Overview", group: title },
@@ -88,7 +103,30 @@
       label: info ? `Members (${info.participants.length})` : "Members",
       group: title,
     },
+    ...(self?.admin ? [{ id: "reports" as Section, label: "Reports", group: "Admin" }] : []),
   ]);
+
+  let reports = $state<AdminReport[] | null>(null);
+  let reportsError = $state<string | null>(null);
+  $effect(() => {
+    if (section !== "reports" || reports !== null) return;
+    onreports()
+      .then((r) => (reports = r))
+      .catch((e) => (reportsError = String(e)));
+  });
+
+  let allowBusy = $state(false);
+  async function setAllow(allow: boolean) {
+    allowBusy = true;
+    try {
+      await onallowreports(allow);
+      if (info) info.allow_admin_reports = allow;
+    } catch (e) {
+      reportsError = String(e);
+    } finally {
+      allowBusy = false;
+    }
+  }
 
   let query = $state("");
   const members = $derived(
@@ -206,6 +244,55 @@
       </div>
       <input class="switch" type="checkbox" checked={pinned} onchange={onpin} />
     </label>
+
+    <label class="setting">
+      <div>
+        <span class="setting-title">Reports to admins</span>
+        <span class="setting-desc">
+          {self?.admin
+            ? "Lets members report messages to this group's admins, not to WhatsApp."
+            : info.allow_admin_reports
+              ? "Members can report messages to the admins from a message's menu."
+              : "The admins have turned reports off in this group."}
+        </span>
+      </div>
+      <input
+        class="switch"
+        type="checkbox"
+        checked={info.allow_admin_reports}
+        disabled={!self?.admin || allowBusy}
+        onchange={(e) => setAllow(e.currentTarget.checked)} />
+    </label>
+  {:else if section === "reports"}
+    <h2>Reported messages</h2>
+    <p class="lede">Messages members reported to the admins. Only admins see this.</p>
+    {#if reportsError}
+      <p class="error-text">{reportsError}</p>
+    {:else if reports === null}
+      <p class="muted">Loading reports…</p>
+    {:else if reports.length === 0}
+      <p class="muted">Nothing has been reported.</p>
+    {:else}
+      <ul class="reports">
+        {#each reports as report (report.id)}
+          <li class="report">
+            {#if report.message}
+              <button class="report-message" onclick={() => onjump(report.id)}>
+                <span class="report-author">{namer(report.message.sender_name, report.message.sender)}</span>
+                <span class="report-text">{report.message.text}</span>
+              </button>
+            {:else}
+              <span class="muted">This message is not on this device.</span>
+            {/if}
+            <span class="muted">
+              Reported by {report.reporters
+                .map(([who, at]) => `${namer(null, who)} (${new Date(at * 1000).toLocaleString()})`)
+                .join(", ")}
+            </span>
+          </li>
+        {/each}
+      </ul>
+    {/if}
   {:else}
     <h2>Members</h2>
     <label class="member-search">
@@ -326,10 +413,39 @@
     color: var(--text);
     font: inherit;
   }
-  .members {
+  .members,
+  .reports {
     list-style: none;
     margin: 0;
     padding: 0;
+  }
+  .report {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .report-message {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 10px;
+    border: 0;
+    border-left: 3px solid var(--danger);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .report-author {
+    font-weight: 600;
+    font-size: 13px;
+  }
+  .report-text {
+    white-space: pre-wrap;
   }
   .member {
     display: flex;

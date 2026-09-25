@@ -37,6 +37,10 @@ pub struct UiSettings {
     /// Whether others see "typing…" while we write.
     #[serde(default = "default_true")]
     pub send_typing: bool,
+    /// Whether senders learn we read or played their messages. Off covers
+    /// groups too, which WhatsApp's own read-receipt privacy does not.
+    #[serde(default = "default_true")]
+    pub send_receipts: bool,
 }
 
 fn default_true() -> bool {
@@ -52,6 +56,7 @@ impl Default for UiSettings {
             media_dir: None,
             warn_missing_video_preview: true,
             send_typing: true,
+            send_receipts: true,
         }
     }
 }
@@ -481,8 +486,18 @@ async fn resolve_names(state: State<'_, AppState>) -> Result<usize, String> {
 
 /// Marks a chat as read. Returns how many messages were newly marked.
 #[tauri::command]
-fn mark_read(state: State<'_, AppState>, chat: String) -> Result<usize, String> {
-    state.service()?.mark_read(&chat).map_err(|e| e.to_string())
+async fn mark_read(state: State<'_, AppState>, chat: String) -> Result<usize, String> {
+    let receipts = state.settings.lock().unwrap().send_receipts;
+    state.service()?.mark_read(&chat, receipts).await.map_err(|e| e.to_string())
+}
+
+/// Sends a played receipt for a voice note or view-once media, unless receipts are off.
+#[tauri::command]
+async fn mark_played(state: State<'_, AppState>, chat: String, id: String, sender: String) -> Result<(), String> {
+    if !state.settings.lock().unwrap().send_receipts {
+        return Ok(());
+    }
+    state.service()?.mark_played(&chat, &id, &sender).await.map_err(|e| e.to_string())
 }
 
 /// Sends a text message quoting an earlier one.
@@ -606,6 +621,7 @@ async fn send_media(
     reply_to_text: Option<String>,
     gif: Option<bool>,
     view_once: Option<bool>,
+    mentions: Option<Vec<String>>,
 ) -> Result<Option<String>, String> {
     let bytes = BASE64.decode(data.as_bytes()).map_err(|e| e.to_string())?;
     let reply = match (reply_to_id, reply_to_sender, reply_to_text) {
@@ -615,7 +631,8 @@ async fn send_media(
     let options = SendOptions {
         gif: gif.unwrap_or(false),
         view_once: view_once.unwrap_or(false),
-        voice: None,
+        mentions: mentions.unwrap_or_default(),
+        ..Default::default()
     };
     let service = state.service()?;
     service
@@ -644,9 +661,9 @@ async fn send_voice(
         _ => None,
     };
     let options = SendOptions {
-        gif: false,
         view_once: view_once.unwrap_or(false),
         voice: Some(VoiceNote { seconds, waveform }),
+        ..Default::default()
     };
     state
         .service()?
@@ -690,20 +707,75 @@ struct EventForm {
     end: Option<i64>,
     location: Option<String>,
     link: Option<String>,
+    #[serde(default)]
+    canceled: bool,
+}
+
+impl From<EventForm> for hermodr_core::NewEvent {
+    fn from(event: EventForm) -> Self {
+        Self {
+            name: event.name.trim().to_string(),
+            description: event.description.filter(|s| !s.trim().is_empty()),
+            start: event.start,
+            end: event.end,
+            location: event.location.filter(|s| !s.trim().is_empty()),
+            link: event.link.filter(|s| !s.trim().is_empty()),
+            canceled: event.canceled,
+        }
+    }
 }
 
 #[tauri::command]
 async fn create_event(state: State<'_, AppState>, chat: String, event: EventForm) -> Result<(), String> {
-    let event = hermodr_core::NewEvent {
-        name: event.name.trim().to_string(),
-        description: event.description.filter(|s| !s.trim().is_empty()),
-        start: event.start,
-        end: event.end,
-        location: event.location.filter(|s| !s.trim().is_empty()),
-        link: event.link.filter(|s| !s.trim().is_empty()),
-        canceled: false,
-    };
-    state.service()?.create_event(&chat, event).await.map_err(|e| e.to_string())
+    state.service()?.create_event(&chat, event.into()).await.map_err(|e| e.to_string())
+}
+
+/// Edits or cancels one of our events.
+#[tauri::command]
+async fn edit_event(state: State<'_, AppState>, chat: String, id: String, event: EventForm) -> Result<(), String> {
+    state.service()?.edit_event(&chat, &id, event.into()).await.map_err(|e| e.to_string())
+}
+
+/// Starred messages across every chat, newest first.
+#[tauri::command]
+fn starred_messages(state: State<'_, AppState>) -> Result<Vec<StoredMessage>, String> {
+    state.service()?.starred_messages().map_err(|e| e.to_string())
+}
+
+#[derive(serde::Serialize)]
+struct ChatSettings {
+    /// The chat's auto download override, `None` when it follows the global one.
+    auto_download: Option<bool>,
+    retention: hermodr_core::ChatRetention,
+}
+
+#[tauri::command]
+fn chat_settings(state: State<'_, AppState>, chat: String) -> Result<ChatSettings, String> {
+    let service = state.service()?;
+    Ok(ChatSettings {
+        auto_download: service.chat_auto_download(&chat).map_err(|e| e.to_string())?,
+        retention: service.chat_retention(&chat).map_err(|e| e.to_string())?,
+    })
+}
+
+#[tauri::command]
+fn set_chat_retention(
+    state: State<'_, AppState>,
+    chat: String,
+    retention: hermodr_core::ChatRetention,
+) -> Result<(), String> {
+    state.service()?.set_chat_retention(&chat, &retention).map_err(|e| e.to_string())
+}
+
+/// Messages reported to a group's admins.
+#[tauri::command]
+async fn admin_reports(state: State<'_, AppState>, chat: String) -> Result<Vec<hermodr_core::AdminReport>, String> {
+    state.service()?.admin_reports(&chat).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn set_allow_admin_reports(state: State<'_, AppState>, chat: String, allow: bool) -> Result<(), String> {
+    state.service()?.set_allow_admin_reports(&chat, allow).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -725,6 +797,13 @@ async fn respond_event(
 async fn send_sticker(state: State<'_, AppState>, chat: String, data: String) -> Result<(), String> {
     let bytes = BASE64.decode(data.as_bytes()).map_err(|e| e.to_string())?;
     state.service()?.send_sticker(&chat, bytes).await.map_err(|e| e.to_string())
+}
+
+/// Saves base64 image bytes as a sticker without sending it; returns its path.
+#[tauri::command]
+fn save_sticker(state: State<'_, AppState>, data: String) -> Result<String, String> {
+    let bytes = BASE64.decode(data.as_bytes()).map_err(|e| e.to_string())?;
+    state.service()?.save_sticker(&bytes).map_err(|e| e.to_string())
 }
 
 /// Stickers or GIFs already downloaded, newest first.
@@ -1173,6 +1252,14 @@ pub fn run() {
             names,
             send_voice,
             open_view_once,
+            mark_played,
+            starred_messages,
+            edit_event,
+            set_chat_retention,
+            chat_settings,
+            admin_reports,
+            set_allow_admin_reports,
+            save_sticker,
             own_jid,
             send_typing,
             set_online,

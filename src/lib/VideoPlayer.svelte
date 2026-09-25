@@ -5,11 +5,13 @@
   let {
     src,
     gif = false,
+    autoplay = true,
     onerror,
   }: {
     src: string;
     /** GIFs loop silently and hide the sound controls. */
     gif?: boolean;
+    autoplay?: boolean;
     onerror?: () => void;
   } = $props();
 
@@ -164,7 +166,7 @@
   <video
     bind:this={video}
     {src}
-    autoplay
+    {autoplay}
     loop={looping}
     bind:paused
     bind:currentTime={current}

@@ -63,6 +63,7 @@
     avatar = null,
     initials = "",
     mine = false,
+    onplayed,
   }: {
     path: string;
     /** The sender's picture, shown beside the note as WhatsApp does. */
@@ -70,6 +71,8 @@
     initials?: string;
     /** Our own notes never show as unplayed. */
     mine?: boolean;
+    /** Called the first time the note plays here, for the played receipt. */
+    onplayed?: () => void;
   } = $props();
   // svelte-ignore state_referenced_locally
   let heard = $state(mine || heardNotes.has(path));
@@ -128,6 +131,7 @@
     if (!heard) {
       heard = true;
       rememberHeard(path);
+      onplayed?.();
     }
   }
 

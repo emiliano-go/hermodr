@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-mark-played"
+description = "Enables the mark_played command without any pre-configured scope."
+commands.allow = ["mark_played"]
+
+[[permission]]
+identifier = "deny-mark-played"
+description = "Denies the mark_played command without any pre-configured scope."
+commands.deny = ["mark_played"]

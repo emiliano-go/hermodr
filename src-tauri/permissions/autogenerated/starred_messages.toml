@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-starred-messages"
+description = "Enables the starred_messages command without any pre-configured scope."
+commands.allow = ["starred_messages"]
+
+[[permission]]
+identifier = "deny-starred-messages"
+description = "Denies the starred_messages command without any pre-configured scope."
+commands.deny = ["starred_messages"]

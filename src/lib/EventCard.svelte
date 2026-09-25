@@ -20,11 +20,16 @@
     title,
     onrespond,
     onopenurl,
+    onedit,
+    oncancel,
   }: {
     event: ChatEvent | undefined;
     title: string;
     onrespond: (response: string) => Promise<void>;
     onopenurl: (url: string) => void;
+    /** Present only on our own events. */
+    onedit?: () => void;
+    oncancel?: () => Promise<void>;
   } = $props();
 
   let busy = $state(false);
@@ -74,6 +79,22 @@
         </button>
       {/each}
     </div>
+    {#if onedit && oncancel}
+      <div class="owner">
+        <button class="link" onclick={onedit}>Edit</button>
+        <button
+          class="link danger"
+          disabled={busy}
+          onclick={async () => {
+            busy = true;
+            try {
+              await oncancel();
+            } finally {
+              busy = false;
+            }
+          }}>Cancel event</button>
+      </div>
+    {/if}
   {:else if !event}
     <span class="muted">This event's details did not reach this device.</span>
   {/if}
@@ -152,5 +173,13 @@
     background: var(--accent-soft);
     color: var(--accent);
     font-weight: 600;
+  }
+  .owner {
+    display: flex;
+    justify-content: flex-end;
+    gap: 14px;
+  }
+  .danger {
+    color: var(--danger);
   }
 </style>

@@ -25,6 +25,7 @@ use whatsapp_rust::{
     wacore::types::presence::{ChatPresence, ChatPresenceMedia, ReceiptType},
     wacore::types::events::Event,
     wacore_binary::builder::NodeBuilder,
+    wacore_binary::JidExt,
     CacheConfig,
     WAPatchName,
 };
@@ -158,6 +159,8 @@ pub enum ServiceEvent {
     /// Someone started or stopped typing; `state` is `typing`, `recording` or
     /// `paused`.
     Typing { chat: String, sender: String, state: String },
+    /// A watched contact came online or went offline; `last_seen` when they share it.
+    Presence { jid: String, online: bool, last_seen: Option<i64> },
     /// A group member changed their tag; empty means they cleared it.
     MemberLabel { chat: String, jid: String, label: String },
     /// Reactions, stars or the pinned message of a chat changed.
@@ -186,6 +189,23 @@ pub struct SendOptions {
     pub view_once: bool,
     /// Present for a recorded voice note (an Ogg/Opus file).
     pub voice: Option<VoiceNote>,
+    /// Carries WhatsApp's "Forwarded" label.
+    pub forwarded: bool,
+    /// JIDs the caption mentions as `@<number>`.
+    pub mentions: Vec<String>,
+}
+
+/// Marks a message context as forwarded, keeping anything already in it (a quote).
+fn forwarded_context(context: Option<Box<wa::ContextInfo>>) -> Box<wa::ContextInfo> {
+    let mut context = context.unwrap_or_default();
+    context.is_forwarded = Some(true);
+    context.forwarding_score = Some(context.forwarding_score.unwrap_or(0) + 1);
+    context
+}
+
+/// Whether a received message carries the "Forwarded" label.
+fn is_forwarded(message: &wa::Message) -> bool {
+    message_context(message).is_some_and(|c| c.is_forwarded == Some(true))
 }
 
 #[derive(Debug)]
@@ -234,6 +254,17 @@ pub struct GroupInfo {
     pub description: Option<String>,
     pub created_at: Option<u64>,
     pub participants: Vec<Participant>,
+    /// Whether members may report messages to the group's admins.
+    pub allow_admin_reports: bool,
+}
+
+/// A message reported to a group's admins, with who reported it and when.
+#[derive(Debug, Clone, Serialize)]
+pub struct AdminReport {
+    pub id: String,
+    /// The message as stored here, when this device has it.
+    pub message: Option<StoredMessage>,
+    pub reporters: Vec<(String, u64)>,
 }
 
 /// How the service should behave for one account.
@@ -463,6 +494,7 @@ impl Service {
                     EventKind::ChatPresence,
                     EventKind::PictureUpdate,
                     EventKind::UndecryptableMessage,
+                    EventKind::Presence,
                 ],
                 move |event, _client| {
                     let store = store_for_events.clone();
@@ -733,6 +765,18 @@ impl Service {
                                         continue;
                                     }
 
+                                    if let Some((target, text)) = edit_of(&inbound.message) {
+                                        if let Ok(true) = store.apply_edit(&chat, &target, &text) {
+                                            if let Ok(updated) = store.message(&chat, &target) {
+                                                let _ = events.send(ServiceEvent::Message {
+                                                    message: Box::new(updated),
+                                                });
+                                            }
+                                            let _ = events.send(ServiceEvent::Marks { chat: chat.clone() });
+                                        }
+                                        continue;
+                                    }
+
                                     let auto_download = store
                                         .chat_auto_download(&chat)
                                         .ok()
@@ -753,6 +797,9 @@ impl Service {
                                     message.mentioned = mentions_me(&inbound.message, &own);
                                     if inbound.message.is_view_once() {
                                         let _ = store.set_view_once(&chat, &message.id, from_me);
+                                    }
+                                    if is_forwarded(&inbound.message) {
+                                        let _ = store.set_forwarded(&chat, &message.id);
                                     }
                                     let _ = store.upsert(&message);
                                     let _ = events.send(ServiceEvent::Message { message: Box::new(message) });
@@ -989,6 +1036,22 @@ impl Service {
                                     state: state.to_string(),
                                 });
                             }
+                            Event::Presence(presence) => {
+                                // A chat is keyed by phone number; presence may name the LID.
+                                let mut jid = presence.from.to_non_ad();
+                                if jid.is_lid() {
+                                    if let Some(client) = client_for_events.get() {
+                                        if let Ok(Some(entry)) = client.get_lid_pn_entry(&jid).await {
+                                            jid = Jid::new(&*entry.phone_number, whatsapp_rust::wacore_binary::Server::Pn);
+                                        }
+                                    }
+                                }
+                                let _ = events.send(ServiceEvent::Presence {
+                                    jid: jid.to_string(),
+                                    online: !presence.unavailable,
+                                    last_seen: presence.last_seen.map(|t| t.timestamp()),
+                                });
+                            }
                             Event::PictureUpdate(update) => {
                                 let jid = update.jid.to_non_ad().to_string();
                                 if let Some(dir) = media_dir.as_deref() {
@@ -1210,6 +1273,7 @@ impl Service {
             description: metadata.description.clone(),
             created_at: metadata.creation_time,
             participants,
+            allow_admin_reports: metadata.allow_admin_reports,
         };
         self.group_cache
             .lock()
@@ -1694,16 +1758,32 @@ impl Service {
                     .unwrap_or_else(|| "file".into());
                 let gif = message.media_kind.as_deref() == Some("gif");
                 if message.media_kind.as_deref() == Some("sticker") {
-                    self.send_sticker(to_chat, bytes).await?;
+                    self.send_sticker_as(to_chat, bytes, true).await?;
                 } else {
-                    let options = SendOptions { gif, ..Default::default() };
+                    let options = SendOptions { gif, forwarded: true, ..Default::default() };
                     self.send_media(to_chat, &name, bytes, caption, None, options).await?;
                 }
             }
             None if message.media_kind.is_some() => {
                 anyhow::bail!("download the media before forwarding it")
             }
-            None => self.send_text(to_chat, message.text, Vec::new()).await?,
+            None => {
+                let to: Jid = to_chat.parse()?;
+                let content = wa::Message {
+                    extended_text_message: MessageField::some(wa::message::ExtendedTextMessage {
+                        text: Some(message.text.clone()),
+                        context_info: MessageField::some(*forwarded_context(None)),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                };
+                let result = self.client.send_message(to, content).await?;
+                self.store.set_forwarded(to_chat, &result.message_id)?;
+                let mut stored = self.own_message(to_chat, &result.message_id, message.text, "");
+                stored.media_kind = None;
+                self.store.upsert(&stored)?;
+                let _ = self.events.send(ServiceEvent::Message { message: Box::new(stored) });
+            }
         }
         Ok(())
     }
@@ -1712,7 +1792,6 @@ impl Service {
         self.store.marks(chat)
     }
 
-    /// A message we just sent, as the store keeps it until the server confirms.
     /// Marks a view-once message opened and deletes its media.
     pub fn open_view_once(&self, chat: &str, id: &str) -> Result<()> {
         if let Some(path) = self.store.open_view_once(chat, id)? {
@@ -1722,6 +1801,7 @@ impl Service {
         Ok(())
     }
 
+    /// A message we just sent, as the store keeps it until the server confirms.
     fn own_message(&self, chat: &str, id: &str, text: String, kind: &str) -> StoredMessage {
         StoredMessage {
             chat: chat.to_string(),
@@ -1814,6 +1894,108 @@ impl Service {
         let stored = self.own_message(chat, &id, event.name, "event");
         self.store.upsert(&stored)?;
         let _ = self.events.send(ServiceEvent::Message { message: Box::new(stored) });
+        Ok(())
+    }
+
+    /// Edits or cancels one of our events. The edit is encrypted with the
+    /// event's secret, which is how WhatsApp sends event edits.
+    pub async fn edit_event(&self, chat: &str, id: &str, event: crate::store::NewEvent) -> Result<()> {
+        let def = self
+            .store
+            .event_secret(chat, id)?
+            .ok_or_else(|| anyhow::anyhow!("this event's key never reached this device"))?;
+        let own: Vec<String> = [self.client.pn(), self.client.lid()]
+            .into_iter()
+            .flatten()
+            .map(|j| j.to_non_ad().to_string())
+            .collect();
+        if !own.contains(&def.creator) {
+            anyhow::bail!("only the event's creator can change it");
+        }
+        let content = wa::Message {
+            event_message: MessageField::some(wa::message::EventMessage {
+                name: Some(event.name.clone()),
+                description: event.description.clone(),
+                start_time: event.start,
+                end_time: event.end,
+                join_link: event.link.clone(),
+                is_canceled: Some(event.canceled),
+                location: event
+                    .location
+                    .clone()
+                    .map(|name| wa::message::LocationMessage { name: Some(name), ..Default::default() })
+                    .into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let to: Jid = chat.parse()?;
+        self.client
+            .edit_message_encrypted(to, id, &def.secret, content)
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        self.store.save_event(chat, id, &def.creator, &event, None)?;
+        self.store.apply_edit(chat, id, &event.name)?;
+        let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
+        Ok(())
+    }
+
+    /// Starred messages across every chat, newest first.
+    pub fn starred_messages(&self) -> Result<Vec<StoredMessage>> {
+        self.store.starred_messages()
+    }
+
+    pub fn chat_retention(&self, chat: &str) -> Result<crate::store::ChatRetention> {
+        self.store.chat_retention(chat)
+    }
+
+    /// Sets a chat's own retention and applies it at once.
+    pub fn set_chat_retention(&self, chat: &str, retention: &crate::store::ChatRetention) -> Result<()> {
+        self.store.set_chat_retention(chat, retention)?;
+        self.store.enforce_retention()?;
+        Ok(())
+    }
+
+    /// The per chat auto download override, if one is set.
+    pub fn chat_auto_download(&self, chat: &str) -> Result<Option<bool>> {
+        self.store.chat_auto_download(chat)
+    }
+
+    /// Messages members reported to this group's admins. Only admins may ask.
+    pub async fn admin_reports(&self, chat: &str) -> Result<Vec<AdminReport>> {
+        let jid: Jid = chat.parse()?;
+        let reported = self
+            .client
+            .groups()
+            .get_reported_messages(jid)
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        Ok(reported
+            .reports
+            .into_iter()
+            .map(|report| AdminReport {
+                message: self.store.message(chat, &report.message_id).ok(),
+                reporters: report
+                    .reporters
+                    .into_iter()
+                    .map(|r| (r.phone_number.unwrap_or(r.jid).to_non_ad().to_string(), r.timestamp))
+                    .collect(),
+                id: report.message_id,
+            })
+            .collect())
+    }
+
+    /// Lets members report messages to the admins, or stops them.
+    pub async fn set_allow_admin_reports(&self, chat: &str, allow: bool) -> Result<()> {
+        let jid: Jid = chat.parse()?;
+        self.client
+            .groups()
+            .set_allow_admin_reports(jid, allow)
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        if let Some(info) = self.group_cache.lock().unwrap().get_mut(chat) {
+            info.allow_admin_reports = allow;
+        }
         Ok(())
     }
 
@@ -2043,9 +2225,40 @@ impl Service {
         self.media_dir.clone()
     }
 
-    /// Marks a chat's incoming messages as read. Returns how many changed.
-    pub fn mark_read(&self, chat: &str) -> Result<usize> {
-        self.store.mark_chat_read(chat)
+    /// Marks a chat's incoming messages as read, and with `receipts` tells
+    /// their senders. Returns how many changed.
+    pub async fn mark_read(&self, chat: &str, receipts: bool) -> Result<usize> {
+        let unread = if receipts { self.store.unread_ids(chat)? } else { Vec::new() };
+        let changed = self.store.mark_chat_read(chat)?;
+        if unread.is_empty() {
+            return Ok(changed);
+        }
+        let to: Jid = chat.parse()?;
+        // A group receipt names the author, one receipt per author; a direct
+        // chat needs none.
+        let mut by_sender: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+        for (id, sender) in unread {
+            let key = if to.is_group() { sender } else { String::new() };
+            by_sender.entry(key).or_default().push(id);
+        }
+        for (sender, ids) in by_sender {
+            let sender = sender.parse::<Jid>().ok().map(|j| j.to_non_ad());
+            let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+            if let Err(e) = self.client.mark_as_read(&to, sender.as_ref(), &ids).await {
+                log::warn!("could not send read receipts: {e}");
+            }
+        }
+        Ok(changed)
+    }
+
+    /// Tells the sender that a voice note was played or view-once media opened.
+    pub async fn mark_played(&self, chat: &str, id: &str, sender: &str) -> Result<()> {
+        let to: Jid = chat.parse()?;
+        let sender = if to.is_group() { sender.parse::<Jid>().ok().map(|j| j.to_non_ad()) } else { None };
+        self.client
+            .mark_as_played(&to, sender.as_ref(), &[id])
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))
     }
 
     /// Sends a text message quoting an earlier one.
@@ -2145,7 +2358,7 @@ impl Service {
         reply: Option<(String, String, String)>,
         options: SendOptions,
     ) -> Result<Option<String>> {
-        let SendOptions { gif, view_once, voice } = options;
+        let SendOptions { gif, view_once, voice, forwarded, mentions } = options;
         let to: Jid = chat.parse()?;
         let to_self = self.is_self_jid(&to);
         let file_name = file_name.to_string();
@@ -2193,6 +2406,14 @@ impl Service {
                 )))
             }
             None => None,
+        };
+        let context = if forwarded { Some(forwarded_context(context)) } else { context };
+        let context = if mentions.is_empty() {
+            context
+        } else {
+            let mut context = context.unwrap_or_default();
+            context.mentioned_jid = mentions;
+            Some(context)
         };
 
         let mut message = match kind {
@@ -2254,6 +2475,9 @@ impl Service {
         }
 
         let result = self.client.send_message(to, message).await?;
+        if forwarded {
+            self.store.set_forwarded(chat, &result.message_id)?;
+        }
         // The sender cannot reopen view-once media either, so no copy is kept.
         if view_once {
             self.store.set_view_once(chat, &result.message_id, true)?;
@@ -2306,6 +2530,24 @@ impl Service {
 
     /// Sends a picture as a sticker (see [`sticker_webp`]).
     pub async fn send_sticker(&self, chat: &str, bytes: Vec<u8>) -> Result<()> {
+        self.send_sticker_as(chat, bytes, false).await
+    }
+
+    /// Turns a picture into a sticker in the media folder without sending it.
+    pub fn save_sticker(&self, bytes: &[u8]) -> Result<String> {
+        let webp = sticker_webp(bytes)
+            .ok_or_else(|| anyhow::anyhow!("that file is not an image we can turn into a sticker"))?;
+        let dir = self
+            .media_dir()
+            .ok_or_else(|| anyhow::anyhow!("no media folder is configured"))?
+            .join("stickers");
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join(format!("saved-{}.webp", unix_now()));
+        std::fs::write(&path, webp)?;
+        Ok(path.to_string_lossy().into_owned())
+    }
+
+    async fn send_sticker_as(&self, chat: &str, bytes: Vec<u8>, forwarded: bool) -> Result<()> {
         let to: Jid = chat.parse()?;
         let webp = sticker_webp(&bytes)
             .ok_or_else(|| anyhow::anyhow!("that file is not an image we can turn into a sticker"))?;
@@ -2325,11 +2567,19 @@ impl Service {
                 mimetype: Some("image/webp".into()),
                 width: Some(512),
                 height: Some(512),
+                context_info: if forwarded {
+                    MessageField::some(*forwarded_context(None))
+                } else {
+                    MessageField::none()
+                },
                 ..Default::default()
             }),
             ..Default::default()
         };
         let result = self.client.send_message(to, message).await?;
+        if forwarded {
+            self.store.set_forwarded(chat, &result.message_id)?;
+        }
 
         let media_path = self.media_dir().and_then(|dir| {
             std::fs::create_dir_all(&dir).ok()?;
@@ -2511,6 +2761,19 @@ fn member_label_change(message: &wa::Message) -> Option<String> {
         return None;
     }
     Some(protocol.member_label.as_option()?.label.clone().unwrap_or_default())
+}
+
+/// The edited message's id and its new text (or caption), if this message is an edit.
+fn edit_of(message: &wa::Message) -> Option<(String, String)> {
+    use wa::message::protocol_message::Type;
+    let protocol = message.get_base_message().protocol_message.as_option()?;
+    if protocol.r#type != Some(Type::MESSAGE_EDIT) {
+        return None;
+    }
+    let target = protocol.key.as_option()?.id.clone().filter(|id| !id.is_empty())?;
+    let edited = protocol.edited_message.as_option()?;
+    let text = edited.text_content().or_else(|| edited.get_caption())?.to_string();
+    Some((target, text))
 }
 
 /// The id of the message a revoke refers to, if this message is a revoke.

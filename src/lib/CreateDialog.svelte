@@ -1,13 +1,17 @@
 <script lang="ts">
   import { fade, scale } from "svelte/transition";
   import Icon from "$lib/Icon.svelte";
+  import type { ChatEvent } from "$lib/EventCard.svelte";
 
   let {
     kind,
+    initial = null,
     oncreate,
     onclose,
   }: {
     kind: "poll" | "event";
+    /** An event being edited instead of created. */
+    initial?: ChatEvent | null;
     /** Resolves once sent; a rejection keeps the dialog open with the error. */
     oncreate: (value: unknown) => Promise<void>;
     onclose: () => void;
@@ -17,13 +21,32 @@
   let options = $state(["", ""]);
   let multi = $state(false);
 
-  let name = $state("");
-  let description = $state("");
-  let date = $state("");
-  let startTime = $state("");
-  let endTime = $state("");
-  let location = $state("");
-  let link = $state("");
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const localDate = (s: number | null | undefined) => {
+    if (!s) return "";
+    const d = new Date(s * 1000);
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  };
+  const localTime = (s: number | null | undefined) => {
+    if (!s) return "";
+    const d = new Date(s * 1000);
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+  // svelte-ignore state_referenced_locally
+  let name = $state(initial?.name ?? "");
+  // svelte-ignore state_referenced_locally
+  let description = $state(initial?.description ?? "");
+  // svelte-ignore state_referenced_locally
+  let date = $state(localDate(initial?.start));
+  // svelte-ignore state_referenced_locally
+  let startTime = $state(localTime(initial?.start));
+  // svelte-ignore state_referenced_locally
+  let endTime = $state(localTime(initial?.end));
+  // svelte-ignore state_referenced_locally
+  let location = $state(initial?.location ?? "");
+  // svelte-ignore state_referenced_locally
+  let link = $state(initial?.link ?? "");
+  const heading = $derived(kind === "poll" ? "Create poll" : initial ? "Edit event" : "Create event");
 
   let busy = $state(false);
   let failed = $state<string | null>(null);
@@ -82,11 +105,11 @@
   onclick={(e) => e.target === e.currentTarget && onclose()}>
   <form
     class="dialog"
-    aria-label={kind === "poll" ? "Create poll" : "Create event"}
+    aria-label={heading}
     transition:scale|global={{ start: 0.96, duration: 160 }}
     onsubmit={(e) => (e.preventDefault(), submit())}>
     <header>
-      <h2>{kind === "poll" ? "Create poll" : "Create event"}</h2>
+      <h2>{heading}</h2>
       <button type="button" class="close" aria-label="Close" onclick={onclose}><Icon name="x" size={18} /></button>
     </header>
 
@@ -140,7 +163,9 @@
     {#if failed}<p class="error">{failed}</p>{/if}
     <div class="actions">
       <button type="button" class="ghost" onclick={onclose}>Cancel</button>
-      <button type="submit" class="primary" disabled={!valid || busy}>{busy ? "Sending…" : "Send"}</button>
+      <button type="submit" class="primary" disabled={!valid || busy}
+        >{busy ? (initial ? "Saving…" : "Sending…") : initial ? "Save" : "Send"}</button
+      >
     </div>
   </form>
 </div>

@@ -7,6 +7,7 @@
     warn_missing_video_preview: boolean;
     media_dir: string | null;
     send_typing: boolean;
+    send_receipts: boolean;
   };
   export type Account = { id: string; label: string; jid: string | null };
   export type Section =
@@ -102,15 +103,19 @@
     });
   }
 
-  const NAV: { id: Section; label: string; group: string }[] = [
-    { id: "profile", label: "My profile", group: "User settings" },
+  // Profile and WhatsApp privacy live on the account, so they wait for pairing.
+  const NAV = $derived<{ id: Section; label: string; group: string }[]>([
+    ...(me ? [{ id: "profile" as Section, label: "My profile", group: "User settings" }] : []),
     { id: "accounts", label: "My accounts", group: "User settings" },
-    { id: "whatsapp", label: "WhatsApp privacy", group: "User settings" },
+    ...(me ? [{ id: "whatsapp" as Section, label: "WhatsApp privacy", group: "User settings" }] : []),
     { id: "privacy", label: "Storage & history", group: "App settings" },
     { id: "media", label: "Media", group: "App settings" },
     { id: "appearance", label: "Customization", group: "App settings" },
     { id: "about", label: "About", group: "Hermóðr" },
-  ];
+  ]);
+  $effect(() => {
+    if (!NAV.some((n) => n.id === section)) section = "accounts";
+  });
 
   // Edits stay local until saved, so leaving with unsaved changes is visible.
   let draft = $state<UiSettings>(untrack(() => structuredClone($state.snapshot(settings))));
@@ -306,6 +311,17 @@
               </span>
             </div>
             <input class="switch" type="checkbox" bind:checked={draft.send_typing} />
+          </label>
+          <label class="setting">
+            <div>
+              <span class="setting-title">Send read and played receipts</span>
+              <span class="setting-desc">
+                Off, nobody learns you read a message, heard a voice note or opened view-once media,
+                in groups too. Unlike WhatsApp's own read receipts setting below, you keep seeing
+                other people's.
+              </span>
+            </div>
+            <input class="switch" type="checkbox" bind:checked={draft.send_receipts} />
           </label>
           {#if profile}
             {#each PRIVACY as item (item.category)}

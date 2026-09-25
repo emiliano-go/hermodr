@@ -128,6 +128,59 @@ pub struct ChatSummary {
     pub pinned: bool,
 }
 
+/// The columns [`message_row`] reads, from `messages m` joined to `names n` on the sender.
+const MESSAGE_COLUMNS: &str = "m.chat, m.id, m.sender, m.timestamp, m.from_me, m.text,
+    n.name, m.media_kind, m.media_path, m.reply_to_id, m.reply_to_text,
+    m.read, m.revoked, m.status, m.reply_to_sender, m.mentioned,
+    m.preview_url, m.preview_title, m.preview_desc, m.preview_thumb,
+    m.reply_to_kind, m.reply_to_thumb, m.media_thumb, m.media_ref, m.reply_to_chat";
+
+fn message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
+    Ok(StoredMessage {
+        chat: row.get(0)?,
+        id: row.get(1)?,
+        sender: row.get(2)?,
+        sender_name: row.get(6)?,
+        timestamp: row.get(3)?,
+        from_me: row.get::<_, i32>(4)? != 0,
+        text: row.get(5)?,
+        media_kind: row.get(7)?,
+        media_path: row.get(8)?,
+        reply_to_id: row.get(9)?,
+        reply_to_text: row.get(10)?,
+        read: row.get::<_, i32>(11)? != 0,
+        revoked: row.get::<_, i32>(12)? != 0,
+        status: row.get(13)?,
+        reply_to_sender: row.get(14)?,
+        mentioned: row.get::<_, i32>(15)? != 0,
+        preview_url: row.get(16)?,
+        preview_title: row.get(17)?,
+        preview_desc: row.get(18)?,
+        preview_thumb: row.get(19)?,
+        reply_to_kind: row.get(20)?,
+        reply_to_thumb: row.get(21)?,
+        media_thumb: row.get(22)?,
+        media_ref: row.get(23)?,
+        reply_to_chat: row.get(24)?,
+    })
+}
+
+/// A chat's own retention, overriding the global policy where set.
+/// `Some(0)` keeps without limit; `None` defers to the global setting.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatRetention {
+    pub max_age_hours: Option<i64>,
+    pub max_messages: Option<i64>,
+    /// Whether scrolling to the top asks the phone for older messages.
+    pub on_demand: bool,
+}
+
+impl Default for ChatRetention {
+    fn default() -> Self {
+        Self { max_age_hours: None, max_messages: None, on_demand: true }
+    }
+}
+
 /// Ordering for outgoing delivery states. Higher means further along; unknown
 /// states rank below everything so any known state replaces them.
 fn status_rank(s: &str) -> i32 {
@@ -213,6 +266,10 @@ pub struct ChatMarks {
     pub events: Vec<Event>,
     /// View-once messages and whether each was opened (or sent by us, which counts).
     pub view_once: Vec<ViewOnce>,
+    /// Ids of messages that arrived marked as forwarded.
+    pub forwarded: Vec<String>,
+    /// Ids of messages their sender edited.
+    pub edited: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -334,7 +391,14 @@ impl MessageStore {
                  response TEXT NOT NULL, PRIMARY KEY (chat, event, responder));
              CREATE TABLE IF NOT EXISTS view_once (
                  chat TEXT NOT NULL, id TEXT NOT NULL, opened INTEGER NOT NULL DEFAULT 0,
-                 PRIMARY KEY (chat, id));",
+                 PRIMARY KEY (chat, id));
+             CREATE TABLE IF NOT EXISTS forwarded (
+                 chat TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY (chat, id));
+             CREATE TABLE IF NOT EXISTS edited (
+                 chat TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY (chat, id));
+             CREATE TABLE IF NOT EXISTS chat_retention (
+                 jid TEXT PRIMARY KEY, max_age_hours INTEGER, max_messages INTEGER,
+                 on_demand INTEGER NOT NULL DEFAULT 1);",
         )?;
 
         // Per chat overrides. Absent means the global setting applies.
@@ -584,46 +648,28 @@ impl MessageStore {
     /// Messages in a chat, newest first.
     pub fn messages_for(&self, chat: &str, limit: u32) -> Result<Vec<StoredMessage>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT m.chat, m.id, m.sender, m.timestamp, m.from_me, m.text,
-                    n.name, m.media_kind, m.media_path, m.reply_to_id, m.reply_to_text,
-                    m.read, m.revoked, m.status, m.reply_to_sender, m.mentioned,
-                    m.preview_url, m.preview_title, m.preview_desc, m.preview_thumb,
-                    m.reply_to_kind, m.reply_to_thumb, m.media_thumb, m.media_ref, m.reply_to_chat
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {MESSAGE_COLUMNS}
              FROM messages m
              LEFT JOIN names n ON n.jid = m.sender
              WHERE m.chat = ?1
-             ORDER BY m.timestamp DESC LIMIT ?2",
-        )?;
-        let rows = stmt.query_map(params![chat, limit], |row| {
-            Ok(StoredMessage {
-                chat: row.get(0)?,
-                id: row.get(1)?,
-                sender: row.get(2)?,
-                sender_name: row.get(6)?,
-                timestamp: row.get(3)?,
-                from_me: row.get::<_, i32>(4)? != 0,
-                text: row.get(5)?,
-                media_kind: row.get(7)?,
-                media_path: row.get(8)?,
-                reply_to_id: row.get(9)?,
-                reply_to_text: row.get(10)?,
-                read: row.get::<_, i32>(11)? != 0,
-                revoked: row.get::<_, i32>(12)? != 0,
-                status: row.get(13)?,
-                reply_to_sender: row.get(14)?,
-                mentioned: row.get::<_, i32>(15)? != 0,
-                preview_url: row.get(16)?,
-                preview_title: row.get(17)?,
-                preview_desc: row.get(18)?,
-                preview_thumb: row.get(19)?,
-                reply_to_kind: row.get(20)?,
-                reply_to_thumb: row.get(21)?,
-                media_thumb: row.get(22)?,
-                media_ref: row.get(23)?,
-                reply_to_chat: row.get(24)?,
-            })
-        })?;
+             ORDER BY m.timestamp DESC LIMIT ?2"
+        ))?;
+        let rows = stmt.query_map(params![chat, limit], message_row)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    }
+
+    /// Starred messages across every chat, newest first.
+    pub fn starred_messages(&self) -> Result<Vec<StoredMessage>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {MESSAGE_COLUMNS}
+             FROM stars s
+             JOIN messages m ON m.chat = s.chat AND m.id = s.id
+             LEFT JOIN names n ON n.jid = m.sender
+             ORDER BY m.timestamp DESC"
+        ))?;
+        let rows = stmt.query_map([], message_row)?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
     }
 
@@ -841,7 +887,68 @@ impl MessageStore {
             .query_map(params![chat], |r| Ok(ViewOnce { id: r.get(0)?, opened: r.get::<_, i32>(1)? != 0 }))?
             .collect::<rusqlite::Result<_>>()?;
 
-        Ok(ChatMarks { reactions, starred, pinned, polls, events, view_once })
+        let ids = |table: &str| -> Result<Vec<String>> {
+            conn.prepare(&format!("SELECT id FROM {table} WHERE chat = ?1"))?
+                .query_map(params![chat], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()
+                .map_err(Into::into)
+        };
+        let forwarded = ids("forwarded")?;
+        let edited = ids("edited")?;
+
+        Ok(ChatMarks { reactions, starred, pinned, polls, events, view_once, forwarded, edited })
+    }
+
+    pub fn set_forwarded(&self, chat: &str, id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("INSERT OR IGNORE INTO forwarded (chat, id) VALUES (?1, ?2)", params![chat, id])?;
+        Ok(())
+    }
+
+    /// Replaces a message's text (its caption, for media) after its sender edited it.
+    pub fn apply_edit(&self, chat: &str, id: &str, text: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "UPDATE messages SET text = ?3 WHERE chat = ?1 AND id = ?2",
+            params![chat, id, text],
+        )?;
+        if changed > 0 {
+            conn.execute("INSERT OR IGNORE INTO edited (chat, id) VALUES (?1, ?2)", params![chat, id])?;
+        }
+        Ok(changed > 0)
+    }
+
+    pub fn chat_retention(&self, jid: &str) -> Result<ChatRetention> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT max_age_hours, max_messages, on_demand FROM chat_retention WHERE jid = ?1",
+                params![jid],
+                |r| {
+                    Ok(ChatRetention {
+                        max_age_hours: r.get(0)?,
+                        max_messages: r.get(1)?,
+                        on_demand: r.get::<_, i32>(2)? != 0,
+                    })
+                },
+            )
+            .unwrap_or_default())
+    }
+
+    pub fn set_chat_retention(&self, jid: &str, retention: &ChatRetention) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        if *retention == ChatRetention::default() {
+            conn.execute("DELETE FROM chat_retention WHERE jid = ?1", params![jid])?;
+        } else {
+            conn.execute(
+                "INSERT INTO chat_retention (jid, max_age_hours, max_messages, on_demand)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(jid) DO UPDATE SET max_age_hours = excluded.max_age_hours,
+                     max_messages = excluded.max_messages, on_demand = excluded.on_demand",
+                params![jid, retention.max_age_hours, retention.max_messages, retention.on_demand as i32],
+            )?;
+        }
+        Ok(())
     }
 
     /// Records a view-once message; `opened` only ever moves from false to true.
@@ -1293,6 +1400,17 @@ impl MessageStore {
     ///
     /// Returns how many rows changed, so the caller can skip a refresh when
     /// nothing was unread.
+    /// Unread incoming messages in `chat` as `(id, sender)`, oldest first.
+    pub fn unread_ids(&self, chat: &str) -> Result<Vec<(String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, sender FROM messages
+             WHERE chat = ?1 AND read = 0 AND from_me = 0 ORDER BY timestamp",
+        )?;
+        let rows = stmt.query_map(params![chat], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    }
+
     pub fn mark_chat_read(&self, chat: &str) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
         let changed = conn.execute(
@@ -1309,29 +1427,38 @@ impl MessageStore {
     pub fn enforce_retention(&self) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
         let mut removed = 0;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
 
+        // A chat with its own window or cap is only bound by that one.
         if let Some(oldest) = self.retention.oldest_allowed() {
             removed += conn.execute(
-                "DELETE FROM messages WHERE timestamp < ?1",
+                "DELETE FROM messages WHERE timestamp < ?1 AND chat NOT IN
+                     (SELECT jid FROM chat_retention WHERE max_age_hours IS NOT NULL)",
                 params![oldest],
             )?;
         }
+        removed += conn.execute(
+            "DELETE FROM messages WHERE EXISTS (
+                 SELECT 1 FROM chat_retention r WHERE r.jid = messages.chat
+                 AND r.max_age_hours > 0 AND messages.timestamp < ?1 - r.max_age_hours * 3600)",
+            params![now],
+        )?;
 
-        if let Some(cap) = self.retention.max_messages_per_chat {
-            // Rank within each chat and drop everything past the cap.
-            removed += conn.execute(
-                "DELETE FROM messages WHERE (chat, id) IN (
-                     SELECT chat, id FROM (
-                         SELECT chat, id,
-                                ROW_NUMBER() OVER (
-                                    PARTITION BY chat ORDER BY timestamp DESC
-                                ) AS rank
-                         FROM messages
-                     ) WHERE rank > ?1
-                 )",
-                params![cap],
-            )?;
-        }
+        // Rank within each chat and drop everything past its cap.
+        removed += conn.execute(
+            "DELETE FROM messages WHERE (chat, id) IN (
+                 SELECT chat, id FROM (
+                     SELECT m.chat, m.id,
+                            ROW_NUMBER() OVER (PARTITION BY m.chat ORDER BY m.timestamp DESC) AS rank,
+                            COALESCE(r.max_messages, ?1) AS cap
+                     FROM messages m LEFT JOIN chat_retention r ON r.jid = m.chat
+                 ) WHERE cap > 0 AND rank > cap
+             )",
+            params![self.retention.max_messages_per_chat.map(|c| c as i64).unwrap_or(0)],
+        )?;
 
         Ok(removed)
     }
@@ -1388,6 +1515,36 @@ mod tests {
             preview_thumb: None,
             status: None,
         }
+    }
+
+    #[test]
+    fn chat_retention_overrides_the_global_policy() {
+        let s = store(Retention { max_age_hours: Some(24), max_messages_per_chat: Some(1) });
+        for (chat, id, age) in [("a", "1", 1), ("a", "2", 2), ("a", "3", 48), ("b", "1", 1), ("b", "2", 48), ("c", "1", 1), ("c", "2", 3)] {
+            s.upsert(&msg(chat, id, age, "x")).unwrap();
+        }
+        let keep_all = ChatRetention { max_age_hours: Some(0), max_messages: Some(0), on_demand: true };
+        s.set_chat_retention("a", &keep_all).unwrap();
+        let two_hours = ChatRetention { max_age_hours: Some(2), max_messages: None, on_demand: true };
+        s.set_chat_retention("c", &two_hours).unwrap();
+        s.enforce_retention().unwrap();
+        assert_eq!(s.messages_for("a", 10).unwrap().len(), 3, "unlimited override");
+        assert_eq!(s.messages_for("b", 10).unwrap().len(), 1, "global policy");
+        // "c" keeps its own 2 h window but still falls back to the global cap.
+        assert_eq!(s.messages_for("c", 10).unwrap().len(), 1);
+        assert_eq!(s.chat_retention("a").unwrap(), keep_all);
+        s.set_chat_retention("a", &ChatRetention::default()).unwrap();
+        assert_eq!(s.chat_retention("a").unwrap(), ChatRetention::default());
+    }
+
+    #[test]
+    fn edits_replace_text_and_mark_the_message() {
+        let s = store(Retention::unlimited());
+        s.upsert(&msg("a", "1", 0, "old")).unwrap();
+        assert!(s.apply_edit("a", "1", "new").unwrap());
+        assert!(!s.apply_edit("a", "missing", "new").unwrap());
+        assert_eq!(s.messages_for("a", 1).unwrap()[0].text, "new");
+        assert_eq!(s.marks("a").unwrap().edited, vec!["1".to_string()]);
     }
 
     #[test]
