@@ -33,7 +33,14 @@
   import EventCard, { type ChatEvent } from "$lib/EventCard.svelte";
   import CreateDialog from "$lib/CreateDialog.svelte";
   import { blocks, plain, type Inline } from "$lib/format";
-  import { activeTheme, applyTheme, customization, motion, save as saveCustomization } from "$lib/theme.svelte";
+  import {
+    activeTheme,
+    applyTheme,
+    customization,
+    lensMap,
+    motion,
+    save as saveCustomization,
+  } from "$lib/theme.svelte";
   import { fly } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
 
@@ -2500,6 +2507,23 @@
   <title>Hermóðr</title>
   {@html extensionCss}
 </svelte:head>
+
+<!-- The glass lens: shifts the backdrop by lensMap, strongest at the rim. Bounding-box units, so it fits any element. -->
+<svg width="0" height="0" aria-hidden="true" style="position: absolute">
+  <filter
+    id="liquid-glass"
+    x="0"
+    y="0"
+    width="1"
+    height="1"
+    primitiveUnits="objectBoundingBox"
+    color-interpolation-filters="sRGB">
+    <feImage href={lensMap("x")} x="0" y="0" width="1" height="1" preserveAspectRatio="none" result="dx" />
+    <feImage href={lensMap("y")} x="0" y="0" width="1" height="1" preserveAspectRatio="none" result="dy" />
+    <feComposite in="dx" in2="dy" operator="arithmetic" k2="1" k3="1" result="map" />
+    <feDisplacementMap in="SourceGraphic" in2="map" scale="0.14" xChannelSelector="R" yChannelSelector="G" />
+  </filter>
+</svg>
 
 {#snippet runs(nodes: Inline[])}{#each nodes as n, i (i)}{#if n.kind === "text"}{n.text}{:else if n.kind === "link"}<a
         class="link"

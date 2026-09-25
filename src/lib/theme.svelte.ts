@@ -49,7 +49,30 @@ export type Tokens = Record<string, string>;
  */
 export type Theme = { id: string; name: string; tokens: Tokens; css?: string; wallpaper?: string };
 export type Extension = { id: string; name: string; css: string; enabled: boolean };
-type Saved = { theme: string; themes: Theme[]; extensions: Extension[] };
+/** A picture behind the app, as a downscaled data URL, darkened by `dim` (0–1). */
+export type Background = { image: string; dim: number };
+type Saved = { theme: string; themes: Theme[]; extensions: Extension[]; background?: Background | null };
+
+/**
+ * Displacement map for the glass lens, one axis per colour channel: 128 is
+ * no shift, and the rim ramps to the extremes so the backdrop bends inward at
+ * the edges, as Apple's Liquid Glass does. Used by `#liquid-glass` in +page.
+ */
+export function lensMap(axis: "x" | "y") {
+  const color = (v: number) => (axis === "x" ? `rgb(${v},0,0)` : `rgb(0,${v},0)`);
+  const stops: [number, number][] = [
+    [0, 255], [0.05, 205], [0.14, 150], [0.26, 128], [0.74, 128], [0.86, 106], [0.95, 50], [1, 0],
+  ];
+  return (
+    "data:image/svg+xml;utf8," +
+    encodeURIComponent(
+      `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' preserveAspectRatio='none'>` +
+        `<linearGradient id='g' x2='${axis === "x" ? 1 : 0}' y2='${axis === "y" ? 1 : 0}'>` +
+        stops.map(([at, v]) => `<stop offset='${at}' stop-color='${color(v)}'/>`).join("") +
+        `</linearGradient><rect width='100' height='100' fill='url(#g)'/></svg>`,
+    )
+  );
+}
 
 const shape = {
   "radius-sm": "7.5px",
@@ -77,6 +100,10 @@ const GLASS_CSS = `
   backdrop-filter: blur(24px) saturate(170%);
   -webkit-backdrop-filter: blur(24px) saturate(170%);
 }
+/* The lens: engines without SVG backdrop filters (WebKitGTK) keep the plain blur above. */
+.menu, .sheet, .modal, .intro-card, .attach-menu, .account-menu, .card {
+  backdrop-filter: url(#liquid-glass) blur(6px) saturate(170%) brightness(1.06);
+}
 .menu, .sheet, .modal, .intro-card, .attach-menu, .account-menu, .search, .chip, .bubble {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.22),
     0 6px 24px rgba(0, 0, 0, 0.22) !important;
@@ -98,9 +125,9 @@ body::before, .stage::before {
 }
 body:has(.backdrop, .sheet-backdrop)::before { animation-play-state: paused; }
 @keyframes glass-drift {
-  from { transform: translate3d(0, 0, 0) rotate(0deg) scale(1); }
-  50% { transform: translate3d(5%, -4%, 0) rotate(9deg) scale(1.1); }
-  to { transform: translate3d(-4%, 5%, 0) rotate(-7deg) scale(1.05); }
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(4%, -3%, 0) scale(1.06); }
+  to { transform: translate3d(-3%, 4%, 0) scale(1.03); }
 }
 .bubble, .chip, .menu .item, .chat-row {
   background-image: linear-gradient(115deg, transparent 35%, rgba(255, 255, 255, 0.14) 50%, transparent 65%) !important;
