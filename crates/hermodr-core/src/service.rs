@@ -969,7 +969,7 @@ impl Service {
                                     // dropping the notice, so the chat shows
                                     // that something was removed.
                                     if let Some(target) = revoke_target(&inbound.message) {
-                                        if let Ok(true) = store.revoke(&chat, &target) {
+                                        if let Ok(true) = store.revoke_message(&chat, &target) {
                                             if let Ok(updated) =
                                                 store.message(&chat, &target)
                                             {
@@ -982,7 +982,7 @@ impl Service {
                                     }
 
                                     if let Some((target, text)) = edit_of(&inbound.message) {
-                                        if let Ok(true) = store.apply_edit(&chat, &target, &text) {
+                                        if let Ok(true) = store.update_message_content(&chat, &target, &text) {
                                             if let Ok(updated) = store.message(&chat, &target) {
                                                 let _ = events.send(ServiceEvent::Message {
                                                     message: Box::new(updated),
@@ -1102,7 +1102,7 @@ impl Service {
                                     let chat = receipt.source.chat.to_string();
                                     for id in receipt.message_ids.iter() {
                                         if let Ok(true) =
-                                            store.set_status(&chat, id.as_str(), status)
+                                            store.set_delivery_state(&chat, id.as_str(), status)
                                         {
                                             if let Ok(updated) = store.message(&chat, id.as_str()) {
                                                 let _ = events.send(ServiceEvent::Message {
@@ -1110,7 +1110,7 @@ impl Service {
                                                 });
                                             }
                                         } else if let Ok(updated) =
-                                            store.set_status_by_id(id.as_str(), status)
+                                            store.set_delivery_state_by_id(id.as_str(), status)
                                         {
                                             for message in updated {
                                                 let _ = events.send(ServiceEvent::Message {
@@ -1133,7 +1133,7 @@ impl Service {
                                     let mut done = false;
                                     if let Some(chat) = ack.from.as_ref() {
                                         let chat = chat.to_string();
-                                        if let Ok(true) = store.set_status(&chat, &ack.id, "sent")
+                                        if let Ok(true) = store.set_delivery_state(&chat, &ack.id, "sent")
                                         {
                                             if let Ok(updated) = store.message(&chat, &ack.id) {
                                                 let _ = events.send(ServiceEvent::Message {
@@ -1145,7 +1145,7 @@ impl Service {
                                     }
                                     if !done {
                                         if let Ok(updated) =
-                                            store.set_status_by_id(&ack.id, "sent")
+                                            store.set_delivery_state_by_id(&ack.id, "sent")
                                         {
                                             for message in updated {
                                                 let _ = events.send(ServiceEvent::Message {
@@ -1282,7 +1282,7 @@ impl Service {
                                             continue;
                                         }
                                         if let Some(target) = revoke_target(message) {
-                                            store.revoke(&chat, &target).logged();
+                                            store.revoke_message(&chat, &target).logged();
                                             continue;
                                         }
                                         remember_structures(&store, &chat, &id, &sender, message);
@@ -2147,7 +2147,7 @@ impl Service {
             .revoke_message(jid, id, kind)
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        self.store.revoke(chat, id)?;
+        self.store.revoke_message(chat, id)?;
         if let Ok(updated) = self.store.message(chat, id) {
             let _ = self.events.send(ServiceEvent::Message { message: Box::new(updated) });
         }
@@ -2370,7 +2370,7 @@ impl Service {
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         self.store.save_event(chat, id, &def.creator, &event, None)?;
-        self.store.apply_edit(chat, id, &event.name)?;
+        self.store.update_message_content(chat, id, &event.name)?;
         let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
         Ok(())
     }
@@ -2692,7 +2692,7 @@ impl Service {
     /// their senders. Returns how many changed.
     pub async fn mark_read(&self, chat: &str, receipts: bool) -> Result<usize> {
         let unread = if receipts { self.store.unread_ids(chat)? } else { Vec::new() };
-        let changed = self.store.mark_chat_read(chat)?;
+        let changed = self.store.mark_read(chat)?;
         if unread.is_empty() {
             return Ok(changed);
         }

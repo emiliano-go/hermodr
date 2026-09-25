@@ -641,8 +641,8 @@ impl MessageStore {
     /// event) refreshes its content but never moves local state backwards:
     /// delivery status only advances, read/mentioned stay set, a known media
     /// file or edited text is kept, and a revoked message is left as it is.
-    /// State changes have their own methods (`set_status`, `mark_chat_read`,
-    /// `revoke`, `apply_edit`, `set_media_path`).
+    /// State changes have their own methods (`set_delivery_state`, `mark_read`,
+    /// `revoke_message`, `update_message_content`, `set_media_path`).
     pub fn insert_message(&self, message: &StoredMessage) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -1196,7 +1196,7 @@ impl MessageStore {
     }
 
     /// Replaces a message's text (its caption, for media) after its sender edited it.
-    pub fn apply_edit(&self, chat: &str, id: &str, text: &str) -> Result<bool> {
+    pub fn update_message_content(&self, chat: &str, id: &str, text: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let changed = conn.execute(
             "UPDATE messages SET text = ?3 WHERE chat = ?1 AND id = ?2",
@@ -1555,7 +1555,7 @@ impl MessageStore {
     ///
     /// Only moves forward: a late `delivered` receipt must not undo a `read`.
     /// Returns whether anything changed so the caller can skip a refresh.
-    pub fn set_status(&self, chat: &str, id: &str, status: &str) -> Result<bool> {
+    pub fn set_delivery_state(&self, chat: &str, id: &str, status: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let current: Option<Option<String>> = conn
             .query_row(
@@ -1587,7 +1587,7 @@ impl MessageStore {
     /// `pending` message still reach `sent` in those cases, including a message
     /// sent to our own number. Returns the updated messages so the caller can
     /// forward them without re-querying.
-    pub fn set_status_by_id(&self, id: &str, status: &str) -> Result<Vec<StoredMessage>> {
+    pub fn set_delivery_state_by_id(&self, id: &str, status: &str) -> Result<Vec<StoredMessage>> {
         let chats: Vec<(String, Option<String>)> = {
             let conn = self.conn.lock().unwrap();
             let mut stmt = conn.prepare(
@@ -1622,7 +1622,7 @@ impl MessageStore {
     ///
     /// The row is kept so the chat shows that something was removed rather than
     /// silently losing a message. Returns whether a row was updated.
-    pub fn revoke(&self, chat: &str, id: &str) -> Result<bool> {
+    pub fn revoke_message(&self, chat: &str, id: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let changed = conn.execute(
             "UPDATE messages
@@ -1649,7 +1649,7 @@ impl MessageStore {
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
     }
 
-    pub fn mark_chat_read(&self, chat: &str) -> Result<usize> {
+    pub fn mark_read(&self, chat: &str) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
         let changed = conn.execute(
             "UPDATE messages SET read = 1 WHERE chat = ?1 AND read = 0 AND from_me = 0",
@@ -1857,7 +1857,7 @@ mod tests {
         let s = store(Retention::unlimited());
         s.insert_message(&msg("a", "1", 0, "hi")).unwrap();
         s.set_forwarded("a", "1").unwrap();
-        s.apply_edit("a", "1", "edited").unwrap();
+        s.update_message_content("a", "1", "edited").unwrap();
         s.set_view_once("a", "1", true).unwrap();
         s.record_receipt("1", "them", "read", 10).unwrap();
 
@@ -1874,8 +1874,8 @@ mod tests {
     fn edits_replace_text_and_mark_the_message() {
         let s = store(Retention::unlimited());
         s.insert_message(&msg("a", "1", 0, "old")).unwrap();
-        assert!(s.apply_edit("a", "1", "new").unwrap());
-        assert!(!s.apply_edit("a", "missing", "new").unwrap());
+        assert!(s.update_message_content("a", "1", "new").unwrap());
+        assert!(!s.update_message_content("a", "missing", "new").unwrap());
         assert_eq!(s.messages_for("a", 1).unwrap()[0].text, "new");
         assert_eq!(s.marks("a").unwrap().edited, vec!["1".to_string()]);
     }
@@ -1923,7 +1923,7 @@ mod tests {
         sent.header.from_me = true;
         sent.local.status =Some("pending".into());
         s.insert_message(&sent).unwrap();
-        assert!(s.set_status("a@s", "1", "delivered").unwrap());
+        assert!(s.set_delivery_state("a@s", "1", "delivered").unwrap());
         s.set_media_path("a@s", "1", "/tmp/1.jpg").unwrap();
         sent.local.status =None;
         s.insert_message(&sent).unwrap();
@@ -1932,15 +1932,15 @@ mod tests {
         assert_eq!(got.media.path.as_deref(), Some("/tmp/1.jpg"));
 
         s.insert_message(&msg("a@s", "2", 0, "original")).unwrap();
-        s.mark_chat_read("a@s").unwrap();
-        assert!(s.apply_edit("a@s", "2", "fixed").unwrap());
+        s.mark_read("a@s").unwrap();
+        assert!(s.update_message_content("a@s", "2", "fixed").unwrap());
         s.insert_message(&msg("a@s", "2", 0, "original")).unwrap();
         let got = s.message("a@s", "2").unwrap();
         assert!(got.local.read);
         assert_eq!(got.text, "fixed");
 
         s.insert_message(&msg("a@s", "3", 0, "oops")).unwrap();
-        assert!(s.revoke("a@s", "3").unwrap());
+        assert!(s.revoke_message("a@s", "3").unwrap());
         s.insert_message(&msg("a@s", "3", 0, "oops")).unwrap();
         let got = s.message("a@s", "3").unwrap();
         assert!(got.local.revoked);
@@ -2090,7 +2090,7 @@ mod tests {
         let chats = s.chats().unwrap();
         assert_eq!(chats[0].unread_count, 1);
 
-        assert_eq!(s.mark_chat_read("a@s").unwrap(), 1);
+        assert_eq!(s.mark_read("a@s").unwrap(), 1);
         assert_eq!(s.chats().unwrap()[0].unread_count, 0);
     }
 
@@ -2098,9 +2098,9 @@ mod tests {
     fn marking_read_is_idempotent() {
         let s = store(Retention::unlimited());
         s.insert_message(&msg("a@s", "1", 0, "hi")).unwrap();
-        assert_eq!(s.mark_chat_read("a@s").unwrap(), 1);
+        assert_eq!(s.mark_read("a@s").unwrap(), 1);
         // Nothing left to change the second time.
-        assert_eq!(s.mark_chat_read("a@s").unwrap(), 0);
+        assert_eq!(s.mark_read("a@s").unwrap(), 0);
     }
 
     #[test]
@@ -2151,11 +2151,11 @@ mod tests {
         m.local.status = Some("pending".into());
         s.insert_message(&m).unwrap();
 
-        assert!(s.set_status("a@s", "1", "sent").unwrap());
-        assert!(s.set_status("a@s", "1", "delivered").unwrap());
-        assert!(s.set_status("a@s", "1", "read").unwrap());
+        assert!(s.set_delivery_state("a@s", "1", "sent").unwrap());
+        assert!(s.set_delivery_state("a@s", "1", "delivered").unwrap());
+        assert!(s.set_delivery_state("a@s", "1", "read").unwrap());
         // A late duplicate must not undo the read state.
-        assert!(!s.set_status("a@s", "1", "delivered").unwrap());
+        assert!(!s.set_delivery_state("a@s", "1", "delivered").unwrap());
         assert_eq!(s.message("a@s", "1").unwrap().local.status.as_deref(), Some("read"));
     }
 
@@ -2163,7 +2163,7 @@ mod tests {
     fn status_ignores_incoming_messages() {
         let s = store(Retention::unlimited());
         s.insert_message(&msg("a@s", "1", 0, "hi")).unwrap();
-        assert!(!s.set_status("a@s", "1", "read").unwrap());
+        assert!(!s.set_delivery_state("a@s", "1", "read").unwrap());
     }
 
     #[test]
@@ -2178,9 +2178,9 @@ mod tests {
         s.insert_message(&m).unwrap();
 
         // Wrong chat: the addressed update misses.
-        assert!(!s.set_status("b@s.whatsapp.net", "1", "sent").unwrap());
+        assert!(!s.set_delivery_state("b@s.whatsapp.net", "1", "sent").unwrap());
         // Id-only update still advances it.
-        let updated = s.set_status_by_id("1", "sent").unwrap();
+        let updated = s.set_delivery_state_by_id("1", "sent").unwrap();
         assert_eq!(updated.len(), 1);
         assert_eq!(updated[0].local.status.as_deref(), Some("sent"));
         assert_eq!(
@@ -2188,21 +2188,21 @@ mod tests {
             Some("sent")
         );
         // Forward-only still holds through the id path.
-        assert!(s.set_status_by_id("1", "delivered").unwrap().len() == 1);
-        assert!(s.set_status_by_id("1", "sent").unwrap().is_empty());
+        assert!(s.set_delivery_state_by_id("1", "delivered").unwrap().len() == 1);
+        assert!(s.set_delivery_state_by_id("1", "sent").unwrap().is_empty());
     }
 
     #[test]
     fn revoking_keeps_the_row_but_clears_content() {
         let s = store(Retention::unlimited());
         s.insert_message(&msg("a@s", "1", 0, "oops")).unwrap();
-        assert!(s.revoke("a@s", "1").unwrap());
+        assert!(s.revoke_message("a@s", "1").unwrap());
 
         let got = &s.messages_for("a@s", 1).unwrap()[0];
         assert!(got.local.revoked);
         assert_eq!(got.text, "");
         // Revoking twice changes nothing the second time.
-        assert!(!s.revoke("a@s", "1").unwrap());
+        assert!(!s.revoke_message("a@s", "1").unwrap());
     }
 
     #[test]
