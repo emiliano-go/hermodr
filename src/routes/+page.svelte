@@ -2552,15 +2552,6 @@
 {/if}
 
 <div class="app">
-{#if syncPending > 0}
-  <div class="sync-banner">
-    <span class="sync-text">Loading messages… {syncPercent}%</span>
-    <div class="sync-track">
-      <div class="sync-bar" style="width: {syncPercent}%"></div>
-    </div>
-  </div>
-{/if}
-
 {#if !connected}
   {@const stage = qrSvg ? 2 : started || connecting ? 1 : 0}
   <!-- An account that paired before signs straight back in; pairing only shows if WhatsApp asks for a code. -->
@@ -2609,8 +2600,23 @@
         <h2>{started || connecting ? "Signing in" : "Welcome back"}</h2>
         <span class="resume-who">{linked.label} · {phoneName(null, linked.jid!)}</span>
         {#if started || connecting}
-          <div class="resume-bar" aria-label="Connecting"><span></span></div>
-          <p class="hint">Connecting to WhatsApp and catching up on new messages…</p>
+          <div class="resume-progress" role="status">
+            <div class="resume-status">
+              <span>{syncPending > 0 ? "Loading messages…" : "Connecting to WhatsApp…"}</span>
+              {#if syncPending > 0}
+                <span class="resume-count">{Math.min(syncSeen, syncPending)} of {syncPending} · {syncPercent}%</span>
+              {/if}
+            </div>
+            <div
+              class="resume-bar"
+              class:determinate={syncPending > 0}
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={syncPending > 0 ? syncPercent : undefined}>
+              <span style:width={syncPending > 0 ? `${syncPercent}%` : null}></span>
+            </div>
+          </div>
         {:else}
           <button class="primary" onclick={connect}>Connect</button>
         {/if}
@@ -4197,10 +4203,25 @@
   .choice-text small {
     color: var(--muted);
   }
+  .resume-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: min(320px, 100%);
+    margin-top: 18px;
+  }
+  .resume-status {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    color: var(--muted);
+    font-size: 12.5px;
+  }
+  .resume-count {
+    font-variant-numeric: tabular-nums;
+  }
   .resume-bar {
-    width: 220px;
-    height: 4px;
-    margin-top: 10px;
+    height: 6px;
     border-radius: 999px;
     background: var(--raised);
     overflow: hidden;
@@ -4212,6 +4233,10 @@
     border-radius: inherit;
     background: var(--accent);
     animation: indeterminate 1.2s ease-in-out infinite;
+  }
+  .resume-bar.determinate span {
+    animation: none;
+    transition: width calc(0.25s * var(--motion-scale)) var(--ease);
   }
   @keyframes indeterminate {
     from {
@@ -5238,32 +5263,6 @@
   .msg-row.jumped {
     background: var(--jump-soft);
     transition-duration: calc(0.15s * var(--motion-scale));
-  }
-  .sync-banner {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 4px 14px;
-    background: var(--surface);
-    border-bottom: 1px solid var(--line);
-  }
-  .sync-text {
-    font-size: 11px;
-    color: var(--muted);
-    white-space: nowrap;
-  }
-  .sync-track {
-    flex: 1;
-    height: 4px;
-    border-radius: 2px;
-    background: var(--raised);
-    overflow: hidden;
-  }
-  .sync-bar {
-    height: 100%;
-    background: var(--accent);
-    transition: width calc(0.2s * var(--motion-scale)) var(--ease);
   }
   .bubble {
     max-width: 70%;
