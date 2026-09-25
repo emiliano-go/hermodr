@@ -24,7 +24,7 @@
   import GroupInfo, { type AdminReport } from "$lib/GroupInfo.svelte";
   import MediaViewer, { mediaSrc, type ViewerItem } from "$lib/MediaViewer.svelte";
   import VideoPlayer from "$lib/VideoPlayer.svelte";
-  import appIcon from "../../src-tauri/icons/128x128.png";
+  import Logo from "$lib/Logo.svelte";
   import ImageCropper from "$lib/ImageCropper.svelte";
   import MessageMenu, { type MenuItem } from "$lib/MessageMenu.svelte";
   import ChatPicker from "$lib/ChatPicker.svelte";
@@ -2757,7 +2757,7 @@
   <div class="pairing">
     <div class="intro-glow" aria-hidden="true"></div>
     <header class="intro-head">
-      <img class="intro-logo" src={appIcon} alt="" />
+      <span class="intro-logo"><Logo size={48} /></span>
       <div>
         <h1>Hermóðr</h1>
         <span class="intro-tag">WhatsApp, native on your desktop</span>
@@ -2882,7 +2882,7 @@
         {#if qrSvg}
           <div class="qr" aria-label="Pairing QR code">
             {@html qrSvg}
-            <img class="qr-logo" src={appIcon} alt="" />
+            <span class="qr-logo"><Logo size={44} /></span>
           </div>
           <p class="hint">The code refreshes by itself. Keep this window open while you scan.</p>
         {:else if started || connecting}
@@ -4353,9 +4353,12 @@
     gap: 14px;
   }
   .intro-logo {
+    display: block;
+    flex: none;
     width: 48px;
     height: 48px;
     border-radius: 12px;
+    overflow: hidden;
   }
   .intro-head h1 {
     margin: 0;
@@ -4670,12 +4673,14 @@
     position: absolute;
     top: 50%;
     left: 50%;
+    display: block;
     width: 44px;
     height: 44px;
     transform: translate(-50%, -50%);
     border-radius: 10px;
     border: 4px solid var(--bg);
     background: var(--bg);
+    overflow: hidden;
   }
   .qr-loading,
   .qr-idle {
