@@ -41,8 +41,8 @@
   onMount(() => {
     const rect = menu!.getBoundingClientRect();
     pos = {
-      left: Math.min(x, window.innerWidth - rect.width - 8),
-      top: Math.min(y, window.innerHeight - rect.height - 8),
+      left: Math.max(8, Math.min(x, window.innerWidth - rect.width - 8)),
+      top: Math.max(8, Math.min(y, window.innerHeight - rect.height - 8)),
     };
     menu!.querySelector("button")?.focus();
   });

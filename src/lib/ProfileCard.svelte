@@ -45,20 +45,20 @@
 
   let profile = $state<UserProfile | null>(null);
   let failed = $state(false);
-  let card: HTMLDivElement | undefined = $state();
-  let position = $state({ left: 0, top: 0 });
+  let width = $state(320);
+  let height = $state(360);
+  let innerWidth = $state(window.innerWidth);
+  let innerHeight = $state(window.innerHeight);
+  // Opens beside the click and stays on screen as the loaded profile grows it.
+  const position = $derived({
+    left: Math.max(12, Math.min(x + 8, innerWidth - width - 12)),
+    top: Math.max(12, Math.min(y - 40, innerHeight - height - 12)),
+  });
 
   onMount(() => {
     invoke<UserProfile>("user_profile", { jid })
       .then((p) => (profile = p))
       .catch(() => (failed = true));
-    // Opens beside the click, kept on screen.
-    const width = card?.offsetWidth ?? 320;
-    const height = card?.offsetHeight ?? 360;
-    position = {
-      left: Math.max(12, Math.min(x + 8, window.innerWidth - width - 12)),
-      top: Math.max(12, Math.min(y - 40, window.innerHeight - height - 12)),
-    };
   });
 
   const shown = $derived(profile?.name ?? profile?.business ?? name);
@@ -76,13 +76,14 @@
   );
 </script>
 
-<svelte:window onkeydown={(e) => e.key === "Escape" && onclose()} />
+<svelte:window onkeydown={(e) => e.key === "Escape" && onclose()} bind:innerWidth bind:innerHeight />
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <div class="catcher" role="presentation" onclick={onclose}></div>
 <div
   class="card"
-  bind:this={card}
+  bind:offsetWidth={width}
+  bind:offsetHeight={height}
   role="dialog"
   aria-label="Profile of {shown}"
   style="left: {position.left}px; top: {position.top}px; --hue: {hue}"
@@ -142,7 +143,9 @@
     background: var(--bg);
     border: 1px solid var(--line-strong);
     box-shadow: var(--shadow);
-    overflow: hidden;
+    max-height: calc(100vh - 24px);
+    overflow-x: hidden;
+    overflow-y: auto;
   }
   .banner {
     height: 64px;
