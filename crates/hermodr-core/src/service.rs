@@ -688,6 +688,7 @@ impl Service {
                     async move {
                         match event.as_ref() {
                             Event::Messages(batch) => {
+                                let _commit = store.batch();
                                 let client = client_for_events.get().cloned();
                                 // Our own addresses, so a mention can be
                                 // recognised whichever form it uses.
@@ -1156,6 +1157,7 @@ impl Service {
                                     history.pushnames.len(),
                                     history.phone_number_to_lid_mappings.len(),
                                 );
+                                let _commit = store.batch();
                                 let client = client_for_events.get().cloned();
                                 let own = client
                                     .as_deref()

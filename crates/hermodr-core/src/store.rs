@@ -305,6 +305,22 @@ pub struct MessageStore {
     retention: Retention,
 }
 
+/// An open [`MessageStore::batch`]; commits on drop.
+pub struct Batch<'a> {
+    store: &'a MessageStore,
+    open: bool,
+}
+
+impl Drop for Batch<'_> {
+    fn drop(&mut self) {
+        if self.open {
+            if let Err(e) = self.store.conn.lock().unwrap().execute_batch("RELEASE batch") {
+                log::warn!("could not commit a store batch: {e}");
+            }
+        }
+    }
+}
+
 impl MessageStore {
     /// Opens (or creates) the store at `path`.
     pub fn open(path: &Path, retention: Retention) -> Result<Self> {
@@ -319,6 +335,10 @@ impl MessageStore {
         // WAL keeps reads from blocking the writer, which matters because
         // messages arrive while the UI is querying.
         conn.pragma_update(None, "journal_mode", "WAL")?;
+        // With WAL, NORMAL skips the fsync per commit and still survives an app
+        // crash; a power loss can drop the last commits but not corrupt the file.
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS messages (
                  chat         TEXT NOT NULL,
@@ -500,6 +520,14 @@ impl MessageStore {
             conn: Mutex::new(conn),
             retention,
         })
+    }
+
+    /// Groups every write made until the guard drops into one commit. Guards
+    /// nest and may overlap across tasks; the last one to drop commits. Nothing
+    /// is rolled back: a failed write fails alone, as it would outside a batch.
+    pub fn batch(&self) -> Batch<'_> {
+        let open = self.conn.lock().unwrap().execute_batch("SAVEPOINT batch").is_ok();
+        Batch { store: self, open }
     }
 
     /// A bookkeeping value, such as when maintenance last ran.
@@ -1683,6 +1711,20 @@ mod tests {
             preview_thumb: None,
             status: None,
         }
+    }
+
+    #[test]
+    fn overlapping_batches_commit_when_the_last_drops() {
+        let s = store(Retention::default());
+        let autocommit = |s: &MessageStore| s.conn.lock().unwrap().is_autocommit();
+        let first = s.batch();
+        let second = s.batch();
+        s.upsert(&msg("a", "1", 0, "x")).unwrap();
+        drop(first);
+        assert!(!autocommit(&s), "still inside the second batch");
+        drop(second);
+        assert!(autocommit(&s), "committed");
+        assert_eq!(s.messages_for("a", 10).unwrap().len(), 1);
     }
 
     #[test]
