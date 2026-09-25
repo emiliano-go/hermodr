@@ -1007,7 +1007,7 @@ impl Service {
                                             });
                                         }
                                     }
-                                    let _ = store.upsert(&message);
+                                    let _ = store.insert_message(&message);
                                     let _ = events.send(ServiceEvent::Message { message: Box::new(message) });
                                 }
                                 // Bound the store right after writes so the
@@ -1232,8 +1232,8 @@ impl Service {
                                                 names_learned += 1;
                                             }
                                         }
-                                        // A stored row keeps its read state and
-                                        // downloaded file; upsert would reset both.
+                                        // A stored row is already complete; rebuilding
+                                        // it would only rewrite its thumbnails.
                                         if store.message(&chat, &id).is_ok() {
                                             continue;
                                         }
@@ -1264,7 +1264,7 @@ impl Service {
                                         };
                                         // Old messages must not raise unread counts.
                                         stored.read = true;
-                                        added |= store.upsert(&stored).is_ok();
+                                        added |= store.insert_message(&stored).is_ok();
                                     }
                                     if added {
                                         chats.push(chat);
@@ -1358,7 +1358,7 @@ impl Service {
                                     status: None,
                                 };
                                 let _ = store.set_view_once(&chat, &id, from_me);
-                                if store.upsert(&message).is_ok() {
+                                if store.insert_message(&message).is_ok() {
                                     let _ = events.send(ServiceEvent::Message { message: Box::new(message) });
                                 }
                             }
@@ -1711,7 +1711,7 @@ impl Service {
             message.preview_desc = p.description.clone();
             message.preview_thumb = thumbnail;
         }
-        self.store.upsert(&message)?;
+        self.store.insert_message(&message)?;
         let _ = self.events.send(ServiceEvent::Message { message: Box::new(message) });
         Ok(())
     }
@@ -2197,7 +2197,7 @@ impl Service {
                 self.store.set_forwarded(to_chat, &result.message_id)?;
                 let mut stored = self.own_message(to_chat, &result.message_id, message.text, "", to_self);
                 stored.media_kind = None;
-                self.store.upsert(&stored)?;
+                self.store.insert_message(&stored)?;
                 let _ = self.events.send(ServiceEvent::Message { message: Box::new(stored) });
             }
         }
@@ -2263,7 +2263,7 @@ impl Service {
         self.store
             .save_poll(chat, &id, &self.own_jid(), question, &options, multi, Some(&secret))?;
         let stored = self.own_message(chat, &id, question.to_string(), "poll", to_self);
-        self.store.upsert(&stored)?;
+        self.store.insert_message(&stored)?;
         let _ = self.events.send(ServiceEvent::Message { message: Box::new(stored) });
         Ok(())
     }
@@ -2311,7 +2311,7 @@ impl Service {
         let id = result.message_id.clone();
         self.store.save_event(chat, &id, &self.own_jid(), &event, Some(&secret))?;
         let stored = self.own_message(chat, &id, event.name, "event", to_self);
-        self.store.upsert(&stored)?;
+        self.store.insert_message(&stored)?;
         let _ = self.events.send(ServiceEvent::Message { message: Box::new(stored) });
         Ok(())
     }
@@ -2787,7 +2787,7 @@ impl Service {
             preview_thumb: None,
             status: Some(if to_self { "delivered".into() } else { "pending".into() }),
         };
-        self.store.upsert(&stored)?;
+        self.store.insert_message(&stored)?;
         let _ = self.events.send(ServiceEvent::Message { message: Box::new(stored) });
         Ok(())
     }
@@ -2973,7 +2973,7 @@ impl Service {
             preview_thumb: None,
             status: Some(if to_self { "delivered".into() } else { "pending".into() }),
         };
-        self.store.upsert(&stored)?;
+        self.store.insert_message(&stored)?;
         let _ = self.events.send(ServiceEvent::Message { message: Box::new(stored) });
         Ok(warning)
     }
@@ -3098,7 +3098,7 @@ impl Service {
             preview_thumb: None,
             status: Some(if to_self { "delivered".into() } else { "pending".into() }),
         };
-        self.store.upsert(&stored)?;
+        self.store.insert_message(&stored)?;
         let _ = self.events.send(ServiceEvent::Message { message: Box::new(stored) });
         Ok(())
     }

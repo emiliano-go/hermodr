@@ -548,8 +548,13 @@ impl MessageStore {
         Ok(())
     }
 
-    /// Records a message, replacing any existing row with the same id.
-    pub fn upsert(&self, message: &StoredMessage) -> Result<()> {
+    /// Records a message. A repeat of a stored one (a replayed or duplicate
+    /// event) refreshes its content but never moves local state backwards:
+    /// delivery status only advances, read/mentioned stay set, a known media
+    /// file or edited text is kept, and a revoked message is left as it is.
+    /// State changes have their own methods (`set_status`, `mark_chat_read`,
+    /// `revoke`, `apply_edit`, `set_media_path`).
+    pub fn insert_message(&self, message: &StoredMessage) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT INTO messages
@@ -564,25 +569,30 @@ impl MessageStore {
                  sender = excluded.sender,
                  timestamp = excluded.timestamp,
                  from_me = excluded.from_me,
-                 text = excluded.text,
+                 text = CASE WHEN EXISTS (SELECT 1 FROM edited e
+                                          WHERE e.chat = messages.chat AND e.id = messages.id)
+                        THEN text ELSE excluded.text END,
                  media_kind = excluded.media_kind,
-                 media_path = excluded.media_path,
+                 media_path = COALESCE(media_path, excluded.media_path),
                  reply_to_id = excluded.reply_to_id,
                  reply_to_text = excluded.reply_to_text,
                  reply_to_sender = excluded.reply_to_sender,
-                 read = excluded.read,
+                 read = MAX(read, excluded.read),
                  revoked = excluded.revoked,
-                 mentioned = excluded.mentioned,
-                 status = excluded.status,
+                 mentioned = MAX(mentioned, excluded.mentioned),
+                 status = CASE WHEN ?25 > (CASE status WHEN 'pending' THEN 0 WHEN 'sent' THEN 1
+                                           WHEN 'delivered' THEN 2 WHEN 'read' THEN 3 ELSE -1 END)
+                          THEN excluded.status ELSE status END,
                  preview_url = excluded.preview_url,
                  preview_title = excluded.preview_title,
                  preview_desc = excluded.preview_desc,
                  preview_thumb = excluded.preview_thumb,
                  reply_to_kind = excluded.reply_to_kind,
                  reply_to_thumb = excluded.reply_to_thumb,
-                 media_thumb = excluded.media_thumb,
-                 media_ref = excluded.media_ref,
-                 reply_to_chat = excluded.reply_to_chat",
+                 media_thumb = COALESCE(media_thumb, excluded.media_thumb),
+                 media_ref = COALESCE(excluded.media_ref, media_ref),
+                 reply_to_chat = excluded.reply_to_chat
+             WHERE revoked = 0",
             params![
                 message.chat,
                 message.id,
@@ -608,6 +618,7 @@ impl MessageStore {
                 message.media_thumb,
                 message.media_ref,
                 message.reply_to_chat,
+                message.status.as_deref().map(status_rank).unwrap_or(-1),
             ],
         )?;
         Ok(())
@@ -1719,7 +1730,7 @@ mod tests {
         let autocommit = |s: &MessageStore| s.conn.lock().unwrap().is_autocommit();
         let first = s.batch();
         let second = s.batch();
-        s.upsert(&msg("a", "1", 0, "x")).unwrap();
+        s.insert_message(&msg("a", "1", 0, "x")).unwrap();
         drop(first);
         assert!(!autocommit(&s), "still inside the second batch");
         drop(second);
@@ -1731,7 +1742,7 @@ mod tests {
     fn chat_retention_overrides_the_global_policy() {
         let s = store(Retention { max_age_hours: Some(24), max_messages_per_chat: Some(1) });
         for (chat, id, age) in [("a", "1", 1), ("a", "2", 2), ("a", "3", 48), ("b", "1", 1), ("b", "2", 48), ("c", "1", 1), ("c", "2", 3)] {
-            s.upsert(&msg(chat, id, age, "x")).unwrap();
+            s.insert_message(&msg(chat, id, age, "x")).unwrap();
         }
         let keep_all = ChatRetention { max_age_hours: Some(0), max_messages: Some(0), on_demand: true };
         s.set_chat_retention("a", &keep_all).unwrap();
@@ -1764,7 +1775,7 @@ mod tests {
     #[test]
     fn delete_message_clears_its_related_rows() {
         let s = store(Retention::unlimited());
-        s.upsert(&msg("a", "1", 0, "hi")).unwrap();
+        s.insert_message(&msg("a", "1", 0, "hi")).unwrap();
         s.set_forwarded("a", "1").unwrap();
         s.apply_edit("a", "1", "edited").unwrap();
         s.set_view_once("a", "1", true).unwrap();
@@ -1782,7 +1793,7 @@ mod tests {
     #[test]
     fn edits_replace_text_and_mark_the_message() {
         let s = store(Retention::unlimited());
-        s.upsert(&msg("a", "1", 0, "old")).unwrap();
+        s.insert_message(&msg("a", "1", 0, "old")).unwrap();
         assert!(s.apply_edit("a", "1", "new").unwrap());
         assert!(!s.apply_edit("a", "missing", "new").unwrap());
         assert_eq!(s.messages_for("a", 1).unwrap()[0].text, "new");
@@ -1794,11 +1805,11 @@ mod tests {
         let s = store(Retention::unlimited());
         let mut ping = msg("g", "1", 1, "hey @123 look");
         ping.mentioned = true;
-        s.upsert(&ping).unwrap();
-        s.upsert(&msg("g", "2", 0, "100% done_ok")).unwrap();
+        s.insert_message(&ping).unwrap();
+        s.insert_message(&msg("g", "2", 0, "100% done_ok")).unwrap();
         let mut elsewhere = msg("h", "3", 0, "@123");
         elsewhere.mentioned = true;
-        s.upsert(&elsewhere).unwrap();
+        s.insert_message(&elsewhere).unwrap();
         assert_eq!(s.pings(Some("g"), 10).unwrap().len(), 1);
         assert_eq!(s.pings(None, 10).unwrap().len(), 2);
         assert_eq!(s.search_messages("g", "LOOK", 10).unwrap()[0].id, "1");
@@ -1809,20 +1820,51 @@ mod tests {
     #[test]
     fn stores_and_reads_messages() {
         let s = store(Retention::unlimited());
-        s.upsert(&msg("a@s", "1", 0, "hello")).unwrap();
+        s.insert_message(&msg("a@s", "1", 0, "hello")).unwrap();
         let got = s.messages_for("a@s", 10).unwrap();
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].text, "hello");
     }
 
     #[test]
-    fn upsert_replaces_same_id() {
+    fn insert_replaces_same_id() {
         let s = store(Retention::unlimited());
-        s.upsert(&msg("a@s", "1", 0, "first")).unwrap();
-        s.upsert(&msg("a@s", "1", 0, "edited")).unwrap();
+        s.insert_message(&msg("a@s", "1", 0, "first")).unwrap();
+        s.insert_message(&msg("a@s", "1", 0, "edited")).unwrap();
         let got = s.messages_for("a@s", 10).unwrap();
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].text, "edited");
+    }
+
+    #[test]
+    fn replayed_messages_never_regress_local_state() {
+        let s = store(Retention::unlimited());
+        let mut sent = msg("a@s", "1", 0, "hi");
+        sent.from_me = true;
+        sent.status = Some("pending".into());
+        s.insert_message(&sent).unwrap();
+        assert!(s.set_status("a@s", "1", "delivered").unwrap());
+        s.set_media_path("a@s", "1", "/tmp/1.jpg").unwrap();
+        sent.status = None;
+        s.insert_message(&sent).unwrap();
+        let got = s.message("a@s", "1").unwrap();
+        assert_eq!(got.status.as_deref(), Some("delivered"));
+        assert_eq!(got.media_path.as_deref(), Some("/tmp/1.jpg"));
+
+        s.insert_message(&msg("a@s", "2", 0, "original")).unwrap();
+        s.mark_chat_read("a@s").unwrap();
+        assert!(s.apply_edit("a@s", "2", "fixed").unwrap());
+        s.insert_message(&msg("a@s", "2", 0, "original")).unwrap();
+        let got = s.message("a@s", "2").unwrap();
+        assert!(got.read);
+        assert_eq!(got.text, "fixed");
+
+        s.insert_message(&msg("a@s", "3", 0, "oops")).unwrap();
+        assert!(s.revoke("a@s", "3").unwrap());
+        s.insert_message(&msg("a@s", "3", 0, "oops")).unwrap();
+        let got = s.message("a@s", "3").unwrap();
+        assert!(got.revoked);
+        assert_eq!(got.text, "");
     }
 
     #[test]
@@ -1831,8 +1873,8 @@ mod tests {
             max_age_hours: Some(24),
             max_messages_per_chat: None,
         });
-        s.upsert(&msg("a@s", "old", 48, "ancient")).unwrap();
-        s.upsert(&msg("a@s", "new", 1, "recent")).unwrap();
+        s.insert_message(&msg("a@s", "old", 48, "ancient")).unwrap();
+        s.insert_message(&msg("a@s", "new", 1, "recent")).unwrap();
         assert_eq!(s.enforce_retention().unwrap(), 1);
         let got = s.messages_for("a@s", 10).unwrap();
         assert_eq!(got.len(), 1);
@@ -1846,7 +1888,7 @@ mod tests {
             max_messages_per_chat: Some(3),
         });
         for i in 0..10 {
-            s.upsert(&msg("a@s", &i.to_string(), i, &format!("m{i}")))
+            s.insert_message(&msg("a@s", &i.to_string(), i, &format!("m{i}")))
                 .unwrap();
         }
         s.enforce_retention().unwrap();
@@ -1863,8 +1905,8 @@ mod tests {
             max_messages_per_chat: Some(2),
         });
         for i in 0..5 {
-            s.upsert(&msg("a@s", &i.to_string(), i, "x")).unwrap();
-            s.upsert(&msg("b@s", &i.to_string(), i, "y")).unwrap();
+            s.insert_message(&msg("a@s", &i.to_string(), i, "x")).unwrap();
+            s.insert_message(&msg("b@s", &i.to_string(), i, "y")).unwrap();
         }
         s.enforce_retention().unwrap();
         assert_eq!(s.messages_for("a@s", 99).unwrap().len(), 2);
@@ -1874,8 +1916,8 @@ mod tests {
     #[test]
     fn summaries_are_newest_first() {
         let s = store(Retention::unlimited());
-        s.upsert(&msg("old@s", "1", 10, "older")).unwrap();
-        s.upsert(&msg("new@s", "1", 1, "newer")).unwrap();
+        s.insert_message(&msg("old@s", "1", 10, "older")).unwrap();
+        s.insert_message(&msg("new@s", "1", 1, "newer")).unwrap();
         let chats = s.chats().unwrap();
         assert_eq!(chats[0].chat, "new@s");
         assert_eq!(chats[0].last_text, "newer");
@@ -1885,7 +1927,7 @@ mod tests {
     #[test]
     fn names_resolve_in_reads() {
         let s = store(Retention::unlimited());
-        s.upsert(&msg("group@g.us", "1", 0, "hi")).unwrap();
+        s.insert_message(&msg("group@g.us", "1", 0, "hi")).unwrap();
         s.set_name("group@g.us", "Team Chat").unwrap();
         s.set_name("them", "Alice").unwrap();
 
@@ -1931,8 +1973,8 @@ mod tests {
             max_age_hours: Some(1),
             max_messages_per_chat: None,
         });
-        s.upsert(&msg("a@s", "older", 72, "hello")).unwrap();
-        s.upsert(&msg("a@s", "old", 48, "hi")).unwrap();
+        s.insert_message(&msg("a@s", "older", 72, "hello")).unwrap();
+        s.insert_message(&msg("a@s", "old", 48, "hi")).unwrap();
         s.set_name("a@s", "Alice").unwrap();
         s.enforce_retention().unwrap();
         assert_eq!(s.count().unwrap(), 1);
@@ -1942,10 +1984,10 @@ mod tests {
     #[test]
     fn quiet_chats_keep_their_newest_message() {
         let s = store(Retention { max_age_hours: Some(24), max_messages_per_chat: None });
-        s.upsert(&msg("quiet@s", "1", 100, "first")).unwrap();
-        s.upsert(&msg("quiet@s", "2", 50, "last word")).unwrap();
-        s.upsert(&msg("busy@s", "1", 50, "old")).unwrap();
-        s.upsert(&msg("busy@s", "2", 1, "new")).unwrap();
+        s.insert_message(&msg("quiet@s", "1", 100, "first")).unwrap();
+        s.insert_message(&msg("quiet@s", "2", 50, "last word")).unwrap();
+        s.insert_message(&msg("busy@s", "1", 50, "old")).unwrap();
+        s.insert_message(&msg("busy@s", "2", 1, "new")).unwrap();
         s.enforce_retention().unwrap();
         let chats = s.chats().unwrap();
         assert_eq!(chats.len(), 2, "no chat vanishes from the list");
@@ -1958,12 +2000,12 @@ mod tests {
         let s = store(Retention::unlimited());
         let mut incoming = msg("a@s", "1", 0, "hi");
         incoming.read = false;
-        s.upsert(&incoming).unwrap();
+        s.insert_message(&incoming).unwrap();
 
         let mut outgoing = msg("a@s", "2", 0, "hello");
         outgoing.from_me = true;
         outgoing.read = true;
-        s.upsert(&outgoing).unwrap();
+        s.insert_message(&outgoing).unwrap();
 
         let chats = s.chats().unwrap();
         assert_eq!(chats[0].unread_count, 1);
@@ -1975,7 +2017,7 @@ mod tests {
     #[test]
     fn marking_read_is_idempotent() {
         let s = store(Retention::unlimited());
-        s.upsert(&msg("a@s", "1", 0, "hi")).unwrap();
+        s.insert_message(&msg("a@s", "1", 0, "hi")).unwrap();
         assert_eq!(s.mark_chat_read("a@s").unwrap(), 1);
         // Nothing left to change the second time.
         assert_eq!(s.mark_chat_read("a@s").unwrap(), 0);
@@ -1989,7 +2031,7 @@ mod tests {
         m.media_path = Some("/tmp/pic.jpg".into());
         m.reply_to_id = Some("0".into());
         m.reply_to_text = Some("earlier".into());
-        s.upsert(&m).unwrap();
+        s.insert_message(&m).unwrap();
 
         let got = &s.messages_for("a@s", 1).unwrap()[0];
         assert_eq!(got.media_kind.as_deref(), Some("image"));
@@ -2008,7 +2050,7 @@ mod tests {
         let mut m = msg("a@s", "1", 0, "");
         m.media_path = Some(shared.join("1.jpg").to_string_lossy().into());
         m.media_thumb = Some(shared.join("1.jpg").to_string_lossy().into());
-        s.upsert(&m).unwrap();
+        s.insert_message(&m).unwrap();
 
         assert_eq!(s.relocate_media(&[&shared], &to).unwrap(), 2);
         let got = s.message("a@s", "1").unwrap();
@@ -2027,7 +2069,7 @@ mod tests {
         let mut m = msg("a@s", "1", 0, "hi");
         m.from_me = true;
         m.status = Some("pending".into());
-        s.upsert(&m).unwrap();
+        s.insert_message(&m).unwrap();
 
         assert!(s.set_status("a@s", "1", "sent").unwrap());
         assert!(s.set_status("a@s", "1", "delivered").unwrap());
@@ -2040,7 +2082,7 @@ mod tests {
     #[test]
     fn status_ignores_incoming_messages() {
         let s = store(Retention::unlimited());
-        s.upsert(&msg("a@s", "1", 0, "hi")).unwrap();
+        s.insert_message(&msg("a@s", "1", 0, "hi")).unwrap();
         assert!(!s.set_status("a@s", "1", "read").unwrap());
     }
 
@@ -2053,7 +2095,7 @@ mod tests {
         let mut m = msg("a@s.whatsapp.net", "1", 0, "hi");
         m.from_me = true;
         m.status = Some("pending".into());
-        s.upsert(&m).unwrap();
+        s.insert_message(&m).unwrap();
 
         // Wrong chat: the addressed update misses.
         assert!(!s.set_status("b@s.whatsapp.net", "1", "sent").unwrap());
@@ -2073,7 +2115,7 @@ mod tests {
     #[test]
     fn revoking_keeps_the_row_but_clears_content() {
         let s = store(Retention::unlimited());
-        s.upsert(&msg("a@s", "1", 0, "oops")).unwrap();
+        s.insert_message(&msg("a@s", "1", 0, "oops")).unwrap();
         assert!(s.revoke("a@s", "1").unwrap());
 
         let got = &s.messages_for("a@s", 1).unwrap()[0];
@@ -2087,7 +2129,7 @@ mod tests {
     fn unlimited_retention_keeps_everything() {
         let s = store(Retention::unlimited());
         for i in 0..50 {
-            s.upsert(&msg("a@s", &i.to_string(), i * 100, "x")).unwrap();
+            s.insert_message(&msg("a@s", &i.to_string(), i * 100, "x")).unwrap();
         }
         assert_eq!(s.enforce_retention().unwrap(), 0);
         assert_eq!(s.count().unwrap(), 50);
