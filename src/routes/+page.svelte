@@ -20,7 +20,7 @@
   import Icon, { type IconName } from "$lib/Icon.svelte";
   import Settings, { type Section } from "$lib/Settings.svelte";
   import GroupInfo, { type AdminReport } from "$lib/GroupInfo.svelte";
-  import MediaViewer, { type ViewerItem } from "$lib/MediaViewer.svelte";
+  import MediaViewer, { mediaSrc, type ViewerItem } from "$lib/MediaViewer.svelte";
   import VideoPlayer from "$lib/VideoPlayer.svelte";
   import appIcon from "../../src-tauri/icons/128x128.png";
   import ImageCropper from "$lib/ImageCropper.svelte";
@@ -3084,7 +3084,7 @@
                     {#if message.reply_to_kind === "image" && message.reply_to_thumb}
                       <img
                         class="quote-thumb"
-                        src={convertFileSrc(message.reply_to_thumb)}
+                        src={mediaSrc(message.reply_to_thumb)}
                         alt=""
                       />
                     {:else if message.reply_to_kind}
@@ -3144,7 +3144,7 @@
                     onclick={() => (message.media_path ? openViewer(message) : downloadMedia(message))}>
                     <img
                       class="media"
-                      src={convertFileSrc((message.media_path ?? message.media_thumb)!)}
+                      src={mediaSrc((message.media_path ?? message.media_thumb)!)}
                       alt={message.text}
                     />
                     {#if !message.media_path}
@@ -3173,7 +3173,7 @@
                     title={message.media_path ? "Play" : "Download"}
                     onclick={() => (message.media_path ? openViewer(message) : downloadMedia(message))}>
                     {#if message.media_thumb}
-                      <img class="media" src={convertFileSrc(message.media_thumb)} alt="" />
+                      <img class="media" src={mediaSrc(message.media_thumb)} alt="" />
                     {/if}
                     <span class="media-overlay">
                       {#if message.media_kind === "gif"}GIF{:else}<span class="play">▶</span>{/if}
@@ -3271,7 +3271,7 @@
                     {#if message.preview_thumb}
                       <img
                         class="preview-thumb"
-                        src={convertFileSrc(message.preview_thumb)}
+                        src={mediaSrc(message.preview_thumb)}
                         alt=""
                       />
                     {/if}

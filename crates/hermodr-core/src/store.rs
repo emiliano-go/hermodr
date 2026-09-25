@@ -78,11 +78,13 @@ pub struct StoredMessage {
     pub media_kind: Option<String>,
     /// Absolute path to the downloaded media, if it was kept.
     pub media_path: Option<String>,
-    /// Path to the media's thumbnail, which is embedded in the message and
-    /// available without downloading the full file.
+    /// The media's thumbnail, embedded in the message and available without
+    /// downloading the full file: a `data:` URI for received media (a few KB
+    /// in the row), a file path for older rows.
     pub media_thumb: Option<String>,
     /// The media submessage, kept so the file can be downloaded on demand when
-    /// automatic downloads are off. Internal: not handed to the UI.
+    /// automatic downloads are off: keys, hashes and URL, without thumbnail or
+    /// quote, typically a few hundred bytes. Internal: not handed to the UI.
     #[serde(skip)]
     pub media_ref: Option<Vec<u8>>,
     /// Id of the message this one quotes.
@@ -912,8 +914,10 @@ impl MessageStore {
     pub fn clear_media_paths(&self) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
         Ok(conn.execute(
-            "UPDATE messages SET media_path = NULL, media_thumb = NULL
-             WHERE media_path IS NOT NULL OR media_thumb IS NOT NULL",
+            "UPDATE messages
+             SET media_path = NULL,
+                 media_thumb = CASE WHEN media_thumb LIKE 'data:%' THEN media_thumb END
+             WHERE media_path IS NOT NULL OR media_thumb NOT LIKE 'data:%'",
             [],
         )?)
     }
@@ -1332,7 +1336,7 @@ impl MessageStore {
         let mut rewritten = 0;
         for column in COLUMNS {
             let paths: Vec<String> = conn
-                .prepare(&format!("SELECT DISTINCT {column} FROM messages WHERE {column} IS NOT NULL"))?
+                .prepare(&format!("SELECT DISTINCT {column} FROM messages WHERE {column} IS NOT NULL AND {column} NOT LIKE 'data:%'"))?
                 .query_map([], |row| row.get(0))?
                 .collect::<rusqlite::Result<_>>()?;
             for old in paths {

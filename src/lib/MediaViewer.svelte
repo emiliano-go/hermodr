@@ -1,4 +1,9 @@
 <script lang="ts" module>
+  import { convertFileSrc } from "@tauri-apps/api/core";
+
+  /** Received thumbnails are stored inline as `data:` URIs; anything else is a file. */
+  export const mediaSrc = (path: string) => (path.startsWith("data:") ? path : convertFileSrc(path));
+
   export type ViewerItem = {
     id: string;
     path: string;
@@ -15,7 +20,7 @@
   import { tick } from "svelte";
   import { fade } from "svelte/transition";
   import { motion } from "$lib/theme.svelte";
-  import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+  import { invoke } from "@tauri-apps/api/core";
   import Icon from "$lib/Icon.svelte";
   import VideoPlayer from "$lib/VideoPlayer.svelte";
 
@@ -198,7 +203,7 @@
           aria-label="Show item {i + 1} of {items.length}"
           onclick={() => (index = i)}>
           {#if entry.thumb || !(entry.kind === "video" || entry.kind === "gif")}
-            <img src={convertFileSrc(entry.thumb ?? entry.path)} alt="" />
+            <img src={mediaSrc(entry.thumb ?? entry.path)} alt="" />
           {:else}
             <!-- A video without a stored thumbnail shows its first frame. -->
             <video src={convertFileSrc(entry.path)} preload="metadata" muted></video>

@@ -1665,14 +1665,7 @@ impl Service {
         };
 
         // Keep the preview with our own copy, so the sender sees it too.
-        let thumbnail = preview.as_ref().and_then(|p| {
-            let bytes = p.thumbnail.as_ref()?;
-            let dir = self.media_dir()?;
-            std::fs::create_dir_all(&dir).ok()?;
-            let path = dir.join(format!("{}_thumb.jpg", result.message_id));
-            std::fs::write(&path, bytes).ok()?;
-            Some(path.to_string_lossy().to_string())
-        });
+        let thumbnail = preview.as_ref().and_then(|p| p.thumbnail.as_deref()).map(thumb_uri);
 
         let mut message = StoredMessage {
             chat: chat.to_string(),
@@ -3536,14 +3529,7 @@ async fn stored_message(
 
         // The thumbnail rides in the message, so it is kept even when the file
         // itself is not downloaded.
-        if let (Some(dir), Some(bytes)) = (media_dir, media.thumb.as_ref()) {
-            if std::fs::create_dir_all(dir).is_ok() {
-                let path = dir.join(format!("{id}_thumb.jpg"));
-                if std::fs::write(&path, bytes).is_ok() {
-                    media_thumb = Some(path.to_string_lossy().to_string());
-                }
-            }
-        }
+        media_thumb = media.thumb.as_deref().map(thumb_uri);
 
         if auto_download {
             // Download when a destination and a client are available. A failure
@@ -3562,8 +3548,7 @@ async fn stored_message(
                 }
             }
         } else {
-            // Keep the message so the file can be fetched on demand later.
-            media_ref = Some(buffa::Message::encode_to_vec(message));
+            media_ref = Some(media_locator(message));
         }
 
         if text.is_empty() {
@@ -3607,28 +3592,19 @@ async fn stored_message(
                     })
                     .unwrap_or(false);
                 let sender = if mine { "@me".to_string() } else { sender };
-                // Keep the quoted thumbnail so the quote shows a preview.
-                let thumb_path = thumb.and_then(|bytes| {
-                    let dir = media_dir?;
-                    std::fs::create_dir_all(dir).ok()?;
-                    let path = dir.join(format!("{id}_quote.jpg"));
-                    std::fs::write(&path, bytes).ok()?;
-                    Some(path.to_string_lossy().to_string())
-                });
                 (
                     Some(id),
                     Some(text),
                     Some(sender),
                     if kind.is_empty() { None } else { Some(kind) },
-                    thumb_path,
+                    thumb.as_deref().map(thumb_uri),
                     chat,
                 )
             })
             .unwrap_or((None, None, None, None, None, None));
 
     // A link preview rides on the extended text message.
-    let (preview_url, preview_title, preview_desc, preview_thumb) =
-        link_preview(message, media_dir, id);
+    let (preview_url, preview_title, preview_desc, preview_thumb) = link_preview(message);
 
     Some(StoredMessage {
         chat: envelope.chat,
@@ -3661,13 +3637,47 @@ async fn stored_message(
     })
 }
 
-/// The link preview a message carries, with its thumbnail written next to the
-/// other media so the UI can show it.
-fn link_preview(
-    message: &wa::Message,
-    media_dir: Option<&std::path::Path>,
-    id: &str,
-) -> (Option<String>, Option<String>, Option<String>, Option<String>) {
+/// A received thumbnail as a `data:` URI, stored in the row rather than as one
+/// file per message.
+fn thumb_uri(jpeg: &[u8]) -> String {
+    use base64::Engine as _;
+    format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(jpeg))
+}
+
+/// The message cut down to what `download_media` needs: the media entry
+/// without its thumbnail (kept in the row) or the context it quotes.
+fn media_locator(message: &wa::Message) -> Vec<u8> {
+    let mut slim = wa::Message {
+        image_message: message.image_message.clone(),
+        video_message: message.video_message.clone(),
+        audio_message: message.audio_message.clone(),
+        document_message: message.document_message.clone(),
+        sticker_message: message.sticker_message.clone(),
+        ..Default::default()
+    };
+    if let Some(m) = slim.image_message.as_option_mut() {
+        m.jpeg_thumbnail = None;
+        m.context_info = Default::default();
+    }
+    if let Some(m) = slim.video_message.as_option_mut() {
+        m.jpeg_thumbnail = None;
+        m.context_info = Default::default();
+    }
+    if let Some(m) = slim.audio_message.as_option_mut() {
+        m.context_info = Default::default();
+    }
+    if let Some(m) = slim.document_message.as_option_mut() {
+        m.jpeg_thumbnail = None;
+        m.context_info = Default::default();
+    }
+    if let Some(m) = slim.sticker_message.as_option_mut() {
+        m.context_info = Default::default();
+    }
+    buffa::Message::encode_to_vec(&slim)
+}
+
+/// The link preview a message carries.
+fn link_preview(message: &wa::Message) -> (Option<String>, Option<String>, Option<String>, Option<String>) {
     use whatsapp_rust::wacore::proto_helpers::MessageExt;
     let Some(text) = message
         .get_base_message()
@@ -3680,13 +3690,7 @@ fn link_preview(
     let Some(url) = text.matched_text.clone() else {
         return (None, None, None, None);
     };
-    let thumb = text.jpeg_thumbnail.as_ref().and_then(|bytes| {
-        let dir = media_dir?;
-        std::fs::create_dir_all(dir).ok()?;
-        let path = dir.join(format!("{id}_thumb.jpg"));
-        std::fs::write(&path, bytes).ok()?;
-        Some(path.to_string_lossy().to_string())
-    });
+    let thumb = text.jpeg_thumbnail.as_deref().map(thumb_uri);
     (Some(url), text.title.clone(), text.description.clone(), thumb)
 }
 
