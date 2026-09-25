@@ -631,8 +631,13 @@
     recall = null;
     olderExhausted = false;
     loadOnScroll = true;
-    invoke<{ retention: ChatRetention }>("chat_settings", { chat })
-      .then((s) => selectedChat === chat && (loadOnScroll = s.retention.on_demand))
+    chatPrivacy = { send_typing: null, send_receipts: null };
+    invoke<{ retention: ChatRetention } & ChatPrivacy>("chat_settings", { chat })
+      .then((s) => {
+        if (selectedChat !== chat) return;
+        loadOnScroll = s.retention.on_demand;
+        chatPrivacy = { send_typing: s.send_typing, send_receipts: s.send_receipts };
+      })
       .catch(() => {});
     participants = memberCache[chat] ?? [];
     chosenMentions = [];
@@ -1265,9 +1270,33 @@
   let typingSentAt = 0;
   let typingIdle: ReturnType<typeof setTimeout> | undefined;
 
+  /** The open chat's overrides of the typing and read receipt settings; `null` follows them. */
+  type ChatPrivacy = { send_typing: boolean | null; send_receipts: boolean | null };
+  let chatPrivacy: ChatPrivacy = $state({ send_typing: null, send_receipts: null });
+  const chatSendsTyping = $derived(chatPrivacy.send_typing ?? settings.send_typing);
+  const chatHidden = $derived(!chatSendsTyping && !(chatPrivacy.send_receipts ?? settings.send_receipts));
+
+  async function toggleChatPrivacy() {
+    const chat = selectedChat;
+    if (!chat) return;
+    const send = chatHidden;
+    // An override equal to the default is dropped, so the chat keeps following it.
+    const next: ChatPrivacy = {
+      send_typing: send === settings.send_typing ? null : send,
+      send_receipts: send === settings.send_receipts ? null : send,
+    };
+    try {
+      await invoke("set_chat_privacy", { chat, typing: next.send_typing, receipts: next.send_receipts });
+      if (selectedChat === chat) chatPrivacy = next;
+      if (!send) stopTyping(chat);
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
   function reportTyping() {
     const chat = selectedChat;
-    if (!chat || !settings.send_typing) return;
+    if (!chat || !chatSendsTyping) return;
     if (Date.now() - typingSentAt > 5000) {
       typingSentAt = Date.now();
       invoke("send_typing", { chat, typing: true }).catch(() => {});
@@ -3129,6 +3158,13 @@
                 aria-label="Your mentions in this group"
                 onclick={() => openPings(selectedChat)}><Icon name="at" size={18} /></button>
             {/if}
+            <button
+              class="icon"
+              class:active={chatHidden}
+              title={chatHidden ? "Typing and read receipts hidden here" : "Hide typing and read receipts here"}
+              aria-label="Hide typing and read receipts here"
+              aria-pressed={chatHidden}
+              onclick={toggleChatPrivacy}><Icon name={chatHidden ? "eyeOff" : "eye"} size={18} /></button>
             <button
               class="icon"
               title="Chat settings"
@@ -6040,7 +6076,8 @@
     width: 38px;
     height: 38px;
   }
-  .composer-tools .icon.active {
+  .composer-tools .icon.active,
+  .header-tools .icon.active {
     color: var(--accent);
   }
   .once-toggle {

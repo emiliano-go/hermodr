@@ -586,8 +586,7 @@ async fn resolve_names(state: State<'_, AppState>) -> Result<usize, String> {
 #[tauri::command]
 async fn mark_read(state: State<'_, AppState>, chat: String) -> Result<usize, String> {
     let service = state.service()?;
-    let receipts =
-        state.settings.lock().unwrap().send_receipts && !service.read_receipts_disabled();
+    let receipts = sends_privacy(&state, &service, &chat).1;
     service.mark_read(&chat, receipts).await.map_err(|e| e.to_string())
 }
 
@@ -595,7 +594,7 @@ async fn mark_read(state: State<'_, AppState>, chat: String) -> Result<usize, St
 #[tauri::command]
 async fn mark_played(state: State<'_, AppState>, chat: String, id: String, sender: String) -> Result<(), String> {
     let service = state.service()?;
-    if !state.settings.lock().unwrap().send_receipts || service.read_receipts_disabled() {
+    if !sends_privacy(&state, &service, &chat).1 {
         return Ok(());
     }
     service.mark_played(&chat, &id, &sender).await.map_err(|e| e.to_string())
@@ -876,12 +875,18 @@ struct ChatSettings {
     /// The chat's auto download override, `None` when it follows the global one.
     auto_download: Option<bool>,
     retention: hermodr_core::ChatRetention,
+    /// Typing and read receipt overrides, `None` when following the global ones.
+    send_typing: Option<bool>,
+    send_receipts: Option<bool>,
 }
 
 #[tauri::command(async)]
 fn chat_settings(state: State<'_, AppState>, chat: String) -> Result<ChatSettings, String> {
     let service = state.service()?;
+    let (send_typing, send_receipts) = service.chat_privacy(&chat).map_err(|e| e.to_string())?;
     Ok(ChatSettings {
+        send_typing,
+        send_receipts,
         auto_download: service.chat_auto_download(&chat).map_err(|e| e.to_string())?,
         retention: service.chat_retention(&chat).map_err(|e| e.to_string())?,
     })
@@ -1208,7 +1213,35 @@ fn own_jid(app: AppHandle, state: State<'_, AppState>) -> Option<String> {
 
 #[tauri::command]
 async fn send_typing(state: State<'_, AppState>, chat: String, typing: bool) -> Result<(), String> {
-    state.service()?.send_typing(&chat, typing).await.map_err(|e| e.to_string())
+    let service = state.service()?;
+    if typing && !sends_privacy(&state, &service, &chat).0 {
+        return Ok(());
+    }
+    service.send_typing(&chat, typing).await.map_err(|e| e.to_string())
+}
+
+/// Whether a chat gets our (typing, read receipts): its overrides, else the global settings.
+fn sends_privacy(state: &AppState, service: &Service, chat: &str) -> (bool, bool) {
+    let (typing, receipts) = service.chat_privacy(chat).unwrap_or_default();
+    let settings = state.settings.lock().unwrap();
+    (
+        typing.unwrap_or(settings.send_typing),
+        receipts.unwrap_or(settings.send_receipts) && !service.read_receipts_disabled(),
+    )
+}
+
+/// Sets a chat's typing and read receipt overrides; `None` follows the global setting.
+#[tauri::command(async)]
+fn set_chat_privacy(
+    state: State<'_, AppState>,
+    chat: String,
+    typing: Option<bool>,
+    receipts: Option<bool>,
+) -> Result<(), String> {
+    state
+        .service()?
+        .set_chat_privacy(&chat, typing, receipts)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1548,6 +1581,7 @@ pub fn run() {
             open_log,
             download_media,
             set_chat_auto_download,
+            set_chat_privacy,
             chat_for_message,
             search,
             open_url,

@@ -557,6 +557,14 @@ impl MessageStore {
              )",
             [],
         )?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS chat_privacy (
+                 jid TEXT PRIMARY KEY,
+                 send_typing INTEGER,
+                 send_receipts INTEGER
+             )",
+            [],
+        )?;
 
         // The media reference is a blob, so it cannot go through the TEXT
         // migration loop above.
@@ -988,6 +996,35 @@ impl MessageStore {
              ON CONFLICT(jid) DO UPDATE SET auto_download = excluded.auto_download",
             params![jid, enabled as i32],
         )?;
+        Ok(())
+    }
+
+    /// The chat's typing and read receipt overrides; `None` follows the global setting.
+    pub fn chat_privacy(&self, jid: &str) -> Result<(Option<bool>, Option<bool>)> {
+        let conn = self.conn.lock().unwrap();
+        let value = conn
+            .query_row(
+                "SELECT send_typing, send_receipts FROM chat_privacy WHERE jid = ?1",
+                params![jid],
+                |r| Ok((r.get::<_, Option<bool>>(0)?, r.get::<_, Option<bool>>(1)?)),
+            )
+            .optional()?;
+        Ok(value.unwrap_or_default())
+    }
+
+    /// Sets the chat's typing and read receipt overrides; both `None` removes them.
+    pub fn set_chat_privacy(&self, jid: &str, typing: Option<bool>, receipts: Option<bool>) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        if typing.is_none() && receipts.is_none() {
+            conn.execute("DELETE FROM chat_privacy WHERE jid = ?1", params![jid])?;
+        } else {
+            conn.execute(
+                "INSERT INTO chat_privacy (jid, send_typing, send_receipts) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(jid) DO UPDATE SET send_typing = excluded.send_typing,
+                                                send_receipts = excluded.send_receipts",
+                params![jid, typing, receipts],
+            )?;
+        }
         Ok(())
     }
 
@@ -1865,6 +1902,16 @@ mod tests {
         assert_eq!(s.count().unwrap(), 0);
         assert_eq!(s.name_for("a@s").unwrap().as_deref(), Some("Ann"));
         assert_eq!(s.chat_auto_download("a@s").unwrap(), Some(false));
+    }
+
+    #[test]
+    fn chat_privacy_overrides_round_trip() {
+        let s = store(Retention::unlimited());
+        assert_eq!(s.chat_privacy("a@s").unwrap(), (None, None));
+        s.set_chat_privacy("a@s", Some(false), None).unwrap();
+        assert_eq!(s.chat_privacy("a@s").unwrap(), (Some(false), None));
+        s.set_chat_privacy("a@s", None, None).unwrap();
+        assert_eq!(s.chat_privacy("a@s").unwrap(), (None, None));
     }
 
     #[test]

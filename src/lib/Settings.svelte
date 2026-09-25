@@ -333,7 +333,8 @@
             <div>
               <span class="setting-title">Send typing indicator</span>
               <span class="setting-desc">
-                Others see "typing…" while you write. Off, you still see theirs.
+                Others see "typing…" while you write. Off, you still see theirs. The default for every
+                chat; the eye in a chat's header overrides it there.
               </span>
             </div>
             <input class="switch" type="checkbox" bind:checked={draft.send_typing} />
@@ -344,7 +345,8 @@
               <span class="setting-desc">
                 Off, nobody learns you read a message, heard a voice note or opened view-once media,
                 in groups too. Unlike WhatsApp's own read receipts setting below, you keep seeing
-                other people's.
+                other people's. The default for every chat; the eye in a chat's header overrides it
+                there.
               </span>
             </div>
             <input class="switch" type="checkbox" bind:checked={draft.send_receipts} />

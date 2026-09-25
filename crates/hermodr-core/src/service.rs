@@ -2551,6 +2551,15 @@ impl Service {
         self.store.chat_auto_download(chat)
     }
 
+    /// The chat's (typing, read receipts) overrides; `None` follows the global setting.
+    pub fn chat_privacy(&self, chat: &str) -> Result<(Option<bool>, Option<bool>)> {
+        self.store.chat_privacy(chat)
+    }
+
+    pub fn set_chat_privacy(&self, chat: &str, typing: Option<bool>, receipts: Option<bool>) -> Result<()> {
+        self.store.set_chat_privacy(chat, typing, receipts)
+    }
+
     /// Messages members reported to this group's admins. Only admins may ask.
     pub async fn admin_reports(&self, chat: &str) -> Result<Vec<AdminReport>> {
         let jid: Jid = chat.parse()?;

@@ -82,6 +82,7 @@
     "allow-group-kinds",
     "allow-open-log",
     "allow-download-media",
-    "allow-set-chat-auto-download"
+    "allow-set-chat-auto-download",
+    "allow-set-chat-privacy"
   ]
 }
