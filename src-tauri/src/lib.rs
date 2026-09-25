@@ -265,7 +265,7 @@ fn resync_event(service: &Service) -> ServiceEvent {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn connection_state(state: State<'_, AppState>) -> ConnectionState {
     let service = state.service.lock().unwrap().clone();
     match service {
@@ -447,7 +447,7 @@ async fn connect(app: AppHandle, state: State<'_, AppState>) -> Result<(), Strin
 }
 
 /// The accounts and which one is active.
-#[tauri::command]
+#[tauri::command(async)]
 fn accounts(state: State<'_, AppState>) -> AccountsView {
     let file = state.accounts.lock().unwrap();
     AccountsView {
@@ -542,7 +542,7 @@ async fn remove_account(app: AppHandle, state: State<'_, AppState>, id: String) 
 }
 
 /// Stored messages for a chat, newest first.
-#[tauri::command]
+#[tauri::command(async)]
 fn messages(
     state: State<'_, AppState>,
     chat: String,
@@ -555,7 +555,7 @@ fn messages(
 }
 
 /// Chat summaries, most recently active first.
-#[tauri::command]
+#[tauri::command(async)]
 fn chats(state: State<'_, AppState>) -> Result<Vec<ChatSummary>, String> {
     state.service()?.chats().map_err(|e| e.to_string())
 }
@@ -687,7 +687,7 @@ async fn forward_message(
     state.service()?.forward(&chat, &id, &to).await.map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn marks(state: State<'_, AppState>, chat: String) -> Result<hermodr_core::ChatMarks, String> {
     state.service()?.marks(&chat).map_err(|e| e.to_string())
 }
@@ -827,25 +827,25 @@ async fn edit_event(state: State<'_, AppState>, chat: String, id: String, event:
 }
 
 /// Who got, read and played one of our messages.
-#[tauri::command]
+#[tauri::command(async)]
 fn message_info(state: State<'_, AppState>, id: String) -> Result<Vec<hermodr_core::MessageReceipt>, String> {
     state.service()?.message_info(&id).map_err(|e| e.to_string())
 }
 
 /// Starred messages across every chat, newest first.
-#[tauri::command]
+#[tauri::command(async)]
 fn starred_messages(state: State<'_, AppState>) -> Result<Vec<StoredMessage>, String> {
     state.service()?.starred_messages().map_err(|e| e.to_string())
 }
 
 /// Messages that mention us, in one chat or (without `chat`) all of them.
-#[tauri::command]
+#[tauri::command(async)]
 fn pings(state: State<'_, AppState>, chat: Option<String>) -> Result<Vec<StoredMessage>, String> {
     state.service()?.pings(chat.as_deref()).map_err(|e| e.to_string())
 }
 
 /// Up to `limit` (default 50) messages in one chat whose text contains `query`.
-#[tauri::command]
+#[tauri::command(async)]
 fn search_messages(
     state: State<'_, AppState>,
     chat: String,
@@ -865,7 +865,7 @@ struct ChatSettings {
     retention: hermodr_core::ChatRetention,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn chat_settings(state: State<'_, AppState>, chat: String) -> Result<ChatSettings, String> {
     let service = state.service()?;
     Ok(ChatSettings {
@@ -874,7 +874,7 @@ fn chat_settings(state: State<'_, AppState>, chat: String) -> Result<ChatSetting
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_chat_retention(
     state: State<'_, AppState>,
     chat: String,
@@ -916,14 +916,14 @@ async fn send_sticker(state: State<'_, AppState>, chat: String, data: String) ->
 }
 
 /// Saves base64 image bytes as a sticker without sending it; returns its path.
-#[tauri::command]
+#[tauri::command(async)]
 fn save_sticker(state: State<'_, AppState>, data: String) -> Result<String, String> {
     let bytes = BASE64.decode(data.as_bytes()).map_err(|e| e.to_string())?;
     state.service()?.save_sticker(&bytes).map_err(|e| e.to_string())
 }
 
 /// Stickers or GIFs already downloaded, newest first.
-#[tauri::command]
+#[tauri::command(async)]
 fn media_library(
     state: State<'_, AppState>,
     kind: String,
@@ -954,7 +954,7 @@ async fn send_from_library(
 /// The path is restricted to the configured media folder. The webview is the
 /// least trusted part of the app, and it must not be able to ask the shell to
 /// open arbitrary files.
-#[tauri::command]
+#[tauri::command(async)]
 fn open_path(app: AppHandle, state: State<'_, AppState>, path: String) -> Result<(), String> {
     let configured = state
         .service
@@ -1105,13 +1105,13 @@ async fn set_pinned(state: State<'_, AppState>, chat: String, pinned: bool) -> R
 }
 
 /// Deletes downloaded media, keeping the messages.
-#[tauri::command]
+#[tauri::command(async)]
 fn flush_media(state: State<'_, AppState>) -> Result<usize, String> {
     state.service()?.flush_media().map_err(|e| e.to_string())
 }
 
 /// The chat a stored message id belongs to.
-#[tauri::command]
+#[tauri::command(async)]
 fn chat_for_message(state: State<'_, AppState>, id: String) -> Result<Option<String>, String> {
     state
         .service()?
@@ -1134,7 +1134,7 @@ async fn download_media(
 }
 
 /// Sets a chat's auto download override.
-#[tauri::command]
+#[tauri::command(async)]
 fn set_chat_auto_download(
     state: State<'_, AppState>,
     chat: String,
@@ -1274,7 +1274,7 @@ async fn join_invite(state: State<'_, AppState>, link: String) -> Result<Joined,
 }
 
 /// Marks a view-once message opened and deletes its file.
-#[tauri::command]
+#[tauri::command(async)]
 fn open_view_once(state: State<'_, AppState>, chat: String, id: String) -> Result<(), String> {
     state.service()?.open_view_once(&chat, &id).map_err(|e| e.to_string())
 }
@@ -1287,7 +1287,7 @@ async fn names(state: State<'_, AppState>, jids: Vec<String>,
 }
 
 /// Unread messages that mention us, oldest first.
-#[tauri::command]
+#[tauri::command(async)]
 fn unread_mentions(state: State<'_, AppState>, chat: String) -> Result<Vec<String>, String> {
     state
         .service()?
