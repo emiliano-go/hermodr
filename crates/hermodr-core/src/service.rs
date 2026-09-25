@@ -636,6 +636,9 @@ impl Service {
         let group_cache_for_events = group_cache.clone();
         let groups_cache: Arc<Mutex<Vec<whatsapp_rust::GroupOverview>>> = Arc::default();
         let groups_cache_for_events = groups_cache.clone();
+        // Auto-downloads run beside the event handler, so a long backlog of media
+        // never holds up the messages behind it.
+        let downloads = Arc::new(tokio::sync::Semaphore::new(4));
 
         let bot = Bot::builder()
             .with_backend(SqliteStore::new(config.session_path.to_string_lossy().as_ref()).await?)
@@ -744,6 +747,7 @@ impl Service {
                     let media_dir = media_dir_for_events.clone();
                     let group_cache = group_cache_for_events.clone();
                     let groups_cache = groups_cache_for_events.clone();
+                    let downloads = downloads.clone();
                     async move {
                         match event.as_ref() {
                             Event::Messages(batch) => {
@@ -1036,13 +1040,9 @@ impl Service {
                                             .ok()
                                             .flatten()
                                             .unwrap_or(auto_download_default);
-                                    let Some(mut message) = incoming_message(
-                                        inbound,
-                                        client.as_deref(),
-                                        media_dir.as_deref(),
-                                        auto_download,
-                                    )
-                                    .await
+                                    let Some(mut message) =
+                                        incoming_message(inbound, client.as_deref(), media_dir.as_deref(), false)
+                                            .await
                                     else {
                                         continue;
                                     };
@@ -1069,7 +1069,26 @@ impl Service {
                                     if let Err(e) = store.insert_message(&message) {
                                         log::error!("could not store message {} in {chat}: {e}", message.header.id);
                                     }
+                                    let fetch = match (auto_download && message.media.locator.is_some(), &client, &media_dir) {
+                                        (true, Some(client), Some(dir)) => {
+                                            Some((client.clone(), dir.clone(), message.header.id.clone()))
+                                        }
+                                        _ => None,
+                                    };
                                     let _ = events.send(ServiceEvent::Message { message: Box::new(message) });
+                                    if let Some((client, dir, id)) = fetch {
+                                        let (store, events, downloads, chat) =
+                                            (store.clone(), events.clone(), downloads.clone(), chat.clone());
+                                        tokio::spawn(async move {
+                                            let Ok(_permit) = downloads.acquire().await else { return };
+                                            match fetch_media(&client, &store, &dir, &chat, &id).await {
+                                                Ok(updated) => {
+                                                    let _ = events.send(ServiceEvent::Message { message: Box::new(updated) });
+                                                }
+                                                Err(e) => log::warn!("failed to download {id} media: {e}"),
+                                            }
+                                        });
+                                    }
                                 }
                                 // Bound the store right after writes so the
                                 // limit holds even if the process stops.
@@ -2139,31 +2158,12 @@ impl Service {
     /// Downloads a message's media on demand, when automatic downloads were
     /// off or the earlier attempt failed.
     pub async fn download_media(&self, chat: &str, id: &str) -> Result<()> {
-        let Some(bytes) = self.store.media_ref_for(chat, id)? else {
-            return Err(anyhow::anyhow!("no stored media reference"));
-        };
-        let message = <wa::Message as buffa::Message>::decode(&mut bytes.as_slice())
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        let Some(media) = detect_media(&message) else {
-            return Err(anyhow::anyhow!("message carries no media"));
-        };
-        let client = self.client.clone();
-        let data = client
-            .download(media.downloadable.as_ref())
-            .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let dir = self
             .media_dir
             .clone()
             .ok_or_else(|| anyhow::anyhow!("no media folder configured"))?;
-        std::fs::create_dir_all(&dir)?;
-        let path = dir.join(format!("{}.{}", id, media.extension()));
-        std::fs::write(&path, &data)?;
-        self.store
-            .set_media_path(chat, id, &path.to_string_lossy())?;
-        if let Ok(updated) = self.store.message(chat, id) {
-            let _ = self.events.send(ServiceEvent::Message { message: Box::new(updated) });
-        }
+        let updated = fetch_media(&self.client, &self.store, &dir, chat, id).await?;
+        let _ = self.events.send(ServiceEvent::Message { message: Box::new(updated) });
         Ok(())
     }
 
@@ -3593,6 +3593,29 @@ async fn incoming_message(
         from_me: info.source.is_from_me,
     };
     stored_message(&inbound.message, header, client, media_dir, auto_download).await
+}
+
+/// Downloads a stored message's media from its locator and records the file.
+async fn fetch_media(client: &Client, store: &MessageStore, dir: &Path, chat: &str, id: &str) -> Result<StoredMessage> {
+    let Some(bytes) = store.media_ref_for(chat, id)? else {
+        anyhow::bail!("no stored media reference");
+    };
+    let message = <wa::Message as buffa::Message>::decode(&mut bytes.as_slice())
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let Some(media) = detect_media(&message) else {
+        anyhow::bail!("message carries no media");
+    };
+    let started = std::time::Instant::now();
+    let data = tokio::time::timeout(Duration::from_secs(120), client.download(media.downloadable.as_ref()))
+        .await
+        .map_err(|_| anyhow::anyhow!("download timed out"))?
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    log::debug!("downloaded {id} {} ({} KB) in {:?}", media.kind, data.len() / 1024, started.elapsed());
+    std::fs::create_dir_all(dir)?;
+    let path = dir.join(format!("{}.{}", id, media.extension()));
+    std::fs::write(&path, &data)?;
+    store.set_media_path(chat, id, &path.to_string_lossy())?;
+    store.message(chat, id)
 }
 
 /// Where a chat's cached profile picture lives.
