@@ -876,13 +876,36 @@
       // Our own contact card may be saved under a nickname; show our push name.
       return { jid: own, name: displayName(null, own), self: true };
     }
-    if (member) return { jid: member.jid, name: displayName(member.name, member.jid), self: false };
+    if (member) {
+      // A push name seen on any of their messages here beats the member list's bare number.
+      const spoken = messages.find(
+        (m) => m.sender_name && !/^\+?\d+$/.test(m.sender_name) && memberOf(m.sender) === member,
+      )?.sender_name;
+      const named = spoken ?? (/^\+?\d+$/.test(member.name) ? null : member.name);
+      return { jid: member.jid, name: displayName(named, member.jid), self: false };
+    }
     const lid = `${user}@lid`;
     const pn = `${user}@s.whatsapp.net`;
     const lidName = displayName(null, lid);
     const pnName = displayName(null, pn);
     const lidKnown = !!learnedNames[lid] && !/^\d+$/.test(learnedNames[lid]);
     return lidKnown ? { jid: lid, name: lidName, self: false } : { jid: pn, name: pnName, self: false };
+  }
+  /**
+   * `@Name` typed for a member, as older captions were sent, rewritten to the
+   * wire's `@<number>` so it draws as a mention tag too. Longest names first,
+   * so "Ana María" wins over "Ana".
+   */
+  function asWireMentions(text: string) {
+    if (!text.includes("@") || participants.length === 0) return text;
+    const named = participants
+      .filter((p) => p.name.length > 1 && !/^\+?\d+$/.test(p.name))
+      .sort((a, b) => b.name.length - a.name.length);
+    for (const p of named) {
+      const token = `@${p.name}`;
+      if (text.includes(token)) text = text.split(token).join(`@${p.jid.split("@")[0]}`);
+    }
+    return text;
   }
   function mentionName(user: string) {
     return mentionTarget(user).name;
@@ -2117,7 +2140,8 @@
     class:self={target.self}
     >{#if picture}<img src={convertFileSrc(picture)} alt="" />{:else}<span
         class="mention-initials"
-        style="--hue: {hue(target.jid)}">{initials(target.name)}</span
+        style="--hue: {hue(target.jid)}"
+        >{#if /\p{L}/u.test(target.name)}{initials(target.name)}{:else}<Icon name="user" size={11} />{/if}</span
       >{/if}@{target.name}</span
   >{/snippet}
 
@@ -2126,7 +2150,7 @@
 <!-- WhatsApp formatting, with the time's reserved space after the last line. -->
 {#snippet formatted(text: string, mine: boolean)}
   <span class="text"
-    >{#each blocks(text) as block, i (i)}{#if block.kind === "pre"}<pre class="pre">{block.text}</pre
+    >{#each blocks(asWireMentions(text)) as block, i (i)}{#if block.kind === "pre"}<pre class="pre">{block.text}</pre
         >{:else if block.kind === "quote"}<span class="quote-block">{@render lines(block.lines)}</span
         >{:else if block.kind === "list"}{#if block.ordered}<ol class="fmt-list">
             {#each block.items as item, j (j)}<li>{@render runs(item)}</li>{/each}
