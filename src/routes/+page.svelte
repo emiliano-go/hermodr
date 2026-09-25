@@ -11,6 +11,7 @@
   import ProfileCard from "$lib/ProfileCard.svelte";
   import MessageInfo from "$lib/MessageInfo.svelte";
   import InviteCard, { inviteLink } from "$lib/InviteCard.svelte";
+  import Embed from "$lib/Embed.svelte";
   import { displayName as phoneName, isPlaceholder, phoneLabel } from "$lib/phone";
   import { polyfillCountryFlagEmojis } from "country-flag-emoji-polyfill";
   import flagFont from "country-flag-emoji-polyfill/dist/TwemojiCountryFlags.woff2?url";
@@ -486,6 +487,13 @@
     document: "Document",
     sticker: "Sticker",
   };
+  /** Kinds with a view of their own; anything else is drawn as a card. */
+  const DRAWN_KINDS = new Set(["image", "video", "gif", "audio", "document", "sticker", "poll", "event", "view_once"]);
+  const CARD_LABELS: Record<string, string> = {
+    location: "📍 Location",
+    live_location: "📍 Live location",
+    contact: "👤 Contact",
+  };
   function mediaIcon(kind: string | null): IconName | null {
     if (kind === "image" || kind === "sticker") return "image";
     if (kind === "video" || kind === "gif") return "video";
@@ -665,9 +673,6 @@
     composerInput?.focus();
   }
 
-
-  /** Link embeds whose image is large enough to draw under the text. */
-  let wideEmbeds = $state<Record<string, boolean>>({});
 
   function hostOf(url: string) {
     try {
@@ -3184,28 +3189,20 @@
                   <span class="forwarded-mark"><Icon name="forward" size={13} /> Forwarded</span>
                 {/if}
                 {#if message.reply_to_text}
-                  <button
-                    type="button"
-                    class="quote"
-                    title="Go to message"
+                  <Embed
+                    compact
+                    tooltip="Go to message"
+                    label={quoteAuthor(message.reply_to_sender)}
+                    text={plain(message.reply_to_text, mentionName)}
+                    image={message.reply_to_kind === "image" && message.reply_to_thumb
+                      ? mediaSrc(message.reply_to_thumb)
+                      : null}
+                    icon={message.reply_to_kind ? replyIcon(message.reply_to_kind) : null}
                     onclick={() => jumpToQuoted(message)}>
-                    {#if message.reply_to_kind === "image" && message.reply_to_thumb}
-                      <img
-                        class="quote-thumb"
-                        src={mediaSrc(message.reply_to_thumb)}
-                        alt=""
-                      />
-                    {:else if message.reply_to_kind}
-                      <span class="quote-icon">{replyIcon(message.reply_to_kind)}</span>
-                    {/if}
-                    <span class="quote-author">
-                      {quoteAuthor(message.reply_to_sender)}
-                    </span>
-                    <span class="quote-text">{plain(message.reply_to_text, mentionName)}</span>
                     {#if message.reply_to_chat && message.reply_to_chat !== selectedChat}
                       <span class="quote-where">in {chatName(message.reply_to_chat)}</span>
                     {/if}
-                  </button>
+                  </Embed>
                 {/if}
 
                 {#if viewOnce}
@@ -3341,6 +3338,16 @@
                   <span class="svg-file">
                     <img class="media" src={convertFileSrc(message.media_path)} alt={message.text} />
                   </span>
+                {:else if message.media_kind && !DRAWN_KINDS.has(message.media_kind)}
+                  <!-- Kinds without a view of their own: a card with what the core could read. -->
+                  {@const link = message.text.match(/https?:\/\/\S+/)?.[0]}
+                  <Embed
+                    label={CARD_LABELS[message.media_kind] ?? message.media_kind}
+                    image={message.media_thumb ? mediaSrc(message.media_thumb) : null}
+                    tooltip={link}
+                    onopen={link ? () => openUrl(link) : undefined}>
+                    {@render formatted(message.text, message.from_me)}
+                  </Embed>
                 {:else if message.media_kind && (message.media_path || message.media_thumb)}
                   <button
                     class="file"
@@ -3356,7 +3363,7 @@
                   {@render formatted(caption, message.from_me)}
                 {/if}
 
-                {#if message.media_kind && !message.media_path && !viewOnce && !["poll", "event", "audio", "sticker", "image", "video", "gif"].includes(message.media_kind)}
+                {#if message.media_kind === "document" && !message.media_path && !viewOnce}
                   <button class="download" onclick={() => downloadMedia(message)}>
                     <Icon name="download" size={14} />
                     Download {message.media_kind}
@@ -3376,26 +3383,14 @@
                   {@const provider = message.preview_site?.trim() || hostOf(url)}
                   {@const title = message.preview_title?.trim() !== provider ? message.preview_title?.trim() : null}
                   {@const desc = message.preview_desc?.trim() !== url ? message.preview_desc?.trim() : null}
-                  <!-- As Discord draws embeds: a small image sits beside the text, a large one under it. -->
-                  <div class="embed" class:wide={wideEmbeds[message.id]} style:--embed-color={message.preview_color}>
-                    <div class="embed-body">
-                      <span class="embed-provider">{provider}</span>
-                      {#if title}
-                        <button type="button" class="embed-title" title={url} onclick={() => openUrl(url)}>{title}</button>
-                      {/if}
-                      {#if desc}<span class="embed-desc">{desc}</span>{/if}
-                    </div>
-                    {#if message.preview_thumb}
-                      <button type="button" class="embed-image" title={url} onclick={() => openUrl(url)}>
-                        <img
-                          src={mediaSrc(message.preview_thumb)}
-                          alt=""
-                          onload={(e) => {
-                            if ((e.currentTarget as HTMLImageElement).naturalWidth >= 300) wideEmbeds[message.id] = true;
-                          }} />
-                      </button>
-                    {/if}
-                  </div>
+                  <Embed
+                    label={provider}
+                    {title}
+                    text={desc}
+                    image={message.preview_thumb ? mediaSrc(message.preview_thumb) : null}
+                    color={message.preview_color}
+                    tooltip={url}
+                    onopen={() => openUrl(url)} />
                 {/if}
               {/if}
 
@@ -4714,76 +4709,6 @@
     color: var(--link);
     cursor: pointer;
   }
-  .embed {
-    display: flex;
-    gap: 16px;
-    max-width: 432px;
-    margin-top: 4px;
-    padding: 10px 14px 14px 12px;
-    box-sizing: border-box;
-    background: rgba(0, 0, 0, 0.18);
-    border-left: 4px solid var(--embed-color, var(--accent));
-    border-radius: 4px;
-  }
-  .embed.wide {
-    flex-direction: column;
-    gap: 10px;
-  }
-  .embed-body {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .embed-provider {
-    font-size: 12px;
-    color: var(--muted);
-  }
-  .embed-title {
-    align-self: flex-start;
-    padding: 0;
-    border: 0;
-    background: none;
-    color: var(--link);
-    font: inherit;
-    font-size: 15px;
-    font-weight: 600;
-    line-height: 20px;
-    text-align: left;
-    cursor: pointer;
-  }
-  .embed-title:hover {
-    text-decoration: underline;
-  }
-  .embed-desc {
-    font-size: 13.5px;
-    line-height: 18px;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-  }
-  .embed-image {
-    flex: none;
-    align-self: flex-start;
-    padding: 0;
-    border: 0;
-    border-radius: 4px;
-    background: none;
-    overflow: hidden;
-    cursor: pointer;
-  }
-  .embed-image img {
-    display: block;
-    width: 80px;
-    height: 80px;
-    object-fit: cover;
-  }
-  .embed.wide .embed-image img {
-    width: auto;
-    height: auto;
-    max-width: 100%;
-    max-height: 300px;
-  }
   /* Keep the spaces the sender typed, and wrap long tokens. */
   .text {
     white-space: pre-wrap;
@@ -5584,31 +5509,6 @@
     font-style: italic;
     color: var(--faint);
   }
-  .quote {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    grid-template-areas: "author thumb" "text thumb";
-    align-items: center;
-    column-gap: 8px;
-    background: rgba(0, 0, 0, 0.18);
-    border: 0;
-    border-left: 4px solid var(--accent);
-    border-radius: 6px;
-    font: inherit;
-    text-align: left;
-    cursor: pointer;
-    font-size: 13px;
-    line-height: 18px;
-    color: var(--muted);
-    padding: 5px 8px 6px;
-    margin-bottom: 2px;
-    overflow: hidden;
-    min-width: 0;
-    max-width: 100%;
-  }
-  .quote:hover {
-    background: rgba(0, 0, 0, 0.26);
-  }
   .media {
     /* Cap both axes: width keeps it inside the bubble, height stops a tall
        photo from filling the viewport. */
@@ -6401,19 +6301,6 @@
   .crop-button {
     align-self: center;
   }
-  .quote-author {
-    grid-area: author;
-    display: block;
-    font-weight: 500;
-    color: var(--accent);
-  }
-  .quote-thumb {
-    grid-area: thumb;
-    width: 42px;
-    height: 42px;
-    object-fit: cover;
-    border-radius: 4px;
-  }
   .quote-where {
     flex: none;
     max-width: 16ch;
@@ -6422,18 +6309,6 @@
     white-space: nowrap;
     font-size: 11px;
     color: #71717a;
-  }
-  .quote-icon {
-    grid-area: thumb;
-    font-size: 14px;
-  }
-  .quote-text {
-    grid-area: text;
-    min-width: 0;
-    display: block;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
   .ticks {
     font-size: 10px;
