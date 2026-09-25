@@ -2523,20 +2523,13 @@
   {@html extensionCss}
 </svelte:head>
 
-<!-- The glass lens: shifts the backdrop by lensMap, strongest at the rim. The shift is a share of
-     the element's size, so wide bars and bubbles take the gentler one. -->
+<!-- The glass lens: shifts the backdrop by lensMap, strongest at the rim. The map stretches to
+     each element; the shift is in pixels, so short pills take a smaller one to avoid smearing. -->
 <svg width="0" height="0" aria-hidden="true" style="position: absolute">
-  {#each [{ id: "liquid-glass", scale: 0.14 }, { id: "liquid-glass-wide", scale: 0.045 }] as { id, scale } (id)}
-    <filter
-      {id}
-      x="0"
-      y="0"
-      width="1"
-      height="1"
-      primitiveUnits="objectBoundingBox"
-      color-interpolation-filters="sRGB">
-      <feImage href={lensMap("x")} x="0" y="0" width="1" height="1" preserveAspectRatio="none" result="dx" />
-      <feImage href={lensMap("y")} x="0" y="0" width="1" height="1" preserveAspectRatio="none" result="dy" />
+  {#each [{ id: "glass-lg", scale: 70 }, { id: "glass-md", scale: 38 }, { id: "glass-sm", scale: 22 }] as { id, scale } (id)}
+    <filter {id} x="0%" y="0%" width="100%" height="100%" color-interpolation-filters="sRGB">
+      <feImage href={lensMap("x")} x="0%" y="0%" width="100%" height="100%" preserveAspectRatio="none" result="dx" />
+      <feImage href={lensMap("y")} x="0%" y="0%" width="100%" height="100%" preserveAspectRatio="none" result="dy" />
       <feComposite in="dx" in2="dy" operator="arithmetic" k2="1" k3="1" result="map" />
       <feDisplacementMap in="SourceGraphic" in2="map" {scale} xChannelSelector="R" yChannelSelector="G" />
     </filter>
