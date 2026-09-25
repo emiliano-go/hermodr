@@ -2012,6 +2012,11 @@ impl Service {
         self.store.set_chat_auto_download(chat, enabled)
     }
 
+    /// Deletes every message stored on this device; the phone keeps its copy.
+    pub fn clear_history(&self) -> Result<usize> {
+        self.store.clear_history()
+    }
+
     /// Deletes downloaded media and forgets the paths, keeping the messages.
     pub fn flush_media(&self) -> Result<usize> {
         let cleared = self.store.clear_media_paths()?;

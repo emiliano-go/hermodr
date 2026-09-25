@@ -619,6 +619,17 @@
     }
   }
 
+  async function clearHistory() {
+    try {
+      const removed = await invoke<number>("clear_history");
+      notice = `Deleted ${removed} message(s) from this computer.`;
+      await refreshChats();
+      if (selectedChat) await reloadMessages();
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
   /** Stops showing the video-without-preview warning. */
   async function muteNotice() {
     settings.warn_missing_video_preview = false;
@@ -3923,6 +3934,7 @@
     onclose={() => (showSettings = false)}
     onsave={saveSettings}
     onflush={flushMedia}
+    onclearhistory={clearHistory}
     onrename={renameAccount}
     onremove={removeAccount}
     onadd={() => {

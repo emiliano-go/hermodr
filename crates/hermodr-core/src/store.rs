@@ -307,6 +307,15 @@ pub struct MessageStore {
     retention: Retention,
 }
 
+/// Returns up to `pages` free pages (0: all of them) to the filesystem. The
+/// pragma frees one page per step, so it has to be stepped to the end.
+fn reclaim(conn: &Connection, pages: u32) -> Result<()> {
+    let mut stmt = conn.prepare(&format!("PRAGMA incremental_vacuum({pages})"))?;
+    let mut rows = stmt.query([])?;
+    while rows.next()?.is_some() {}
+    Ok(())
+}
+
 /// An open [`MessageStore::batch`]; commits on drop.
 pub struct Batch<'a> {
     store: &'a MessageStore,
@@ -341,6 +350,16 @@ impl MessageStore {
         // crash; a power loss can drop the last commits but not corrupt the file.
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        // Pruned pages go back to the filesystem a step at a time (`reclaim`)
+        // instead of through a full VACUUM. Switching an existing file over
+        // takes one VACUUM, done here before anything else touches the store.
+        let auto_vacuum: i64 = conn.pragma_query_value(None, "auto_vacuum", |row| row.get(0))?;
+        if auto_vacuum != 2 {
+            let started = std::time::Instant::now();
+            conn.pragma_update(None, "auto_vacuum", "INCREMENTAL")?;
+            conn.execute_batch("VACUUM")?;
+            log::info!("message store switched to incremental vacuum in {:?}", started.elapsed());
+        }
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS messages (
                  chat         TEXT NOT NULL,
@@ -1671,6 +1690,24 @@ impl MessageStore {
             [],
         )?;
 
+        if removed > 0 {
+            reclaim(&conn, 2_000)?;
+        }
+        Ok(removed)
+    }
+
+    /// Deletes every stored message and the state attached to them. Names,
+    /// chat pins and per-chat settings stay. Returns how many messages went.
+    pub fn clear_history(&self) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let removed = conn.execute("DELETE FROM messages", [])?;
+        conn.execute_batch(
+            "DELETE FROM reactions; DELETE FROM stars; DELETE FROM message_pins;
+             DELETE FROM polls; DELETE FROM poll_votes; DELETE FROM events;
+             DELETE FROM event_responses; DELETE FROM view_once; DELETE FROM forwarded;
+             DELETE FROM edited; DELETE FROM receipts;",
+        )?;
+        reclaim(&conn, 0)?;
         Ok(removed)
     }
 
@@ -1726,6 +1763,18 @@ mod tests {
             preview_thumb: None,
             status: None,
         }
+    }
+
+    #[test]
+    fn clearing_history_keeps_names_and_settings() {
+        let s = store(Retention::unlimited());
+        s.insert_message(&msg("a@s", "1", 0, "hi")).unwrap();
+        s.set_name("a@s", "Ann").unwrap();
+        s.set_chat_auto_download("a@s", false).unwrap();
+        assert_eq!(s.clear_history().unwrap(), 1);
+        assert_eq!(s.count().unwrap(), 0);
+        assert_eq!(s.name_for("a@s").unwrap().as_deref(), Some("Ann"));
+        assert_eq!(s.chat_auto_download("a@s").unwrap(), Some(false));
     }
 
     #[test]

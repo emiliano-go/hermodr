@@ -46,6 +46,7 @@
     onclose,
     onsave,
     onflush,
+    onclearhistory,
     onrename,
     onremove,
     onadd,
@@ -63,6 +64,7 @@
     onclose: () => void;
     onsave: (settings: UiSettings) => Promise<void>;
     onflush: () => void;
+    onclearhistory: () => void;
     onrename: (id: string, label: string) => void;
     onremove: (id: string) => void;
     onadd: () => void;
@@ -148,6 +150,26 @@
   function hoursField(value: string) {
     return value ? Math.max(1, Number(value)) : null;
   }
+
+  /** Hours per unit of the "keep messages for" field; a month counts as 30 days. */
+  const AGE_UNITS: [number, string][] = [
+    [1, "hours"],
+    [24, "days"],
+    [168, "weeks"],
+    [720, "months"],
+  ];
+  let ageUnit = $state(
+    untrack(() => {
+      const hours = settings.retention.max_age_hours;
+      return [720, 168, 24].find((unit) => hours && hours % unit === 0) ?? 1;
+    }),
+  );
+  function setAgeUnit(unit: number) {
+    const hours = draft.retention.max_age_hours;
+    if (hours) draft.retention.max_age_hours = Math.max(1, Math.round(hours / ageUnit)) * unit;
+    ageUnit = unit;
+  }
+  let clearingHistory = $state(false);
 
   // The account's profile lives on WhatsApp's servers, so it is fetched when a
   // section that shows it opens and written back field by field.
@@ -403,22 +425,32 @@
           <div class="setting">
             <div>
               <span class="setting-title">Keep messages for</span>
-              <span class="setting-desc">Older messages are deleted from this device.</span>
+              <span class="setting-desc">
+                Older messages are deleted from this device after each new message, and the space is
+                freed. Default: 1 day.
+              </span>
             </div>
             <span class="unit-field">
               <input
                 class="field number"
                 type="number"
                 min="1"
-                value={draft.retention.max_age_hours ?? ""}
-                oninput={(e) => (draft.retention.max_age_hours = hoursField(e.currentTarget.value))} />
-              hours
+                value={draft.retention.max_age_hours ? draft.retention.max_age_hours / ageUnit : ""}
+                oninput={(e) => {
+                  const amount = hoursField(e.currentTarget.value);
+                  draft.retention.max_age_hours = amount && amount * ageUnit;
+                }} />
+              <select class="field" value={ageUnit} onchange={(e) => setAgeUnit(Number(e.currentTarget.value))}>
+                {#each AGE_UNITS as [unit, label] (unit)}
+                  <option value={unit}>{label}</option>
+                {/each}
+              </select>
             </span>
           </div>
           <div class="setting">
             <div>
               <span class="setting-title">Messages per chat</span>
-              <span class="setting-desc">Only the newest are kept in each conversation.</span>
+              <span class="setting-desc">Only the newest are kept in each conversation. Default: 500.</span>
             </div>
             <input
               class="field number"
@@ -439,6 +471,28 @@
             </div>
             <input class="switch" type="checkbox" bind:checked={draft.accept_full_history} />
           </label>
+          <div class="setting">
+            <div>
+              <span class="setting-title">Clear message history</span>
+              <span class="setting-desc">
+                Deletes every message stored on this computer. Names and chat settings stay; the phone
+                keeps everything.
+              </span>
+            </div>
+            {#if clearingHistory}
+              <span class="unit-field">
+                <button class="button" onclick={() => (clearingHistory = false)}>Cancel</button>
+                <button
+                  class="button danger"
+                  onclick={() => {
+                    clearingHistory = false;
+                    onclearhistory();
+                  }}>Delete all</button>
+              </span>
+            {:else}
+              <button class="button danger" onclick={() => (clearingHistory = true)}>Clear history</button>
+            {/if}
+          </div>
         {:else if section === "media"}
           <h2>Media</h2>
           <label class="setting">
@@ -680,6 +734,9 @@
     gap: 8px;
     color: var(--muted);
     font-size: 13px;
+  }
+  .unit-field select.field {
+    min-width: 0;
   }
   .customization {
     display: flex;

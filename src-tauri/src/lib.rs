@@ -1111,6 +1111,12 @@ fn flush_media(state: State<'_, AppState>) -> Result<usize, String> {
     state.service()?.flush_media().map_err(|e| e.to_string())
 }
 
+/// Deletes every message stored on this device; the phone keeps its copy.
+#[tauri::command(async)]
+fn clear_history(state: State<'_, AppState>) -> Result<usize, String> {
+    state.service()?.clear_history().map_err(|e| e.to_string())
+}
+
 /// The chat a stored message id belongs to.
 #[tauri::command(async)]
 fn chat_for_message(state: State<'_, AppState>, id: String) -> Result<Option<String>, String> {
@@ -1482,6 +1488,7 @@ pub fn run() {
             set_privacy,
             load_older,
             flush_media,
+            clear_history,
             download_media,
             set_chat_auto_download,
             chat_for_message,
