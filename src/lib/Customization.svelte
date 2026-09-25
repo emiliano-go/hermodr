@@ -457,6 +457,10 @@
         Custom CSS applied after the theme. Component styles are scoped, so use <code>!important</code> or a
         doubled class (<code>.bubble.bubble</code>) to override them.
       </p>
+      <p class="hint">
+        An extension can restyle or hide anything in the app, including what a message appears to say, so only
+        add CSS you trust. Remote fonts and images are blocked; embed them as <code>data:</code> URLs.
+      </p>
     </div>
     <button class="ghost" onclick={addExtension}><Icon name="plus" size={15} /> Add</button>
   </div>
