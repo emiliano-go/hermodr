@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from "$lib/Icon.svelte";
+  import ThemePreview from "$lib/ThemePreview.svelte";
   import {
     TOKENS,
     activeTheme,
@@ -18,6 +19,15 @@
     ["1", "Normal"],
     ["2", "Slow"],
   ];
+
+  const SCENES = [
+    ["chat", "Chat"],
+    ["signin", "Sign-in"],
+    ["dialog", "Dialogs & menus"],
+  ] as const;
+  let scene = $state<(typeof SCENES)[number][0]>("chat");
+  /** Keeps the preview in view while the controls below scroll. */
+  let pinned = $state(true);
 
   let importing = $state(false);
   let importText = $state("");
@@ -142,7 +152,7 @@
     {#each allThemes() as option (option.id)}
       {@const o = option.tokens}
       <button
-        class="card"
+        class="theme-card"
         class:active={option.id === theme.id}
         aria-pressed={option.id === theme.id}
         onclick={() => (customization.theme = option.id)}>
@@ -178,7 +188,7 @@
       <span class="hint">{theme.name} is built in. Changing anything makes an editable copy.</span>
     {:else}
       <input
-        class="field name"
+        class="input name"
         value={theme.name}
         aria-label="Theme name"
         oninput={(e) => (theme.name = e.currentTarget.value)} />
@@ -197,7 +207,7 @@
   {#if importing}
     <div class="import">
       <textarea
-        class="field code"
+        class="input code"
         rows="4"
         spellcheck="false"
         placeholder={'{ "name": "…", "tokens": { "accent": "#00a884" } }'}
@@ -211,6 +221,27 @@
       </div>
     </div>
   {/if}
+</section>
+
+<section class="block dock" class:pinned>
+  <div class="dock-head">
+    <h3>Preview</h3>
+    <div class="segmented small" role="tablist" aria-label="Preview">
+      {#each SCENES as [id, label] (id)}
+        <button role="tab" aria-selected={scene === id} class:active={scene === id} onclick={() => (scene = id)}>
+          {label}
+        </button>
+      {/each}
+    </div>
+    <span class="spacer"></span>
+    <button
+      class="icon-btn pin"
+      class:on={pinned}
+      title={pinned ? "Unpin: let the preview scroll away" : "Pin: keep the preview in view"}
+      aria-pressed={pinned}
+      onclick={() => (pinned = !pinned)}><Icon name="pin" size={15} /></button>
+  </div>
+  <ThemePreview {scene} />
 </section>
 
 <section class="block">
@@ -331,7 +362,7 @@
               {/if}
               <span class="token-label">{token.label}</span>
               <input
-                class="field value"
+                class="input value"
                 {value}
                 spellcheck="false"
                 aria-label={token.label}
@@ -362,7 +393,7 @@
   {#each customization.extensions as extension, i (extension.id)}
     <div class="extension" class:off={!extension.enabled}>
       <div class="ext-head">
-        <input class="field name" bind:value={extension.name} aria-label="Extension name" />
+        <input class="input name" bind:value={extension.name} aria-label="Extension name" />
         <label class="toggle" title={extension.enabled ? "Enabled" : "Disabled"}>
           <input type="checkbox" role="switch" bind:checked={extension.enabled} aria-label="Enabled" />
         </label>
@@ -373,7 +404,7 @@
           onclick={() => customization.extensions.splice(i, 1)}><Icon name="trash" size={16} /></button>
       </div>
       <textarea
-        class="field code"
+        class="input code"
         rows="6"
         spellcheck="false"
         placeholder=".bubble.bubble {'{'} border-radius: 18px; {'}'}"
@@ -427,7 +458,7 @@
     grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
     gap: 12px;
   }
-  .card {
+  .theme-card {
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -443,11 +474,11 @@
       border-color calc(120ms * var(--motion-scale, 1)),
       transform calc(120ms * var(--motion-scale, 1)) var(--ease);
   }
-  .card:hover {
+  .theme-card:hover {
     border-color: var(--muted);
     transform: translateY(-1px);
   }
-  .card.active {
+  .theme-card.active {
     border-color: var(--accent);
     box-shadow: 0 0 0 1px var(--accent);
   }
@@ -459,7 +490,7 @@
     font-size: 13px;
     font-weight: 500;
   }
-  .card.active .card-name {
+  .theme-card.active .card-name {
     color: var(--accent-text);
   }
   .preview {
@@ -589,7 +620,33 @@
     background: var(--raised);
     color: var(--danger);
   }
-  .field {
+  .icon-btn.pin:hover {
+    color: var(--text);
+  }
+  .icon-btn.pin.on {
+    color: var(--accent-text);
+  }
+
+  /* Preview dock */
+  .dock.pinned {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    margin-top: -10px;
+    padding: 10px 0 12px;
+    background: var(--bg);
+    box-shadow: 0 10px 12px -12px rgba(0, 0, 0, 0.6);
+  }
+  .dock-head {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .segmented.small button {
+    padding: 3px 10px;
+    font-size: 12.5px;
+  }
+  .input {
     background: var(--bg);
     border: 1px solid var(--line-strong);
     border-radius: var(--radius);
@@ -599,7 +656,7 @@
     font-size: 13px;
     outline: none;
   }
-  .field:focus {
+  .input:focus {
     border-color: var(--accent);
   }
   .name {
