@@ -63,54 +63,101 @@ impl Retention {
     }
 }
 
-/// A stored message.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// A stored message, as rows are read and as the UI receives it.
+///
+/// Each concern is its own type; they serialize flattened, so the IPC shape
+/// stays one flat object with the column names as keys.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredMessage {
+    #[serde(flatten)]
+    pub header: MessageHeader,
+    /// Resolved from `names` when read; never stored on the row.
+    pub sender_name: Option<String>,
+    pub text: String,
+    #[serde(flatten)]
+    pub media: Media,
+    #[serde(flatten)]
+    pub quote: Quote,
+    #[serde(flatten)]
+    pub link: LinkCard,
+    #[serde(flatten)]
+    pub local: LocalState,
+}
+
+/// Where a message lives, who sent it and when.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MessageHeader {
     pub chat: String,
     pub id: String,
     pub sender: String,
-    /// Resolved display name for the sender, when one has been learned.
-    pub sender_name: Option<String>,
     pub timestamp: i64,
     pub from_me: bool,
-    pub text: String,
-    /// `image`, `video`, `audio` or `document`, when the message carries media.
-    pub media_kind: Option<String>,
+}
+
+/// The media a message carries.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Media {
+    /// `image`, `video`, `audio`, `document`, `sticker`, `gif`, `poll`, `event`…
+    #[serde(rename = "media_kind")]
+    pub kind: Option<String>,
     /// Absolute path to the downloaded media, if it was kept.
-    pub media_path: Option<String>,
+    #[serde(rename = "media_path")]
+    pub path: Option<String>,
     /// The media's thumbnail, embedded in the message and available without
     /// downloading the full file: a `data:` URI for received media (a few KB
     /// in the row), a file path for older rows.
-    pub media_thumb: Option<String>,
+    #[serde(rename = "media_thumb")]
+    pub thumb: Option<String>,
     /// The media submessage, kept so the file can be downloaded on demand when
     /// automatic downloads are off: keys, hashes and URL, without thumbnail or
     /// quote, typically a few hundred bytes. Internal: not handed to the UI.
     #[serde(skip)]
-    pub media_ref: Option<Vec<u8>>,
-    /// Id of the message this one quotes.
-    pub reply_to_id: Option<String>,
-    /// Text of the quoted message, stored so a quote renders without a lookup.
-    pub reply_to_text: Option<String>,
-    /// Author of the quoted message, so the quote can be attributed.
-    pub reply_to_sender: Option<String>,
+    pub locator: Option<Vec<u8>>,
+}
+
+/// The message a reply quotes, copied so the quote renders without a lookup.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Quote {
+    #[serde(rename = "reply_to_id")]
+    pub id: Option<String>,
+    #[serde(rename = "reply_to_text")]
+    pub text: Option<String>,
+    #[serde(rename = "reply_to_sender")]
+    pub sender: Option<String>,
     /// Chat the quoted message lives in. Different from this chat for a private
     /// reply, which is a direct message quoting a group message.
-    pub reply_to_chat: Option<String>,
+    #[serde(rename = "reply_to_chat")]
+    pub chat: Option<String>,
     /// Media kind of the quoted message, when it carried media.
-    pub reply_to_kind: Option<String>,
-    /// Path to the quoted media's thumbnail, when one was available.
-    pub reply_to_thumb: Option<String>,
+    #[serde(rename = "reply_to_kind")]
+    pub kind: Option<String>,
+    /// The quoted media's thumbnail, when one was available.
+    #[serde(rename = "reply_to_thumb")]
+    pub thumb: Option<String>,
+}
+
+/// A link preview: canonical URL, title, description and thumbnail.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkCard {
+    #[serde(rename = "preview_url")]
+    pub url: Option<String>,
+    #[serde(rename = "preview_title")]
+    pub title: Option<String>,
+    #[serde(rename = "preview_desc")]
+    pub desc: Option<String>,
+    #[serde(rename = "preview_thumb")]
+    pub thumb: Option<String>,
+}
+
+/// What this device knows about a message beyond its content.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalState {
     /// Whether the user has seen this message.
     pub read: bool,
     /// Whether the sender deleted the message for everyone.
     pub revoked: bool,
     /// Whether the message mentions us (directly or via @all).
     pub mentioned: bool,
-    /// Link preview: canonical URL, title, description and thumbnail path.
-    pub preview_url: Option<String>,
-    pub preview_title: Option<String>,
-    pub preview_desc: Option<String>,
-    pub preview_thumb: Option<String>,
     /// Delivery state of a message we sent: `pending`, `sent`, `delivered` or
     /// `read`. `None` for incoming messages.
     pub status: Option<String>,
@@ -150,31 +197,41 @@ const MESSAGE_COLUMNS: &str = "m.chat, m.id, m.sender, m.timestamp, m.from_me, m
 
 fn message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
     Ok(StoredMessage {
-        chat: row.get(0)?,
-        id: row.get(1)?,
-        sender: row.get(2)?,
+        header: MessageHeader {
+            chat: row.get(0)?,
+            id: row.get(1)?,
+            sender: row.get(2)?,
+            timestamp: row.get(3)?,
+            from_me: row.get::<_, i32>(4)? != 0,
+        },
         sender_name: row.get(6)?,
-        timestamp: row.get(3)?,
-        from_me: row.get::<_, i32>(4)? != 0,
         text: row.get(5)?,
-        media_kind: row.get(7)?,
-        media_path: row.get(8)?,
-        reply_to_id: row.get(9)?,
-        reply_to_text: row.get(10)?,
-        read: row.get::<_, i32>(11)? != 0,
-        revoked: row.get::<_, i32>(12)? != 0,
-        status: row.get(13)?,
-        reply_to_sender: row.get(14)?,
-        mentioned: row.get::<_, i32>(15)? != 0,
-        preview_url: row.get(16)?,
-        preview_title: row.get(17)?,
-        preview_desc: row.get(18)?,
-        preview_thumb: row.get(19)?,
-        reply_to_kind: row.get(20)?,
-        reply_to_thumb: row.get(21)?,
-        media_thumb: row.get(22)?,
-        media_ref: row.get(23)?,
-        reply_to_chat: row.get(24)?,
+        media: Media {
+            kind: row.get(7)?,
+            path: row.get(8)?,
+            thumb: row.get(22)?,
+            locator: row.get(23)?,
+        },
+        quote: Quote {
+            id: row.get(9)?,
+            text: row.get(10)?,
+            sender: row.get(14)?,
+            chat: row.get(24)?,
+            kind: row.get(20)?,
+            thumb: row.get(21)?,
+        },
+        link: LinkCard {
+            url: row.get(16)?,
+            title: row.get(17)?,
+            desc: row.get(18)?,
+            thumb: row.get(19)?,
+        },
+        local: LocalState {
+            read: row.get::<_, i32>(11)? != 0,
+            revoked: row.get::<_, i32>(12)? != 0,
+            mentioned: row.get::<_, i32>(15)? != 0,
+            status: row.get(13)?,
+        },
     })
 }
 
@@ -615,31 +672,31 @@ impl MessageStore {
                  reply_to_chat = excluded.reply_to_chat
              WHERE revoked = 0",
             params![
-                message.chat,
-                message.id,
-                message.sender,
-                message.timestamp,
-                message.from_me as i32,
+                message.header.chat,
+                message.header.id,
+                message.header.sender,
+                message.header.timestamp,
+                message.header.from_me as i32,
                 message.text,
-                message.media_kind,
-                message.media_path,
-                message.reply_to_id,
-                message.reply_to_text,
-                message.reply_to_sender,
-                message.read as i32,
-                message.revoked as i32,
-                message.mentioned as i32,
-                message.status,
-                message.preview_url,
-                message.preview_title,
-                message.preview_desc,
-                message.preview_thumb,
-                message.reply_to_kind,
-                message.reply_to_thumb,
-                message.media_thumb,
-                message.media_ref,
-                message.reply_to_chat,
-                message.status.as_deref().map(status_rank).unwrap_or(-1),
+                message.media.kind,
+                message.media.path,
+                message.quote.id,
+                message.quote.text,
+                message.quote.sender,
+                message.local.read as i32,
+                message.local.revoked as i32,
+                message.local.mentioned as i32,
+                message.local.status,
+                message.link.url,
+                message.link.title,
+                message.link.desc,
+                message.link.thumb,
+                message.quote.kind,
+                message.quote.thumb,
+                message.media.thumb,
+                message.media.locator,
+                message.quote.chat,
+                message.local.status.as_deref().map(status_rank).unwrap_or(-1),
             ],
         )?;
         Ok(())
@@ -1423,44 +1480,14 @@ impl MessageStore {
     pub fn message(&self, chat: &str, id: &str) -> Result<StoredMessage> {
         let conn = self.conn.lock().unwrap();
         let message = conn.query_row(
-            "SELECT m.chat, m.id, m.sender, m.timestamp, m.from_me, m.text,
-                    n.name, m.media_kind, m.media_path, m.reply_to_id, m.reply_to_text,
-                    m.read, m.revoked, m.status, m.reply_to_sender, m.mentioned,
-                    m.preview_url, m.preview_title, m.preview_desc, m.preview_thumb,
-                    m.reply_to_kind, m.reply_to_thumb, m.media_thumb, m.media_ref, m.reply_to_chat
-             FROM messages m
-             LEFT JOIN names n ON n.jid = m.sender
-             WHERE m.chat = ?1 AND m.id = ?2",
+            &format!(
+                "SELECT {MESSAGE_COLUMNS}
+                 FROM messages m
+                 LEFT JOIN names n ON n.jid = m.sender
+                 WHERE m.chat = ?1 AND m.id = ?2"
+            ),
             params![chat, id],
-            |row| {
-                Ok(StoredMessage {
-                    chat: row.get(0)?,
-                    id: row.get(1)?,
-                    sender: row.get(2)?,
-                    sender_name: row.get(6)?,
-                    timestamp: row.get(3)?,
-                    from_me: row.get::<_, i32>(4)? != 0,
-                    text: row.get(5)?,
-                    media_kind: row.get(7)?,
-                    media_path: row.get(8)?,
-                    reply_to_id: row.get(9)?,
-                    reply_to_text: row.get(10)?,
-                    read: row.get::<_, i32>(11)? != 0,
-                    revoked: row.get::<_, i32>(12)? != 0,
-                    status: row.get(13)?,
-                    reply_to_sender: row.get(14)?,
-                    mentioned: row.get::<_, i32>(15)? != 0,
-                    preview_url: row.get(16)?,
-                    preview_title: row.get(17)?,
-                    preview_desc: row.get(18)?,
-                    preview_thumb: row.get(19)?,
-                reply_to_kind: row.get(20)?,
-                reply_to_thumb: row.get(21)?,
-                media_thumb: row.get(22)?,
-                media_ref: row.get(23)?,
-                reply_to_chat: row.get(24)?,
-                })
-            },
+            message_row,
         )?;
         Ok(message)
     }
@@ -1737,31 +1764,15 @@ mod tests {
 
     fn msg(chat: &str, id: &str, age_hours: i64, text: &str) -> StoredMessage {
         StoredMessage {
-            chat: chat.into(),
-            id: id.into(),
-            sender: "them".into(),
-            sender_name: None,
-            timestamp: now() - age_hours * 3600,
-            from_me: false,
+            header: MessageHeader {
+                chat: chat.into(),
+                id: id.into(),
+                sender: "them".into(),
+                timestamp: now() - age_hours * 3600,
+                from_me: false,
+            },
             text: text.into(),
-            media_kind: None,
-            media_path: None,
-            media_thumb: None,
-            media_ref: None,
-            reply_to_id: None,
-            reply_to_text: None,
-            reply_to_sender: None,
-            reply_to_chat: None,
-            reply_to_kind: None,
-            reply_to_thumb: None,
-            read: false,
-            revoked: false,
-            mentioned: false,
-            preview_url: None,
-            preview_title: None,
-            preview_desc: None,
-            preview_thumb: None,
-            status: None,
+            ..Default::default()
         }
     }
 
@@ -1857,16 +1868,16 @@ mod tests {
     fn pings_and_message_search() {
         let s = store(Retention::unlimited());
         let mut ping = msg("g", "1", 1, "hey @123 look");
-        ping.mentioned = true;
+        ping.local.mentioned = true;
         s.insert_message(&ping).unwrap();
         s.insert_message(&msg("g", "2", 0, "100% done_ok")).unwrap();
         let mut elsewhere = msg("h", "3", 0, "@123");
-        elsewhere.mentioned = true;
+        elsewhere.local.mentioned = true;
         s.insert_message(&elsewhere).unwrap();
         assert_eq!(s.pings(Some("g"), 10).unwrap().len(), 1);
         assert_eq!(s.pings(None, 10).unwrap().len(), 2);
-        assert_eq!(s.search_messages("g", "LOOK", 10).unwrap()[0].id, "1");
-        assert_eq!(s.search_messages("g", "0% d", 10).unwrap()[0].id, "2");
+        assert_eq!(s.search_messages("g", "LOOK", 10).unwrap()[0].header.id, "1");
+        assert_eq!(s.search_messages("g", "0% d", 10).unwrap()[0].header.id, "2");
         assert!(s.search_messages("g", "_", 10).unwrap().iter().all(|m| m.text.contains('_')));
     }
 
@@ -1893,30 +1904,30 @@ mod tests {
     fn replayed_messages_never_regress_local_state() {
         let s = store(Retention::unlimited());
         let mut sent = msg("a@s", "1", 0, "hi");
-        sent.from_me = true;
-        sent.status = Some("pending".into());
+        sent.header.from_me = true;
+        sent.local.status =Some("pending".into());
         s.insert_message(&sent).unwrap();
         assert!(s.set_status("a@s", "1", "delivered").unwrap());
         s.set_media_path("a@s", "1", "/tmp/1.jpg").unwrap();
-        sent.status = None;
+        sent.local.status =None;
         s.insert_message(&sent).unwrap();
         let got = s.message("a@s", "1").unwrap();
-        assert_eq!(got.status.as_deref(), Some("delivered"));
-        assert_eq!(got.media_path.as_deref(), Some("/tmp/1.jpg"));
+        assert_eq!(got.local.status.as_deref(), Some("delivered"));
+        assert_eq!(got.media.path.as_deref(), Some("/tmp/1.jpg"));
 
         s.insert_message(&msg("a@s", "2", 0, "original")).unwrap();
         s.mark_chat_read("a@s").unwrap();
         assert!(s.apply_edit("a@s", "2", "fixed").unwrap());
         s.insert_message(&msg("a@s", "2", 0, "original")).unwrap();
         let got = s.message("a@s", "2").unwrap();
-        assert!(got.read);
+        assert!(got.local.read);
         assert_eq!(got.text, "fixed");
 
         s.insert_message(&msg("a@s", "3", 0, "oops")).unwrap();
         assert!(s.revoke("a@s", "3").unwrap());
         s.insert_message(&msg("a@s", "3", 0, "oops")).unwrap();
         let got = s.message("a@s", "3").unwrap();
-        assert!(got.revoked);
+        assert!(got.local.revoked);
         assert_eq!(got.text, "");
     }
 
@@ -2052,12 +2063,12 @@ mod tests {
     fn unread_counts_only_incoming_unread() {
         let s = store(Retention::unlimited());
         let mut incoming = msg("a@s", "1", 0, "hi");
-        incoming.read = false;
+        incoming.local.read = false;
         s.insert_message(&incoming).unwrap();
 
         let mut outgoing = msg("a@s", "2", 0, "hello");
-        outgoing.from_me = true;
-        outgoing.read = true;
+        outgoing.header.from_me = true;
+        outgoing.local.read = true;
         s.insert_message(&outgoing).unwrap();
 
         let chats = s.chats().unwrap();
@@ -2080,15 +2091,15 @@ mod tests {
     fn media_and_reply_fields_round_trip() {
         let s = store(Retention::unlimited());
         let mut m = msg("a@s", "1", 0, "look");
-        m.media_kind = Some("image".into());
-        m.media_path = Some("/tmp/pic.jpg".into());
-        m.reply_to_id = Some("0".into());
-        m.reply_to_text = Some("earlier".into());
+        m.media.kind = Some("image".into());
+        m.media.path = Some("/tmp/pic.jpg".into());
+        m.quote.id = Some("0".into());
+        m.quote.text = Some("earlier".into());
         s.insert_message(&m).unwrap();
 
         let got = &s.messages_for("a@s", 1).unwrap()[0];
-        assert_eq!(got.media_kind.as_deref(), Some("image"));
-        assert_eq!(got.reply_to_text.as_deref(), Some("earlier"));
+        assert_eq!(got.media.kind.as_deref(), Some("image"));
+        assert_eq!(got.quote.text.as_deref(), Some("earlier"));
     }
 
     #[test]
@@ -2101,14 +2112,14 @@ mod tests {
 
         let s = store(Retention::unlimited());
         let mut m = msg("a@s", "1", 0, "");
-        m.media_path = Some(shared.join("1.jpg").to_string_lossy().into());
-        m.media_thumb = Some(shared.join("1.jpg").to_string_lossy().into());
+        m.media.path = Some(shared.join("1.jpg").to_string_lossy().into());
+        m.media.thumb = Some(shared.join("1.jpg").to_string_lossy().into());
         s.insert_message(&m).unwrap();
 
         assert_eq!(s.relocate_media(&[&shared], &to).unwrap(), 2);
         let got = s.message("a@s", "1").unwrap();
-        assert_eq!(got.media_path.as_deref(), Some(&*to.join("1.jpg").to_string_lossy()));
-        assert_eq!(got.media_thumb, got.media_path);
+        assert_eq!(got.media.path.as_deref(), Some(&*to.join("1.jpg").to_string_lossy()));
+        assert_eq!(got.media.thumb, got.media.path);
         assert_eq!(std::fs::read(to.join("1.jpg")).unwrap(), b"ours");
         assert!(shared.join("other.jpg").exists());
         // Idempotent: a second run finds nothing to do.
@@ -2120,8 +2131,8 @@ mod tests {
     fn status_advances_but_never_regresses() {
         let s = store(Retention::unlimited());
         let mut m = msg("a@s", "1", 0, "hi");
-        m.from_me = true;
-        m.status = Some("pending".into());
+        m.header.from_me = true;
+        m.local.status = Some("pending".into());
         s.insert_message(&m).unwrap();
 
         assert!(s.set_status("a@s", "1", "sent").unwrap());
@@ -2129,7 +2140,7 @@ mod tests {
         assert!(s.set_status("a@s", "1", "read").unwrap());
         // A late duplicate must not undo the read state.
         assert!(!s.set_status("a@s", "1", "delivered").unwrap());
-        assert_eq!(s.message("a@s", "1").unwrap().status.as_deref(), Some("read"));
+        assert_eq!(s.message("a@s", "1").unwrap().local.status.as_deref(), Some("read"));
     }
 
     #[test]
@@ -2146,8 +2157,8 @@ mod tests {
         // still move a pending message to sent.
         let s = store(Retention::unlimited());
         let mut m = msg("a@s.whatsapp.net", "1", 0, "hi");
-        m.from_me = true;
-        m.status = Some("pending".into());
+        m.header.from_me = true;
+        m.local.status = Some("pending".into());
         s.insert_message(&m).unwrap();
 
         // Wrong chat: the addressed update misses.
@@ -2155,9 +2166,9 @@ mod tests {
         // Id-only update still advances it.
         let updated = s.set_status_by_id("1", "sent").unwrap();
         assert_eq!(updated.len(), 1);
-        assert_eq!(updated[0].status.as_deref(), Some("sent"));
+        assert_eq!(updated[0].local.status.as_deref(), Some("sent"));
         assert_eq!(
-            s.message("a@s.whatsapp.net", "1").unwrap().status.as_deref(),
+            s.message("a@s.whatsapp.net", "1").unwrap().local.status.as_deref(),
             Some("sent")
         );
         // Forward-only still holds through the id path.
@@ -2172,7 +2183,7 @@ mod tests {
         assert!(s.revoke("a@s", "1").unwrap());
 
         let got = &s.messages_for("a@s", 1).unwrap()[0];
-        assert!(got.revoked);
+        assert!(got.local.revoked);
         assert_eq!(got.text, "");
         // Revoking twice changes nothing the second time.
         assert!(!s.revoke("a@s", "1").unwrap());

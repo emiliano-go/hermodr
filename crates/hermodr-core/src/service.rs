@@ -32,7 +32,7 @@ use whatsapp_rust::{
 
 use crate::{
     history::HistoryPolicy,
-    store::{MessageStore, Retention, StoredMessage},
+    store::{LinkCard, LocalState, Media, MessageHeader, MessageStore, Quote, Retention, StoredMessage},
 };
 
 /// Asks the phone for `count` messages older than the oldest one stored in
@@ -989,17 +989,17 @@ impl Service {
                                     };
                                     // Mentions stay `@<number>` as on the wire; the UI
                                     // resolves them when drawn, so later names apply.
-                                    message.mentioned = mentions_me(&inbound.message, &own);
+                                    message.local.mentioned = mentions_me(&inbound.message, &own);
                                     if inbound.message.is_view_once() {
-                                        let _ = store.set_view_once(&chat, &message.id, from_me);
+                                        let _ = store.set_view_once(&chat, &message.header.id, from_me);
                                     }
                                     if is_forwarded(&inbound.message) {
-                                        let _ = store.set_forwarded(&chat, &message.id);
+                                        let _ = store.set_forwarded(&chat, &message.header.id);
                                     }
                                     // Pairing only brings recent days; a reply to something
                                     // older pulls that chat's past so the quote can be opened.
-                                    if let (Some(quoted), Some(client)) = (message.reply_to_id.clone(), client.clone()) {
-                                        let quoted_chat = message.reply_to_chat.clone().unwrap_or_else(|| chat.clone());
+                                    if let (Some(quoted), Some(client)) = (message.quote.id.clone(), client.clone()) {
+                                        let quoted_chat = message.quote.chat.clone().unwrap_or_else(|| chat.clone());
                                         if store.message(&quoted_chat, &quoted).is_err() && recall_allowed(&quoted_chat) {
                                             let store = store.clone();
                                             tokio::spawn(async move {
@@ -1242,7 +1242,7 @@ impl Service {
                                             continue;
                                         }
                                         remember_structures(&store, &chat, &id, &sender, message);
-                                        let envelope = Envelope {
+                                        let header = MessageHeader {
                                             chat: chat.clone(),
                                             id,
                                             sender,
@@ -1253,7 +1253,7 @@ impl Service {
                                         // it is fetched on demand like any other.
                                         let Some(mut stored) = stored_message(
                                             message,
-                                            envelope,
+                                            header,
                                             client.as_deref(),
                                             media_dir.as_deref(),
                                             false,
@@ -1263,7 +1263,7 @@ impl Service {
                                             continue;
                                         };
                                         // Old messages must not raise unread counts.
-                                        stored.read = true;
+                                        stored.local.read = true;
                                         added |= store.insert_message(&stored).is_ok();
                                     }
                                     if added {
@@ -1331,31 +1331,16 @@ impl Service {
                                 }
                                 let from_me = info.source.is_from_me;
                                 let message = StoredMessage {
-                                    chat: chat.clone(),
-                                    id: id.clone(),
-                                    sender: info.source.sender.to_string(),
-                                    sender_name: None,
-                                    timestamp: info.timestamp.timestamp(),
-                                    from_me,
-                                    text: String::new(),
-                                    media_kind: Some("view_once".into()),
-                                    media_path: None,
-                                    media_thumb: None,
-                                    media_ref: None,
-                                    reply_to_id: None,
-                                    reply_to_text: None,
-                                    reply_to_sender: None,
-                                    reply_to_chat: None,
-                                    reply_to_kind: None,
-                                    reply_to_thumb: None,
-                                    read: from_me,
-                                    revoked: false,
-                                    mentioned: false,
-                                    preview_url: None,
-                                    preview_title: None,
-                                    preview_desc: None,
-                                    preview_thumb: None,
-                                    status: None,
+                                    header: MessageHeader {
+                                        chat: chat.clone(),
+                                        id: id.clone(),
+                                        sender: info.source.sender.to_string(),
+                                        timestamp: info.timestamp.timestamp(),
+                                        from_me,
+                                    },
+                                    media: Media { kind: Some("view_once".into()), ..Default::default() },
+                                    local: LocalState { read: from_me, ..Default::default() },
+                                    ..Default::default()
                                 };
                                 let _ = store.set_view_once(&chat, &id, from_me);
                                 if store.insert_message(&message).is_ok() {
@@ -1667,42 +1652,14 @@ impl Service {
         // Keep the preview with our own copy, so the sender sees it too.
         let thumbnail = preview.as_ref().and_then(|p| p.thumbnail.as_deref()).map(thumb_uri);
 
-        let mut message = StoredMessage {
-            chat: chat.to_string(),
-            id: result.message_id.clone(),
-            sender: self.own_jid(),
-            sender_name: None,
-            timestamp: unix_now(),
-            from_me: true,
-            text,
-            media_kind: None,
-            media_path: None,
-            media_thumb: None,
-            media_ref: None,
-            reply_to_id: None,
-            reply_to_text: None,
-            reply_to_sender: None,
-            reply_to_chat: None,
-            reply_to_kind: None,
-            reply_to_thumb: None,
-            // Not `true`: we cannot know whether the recipient has read it, and
-            // claiming so shows a read marker that is not true.
-            read: false,
-            revoked: false,
-            mentioned: false,
-            preview_url: None,
-            preview_title: None,
-            preview_desc: None,
-            preview_thumb: None,
-            // A message to ourselves is already where it needs to be; leaving
-            // it pending would wait for a receipt that never arrives.
-            status: Some(if to_self { "delivered".into() } else { "pending".into() }),
-        };
+        let mut message = self.own_message(chat, &result.message_id, text, "", to_self);
         if let Some(p) = &preview {
-            message.preview_url = Some(p.url.clone());
-            message.preview_title = p.title.clone();
-            message.preview_desc = p.description.clone();
-            message.preview_thumb = thumbnail;
+            message.link = LinkCard {
+                url: Some(p.url.clone()),
+                title: p.title.clone(),
+                desc: p.description.clone(),
+                thumb: thumbnail,
+            };
         }
         self.store.insert_message(&message)?;
         let _ = self.events.send(ServiceEvent::Message { message: Box::new(message) });
@@ -2137,7 +2094,7 @@ impl Service {
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         // The stored copy is gone, so its media file has no other referent.
         if let Ok(message) = self.store.message(chat, id) {
-            if let Some(path) = message.media_path.as_deref() {
+            if let Some(path) = message.media.path.as_deref() {
                 let _ = std::fs::remove_file(path);
             }
         }
@@ -2158,26 +2115,26 @@ impl Service {
     pub async fn forward(&self, from_chat: &str, id: &str, to_chat: &str) -> Result<()> {
         let message = self.store.message(from_chat, id)?;
         // Uncaptioned media is stored as `[kind]`, which must not become a caption.
-        let placeholder = message.media_kind.as_ref().map(|kind| format!("[{kind}]"));
+        let placeholder = message.media.kind.as_ref().map(|kind| format!("[{kind}]"));
         let text = message.text.trim();
         let caption = (!text.is_empty() && placeholder.as_deref() != Some(text))
             .then(|| message.text.clone());
-        match message.media_path.as_deref().filter(|p| Path::new(p).is_file()) {
+        match message.media.path.as_deref().filter(|p| Path::new(p).is_file()) {
             Some(path) => {
                 let bytes = std::fs::read(path)?;
                 let name = Path::new(path)
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_else(|| "file".into());
-                let gif = message.media_kind.as_deref() == Some("gif");
-                if message.media_kind.as_deref() == Some("sticker") {
+                let gif = message.media.kind.as_deref() == Some("gif");
+                if message.media.kind.as_deref() == Some("sticker") {
                     self.send_sticker_as(to_chat, bytes, true).await?;
                 } else {
                     let options = SendOptions { gif, forwarded: true, ..Default::default() };
                     self.send_media(to_chat, &name, bytes, caption, None, options).await?;
                 }
             }
-            None if message.media_kind.is_some() => {
+            None if message.media.kind.is_some() => {
                 anyhow::bail!("download the media before forwarding it")
             }
             None => {
@@ -2193,8 +2150,7 @@ impl Service {
                 };
                 let result = self.client.send_message(to, content).await?;
                 self.store.set_forwarded(to_chat, &result.message_id)?;
-                let mut stored = self.own_message(to_chat, &result.message_id, message.text, "", to_self);
-                stored.media_kind = None;
+                let stored = self.own_message(to_chat, &result.message_id, message.text, "", to_self);
                 self.store.insert_message(&stored)?;
                 let _ = self.events.send(ServiceEvent::Message { message: Box::new(stored) });
             }
@@ -2216,34 +2172,25 @@ impl Service {
     }
 
     /// A message we just sent, as the store keeps it until the server confirms.
+    /// An empty `kind` means text only.
     fn own_message(&self, chat: &str, id: &str, text: String, kind: &str, to_self: bool) -> StoredMessage {
         StoredMessage {
-            chat: chat.to_string(),
-            id: id.to_string(),
-            sender: self.own_jid(),
-            sender_name: None,
-            timestamp: unix_now(),
-            from_me: true,
+            header: MessageHeader {
+                chat: chat.to_string(),
+                id: id.to_string(),
+                sender: self.own_jid(),
+                timestamp: unix_now(),
+                from_me: true,
+            },
             text,
-            media_kind: Some(kind.to_string()),
-            media_path: None,
-            media_thumb: None,
-            media_ref: None,
-            reply_to_id: None,
-            reply_to_text: None,
-            reply_to_sender: None,
-            reply_to_chat: None,
-            reply_to_kind: None,
-            reply_to_thumb: None,
-            read: false,
-            revoked: false,
-            mentioned: false,
-            preview_url: None,
-            preview_title: None,
-            preview_desc: None,
-            preview_thumb: None,
-            // A message to ourselves needs no receipt to count as delivered.
-            status: Some(if to_self { "delivered".into() } else { "pending".into() }),
+            media: Media { kind: (!kind.is_empty()).then(|| kind.to_string()), ..Default::default() },
+            // Not read: we cannot know whether the recipient has read it. A
+            // message to ourselves needs no receipt to count as delivered.
+            local: LocalState {
+                status: Some(if to_self { "delivered".into() } else { "pending".into() }),
+                ..Default::default()
+            },
+            ..Default::default()
         }
     }
 
@@ -2754,36 +2701,17 @@ impl Service {
         let message = wa::Message::text_with_context(text.clone(), context);
         let result = self.client.send_message(to, message).await?;
 
-        let stored = StoredMessage {
-            chat: chat.to_string(),
-            id: result.message_id.clone(),
-            sender: self.own_jid(),
-            sender_name: None,
-            timestamp: unix_now(),
-            from_me: true,
-            text,
-            media_kind: None,
-            media_path: None,
-            media_thumb: None,
-            media_ref: None,
-            reply_to_id: Some(reply_to_id.to_string()),
-            reply_to_text: Some(reply_to_text.to_string()),
-            reply_to_sender: Some(if sender.to_string() == self.own_jid() {
+        let mut stored = self.own_message(chat, &result.message_id, text, "", to_self);
+        stored.quote = Quote {
+            id: Some(reply_to_id.to_string()),
+            text: Some(reply_to_text.to_string()),
+            sender: Some(if sender.to_string() == self.own_jid() {
                 "@me".to_string()
             } else {
                 reply_to_sender.to_string()
             }),
-            reply_to_chat: quote_chat.map(str::to_string),
-            reply_to_kind: None,
-            reply_to_thumb: None,
-            read: false,
-            revoked: false,
-            mentioned: false,
-            preview_url: None,
-            preview_title: None,
-            preview_desc: None,
-            preview_thumb: None,
-            status: Some(if to_self { "delivered".into() } else { "pending".into() }),
+            chat: quote_chat.map(str::to_string),
+            ..Default::default()
         };
         self.store.insert_message(&stored)?;
         let _ = self.events.send(ServiceEvent::Message { message: Box::new(stored) });
@@ -2944,33 +2872,12 @@ impl Service {
             }
         }
 
-        let stored = StoredMessage {
-            chat: chat.to_string(),
-            id: result.message_id.clone(),
-            sender: self.own_jid(),
-            sender_name: None,
-            timestamp: unix_now(),
-            from_me: true,
-            text: caption.unwrap_or_default(),
-            media_kind: Some(if gif && kind == "video" { "gif" } else { kind }.to_string()),
-            media_path: stored_path,
-            media_thumb: None,
-            media_ref: None,
-            reply_to_id: reply.as_ref().map(|(id, _, _)| id.clone()),
-            reply_to_text: reply.as_ref().map(|(_, _, text)| text.clone()),
-            reply_to_sender: reply.as_ref().map(|(_, sender, _)| sender.clone()),
-            reply_to_chat: None,
-            reply_to_kind: None,
-            reply_to_thumb: None,
-            read: false,
-            revoked: false,
-            mentioned: false,
-            preview_url: None,
-            preview_title: None,
-            preview_desc: None,
-            preview_thumb: None,
-            status: Some(if to_self { "delivered".into() } else { "pending".into() }),
-        };
+        let kind = if gif && kind == "video" { "gif" } else { kind };
+        let mut stored = self.own_message(chat, &result.message_id, caption.unwrap_or_default(), kind, to_self);
+        stored.media.path = stored_path;
+        if let Some((id, sender, text)) = reply {
+            stored.quote = Quote { id: Some(id), text: Some(text), sender: Some(sender), ..Default::default() };
+        }
         self.store.insert_message(&stored)?;
         let _ = self.events.send(ServiceEvent::Message { message: Box::new(stored) });
         Ok(warning)
@@ -3069,33 +2976,8 @@ impl Service {
             std::fs::write(&dest, &webp).ok()?;
             Some(dest.to_string_lossy().into_owned())
         });
-        let stored = StoredMessage {
-            chat: chat.to_string(),
-            id: result.message_id.clone(),
-            sender: self.own_jid(),
-            sender_name: None,
-            timestamp: unix_now(),
-            from_me: true,
-            text: "[sticker]".into(),
-            media_kind: Some("sticker".into()),
-            media_path,
-            media_thumb: None,
-            media_ref: None,
-            reply_to_id: None,
-            reply_to_text: None,
-            reply_to_sender: None,
-            reply_to_chat: None,
-            reply_to_kind: None,
-            reply_to_thumb: None,
-            read: false,
-            revoked: false,
-            mentioned: false,
-            preview_url: None,
-            preview_title: None,
-            preview_desc: None,
-            preview_thumb: None,
-            status: Some(if to_self { "delivered".into() } else { "pending".into() }),
-        };
+        let mut stored = self.own_message(chat, &result.message_id, "[sticker]".into(), "sticker", to_self);
+        stored.media.path = media_path;
         self.store.insert_message(&stored)?;
         let _ = self.events.send(ServiceEvent::Message { message: Box::new(stored) });
         Ok(())
@@ -3486,14 +3368,14 @@ async fn incoming_message(
     auto_download: bool,
 ) -> Option<StoredMessage> {
     let info = &inbound.info;
-    let envelope = Envelope {
+    let header = MessageHeader {
         chat: info.source.chat.to_string(),
         id: info.id.to_string(),
         sender: info.source.sender.to_string(),
         timestamp: info.timestamp.timestamp(),
         from_me: info.source.is_from_me,
     };
-    stored_message(&inbound.message, envelope, client, media_dir, auto_download).await
+    stored_message(&inbound.message, header, client, media_dir, auto_download).await
 }
 
 /// Where a chat's cached profile picture lives.
@@ -3505,23 +3387,15 @@ fn avatar_path(media_dir: &Path, jid: &str) -> PathBuf {
     media_dir.join("avatars").join(format!("{name}.jpg"))
 }
 
-/// Where a message came from, whether it arrived live or through history sync.
-struct Envelope {
-    chat: String,
-    id: String,
-    sender: String,
-    timestamp: i64,
-    from_me: bool,
-}
-
+/// Builds the stored form of a message that arrived live or through history sync.
 async fn stored_message(
     message: &wa::Message,
-    envelope: Envelope,
+    header: MessageHeader,
     client: Option<&Client>,
     media_dir: Option<&Path>,
     auto_download: bool,
 ) -> Option<StoredMessage> {
-    let id = envelope.id.as_str();
+    let id = header.id.as_str();
     let mut text = message.text_content().unwrap_or_default().to_string();
 
     let mut media_kind = None;
@@ -3578,67 +3452,38 @@ async fn stored_message(
 
     // A reply carries the quote in the message context. We do not keep the
     // original protobuf, so the text is copied out for display.
-    let (
-        reply_to_id,
-        reply_to_text,
-        reply_to_sender,
-        reply_to_kind,
-        reply_to_thumb,
-        reply_to_chat,
-    ) = quote_of(message)
-            .map(|(id, sender, text, kind, thumb, chat)| {
-                // Quoting our own message should read "You", not our phone number.
-                let mine = client
-                    .map(|c| {
-                        [c.pn(), c.lid()]
-                            .into_iter()
-                            .flatten()
-                            .any(|j| j.to_non_ad().to_string() == sender)
-                    })
-                    .unwrap_or(false);
-                let sender = if mine { "@me".to_string() } else { sender };
-                (
-                    Some(id),
-                    Some(text),
-                    Some(sender),
-                    if kind.is_empty() { None } else { Some(kind) },
-                    thumb.as_deref().map(thumb_uri),
-                    chat,
-                )
-            })
-            .unwrap_or((None, None, None, None, None, None));
+    let quote = quote_of(message)
+        .map(|(id, sender, text, kind, thumb, chat)| {
+            // Quoting our own message should read "You", not our phone number.
+            let mine = client
+                .map(|c| {
+                    [c.pn(), c.lid()]
+                        .into_iter()
+                        .flatten()
+                        .any(|j| j.to_non_ad().to_string() == sender)
+                })
+                .unwrap_or(false);
+            let sender = if mine { "@me".to_string() } else { sender };
+            Quote {
+                id: Some(id),
+                text: Some(text),
+                sender: Some(sender),
+                chat,
+                kind: if kind.is_empty() { None } else { Some(kind) },
+                thumb: thumb.as_deref().map(thumb_uri),
+            }
+        })
+        .unwrap_or_default();
 
-    // A link preview rides on the extended text message.
-    let (preview_url, preview_title, preview_desc, preview_thumb) = link_preview(message);
-
+    // Names are resolved separately and joined by the store on read; a new
+    // message stays unread until its chat is opened.
     Some(StoredMessage {
-        chat: envelope.chat,
-        id: envelope.id.clone(),
-        sender: envelope.sender,
-        // Names are resolved separately and joined by the store on read.
-        sender_name: None,
-        timestamp: envelope.timestamp,
-        from_me: envelope.from_me,
+        header,
         text,
-        media_kind,
-        media_path,
-        media_thumb,
-        media_ref,
-        reply_to_id,
-        reply_to_text,
-        reply_to_sender,
-        reply_to_chat,
-        reply_to_kind,
-        reply_to_thumb,
-        // Newly arrived, so unseen until the chat is opened.
-        read: false,
-        revoked: false,
-        mentioned: false,
-        preview_url,
-        preview_title,
-        preview_desc,
-        preview_thumb,
-        status: None,
+        media: Media { kind: media_kind, path: media_path, thumb: media_thumb, locator: media_ref },
+        quote,
+        link: link_preview(message),
+        ..Default::default()
     })
 }
 
@@ -3682,21 +3527,25 @@ fn media_locator(message: &wa::Message) -> Vec<u8> {
 }
 
 /// The link preview a message carries.
-fn link_preview(message: &wa::Message) -> (Option<String>, Option<String>, Option<String>, Option<String>) {
+fn link_preview(message: &wa::Message) -> LinkCard {
     use whatsapp_rust::wacore::proto_helpers::MessageExt;
     let Some(text) = message
         .get_base_message()
         .extended_text_message
         .as_option()
     else {
-        return (None, None, None, None);
+        return LinkCard::default();
     };
     // `matched_text` is the URL as it appeared in the message.
     let Some(url) = text.matched_text.clone() else {
-        return (None, None, None, None);
+        return LinkCard::default();
     };
-    let thumb = text.jpeg_thumbnail.as_deref().map(thumb_uri);
-    (Some(url), text.title.clone(), text.description.clone(), thumb)
+    LinkCard {
+        url: Some(url),
+        title: text.title.clone(),
+        desc: text.description.clone(),
+        thumb: text.jpeg_thumbnail.as_deref().map(thumb_uri),
+    }
 }
 
 /// File extension for a downloaded media item.
@@ -4105,35 +3954,27 @@ mod tests {
 
         let message = ServiceEvent::Message {
             message: Box::new(StoredMessage {
-                chat: "a@s".into(),
-                id: "1".into(),
-                sender: "b@s".into(),
-                sender_name: None,
-                timestamp: 0,
-                from_me: false,
+                header: MessageHeader {
+                    chat: "a@s".into(),
+                    id: "1".into(),
+                    sender: "b@s".into(),
+                    timestamp: 0,
+                    from_me: false,
+                },
                 text: "hi".into(),
-                media_kind: None,
-                media_path: None,
-                media_thumb: None,
-                media_ref: None,
-                reply_to_id: None,
-                reply_to_text: None,
-                reply_to_sender: None,
-                reply_to_chat: None,
-                reply_to_kind: None,
-                reply_to_thumb: None,
-                read: false,
-                revoked: false,
-                mentioned: false,
-                preview_url: None,
-                preview_title: None,
-                preview_desc: None,
-                preview_thumb: None,
-                status: None,
+                media: Media { locator: Some(vec![1]), ..Default::default() },
+                ..Default::default()
             }),
         };
         let json = serde_json::to_string(&message).expect("message event must serialize");
         assert!(json.contains("\"message\""), "missing payload: {json}");
+        // The UI reads one flat object keyed by column names.
+        for key in ["\"chat\":\"a@s\"", "\"media_kind\"", "\"reply_to_id\"", "\"preview_url\"", "\"status\""] {
+            assert!(json.contains(key), "missing {key}: {json}");
+        }
+        for key in ["\"header\"", "\"media\"", "\"locator\"", "\"media_ref\""] {
+            assert!(!json.contains(key), "unexpected {key}: {json}");
+        }
     }
 
     #[test]

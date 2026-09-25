@@ -83,7 +83,7 @@ async fn main() -> Result<()> {
             ServiceEvent::Disconnected => println!("[check] disconnected"),
             ServiceEvent::Message { message } => {
                 stats.received += 1;
-                println!("[check] stored [{}] {}: {}", message.chat, message.sender, message.text);
+                println!("[check] stored [{}] {}: {}", message.header.chat, message.header.sender, message.text);
             }
             ServiceEvent::RetentionApplied { removed } => {
                 stats.pruned += removed;
