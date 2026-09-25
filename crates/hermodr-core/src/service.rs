@@ -524,6 +524,9 @@ pub struct Service {
     connected: Arc<AtomicBool>,
     /// Groups whose subject query failed: when to retry, and the wait that set it.
     subject_backoff: Mutex<std::collections::HashMap<String, (std::time::Instant, Duration)>>,
+    /// JIDs the server already had no name for this run, so the UI's repeated
+    /// lookups do not re-query it for the same people.
+    nameless: Mutex<std::collections::HashSet<String>>,
     resolving: AtomicBool,
     /// Group metadata for this run, so opening a chat does not re-query the
     /// server and trip its rate limit. Group membership changes rarely enough
@@ -696,7 +699,7 @@ impl Service {
                     async move {
                         match event.as_ref() {
                             Event::Messages(batch) => {
-                                log::debug!("{} live message(s)", batch.messages.len());
+                                let started = std::time::Instant::now();
                                 let _commit = store.batch();
                                 let client = client_for_events.get().cloned();
                                 // Our own addresses, so a mention can be
@@ -1023,15 +1026,23 @@ impl Service {
                                 }
                                 // Bound the store right after writes so the
                                 // limit holds even if the process stops.
-                                match store.enforce_retention() {
-                                    Ok(0) => {}
-                                    Ok(removed) => {
-                                        log::debug!("retention removed {removed} message(s)");
-                                        let _ = events
-                                            .send(ServiceEvent::RetentionApplied { removed });
+                                let pruning = std::time::Instant::now();
+                                let removed = match store.enforce_retention() {
+                                    Ok(removed) => removed,
+                                    Err(e) => {
+                                        log::error!("retention failed: {e}");
+                                        0
                                     }
-                                    Err(e) => log::error!("retention failed: {e}"),
+                                };
+                                if removed > 0 {
+                                    let _ = events.send(ServiceEvent::RetentionApplied { removed });
                                 }
+                                log::debug!(
+                                    "{} live message(s) in {:?} (retention {:?}, pruned {removed})",
+                                    batch.messages.len(),
+                                    started.elapsed(),
+                                    pruning.elapsed(),
+                                );
                             }
                             Event::Disconnected(_) => {
                                 log::warn!("disconnected");
@@ -1417,6 +1428,7 @@ impl Service {
                 qr: qr_state,
                 connected: connected_state,
                 subject_backoff: Mutex::default(),
+                nameless: Mutex::default(),
                 resolving: AtomicBool::new(false),
                 group_cache,
                 groups_cache: Mutex::new(Vec::new()),
@@ -1771,26 +1783,38 @@ impl Service {
         }
         // Push names only travel with messages; for anyone we have not heard
         // from, the username or verified business name is the next best thing.
+        unknown.retain(|(_, jid)| !self.nameless.lock().unwrap().contains(&jid.to_string()));
         if !unknown.is_empty() {
             let query: Vec<Jid> = unknown.iter().map(|(_, j)| j.clone()).collect();
-            if let Ok(infos) = self.client.contacts().get_user_info(&query).await {
-                for (asked, jid) in unknown {
-                    let info = infos.values().find(|i| {
-                        i.jid.user == jid.user || i.lid.as_ref().is_some_and(|l| l.user == jid.user)
-                    });
-                    let found = info.and_then(|i| {
-                        i.verified_name
-                            .as_ref()
-                            .and_then(|v| v.name.clone())
-                            .or_else(|| i.username.as_ref().map(|u| u.to_string()))
-                    });
-                    if let Some(found) = found.filter(|n| !n.trim().is_empty()) {
-                        let _ = self.store.set_name(&jid.to_string(), &found);
-                        out.insert(asked, found);
-                    } else {
-                        log::debug!("no name known for {jid} (shown as {:?})", out.get(&asked));
+            match self.client.contacts().get_user_info(&query).await {
+                Ok(infos) => {
+                    let mut learned = 0;
+                    let mut nameless = self.nameless.lock().unwrap();
+                    for (asked, jid) in unknown.iter() {
+                        let info = infos.values().find(|i| {
+                            i.jid.user == jid.user || i.lid.as_ref().is_some_and(|l| l.user == jid.user)
+                        });
+                        let found = info.and_then(|i| {
+                            i.verified_name
+                                .as_ref()
+                                .and_then(|v| v.name.clone())
+                                .or_else(|| i.username.as_ref().map(|u| u.to_string()))
+                        });
+                        if let Some(found) = found.filter(|n| !n.trim().is_empty()) {
+                            let _ = self.store.set_name(&jid.to_string(), &found);
+                            out.insert(asked.clone(), found);
+                            learned += 1;
+                        } else {
+                            nameless.insert(jid.to_string());
+                        }
                     }
+                    log::debug!(
+                        "names: asked the server about {}, learned {learned}, {} still unnamed",
+                        unknown.len(),
+                        unknown.len() - learned,
+                    );
                 }
+                Err(e) => log::warn!("names: user info query for {} JID(s) failed: {e}", unknown.len()),
             }
         }
         out
