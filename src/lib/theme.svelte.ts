@@ -401,21 +401,38 @@ export function duplicate(theme: Theme, name = `${theme.name} copy`): Theme {
   return customization.themes[customization.themes.length - 1];
 }
 
-/** A Svelte transition length scaled by the active theme's `motion-scale`. */
-export function motion(ms: number): number {
-  const scale = Number.parseFloat(activeTheme().tokens["motion-scale"] ?? "1");
-  return Number.isFinite(scale) && scale >= 0 ? ms * scale : ms;
+const reducedMotion = typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
+
+/** The theme's `motion-scale`, or 0 when the OS asks for reduced motion. */
+function motionScale(theme: Theme): number {
+  if (reducedMotion?.matches) return 0;
+  const scale = Number.parseFloat(theme.tokens["motion-scale"] ?? "1");
+  return Number.isFinite(scale) && scale >= 0 ? scale : 1;
 }
 
-/** Writes the theme onto the document root, clearing tokens it does not set. */
+/** A Svelte transition length scaled by the active theme's `motion-scale`. */
+export function motion(ms: number): number {
+  return ms * motionScale(activeTheme());
+}
+
+/**
+ * Writes the theme onto the document root, clearing tokens it does not set.
+ * At scale 0 `no-motion` also stops the animations whose durations are fixed
+ * (spinners, loading bars, shimmer), which `--motion-scale` cannot reach.
+ */
 export function applyTheme(theme: Theme) {
-  const root = document.documentElement.style;
+  const root = document.documentElement;
   for (const { key } of TOKENS) {
     const value = theme.tokens[key];
-    if (value) root.setProperty(`--${key}`, value);
-    else root.removeProperty(`--${key}`);
+    if (value) root.style.setProperty(`--${key}`, value);
+    else root.style.removeProperty(`--${key}`);
   }
+  const scale = motionScale(theme);
+  root.style.setProperty("--motion-scale", String(scale));
+  root.classList.toggle("no-motion", scale === 0);
 }
+
+reducedMotion?.addEventListener("change", () => applyTheme(activeTheme()));
 
 export function save() {
   try {

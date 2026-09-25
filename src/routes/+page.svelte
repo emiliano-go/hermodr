@@ -4036,6 +4036,13 @@
     scrollbar-width: thin;
     scrollbar-color: var(--raised-2) transparent;
   }
+  /* Animations off (setting or OS): nothing moves, whatever its duration. */
+  :global(html.no-motion *),
+  :global(html.no-motion *::before),
+  :global(html.no-motion *::after) {
+    animation: none !important;
+    transition: none !important;
+  }
   :global(button) {
     transition:
       background-color calc(0.15s * var(--motion-scale)) var(--ease),
