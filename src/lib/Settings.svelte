@@ -8,6 +8,7 @@
     media_dir: string | null;
     send_typing: boolean;
     send_receipts: boolean;
+    keep_history: boolean;
   };
   export type Account = { id: string; label: string; jid: string | null };
   export type Section =
@@ -423,6 +424,17 @@
             History is kept on this device only, and only within these limits. Leave a field
             empty for no limit.
           </p>
+          <label class="setting">
+            <div>
+              <span class="setting-title">Keep history on this computer</span>
+              <span class="setting-desc">
+                Off keeps messages in memory only: they show while Hermóðr runs and are gone when it
+                quits. Applies the next time Hermóðr starts; clear history below to remove what is
+                already saved.
+              </span>
+            </div>
+            <input class="switch" type="checkbox" bind:checked={draft.keep_history} />
+          </label>
           <div class="setting">
             <div>
               <span class="setting-title">Keep messages for</span>
@@ -451,7 +463,10 @@
           <div class="setting">
             <div>
               <span class="setting-title">Messages per chat</span>
-              <span class="setting-desc">Only the newest are kept in each conversation. Default: 500.</span>
+              <span class="setting-desc">
+                Only the newest are kept in each conversation. Default: 500. Search stays fast up to
+                about 50 000.
+              </span>
             </div>
             <input
               class="field number"

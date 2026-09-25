@@ -42,6 +42,9 @@ pub struct UiSettings {
     /// groups too, which WhatsApp's own read-receipt privacy does not.
     #[serde(default = "default_true")]
     pub send_receipts: bool,
+    /// Whether messages are kept on disk. Off keeps them in memory for this run only.
+    #[serde(default = "default_true")]
+    pub keep_history: bool,
 }
 
 fn default_true() -> bool {
@@ -58,6 +61,7 @@ impl Default for UiSettings {
             warn_missing_video_preview: true,
             send_typing: true,
             send_receipts: true,
+            keep_history: true,
         }
     }
 }
@@ -229,7 +233,11 @@ fn config_for(app: &AppHandle, settings: &UiSettings, account: &str) -> ServiceC
     let default_media = media_cache_dir(app);
     ServiceConfig {
         session_path: session_path(&base),
-        messages_path: base.join("messages.db"),
+        messages_path: if settings.keep_history {
+            base.join("messages.db")
+        } else {
+            PathBuf::from(":memory:")
+        },
         retention: settings.retention,
         accept_full_history: settings.accept_full_history,
         auto_download_media: settings.auto_download_media,

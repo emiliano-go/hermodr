@@ -891,6 +891,7 @@ impl MessageStore {
     }
 
     /// Messages in a chat whose text contains `query`, ignoring case, newest first.
+    /// Scans only that chat's rows; tested to stay under a second at 50 000.
     pub fn search_messages(&self, chat: &str, query: &str, limit: u32) -> Result<Vec<StoredMessage>> {
         let escaped = query.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
         let pattern = format!("%{}%", escaped.to_lowercase());
@@ -1790,6 +1791,21 @@ mod tests {
             text: text.into(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn search_stays_fast_at_fifty_thousand_messages() {
+        let s = store(Retention::unlimited());
+        {
+            let _commit = s.batch();
+            for i in 0..50_000 {
+                s.insert_message(&msg("big@s", &i.to_string(), 0, &format!("message number {i}"))).unwrap();
+            }
+        }
+        let started = std::time::Instant::now();
+        let found = s.search_messages("big@s", "number 49999", 50).unwrap();
+        assert_eq!(found.len(), 1);
+        assert!(started.elapsed() < std::time::Duration::from_secs(1), "took {:?}", started.elapsed());
     }
 
     #[test]

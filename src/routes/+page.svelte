@@ -122,6 +122,7 @@
     media_dir: string | null;
     send_typing: boolean;
     send_receipts: boolean;
+    keep_history: boolean;
   };
   type ConnectionState = { started: boolean; connected: boolean; qr: string | null };
 
@@ -308,6 +309,7 @@
     media_dir: null,
     send_typing: true,
     send_receipts: true,
+    keep_history: true,
   });
   let showSettings = $state(false);
   let showGroupInfo = $state(false);
