@@ -21,6 +21,9 @@ export async function invoke<T>(cmd: string, args?: InvokeArgs, options?: Invoke
 window.addEventListener("error", (e) =>
   log("error", e.error instanceof Error ? (e.error.stack ?? e.message) : `${e.message} at ${e.filename}:${e.lineno}`),
 );
+document.addEventListener("securitypolicyviolation", (e) =>
+  log("warn", `CSP blocked ${e.blockedURI || "inline content"} (${e.violatedDirective}) in ${e.sourceFile}:${e.lineNumber}`),
+);
 window.addEventListener("unhandledrejection", (e) =>
   log("error", `unhandled rejection: ${e.reason instanceof Error ? (e.reason.stack ?? e.reason) : e.reason}`),
 );
