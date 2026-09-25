@@ -3517,6 +3517,15 @@ async fn stored_message(
         }
     }
 
+    // Kinds without a dedicated view still arrive as readable cards.
+    if text.is_empty() && media_kind.is_none() {
+        if let Some((kind, card, thumb)) = card_of(message) {
+            text = card;
+            media_kind = Some(kind.to_string());
+            media_thumb = thumb.as_deref().map(thumb_uri);
+        }
+    }
+
     if text.is_empty() && media_kind.is_none() {
         return None;
     }
@@ -3556,6 +3565,48 @@ async fn stored_message(
         link: link_preview(message),
         ..Default::default()
     })
+}
+
+/// Location and contact messages as a kind, readable text and the map
+/// thumbnail when one was sent; `None` for anything else.
+fn card_of(message: &wa::Message) -> Option<(&'static str, String, Option<Vec<u8>>)> {
+    use whatsapp_rust::wacore::proto_helpers::MessageExt;
+    let base = message.get_base_message();
+    let lines = |parts: Vec<Option<String>>| {
+        parts.into_iter().flatten().filter(|s| !s.trim().is_empty()).collect::<Vec<_>>().join("\n")
+    };
+    let map = |lat: Option<f64>, lng: Option<f64>| Some(format!("https://maps.google.com/?q={},{}", lat?, lng?));
+    if let Some(at) = base.location_message.as_option() {
+        let text = lines(vec![at.name.clone(), at.address.clone(), map(at.degrees_latitude, at.degrees_longitude)]);
+        return Some(("location", text, at.jpeg_thumbnail.clone()));
+    }
+    if let Some(at) = base.live_location_message.as_option() {
+        let text = lines(vec![at.caption.clone(), map(at.degrees_latitude, at.degrees_longitude)]);
+        return Some(("live_location", text, at.jpeg_thumbnail.clone()));
+    }
+    // A vCard's TEL lines carry the numbers.
+    let phones = |vcard: &Option<String>| {
+        vcard
+            .iter()
+            .flat_map(|v| v.lines())
+            .filter(|l| l.to_ascii_uppercase().starts_with("TEL"))
+            .filter_map(|l| l.split_once(':').map(|(_, n)| n.trim().to_string()))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    if let Some(contact) = base.contact_message.as_option() {
+        let text = lines(vec![contact.display_name.clone(), Some(phones(&contact.vcard))]);
+        return Some(("contact", text, None));
+    }
+    if let Some(list) = base.contacts_array_message.as_option() {
+        let people = list
+            .contacts
+            .iter()
+            .map(|c| lines(vec![c.display_name.clone(), Some(phones(&c.vcard))]).replace('\n', " · "))
+            .collect::<Vec<_>>();
+        return Some(("contact", lines(vec![list.display_name.clone(), Some(people.join("\n"))]), None));
+    }
+    None
 }
 
 /// A received thumbnail as a `data:` URI, stored in the row rather than as one
