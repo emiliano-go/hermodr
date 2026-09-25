@@ -14,6 +14,14 @@
     created_at: number | null;
     participants: Member[];
     allow_admin_reports: boolean;
+    announce: boolean;
+    locked: boolean;
+    community: boolean;
+    announcements: boolean;
+    parent: string | null;
+    parent_name: string | null;
+    admin: boolean;
+    can_send: boolean;
   };
   export type AdminReport = {
     id: string;
@@ -225,7 +233,9 @@
       <div>
         <h2>{info.subject ?? title}</h2>
         <span class="muted">
-          Group · {info.participants.length} members{#if info.created_at}
+          {info.community ? "Community" : info.announcements ? "Announcements" : "Group"} · {info.participants
+            .length} members{#if info.parent_name}
+            · in {info.parent_name}{/if}{#if info.created_at}
             · created {new Date(info.created_at * 1000).toLocaleDateString()}{/if}
         </span>
       </div>
@@ -243,6 +253,25 @@
             >{:else}{part}{/if}{/each}
       </p>
     {/if}
+
+    <div class="setting">
+      <div>
+        <span class="setting-title">Who can send</span>
+        <span class="setting-desc">
+          {info.community
+            ? "Nobody writes in the community itself; its groups hold the conversations."
+            : info.announce
+              ? `Only admins${info.admin ? ", including you" : ""}.`
+              : "Everyone in the group."}
+        </span>
+      </div>
+    </div>
+    <div class="setting">
+      <div>
+        <span class="setting-title">Who can edit the group's info</span>
+        <span class="setting-desc">{info.locked ? "Only admins." : "Everyone in the group."}</span>
+      </div>
+    </div>
 
     <div class="setting stack">
       <div>

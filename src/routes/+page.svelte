@@ -112,6 +112,14 @@
       label: string | null;
     }[];
     allow_admin_reports: boolean;
+    announce: boolean;
+    locked: boolean;
+    community: boolean;
+    announcements: boolean;
+    parent: string | null;
+    parent_name: string | null;
+    admin: boolean;
+    can_send: boolean;
   };
   type Retention = {
     max_age_hours: number | null;
@@ -154,6 +162,7 @@
     | { kind: "typing"; chat: string; sender: string; state: string }
     | { kind: "presence"; jid: string; online: boolean; last_seen: number | null }
     | { kind: "memberLabel"; chat: string; jid: string; label: string }
+    | { kind: "groupChanged"; chat: string }
     | { kind: "marks"; chat: string };
 
   let settingsSection = $state<Section>("accounts");
@@ -611,6 +620,7 @@
     if (selectedChat !== chat) {
       stopTyping();
       switching = true;
+      chatGroup = null;
     }
     selectedChat = chat;
     // One-to-one typing only arrives for contacts we are subscribed to.
@@ -652,18 +662,9 @@
       switching = false;
       error = String(e);
     }
-    // Group members power the @ autocomplete; a one-to-one chat returns none.
-    try {
-      const loaded = await invoke<Member[]>("participants", { chat });
-      memberCache[chat] = loaded;
-      if (selectedChat !== chat) return;
-      participants = loaded;
-      // Loading members stores their group display names, so numbers looked up
-      // before now may have a name; ask again.
-      forgetUnresolvedNames();
-    } catch {
-      if (selectedChat === chat) participants = memberCache[chat] ?? [];
-    }
+    // Group members power the @ autocomplete, and the group's settings decide
+    // whether we may write; a one-to-one chat has neither.
+    await loadChatGroup(chat);
     // Opening a chat is the obvious moment to start typing.
     await tick();
     if (jumpToMention && mentionQueue.length > 0) {
@@ -673,6 +674,52 @@
     composerInput?.focus();
   }
 
+
+  /** The open group's info: members, and whether we may send (announcement mode, communities). */
+  let chatGroup = $state<GroupInfo | null>(null);
+  /** What kind of group the open chat is, shown before its members in the header. */
+  const groupContext = $derived.by(() => {
+    if (!chatGroup) return null;
+    if (chatGroup.community) return "Community";
+    const parent = chatGroup.parent_name ?? (chatGroup.parent ? "a community" : null);
+    if (chatGroup.announcements) return parent ? `Announcements · ${parent}` : "Announcements";
+    return parent ? `In ${parent}` : null;
+  });
+  /** Communities and their subgroups among our groups, for the chat list. */
+  let groupKinds = $state<Record<string, { community: boolean; announcements: boolean; parent: string | null }>>({});
+
+  async function loadChatGroup(chat: string) {
+    if (!chat.endsWith("@g.us")) {
+      chatGroup = null;
+      participants = [];
+      return;
+    }
+    try {
+      const info = await invoke<GroupInfo>("group_info", { chat });
+      memberCache[chat] = info.participants;
+      if (selectedChat !== chat) return;
+      chatGroup = info;
+      participants = info.participants;
+      // Loading members stores their group display names, so numbers looked up
+      // before now may have a name; ask again.
+      forgetUnresolvedNames();
+    } catch {
+      if (selectedChat !== chat) return;
+      chatGroup = null;
+      participants = memberCache[chat] ?? [];
+    }
+  }
+
+  async function loadGroupKinds() {
+    try {
+      groupKinds = await invoke("group_kinds");
+    } catch {
+      // Not connected yet; the next connection loads them.
+    }
+  }
+  $effect(() => {
+    if (connected) void loadGroupKinds();
+  });
 
   function hostOf(url: string) {
     try {
@@ -2535,6 +2582,15 @@
               if (info) info.label = label;
             }
             break;
+          case "groupChanged":
+            // Who may send, who is admin, or the name changed; the core dropped its cache.
+            if (payload.chat === selectedChat) {
+              await loadChatGroup(payload.chat);
+              if (groupInfo) groupInfo = chatGroup;
+            }
+            void loadGroupKinds();
+            void refreshChats();
+            break;
         }
       });
 
@@ -2908,7 +2964,13 @@
                 }
               }}>
               {@render avatarFor(chat.chat, chatLabel(chat))}
-              <span class="name">{#if chat.pinned}<span class="pin"><Icon name="pin" size={12} /></span>{/if}{chatLabel(chat)}</span>
+              <span class="name"
+                >{#if chat.pinned}<span class="pin"><Icon name="pin" size={12} /></span>{/if}{#if groupKinds[chat.chat]?.community}<span
+                    class="kind"
+                    title="Community"><Icon name="users" size={13} /></span
+                  >{:else if groupKinds[chat.chat]?.announcements}<span class="kind" title="Community announcements"
+                    ><Icon name="volume" size={13} /></span
+                  >{/if}{chatLabel(chat)}</span>
               <span class="time" class:unread={chat.unread_count > 0}>{formatTime(chat.last_message_at)}</span>
               {#if typingLabel(chat.chat)}
                 <span class="preview typing">{typingLabel(chat.chat)}</span>
@@ -3033,7 +3095,7 @@
               <button class="chat-title" title="Group info" onclick={openGroupInfo}>
                 {title}
                 <span class="chat-sub" class:typing={typingNow}
-                  >{typingNow ?? subtitle ?? " "}</span
+                  >{typingNow ?? ([groupContext, subtitle].filter(Boolean).join(" · ") || null) ??" "}</span
                 >
               </button>
             {:else}
@@ -3566,6 +3628,16 @@
           </div>
         {/if}
 
+        {#if chatGroup && !chatGroup.can_send}
+          <div class="read-only" role="status">
+            <Icon name={chatGroup.community ? "users" : "volume"} size={16} />
+            {#if chatGroup.community}
+              This is a community. People talk in its groups; announcements go to its announcement group.
+            {:else}
+              Only admins can send messages{chatGroup.announcements ? " to this community's announcements" : " here"}.
+            {/if}
+          </div>
+        {:else}
         <div class="composer-area">
         {#if emojiToken && emojiMatches.length > 0}
           <div class="suggest" role="listbox" aria-label="Emoji suggestions">
@@ -3708,6 +3780,7 @@
           {/if}
         </form>
         </div>
+        {/if}
       {:else}
         <div class="placeholder">
           <span class="placeholder-icon"><Icon name="message" size={28} /></span>
@@ -5892,6 +5965,27 @@
   .composer-area {
     position: relative;
     flex: none;
+  }
+  /* In place of the composer where we may not write. */
+  .read-only {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    min-height: 62px;
+    padding: 10px 20px;
+    box-sizing: border-box;
+    background: var(--surface);
+    color: var(--muted);
+    font-size: 13.5px;
+    text-align: center;
+  }
+  .kind {
+    display: inline-flex;
+    vertical-align: -1px;
+    margin-right: 5px;
+    color: var(--muted);
   }
   .attach.active {
     color: var(--accent);
