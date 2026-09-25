@@ -362,9 +362,37 @@ fn remove_stale_sessions(base: &std::path::Path, current: &std::path::Path) {
     for entry in entries.flatten() {
         let name = entry.file_name();
         let Some(name) = name.to_str() else { continue };
-        if name.starts_with("session") && name.contains(".db") && name != current {
+        if is_stale_session(name, current) {
             let _ = std::fs::remove_file(entry.path());
         }
+    }
+}
+
+/// True for an old `session*.db` file or its `-wal`/`-shm`/`-journal`; never
+/// for the current database or its own sidecars.
+fn is_stale_session(name: &str, current: &str) -> bool {
+    let db = ["-wal", "-shm", "-journal"]
+        .iter()
+        .find_map(|suffix| name.strip_suffix(suffix))
+        .unwrap_or(name);
+    db.starts_with("session") && db.ends_with(".db") && db != current
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_stale_session;
+
+    #[test]
+    fn stale_sessions_spare_the_active_wal() {
+        assert!(!is_stale_session("session.db", "session.db"));
+        assert!(!is_stale_session("session.db-wal", "session.db"));
+        assert!(!is_stale_session("session.db-shm", "session.db"));
+        assert!(is_stale_session("session.db-wal", "session-1.db"));
+        assert!(is_stale_session("session-1.db", "session-2.db"));
+        assert!(is_stale_session("session-1.db-shm", "session-2.db"));
+        assert!(!is_stale_session("session-2.db-wal", "session-2.db"));
+        assert!(!is_stale_session("session.dbx", "session-2.db"));
+        assert!(!is_stale_session("messages.db", "session.db"));
     }
 }
 
