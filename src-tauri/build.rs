@@ -66,6 +66,8 @@ const COMMANDS: &[&str] = &[
     "load_older",
     "flush_media",
     "clear_history",
+    "frontend_log",
+    "open_log",
     "download_media",
     "set_chat_auto_download",
     "chat_for_message",

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
-  import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+  import { convertFileSrc } from "@tauri-apps/api/core";
+  import { invoke } from "$lib/ipc";
   import { listen } from "@tauri-apps/api/event";
   import AudioPlayer from "$lib/AudioPlayer.svelte";
   import VoiceRecorder, { type Recording } from "$lib/VoiceRecorder.svelte";

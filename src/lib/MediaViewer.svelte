@@ -20,7 +20,7 @@
   import { tick } from "svelte";
   import { fade } from "svelte/transition";
   import { motion } from "$lib/theme.svelte";
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "$lib/ipc";
   import Icon from "$lib/Icon.svelte";
   import VideoPlayer from "$lib/VideoPlayer.svelte";
 

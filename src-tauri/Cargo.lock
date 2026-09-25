@@ -1863,6 +1863,7 @@ dependencies = [
  "dunce",
  "env_logger",
  "hermodr-core",
+ "log",
  "serde",
  "serde_json",
  "tauri",

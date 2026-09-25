@@ -11,7 +11,8 @@
 <script lang="ts">
   import { fade, scale } from "svelte/transition";
   import { motion } from "$lib/theme.svelte";
-  import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+  import { convertFileSrc } from "@tauri-apps/api/core";
+  import { invoke } from "$lib/ipc";
   import Icon from "$lib/Icon.svelte";
 
   let {

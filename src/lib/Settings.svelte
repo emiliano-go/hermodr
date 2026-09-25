@@ -29,7 +29,8 @@
 
 <script lang="ts">
   import { onMount, untrack } from "svelte";
-  import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+  import { convertFileSrc } from "@tauri-apps/api/core";
+  import { invoke } from "$lib/ipc";
   import { getVersion } from "@tauri-apps/api/app";
   import Icon from "$lib/Icon.svelte";
   import Customization from "$lib/Customization.svelte";
@@ -538,6 +539,15 @@
             <span class="muted">{version ? `Version ${version}` : ""}</span>
           </div>
           <p class="lede">A native WhatsApp client that speaks the protocol directly.</p>
+          <div class="setting">
+            <div>
+              <span class="setting-title">Log file</span>
+              <span class="setting-desc">
+                What the app did, failed commands and crashes. Attach it when reporting a bug.
+              </span>
+            </div>
+            <button class="button" onclick={() => invoke("open_log").catch(() => {})}>Open log</button>
+          </div>
         {/if}
 
   {#snippet footer()}

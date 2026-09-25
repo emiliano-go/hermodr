@@ -212,10 +212,10 @@ fn migrate_media(app: &AppHandle, accounts: &AccountsFile) {
         match hermodr_core::MessageStore::open(&db, Retention::default()) {
             Ok(store) => {
                 if let Err(e) = store.relocate_media(&from, &to) {
-                    eprintln!("[hermodr] media migration for {}: {e}", account.id);
+                    log::warn!("media migration for {}: {e}", account.id);
                 }
             }
-            Err(e) => eprintln!("[hermodr] media migration for {}: {e}", account.id),
+            Err(e) => log::warn!("media migration for {}: {e}", account.id),
         }
     }
     for dir in &legacy {
@@ -289,6 +289,7 @@ fn connection_state(state: State<'_, AppState>) -> ConnectionState {
 /// as [`SERVICE_EVENT`] messages so the UI can render them as they happen.
 /// Starts the service for an account, replacing any running one.
 async fn start_service(app: &AppHandle, state: &AppState, account: &str) -> Result<(), String> {
+    log::info!("starting account {account}");
     // Stop whatever is running first, so the old account disconnects.
     if let Some(existing) = state.service.lock().unwrap().take() {
         existing.shutdown();
@@ -299,9 +300,10 @@ async fn start_service(app: &AppHandle, state: &AppState, account: &str) -> Resu
 
     remove_stale_sessions(&account_base(app, account), &config.session_path);
 
-    let (service, mut events) = Service::start(config)
-        .await
-        .map_err(|e| format!("failed to start service: {e}"))?;
+    let (service, mut events) = Service::start(config).await.map_err(|e| {
+        log::error!("failed to start account {account}: {e:#}");
+        format!("failed to start service: {e}")
+    })?;
     let service = Arc::new(service);
 
     // `events` was registered before the connection attempt, so the pairing code
@@ -313,6 +315,7 @@ async fn start_service(app: &AppHandle, state: &AppState, account: &str) -> Resu
         loop {
             match events.recv().await {
                 Ok(ServiceEvent::LoggedOut) => {
+                    log::warn!("account {account_id} was logged out; its session is dropped");
                     forget_session(&emitter, &account_id, &service_for_events);
                     let _ = emitter.emit(SERVICE_EVENT, &ServiceEvent::LoggedOut);
                     // Holding the service keeps its session database open.
@@ -326,7 +329,7 @@ async fn start_service(app: &AppHandle, state: &AppState, account: &str) -> Resu
                     // `Connected`: an offline-sync burst is larger than any
                     // buffer. Re-announce the state so the UI catches up. The
                     // messages themselves are in the store to be refetched.
-                    eprintln!("[hermodr] dropped {dropped} service event(s)");
+                    log::warn!("UI fell behind, dropped {dropped} service event(s)");
                     let _ = emitter.emit(SERVICE_EVENT, &resync_event(&service_for_events));
                 }
                 Err(_) => break,
@@ -522,6 +525,7 @@ fn rename_account(
 /// Removes an account and its data, switching to another if it was active.
 #[tauri::command]
 async fn remove_account(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
+    log::info!("removing account {id}");
     {
         let mut file = state.accounts.lock().unwrap();
         file.accounts.retain(|a| a.id != id);
@@ -1343,23 +1347,32 @@ impl std::io::Write for Tee {
     }
 }
 
+/// Where [`init_logging`] writes.
+fn log_path(app: &AppHandle) -> PathBuf {
+    data_dir(app).join("hermodr.log")
+}
+
 /// Sends logs and panics to `<app data>/hermodr.log` as well as stderr, which
-/// is discarded when the app is launched from a desktop entry. The file starts
-/// over once it passes 5 MB.
-fn init_logging(dir: &std::path::Path) {
-    // History sync and peer requests fail silently otherwise. RUST_LOG overrides.
-    let mut builder = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(
-        "warn,whatsapp_rust::history_sync=info,whatsapp_rust::pdo=info",
-    ));
-    let path = dir.join("hermodr.log");
-    let fresh = std::fs::metadata(&path).is_ok_and(|m| m.len() > 5 << 20);
-    let _ = std::fs::create_dir_all(dir);
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .append(!fresh)
-        .truncate(fresh)
-        .open(&path);
+/// is discarded when the app is launched from a desktop entry. Past 5 MB the
+/// file moves to `hermodr.log.old`, so the run before a crash is still there.
+fn init_logging(path: &std::path::Path) {
+    // Our crates and the UI (`ui`) log at info, debug in dev builds; history
+    // sync and peer requests fail silently otherwise. RUST_LOG overrides.
+    let ours = if cfg!(debug_assertions) { "debug" } else { "info" };
+    let filter = format!(
+        "warn,hermodr_lib={ours},hermodr_core={ours},ui={ours},\
+         whatsapp_rust::history_sync=info,whatsapp_rust::pdo=info"
+    );
+    let mut builder = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(filter));
+    builder.format_timestamp_millis();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if std::fs::metadata(path).is_ok_and(|m| m.len() > 5 << 20) {
+        let _ = std::fs::rename(path, path.with_extension("log.old"));
+    }
+    let file = std::fs::OpenOptions::new().create(true).append(true).open(path);
+    let opened = file.is_ok();
     if let Ok(file) = file {
         if let Ok(panics) = file.try_clone() {
             let default = std::panic::take_hook();
@@ -1378,6 +1391,35 @@ fn init_logging(dir: &std::path::Path) {
         builder.target(env_logger::Target::Pipe(Box::new(Tee(file))));
     }
     builder.init();
+    log::info!(
+        "Hermóðr {} on {} {}",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+    );
+    if opened {
+        log::info!("logging to {}", path.display());
+    } else {
+        log::warn!("could not open {}; logging to stderr only", path.display());
+    }
+}
+
+/// Writes a line from the UI into the log under the `ui` target.
+#[tauri::command(async)]
+fn frontend_log(level: String, message: String) {
+    let level = match level.as_str() {
+        "error" => log::Level::Error,
+        "warn" => log::Level::Warn,
+        "debug" => log::Level::Debug,
+        _ => log::Level::Info,
+    };
+    log::log!(target: "ui", level, "{message}");
+}
+
+/// Opens the log file with the desktop's default application.
+#[tauri::command(async)]
+fn open_log(app: AppHandle) -> Result<(), String> {
+    shell_open(log_path(&app).as_os_str())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1392,7 +1434,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .setup(|app| {
-            init_logging(&data_dir(app.handle()));
+            init_logging(&log_path(app.handle()));
             let accounts = load_accounts(app.handle());
             migrate_media(app.handle(), &accounts);
 
@@ -1489,6 +1531,8 @@ pub fn run() {
             load_older,
             flush_media,
             clear_history,
+            frontend_log,
+            open_log,
             download_media,
             set_chat_auto_download,
             chat_for_message,

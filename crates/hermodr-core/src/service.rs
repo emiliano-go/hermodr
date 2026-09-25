@@ -46,7 +46,7 @@ async fn fetch_older(client: &Arc<Client>, store: &MessageStore, chat: &str, cou
         .fetch_message_history(&jid, &id, from_me, timestamp * 1000, count)
         .await
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    eprintln!("[hermodr] asked the phone for {count} messages before {id} in {chat} (session {session})");
+    log::info!("asked the phone for {count} messages before {id} in {chat} (session {session})");
     Ok(())
 }
 
@@ -542,6 +542,14 @@ impl Service {
     /// startup, so a receiver created afterwards would miss it; the returned one
     /// is guaranteed to see every event from the beginning.
     pub async fn start(config: ServiceConfig) -> Result<(Self, broadcast::Receiver<ServiceEvent>)> {
+        log::info!(
+            "starting: session {}, messages {}, media {:?}, retention {:?}, full history {}",
+            config.session_path.display(),
+            config.messages_path.display(),
+            config.media_dir,
+            config.retention,
+            config.accept_full_history,
+        );
         let store = Arc::new(MessageStore::open(
             &config.messages_path,
             config.retention,
@@ -549,10 +557,10 @@ impl Service {
         let (events, initial_rx) = broadcast::channel(256);
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
 
-        if let Ok(removed) = reclaim_oversized_secrets(&config.session_path, &config.retention, &store) {
-            if removed > 0 {
-                println!("[service] reclaimed {removed} stale decryption secret(s)");
-            }
+        match reclaim_oversized_secrets(&config.session_path, &config.retention, &store) {
+            Ok(0) => {}
+            Ok(removed) => log::info!("reclaimed {removed} stale decryption secret(s)"),
+            Err(e) => log::warn!("could not reclaim stale decryption secrets: {e}"),
         }
 
         let policy = if config.accept_full_history {
@@ -592,6 +600,7 @@ impl Service {
                     let events = events.clone();
                     let qr_state = qr_state.clone();
                     async move {
+                        log::info!("pairing code issued");
                         *qr_state.lock().unwrap() = Some(code.clone());
                         let _ = events.send(ServiceEvent::QrCode { code });
                     }
@@ -612,6 +621,7 @@ impl Service {
                     let store = store.clone();
                     let session_path = session_path.clone();
                     async move {
+                        log::info!("connected");
                         connected_state.store(true, Ordering::SeqCst);
                         // The code is spent once paired.
                         *qr_state.lock().unwrap() = None;
@@ -633,9 +643,7 @@ impl Service {
                                     Ok(_) => {
                                         backfill_lid_names(&session_path, &store);
                                         if let Ok(count) = store.saved_name_count() {
-                                            println!(
-                                                "[service] address book: {count} saved name(s)"
-                                            );
+                                            log::info!("address book: {count} saved name(s)");
                                             if count > 0 {
                                                 let _ =
                                                     events.send(ServiceEvent::NamesUpdated { count });
@@ -643,7 +651,7 @@ impl Service {
                                         }
                                     }
                                     Err(e) => {
-                                        eprintln!("[service] contact resync failed: {e}");
+                                        log::warn!("contact resync failed: {e}");
                                     }
                                 }
                                 // Pins live in a different collection.
@@ -651,7 +659,7 @@ impl Service {
                                     .resync_app_state_collection(WAPatchName::RegularLow)
                                     .await
                                 {
-                                    eprintln!("[service] pin resync failed: {e}");
+                                    log::warn!("pin resync failed: {e}");
                                 }
                             });
                         }
@@ -688,6 +696,7 @@ impl Service {
                     async move {
                         match event.as_ref() {
                             Event::Messages(batch) => {
+                                log::debug!("{} live message(s)", batch.messages.len());
                                 let _commit = store.batch();
                                 let client = client_for_events.get().cloned();
                                 // Our own addresses, so a mention can be
@@ -1007,23 +1016,30 @@ impl Service {
                                             });
                                         }
                                     }
-                                    let _ = store.insert_message(&message);
+                                    if let Err(e) = store.insert_message(&message) {
+                                        log::error!("could not store message {} in {chat}: {e}", message.header.id);
+                                    }
                                     let _ = events.send(ServiceEvent::Message { message: Box::new(message) });
                                 }
                                 // Bound the store right after writes so the
                                 // limit holds even if the process stops.
-                                if let Ok(removed) = store.enforce_retention() {
-                                    if removed > 0 {
+                                match store.enforce_retention() {
+                                    Ok(0) => {}
+                                    Ok(removed) => {
+                                        log::debug!("retention removed {removed} message(s)");
                                         let _ = events
                                             .send(ServiceEvent::RetentionApplied { removed });
                                     }
+                                    Err(e) => log::error!("retention failed: {e}"),
                                 }
                             }
                             Event::Disconnected(_) => {
+                                log::warn!("disconnected");
                                 connected.store(false, Ordering::SeqCst);
                                 let _ = events.send(ServiceEvent::Disconnected);
                             }
-                            Event::LoggedOut(_) => {
+                            Event::LoggedOut(reason) => {
+                                log::warn!("logged out: {reason:?}");
                                 connected.store(false, Ordering::SeqCst);
                                 let _ = events.send(ServiceEvent::LoggedOut);
                             }
@@ -1134,22 +1150,24 @@ impl Service {
                             // show how much of the backlog is still arriving.
                             Event::OfflineSyncPreview(preview) => {
                                 let pending = preview.messages.max(0) as usize;
+                                log::info!("offline sync: {pending} message(s) pending");
                                 if pending > 0 {
                                     let _ = events.send(ServiceEvent::Syncing { pending });
                                 }
                             }
                             Event::OfflineSyncCompleted(_) => {
+                                log::info!("offline sync complete");
                                 let _ = events.send(ServiceEvent::Synced);
                             }
                             // Pairing's recent window and "load older" answers
                             // arrive here, never as `Messages`.
                             Event::HistorySync(sync) => {
                                 let Some(history) = sync.get() else {
-                                    eprintln!("[hermodr] history sync type {} failed to decode", sync.sync_type());
+                                    log::warn!("history sync type {} failed to decode", sync.sync_type());
                                     return;
                                 };
-                                eprintln!(
-                                    "[hermodr] history sync type {} ({:?}): {} conversation(s), {} message(s), {} push name(s), {} LID mapping(s)",
+                                log::info!(
+                                    "history sync type {} ({:?}): {} conversation(s), {} message(s), {} push name(s), {} LID mapping(s)",
                                     sync.sync_type(),
                                     sync.peer_data_request_session_id(),
                                     history.conversations.len(),
@@ -1264,7 +1282,10 @@ impl Service {
                                         };
                                         // Old messages must not raise unread counts.
                                         stored.local.read = true;
-                                        added |= store.insert_message(&stored).is_ok();
+                                        match store.insert_message(&stored) {
+                                            Ok(()) => added = true,
+                                            Err(e) => log::error!("could not store history message in {chat}: {e}"),
+                                        }
                                     }
                                     if added {
                                         chats.push(chat);
@@ -1346,6 +1367,15 @@ impl Service {
                                 if store.insert_message(&message).is_ok() {
                                     let _ = events.send(ServiceEvent::Message { message: Box::new(message) });
                                 }
+                            }
+                            Event::UndecryptableMessage(stub) => {
+                                log::warn!(
+                                    "could not decrypt message {} in {} from {} ({:?})",
+                                    stub.info.id,
+                                    stub.info.source.chat,
+                                    stub.info.source.sender,
+                                    stub.unavailable_type,
+                                );
                             }
                             // Chat pins are account state; mirror them so the
                             // list matches the phone.
@@ -1758,7 +1788,7 @@ impl Service {
                         let _ = self.store.set_name(&jid.to_string(), &found);
                         out.insert(asked, found);
                     } else {
-                        eprintln!("[hermodr] no name known for {jid} (shown as {:?})", out.get(&asked));
+                        log::debug!("no name known for {jid} (shown as {:?})", out.get(&asked));
                     }
                 }
             }

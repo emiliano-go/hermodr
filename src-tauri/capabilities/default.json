@@ -78,6 +78,8 @@
     "allow-load-older",
     "allow-flush-media",
     "allow-clear-history",
+    "allow-frontend-log",
+    "allow-open-log",
     "allow-download-media",
     "allow-set-chat-auto-download"
   ]
