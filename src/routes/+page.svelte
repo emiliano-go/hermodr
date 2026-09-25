@@ -3657,10 +3657,7 @@
     items={menuItems(m)}
     reactions={QUICK_REACTIONS}
     current={reactionsFor.get(m.id)?.find((r) => r.mine)?.emoji ?? null}
-    onreact={(emoji) => {
-      menu = null;
-      act(() => invoke("react", { target: target(m), emoji }));
-    }}
+    onreact={(emoji) => act(() => invoke("react", { target: target(m), emoji }))}
     onclose={() => (menu = null)} />
 {/if}
 

@@ -13,6 +13,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import Icon from "$lib/Icon.svelte";
+  import { motion } from "$lib/theme.svelte";
 
   let {
     x,
@@ -36,6 +37,14 @@
 
   let menu: HTMLDivElement | undefined = $state();
   let pos = $state({ left: 0, top: 0 });
+  let closing = $state(false);
+
+  /** Fades out, then tells the parent to drop the menu. */
+  function close() {
+    if (closing) return;
+    closing = true;
+    setTimeout(onclose, motion(120));
+  }
 
   // Opens at the pointer but never past the window's edges.
   onMount(() => {
@@ -49,20 +58,21 @@
 </script>
 
 <svelte:window
-  onkeydown={(e) => e.key === "Escape" && onclose()}
-  onblur={onclose}
-  onresize={onclose} />
+  onkeydown={(e) => e.key === "Escape" && close()}
+  onblur={close}
+  onresize={close} />
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <div
   class="catcher"
+  class:closing
   role="presentation"
-  onclick={onclose}
+  onclick={close}
   oncontextmenu={(e) => {
     e.preventDefault();
-    onclose();
+    close();
   }}></div>
-<div class="menu" role="menu" bind:this={menu} style="left: {pos.left}px; top: {pos.top}px">
+<div class="menu" class:closing role="menu" bind:this={menu} style="left: {pos.left}px; top: {pos.top}px">
   <div class="reactions">
     {#each reactions as emoji (emoji)}
       <button
@@ -70,7 +80,10 @@
         class:mine={current === emoji}
         role="menuitem"
         aria-label="React {emoji}"
-        onclick={() => onreact(current === emoji ? "" : emoji)}>{emoji}</button>
+        onclick={() => {
+          close();
+          onreact(current === emoji ? "" : emoji);
+        }}>{emoji}</button>
     {/each}
   </div>
   {#each items as item (item.label)}
@@ -80,7 +93,7 @@
       class:danger={item.danger}
       role="menuitem"
       onclick={() => {
-        onclose();
+        close();
         item.action();
       }}>
       <Icon name={item.icon} size={18} />
@@ -113,6 +126,20 @@
       opacity: 0;
       transform: scale(0.96);
     }
+  }
+  .menu.closing {
+    animation: pop-out calc(0.12s * var(--motion-scale)) ease-in forwards;
+    pointer-events: none;
+  }
+  @keyframes pop-out {
+    to {
+      opacity: 0;
+      transform: scale(0.96);
+    }
+  }
+  /* The click that closed the menu is done; the next one should reach the chat. */
+  .catcher.closing {
+    pointer-events: none;
   }
   .reactions {
     display: flex;

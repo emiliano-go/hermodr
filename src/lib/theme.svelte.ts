@@ -118,7 +118,7 @@ body:has(.backdrop, .sheet-backdrop)::before { animation-play-state: paused; }
 }
 .icon:hover, .chip:hover, .send:hover { transform: translateY(-1px) scale(1.06); }
 .icon:active, .chip:active, .send:active, .confirm-actions button:active { transform: scale(0.94) !important; }
-.menu, .sheet, .attach-menu, .account-menu {
+.menu:not(.closing), .sheet, .attach-menu, .account-menu {
   animation: glass-in calc(0.38s * var(--motion-scale)) cubic-bezier(0.34, 1.4, 0.64, 1) both !important;
 }
 @keyframes glass-in {
