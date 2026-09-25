@@ -60,7 +60,11 @@ export function inline(text: string): Inline[] {
   return out;
 }
 
+const blockCache = new Map<string, Block[]>();
+
 export function blocks(text: string): Block[] {
+  const cached = blockCache.get(text);
+  if (cached) return cached;
   const out: Block[] = [];
   const parts = text.split(/```/);
   parts.forEach((part, i) => {
@@ -91,7 +95,12 @@ export function blocks(text: string): Block[] {
     }
   });
   // Blank lines around fences leave empty paragraphs behind.
-  return out.filter((b) => b.kind !== "para" || b.lines.some((l) => l.length > 0));
+  const result = out.filter((b) => b.kind !== "para" || b.lines.some((l) => l.length > 0));
+  // Parsing is pure; keep the last thousand texts so re-renders do not re-parse
+  // a chat full of long messages.
+  if (blockCache.size >= 1000) blockCache.clear();
+  blockCache.set(text, result);
+  return result;
 }
 
 /** The text without its formatting marks, for previews and notifications. */
