@@ -13,7 +13,7 @@ use anyhow::Result;
 
 pub use history::HistoryPolicy;
 pub use service::{
-    AdminReport, GroupInfo, Participant, Profile, SearchResult, SendOptions, Service, ServiceConfig,
+    AdminReport, GroupInfo, InviteInfo, UserProfile, Participant, Profile, SearchResult, SendOptions, Service, ServiceConfig,
     ServiceEvent, VoiceNote,
 };
 pub use store::{

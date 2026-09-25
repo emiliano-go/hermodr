@@ -258,6 +258,36 @@ pub struct GroupInfo {
     pub allow_admin_reports: bool,
 }
 
+/// What an invite link card shows about its group.
+#[derive(Debug, Clone, Serialize)]
+pub struct InviteInfo {
+    pub jid: String,
+    pub subject: Option<String>,
+    pub description: Option<String>,
+    pub size: u32,
+    pub created_at: Option<u64>,
+    /// Joining needs an admin's approval.
+    pub approval: bool,
+    pub community: bool,
+    /// We are already in it.
+    pub joined: bool,
+    pub picture: Option<String>,
+}
+
+/// What a profile card shows about someone.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct UserProfile {
+    pub jid: String,
+    /// Saved, push, business or user name; `None` when only the number is known.
+    pub name: Option<String>,
+    /// Phone number digits, when known.
+    pub number: Option<String>,
+    pub username: Option<String>,
+    pub about: Option<String>,
+    /// Verified business name, for business accounts.
+    pub business: Option<String>,
+}
+
 /// A message reported to a group's admins, with who reported it and when.
 #[derive(Debug, Clone, Serialize)]
 pub struct AdminReport {
@@ -777,11 +807,17 @@ impl Service {
                                         continue;
                                     }
 
-                                    let auto_download = store
-                                        .chat_auto_download(&chat)
-                                        .ok()
-                                        .flatten()
-                                        .unwrap_or(auto_download_default);
+                                    // Stickers and voice notes are small and read as part
+                                    // of the conversation, so WhatsApp always fetches them.
+                                    let base = inbound.message.get_base_message();
+                                    let small = base.sticker_message.is_set()
+                                        || base.audio_message.as_option().is_some_and(|a| a.ptt == Some(true));
+                                    let auto_download = small
+                                        || store
+                                            .chat_auto_download(&chat)
+                                            .ok()
+                                            .flatten()
+                                            .unwrap_or(auto_download_default);
                                     let Some(mut message) = incoming_message(
                                         inbound,
                                         client.as_deref(),
@@ -1266,6 +1302,35 @@ impl Service {
                 label,
             });
         }
+        // Group metadata rarely carries usernames; one usync query fills them in,
+        // and gives members we only know by number a username or business name.
+        let jids: Vec<Jid> = participants.iter().filter_map(|p| p.jid.parse().ok()).collect();
+        if let Ok(infos) = self.client.contacts().get_user_info(&jids).await {
+            let numeric = |n: &str| n.trim_start_matches('+').chars().all(|c| c.is_ascii_digit());
+            for p in participants.iter_mut() {
+                let user = p.jid.split('@').next().unwrap_or_default();
+                let Some(info) = infos.values().find(|i| {
+                    i.jid.user == user
+                        || i.lid.as_ref().is_some_and(|l| l.user == user)
+                        || p.number.as_deref() == Some(i.jid.user.as_str())
+                }) else {
+                    continue;
+                };
+                if p.username.is_none() {
+                    p.username = info.username.as_ref().map(|u| u.to_string());
+                }
+                if numeric(&p.name) {
+                    if let Some(better) = info
+                        .verified_name
+                        .as_ref()
+                        .and_then(|v| v.name.clone())
+                        .or_else(|| p.username.clone())
+                    {
+                        p.name = better;
+                    }
+                }
+            }
+        }
         participants.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
         let info = GroupInfo {
@@ -1427,6 +1492,7 @@ impl Service {
             .collect();
         let push_name = self.client.push_name();
         let mut out = std::collections::HashMap::new();
+        let mut unknown: Vec<(String, Jid)> = Vec::new();
         for jid in jids {
             let Ok(parsed) = jid.parse::<Jid>() else { continue };
             let bare = parsed.to_non_ad();
@@ -1452,12 +1518,104 @@ impl Service {
                     }
                 }
             }
-            let name = name.filter(|n| !numeric(n)).or(number);
-            if let Some(name) = name {
-                out.insert(jid.clone(), name);
+            match name.filter(|n| !numeric(n)) {
+                Some(name) => {
+                    out.insert(jid.clone(), name);
+                }
+                None => {
+                    if let Some(number) = number {
+                        out.insert(jid.clone(), number);
+                    }
+                    unknown.push((jid.clone(), bare));
+                }
+            }
+        }
+        // Push names only travel with messages; for anyone we have not heard
+        // from, the username or verified business name is the next best thing.
+        if !unknown.is_empty() {
+            let query: Vec<Jid> = unknown.iter().map(|(_, j)| j.clone()).collect();
+            if let Ok(infos) = self.client.contacts().get_user_info(&query).await {
+                for (asked, jid) in unknown {
+                    let info = infos.values().find(|i| {
+                        i.jid.user == jid.user || i.lid.as_ref().is_some_and(|l| l.user == jid.user)
+                    });
+                    let found = info.and_then(|i| {
+                        i.verified_name
+                            .as_ref()
+                            .and_then(|v| v.name.clone())
+                            .or_else(|| i.username.as_ref().map(|u| u.to_string()))
+                    });
+                    if let Some(found) = found.filter(|n| !n.trim().is_empty()) {
+                        let _ = self.store.set_name(&jid.to_string(), &found);
+                        out.insert(asked, found);
+                    }
+                }
             }
         }
         out
+    }
+
+    /// A group invite link's group, without joining it.
+    pub async fn invite_info(&self, link: &str) -> Result<InviteInfo> {
+        let group = self
+            .client
+            .groups()
+            .get_invite_info(link)
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let jid = group.id.to_string();
+        // Already a member when the chat is here.
+        let joined = self.store.chats()?.iter().any(|c| c.chat == jid);
+        let picture = self.avatar(&jid).await.ok().flatten();
+        Ok(InviteInfo {
+            size: group.size.unwrap_or(group.participants.len() as u32),
+            subject: group.subject,
+            description: group.description.filter(|d| !d.trim().is_empty()),
+            created_at: group.creation_time,
+            approval: group.membership_approval,
+            community: group.is_parent_group,
+            joined,
+            picture,
+            jid,
+        })
+    }
+
+    /// Joins through an invite link; `pending` when an admin has to approve.
+    pub async fn join_invite(&self, link: &str) -> Result<(String, bool)> {
+        use whatsapp_rust::JoinGroupResult;
+        let joined = self
+            .client
+            .groups()
+            .join_with_invite_code(link)
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let pending = matches!(joined, JoinGroupResult::PendingApproval(_));
+        Ok((joined.group_jid().to_string(), pending))
+    }
+
+    /// Everything a profile card shows about someone, fetched fresh.
+    pub async fn user_profile(&self, jid: &str) -> Result<UserProfile> {
+        let bare = jid.parse::<Jid>()?.to_non_ad();
+        let key = bare.to_string();
+        let mut profile = UserProfile { jid: key.clone(), ..Default::default() };
+        profile.number = if bare.is_pn() {
+            Some(bare.user.to_string())
+        } else {
+            self.client.get_lid_pn_entry(&bare).await.ok().flatten().map(|e| e.phone_number.to_string())
+        };
+        if let Ok(infos) = self.client.contacts().get_user_info(std::slice::from_ref(&bare)).await {
+            if let Some(info) = infos.into_values().next() {
+                profile.about = info.status.filter(|s| !s.is_empty());
+                profile.username = info.username.map(|u| u.to_string());
+                profile.business = info.verified_name.and_then(|v| v.name);
+            }
+        }
+        profile.name = self
+            .names_for(std::slice::from_ref(&key))
+            .await
+            .remove(&key)
+            .filter(|n| !n.trim_start_matches('+').chars().all(|c| c.is_ascii_digit()));
+        Ok(profile)
     }
 
     /// Chats, contacts and groups matching a query.

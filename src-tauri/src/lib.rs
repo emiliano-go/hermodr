@@ -1132,6 +1132,31 @@ async fn avatar(state: State<'_, AppState>, jid: String) -> Result<Option<String
     state.service()?.avatar(&jid).await.map_err(|e| e.to_string())
 }
 
+/// Someone's profile card: names, number, username, about.
+#[tauri::command]
+async fn user_profile(state: State<'_, AppState>, jid: String) -> Result<hermodr_core::UserProfile, String> {
+    state.service()?.user_profile(&jid).await.map_err(|e| e.to_string())
+}
+
+/// The group behind an invite link, without joining it.
+#[tauri::command]
+async fn invite_info(state: State<'_, AppState>, link: String) -> Result<hermodr_core::InviteInfo, String> {
+    state.service()?.invite_info(&link).await.map_err(|e| e.to_string())
+}
+
+#[derive(serde::Serialize)]
+struct Joined {
+    jid: String,
+    /// An admin still has to approve the request.
+    pending: bool,
+}
+
+#[tauri::command]
+async fn join_invite(state: State<'_, AppState>, link: String) -> Result<Joined, String> {
+    let (jid, pending) = state.service()?.join_invite(&link).await.map_err(|e| e.to_string())?;
+    Ok(Joined { jid, pending })
+}
+
 /// Marks a view-once message opened and deletes its file.
 #[tauri::command]
 fn open_view_once(state: State<'_, AppState>, chat: String, id: String) -> Result<(), String> {
@@ -1260,6 +1285,9 @@ pub fn run() {
             admin_reports,
             set_allow_admin_reports,
             save_sticker,
+            user_profile,
+            invite_info,
+            join_invite,
             own_jid,
             send_typing,
             set_online,

@@ -6,6 +6,8 @@
   import VoiceRecorder, { type Recording } from "$lib/VoiceRecorder.svelte";
   import StarredList, { type StarredItem } from "$lib/StarredList.svelte";
   import ChatSettings, { type ChatRetention } from "$lib/ChatSettings.svelte";
+  import ProfileCard from "$lib/ProfileCard.svelte";
+  import InviteCard, { inviteLink } from "$lib/InviteCard.svelte";
   import { displayName as phoneName, phoneLabel } from "$lib/phone";
   import { polyfillCountryFlagEmojis } from "country-flag-emoji-polyfill";
   import flagFont from "country-flag-emoji-polyfill/dist/TwemojiCountryFlags.woff2?url";
@@ -918,6 +920,13 @@
     }
     return text;
   }
+  /** The profile card open beside a mention, name or picture. */
+  let profileCard = $state<{ jid: string; name: string; x: number; y: number; self: boolean } | null>(null);
+  function openProfile(jid: string, name: string, event: MouseEvent, self = false) {
+    event.stopPropagation();
+    profileCard = { jid: bare(jid), name, x: event.clientX, y: event.clientY, self };
+  }
+
   function mentionName(user: string) {
     return mentionTarget(user).name;
   }
@@ -1662,6 +1671,19 @@
   }
 
   /** Fetches a message's media on demand. */
+  // Stickers and voice notes read as part of the conversation, so ones that
+  // arrived before automatic fetching are fetched as soon as they are shown.
+  const autoFetched = new Set<string>();
+  $effect(() => {
+    if (!connected) return;
+    for (const m of messages) {
+      if (m.media_path || !(m.media_kind === "sticker" || m.media_kind === "audio")) continue;
+      if (autoFetched.has(m.id) || marks.view_once.some((v) => v.id === m.id)) continue;
+      autoFetched.add(m.id);
+      void untrack(() => downloadMedia(m));
+    }
+  });
+
   /** Media downloads in flight, so a second click does not start another. */
   let downloading = $state<Record<string, true>>({});
   async function downloadMedia(message: StoredMessage) {
@@ -2146,14 +2168,17 @@
         >{@render runs(n.children)}</s
       >{/if}{/each}{/snippet}
 
-{#snippet mentionPill(user: string)}{@const target = mentionTarget(user)}{@const picture = pictureOf(target.jid)}<span
+{#snippet mentionPill(user: string)}{@const target = mentionTarget(user)}{@const picture = pictureOf(target.jid)}<button
+    type="button"
     class="mention-pill"
     class:self={target.self}
+    onclick={(e) => openProfile(target.jid, target.name, e, target.self)}
+    ondblclick={(e) => e.stopPropagation()}
     >{#if picture}<img src={convertFileSrc(picture)} alt="" />{:else}<span
         class="mention-initials"
         style="--hue: {hue(target.jid)}"
         >{#if /\p{L}/u.test(target.name)}{initials(target.name)}{:else}<Icon name="user" size={11} />{/if}</span
-      >{/if}@{target.name}</span
+      >{/if}@{target.name}</button
   >{/snippet}
 
 {#snippet lines(list: Inline[][])}{#each list as line, i (i)}{#if i > 0}<br />{/if}{@render runs(line)}{/each}{/snippet}
@@ -2650,15 +2675,23 @@
               class:inline-meta={inlineMeta}
               class:has-reactions={!!reactions}
               class:sticker-only={message.media_kind === "sticker" &&
-                !!message.media_path &&
                 !message.reply_to_text &&
                 !showSender}
               class:menu-open={menu?.message.id === message.id}
               class:edited={edited.has(message.id)}
               data-id={message.id}>
               {#if showSender}
-                <span class="sender-avatar">{@render avatarFor(bare(message.sender), senderLabel(message))}</span>
-                <span class="sender" style="--hue: {hue(message.sender)}">{senderLabel(message)}</span>
+                <button
+                  type="button"
+                  class="sender-avatar"
+                  title="Profile"
+                  onclick={(e) => openProfile(message.sender, senderLabel(message), e)}
+                  >{@render avatarFor(bare(message.sender), senderLabel(message))}</button>
+                <button
+                  type="button"
+                  class="sender"
+                  style="--hue: {hue(message.sender)}"
+                  onclick={(e) => openProfile(message.sender, senderLabel(message), e)}>{senderLabel(message)}</button>
                 {#if memberOf(message.sender)?.label}
                   <span class="member-label">{memberOf(message.sender)?.label}</span>
                 {/if}
@@ -2724,6 +2757,14 @@
                   {/if}
                 {:else if message.media_kind === "sticker" && message.media_path}
                   <img class="sticker" src={convertFileSrc(message.media_path)} alt="Sticker" />
+                {:else if message.media_kind === "sticker"}
+                  <!-- Fetched on its own when shown; the placeholder keeps the sticker's space. -->
+                  <button
+                    class="sticker sticker-pending"
+                    title={downloading[message.id] ? "Loading sticker" : "Load sticker"}
+                    onclick={() => downloadMedia(message)}>
+                    {#if downloading[message.id]}<span class="spinner"></span>{:else}<Icon name="sticker" size={28} />{/if}
+                  </button>
                 {:else if message.media_kind === "image" && (message.media_path || message.media_thumb)}
                   <button
                     class="media-button"
@@ -2812,14 +2853,22 @@
                   {@render formatted(caption, message.from_me)}
                 {/if}
 
-                {#if message.media_kind && !message.media_path && !viewOnce && !["poll", "event", "audio"].includes(message.media_kind)}
+                {#if message.media_kind && !message.media_path && !viewOnce && !["poll", "event", "audio", "sticker"].includes(message.media_kind)}
                   <button class="download" onclick={() => downloadMedia(message)}>
                     <Icon name="download" size={14} />
                     Download {message.media_kind}
                   </button>
                 {/if}
 
-                {#if message.preview_url}
+                {@const invite = inviteLink(message.text)}
+                {#if invite}
+                  <InviteCard
+                    link={invite}
+                    onopen={async (jid) => {
+                      await refreshChats();
+                      void openChat(jid);
+                    }} />
+                {:else if message.preview_url}
                   <button
                     class="preview-card"
                     title="Open link"
@@ -3255,6 +3304,23 @@
       await refreshChats();
     }}
     onclose={() => (chatSettingsOpen = false)} />
+{/if}
+
+{#if profileCard}
+  {@const card = profileCard}
+  <ProfileCard
+    jid={card.jid}
+    x={card.x}
+    y={card.y}
+    name={card.name}
+    self={card.self}
+    picture={pictureOf(card.jid)}
+    tag={memberOf(card.jid)?.label ?? null}
+    onmessage={(jid) => {
+      profileCard = null;
+      void openChat(jid);
+    }}
+    onclose={() => (profileCard = null)} />
 {/if}
 
 {#if showStarred}
@@ -4008,6 +4074,13 @@
     color: var(--mention-pill);
     background: var(--mention-pill-soft);
     white-space: nowrap;
+    border: 0;
+    font: inherit;
+    line-height: inherit;
+    cursor: pointer;
+  }
+  .mention-pill:hover {
+    text-decoration: underline;
   }
   .mention-pill.self {
     color: var(--mention);
@@ -4340,6 +4413,11 @@
     position: absolute;
     left: -38px;
     top: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: none;
+    cursor: pointer;
   }
   .sender-avatar .avatar {
     width: 28px;
@@ -4755,10 +4833,22 @@
     color: #eef0f2;
   }
   .sender {
+    align-self: flex-start;
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
     font-size: 12.8px;
     font-weight: 500;
     line-height: 22px;
     color: hsl(var(--hue) 65% 68%);
+    text-align: left;
+  }
+  button.sender {
+    cursor: pointer;
+  }
+  button.sender:hover {
+    text-decoration: underline;
   }
   .member-label {
     margin-top: -4px;
@@ -5039,6 +5129,16 @@
     height: 160px;
     object-fit: contain;
     display: block;
+  }
+  .sticker-pending {
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: 18px;
+    color: var(--faint);
+    cursor: pointer;
+    background: linear-gradient(100deg, var(--surface) 40%, var(--raised) 50%, var(--surface) 60%) 0 0 / 300% 100%;
+    animation: shimmer 1.4s linear infinite;
   }
   /* Stickers float free of a bubble, as in WhatsApp. */
   .bubble.sticker-only {

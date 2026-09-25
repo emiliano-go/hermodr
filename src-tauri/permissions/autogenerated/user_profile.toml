@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-user-profile"
+description = "Enables the user_profile command without any pre-configured scope."
+commands.allow = ["user_profile"]
+
+[[permission]]
+identifier = "deny-user-profile"
+description = "Denies the user_profile command without any pre-configured scope."
+commands.deny = ["user_profile"]

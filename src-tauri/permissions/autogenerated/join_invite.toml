@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-join-invite"
+description = "Enables the join_invite command without any pre-configured scope."
+commands.allow = ["join_invite"]
+
+[[permission]]
+identifier = "deny-join-invite"
+description = "Denies the join_invite command without any pre-configured scope."
+commands.deny = ["join_invite"]
