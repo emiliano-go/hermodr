@@ -1866,6 +1866,14 @@ impl Service {
             .unwrap_or_default()
     }
 
+    /// Our own display name, as peers see it. Empty before it is known.
+    ///
+    /// Read from the cached device snapshot rather than `profile`, which would
+    /// cost three network round trips for the same name.
+    pub fn push_name(&self) -> String {
+        self.client.push_name()
+    }
+
     /// Whether a destination is our own account, in either addressing form.
     ///
     /// A message to ourselves needs no network receipt to be delivered, so it
