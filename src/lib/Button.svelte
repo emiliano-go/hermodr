@@ -7,7 +7,7 @@
   import Icon, { type IconName } from "$lib/Icon.svelte";
   import type { Snippet } from "svelte";
 
-  export type ButtonVariant = "icon" | "primary" | "chip" | "send" | "menu";
+  export type ButtonVariant = "icon" | "primary" | "chip" | "send" | "menu" | "ghost";
 
   let {
     variant,
@@ -20,6 +20,8 @@
     pressed,
     /** Filter-chip trailing count, shown only when set. */
     count,
+    /** Destructive tone, currently only styled on ghost. */
+    danger = false,
     /** Extra (global) modifier class for spot tweaks: attach, tool-text, … */
     cls = "",
     children,
@@ -32,6 +34,7 @@
     selected?: boolean;
     pressed?: boolean;
     count?: number | string;
+    danger?: boolean;
     cls?: string;
     children?: Snippet;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -49,6 +52,7 @@
   type="button"
   class="btn btn-{variant} {cls}"
   class:on
+  class:is-danger={danger}
   aria-pressed={pressed}
   {...selectAttrs}
   {...rest}>
@@ -94,6 +98,31 @@
     background: var(--accent-hover);
   }
   .btn-primary:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  /* Subtle bordered button for secondary actions (Cancel, Duplicate, …). */
+  .btn-ghost {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--raised);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 14px;
+    padding: 8px 16px;
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--raised-2);
+  }
+  .btn-ghost.on {
+    background: var(--raised-2);
+  }
+  .btn-ghost.is-danger {
+    color: var(--danger);
+  }
+  .btn-ghost:disabled {
     opacity: 0.5;
     cursor: default;
   }

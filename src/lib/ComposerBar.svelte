@@ -396,7 +396,7 @@
           oncancel={() => (cropping = false)} />
       {:else if previewItem.kind === "image"}
         <img class="preview-large" src={previewItem.url} alt={previewItem.file.name} />
-        <button class="ghost crop-button" onclick={() => (cropping = true)}>Crop or resize</button>
+        <Button variant="ghost" cls="crop-button" onclick={() => (cropping = true)}>Crop or resize</Button>
       {:else if previewItem.kind === "video"}
         <div class="preview-video">
           <VideoPlayer src={previewItem.url} autoplay={false} />
@@ -730,10 +730,10 @@
     align-items: center;
     justify-content: center;
   }
-  .crop-button {
+  /* Arrives through Button's `cls`, so it must pierce into the child. */
+  :global(.crop-button) {
     align-self: center;
-  }
-  .file-icon {
+  }  .file-icon {
     color: var(--muted);
   }
   .caption {

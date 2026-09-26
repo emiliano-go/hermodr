@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from "$lib/Button.svelte";
   import Icon from "$lib/Icon.svelte";
   import ThemePreview, { type Scene } from "$lib/ThemePreview.svelte";
   import {
@@ -238,13 +239,13 @@
         oninput={(e) => (theme.name = e.currentTarget.value)} />
     {/if}
     <span class="spacer"></span>
-    <button class="ghost" onclick={() => duplicate(theme)}><Icon name="copy" size={14} /> Duplicate</button>
-    <button class="ghost" onclick={exportTheme}>{copied ? "Copied" : "Export"}</button>
-    <button class="ghost" class:on={importing} onclick={() => (importing = !importing)}>Import</button>
+    <Button variant="ghost" onclick={() => duplicate(theme)}><Icon name="copy" size={14} /> Duplicate</Button>
+    <Button variant="ghost" onclick={exportTheme}>{copied ? "Copied" : "Export"}</Button>
+    <Button variant="ghost" active={importing} onclick={() => (importing = !importing)}>Import</Button>
     {#if !builtIn}
-      <button class="ghost danger" onclick={() => removeTheme(theme.id)}>
+      <Button variant="ghost" danger onclick={() => removeTheme(theme.id)}>
         <Icon name="trash" size={14} /> Delete
-      </button>
+      </Button>
     {/if}
   </div>
 
@@ -260,8 +261,8 @@
       <div class="toolbar">
         <span class="hint">Paste a theme someone exported.</span>
         <span class="spacer"></span>
-        <button class="ghost" onclick={() => (importing = false)}>Cancel</button>
-        <button class="primary" disabled={!importText.trim()} onclick={importTheme}>Import theme</button>
+        <Button variant="ghost" onclick={() => (importing = false)}>Cancel</Button>
+        <Button variant="primary" disabled={!importText.trim()} onclick={importTheme}>Import theme</Button>
       </div>
     </div>
   {/if}
@@ -332,11 +333,11 @@
         accept="image/*"
         bind:this={picturePicker}
         onchange={(e) => setBackground(e.currentTarget.files?.[0])} />
-      <button class="ghost" onclick={() => picturePicker?.click()}>
+      <Button variant="ghost" onclick={() => picturePicker?.click()}>
         {customization.background ? "Change" : "Choose…"}
-      </button>
+      </Button>
       {#if customization.background}
-        <button class="ghost" onclick={() => removeAppPicture()}>Remove</button>
+        <Button variant="ghost" onclick={() => removeAppPicture()}>Remove</Button>
       {/if}
     </div>
 
@@ -509,7 +510,7 @@
         add CSS you trust. Remote fonts and images are blocked; embed them as <code>data:</code> URLs.
       </p>
     </div>
-    <button class="ghost" onclick={addExtension}><Icon name="plus" size={15} /> Add</button>
+    <Button variant="ghost" onclick={addExtension}><Icon name="plus" size={15} /> Add</Button>
   </div>
   {#if customization.extensions.length === 0}
     <div class="empty">No extensions yet.</div>
@@ -692,43 +693,7 @@
     gap: 8px;
     flex-wrap: wrap;
   }
-  .ghost,
-  .primary {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    border-radius: var(--radius);
-    font: inherit;
-    font-size: 13px;
-    padding: 6px 12px;
-    cursor: pointer;
-  }
-  .ghost {
-    background: var(--raised);
-    border: 1px solid var(--line-strong);
-    color: inherit;
-  }
-  .ghost:hover:not(:disabled),
-  .ghost.on {
-    background: var(--raised-2);
-  }
-  .ghost.danger {
-    color: var(--danger);
-  }
-  .primary {
-    background: var(--accent);
-    border: 1px solid var(--accent);
-    color: var(--accent-ink);
-    font-weight: 500;
-  }
-  .primary:hover:not(:disabled) {
-    background: var(--accent-hover);
-  }
-  .ghost:disabled,
-  .primary:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
+  /* Action buttons live in $lib/Button.svelte (ghost/primary variants). */
   .icon-btn {
     display: grid;
     place-items: center;

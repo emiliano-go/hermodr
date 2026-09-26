@@ -1,6 +1,7 @@
 <script lang="ts">
   import { fade, scale } from "svelte/transition";
   import { motion } from "$lib/theme.svelte";
+  import Button from "$lib/Button.svelte";
   import Icon from "$lib/Icon.svelte";
   import type { ChatEvent } from "$lib/EventCard.svelte";
 
@@ -163,9 +164,9 @@
 
     {#if failed}<p class="error">{failed}</p>{/if}
     <div class="actions">
-      <button type="button" class="ghost" onclick={onclose}>Cancel</button>
-      <button type="submit" class="primary" disabled={!valid || busy}
-        >{busy ? (initial ? "Saving…" : "Sending…") : initial ? "Save" : "Send"}</button
+      <Button variant="ghost" type="button" onclick={onclose}>Cancel</Button>
+      <Button variant="primary" type="submit" disabled={!valid || busy}
+        >{busy ? (initial ? "Saving…" : "Sending…") : initial ? "Save" : "Send"}</Button
       >
     </div>
   </form>
@@ -284,25 +285,5 @@
     gap: 8px;
     padding-top: 6px;
   }
-  .ghost,
-  .primary {
-    padding: 8px 16px;
-    border: 0;
-    border-radius: 6px;
-    font: inherit;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .ghost {
-    background: var(--raised);
-    color: var(--text);
-  }
-  .primary {
-    background: var(--accent);
-    color: var(--accent-ink);
-  }
-  .primary:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
+  /* Footer actions live in $lib/Button.svelte (ghost/primary variants). */
 </style>
