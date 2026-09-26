@@ -72,6 +72,7 @@ const COMMANDS: &[&str] = &[
     "open_log",
     "download_media",
     "set_chat_auto_download",
+    "mark_read_until",
     "set_chat_privacy",
     "chat_for_message",
     "qr_svg",

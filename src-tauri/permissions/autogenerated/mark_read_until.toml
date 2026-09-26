@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-mark-read-until"
+description = "Enables the mark_read_until command without any pre-configured scope."
+commands.allow = ["mark_read_until"]
+
+[[permission]]
+identifier = "deny-mark-read-until"
+description = "Denies the mark_read_until command without any pre-configured scope."
+commands.deny = ["mark_read_until"]
