@@ -274,6 +274,8 @@ fn config_for(app: &AppHandle, settings: &UiSettings, account: &str) -> ServiceC
         } else {
             PathBuf::from(":memory:")
         },
+        // Aliases outlive the history setting, so they never travel with it.
+        aliases_path: base.join("aliases.db"),
         retention: settings.retention,
         accept_full_history: settings.accept_full_history,
         auto_download_media: settings.auto_download_media,
@@ -1401,6 +1403,40 @@ fn set_chat_privacy(
         .map_err(|e| e.to_string())
 }
 
+/// Every contact alias in the account, keyed by each address form of its
+/// contact so the UI can look one up without knowing which form it holds.
+#[tauri::command(async)]
+fn contact_aliases(
+    state: State<'_, AppState>,
+) -> Result<std::collections::HashMap<String, Vec<String>>, String> {
+    state.service()?.all_aliases().map_err(|e| e.to_string())
+}
+
+/// Gives a contact a local alias so they can be addressed as `@alias`.
+///
+/// Fails when another contact already answers to it, so an alias always names
+/// one person. Nothing is sent to the phone and no name is changed.
+#[tauri::command(async)]
+fn add_contact_alias(state: State<'_, AppState>, jid: String, alias: String) -> Result<(), String> {
+    state
+        .service()?
+        .add_alias(&jid, &alias)
+        .map_err(|e| e.to_string())
+}
+
+/// Drops one of a contact's aliases.
+#[tauri::command(async)]
+fn remove_contact_alias(
+    state: State<'_, AppState>,
+    jid: String,
+    alias: String,
+) -> Result<(), String> {
+    state
+        .service()?
+        .remove_alias(&jid, &alias)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn set_online(state: State<'_, AppState>, online: bool) -> Result<(), String> {
     state.service()?.set_online(online).await.map_err(|e| e.to_string())
@@ -1751,6 +1787,9 @@ pub fn run() {
             download_media,
             set_chat_auto_download,
             set_chat_privacy,
+            contact_aliases,
+            add_contact_alias,
+            remove_contact_alias,
             chat_for_message,
             search,
             open_url,

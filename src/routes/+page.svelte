@@ -1035,6 +1035,9 @@
       // the loading screen. A cold start reaches here disconnected, then gates.
       if (!session.connectRequested && !session.gateDone) session.gateDone = true;
       await chats.refreshChats();
+      // Aliases need a live service, so they are read on every connect and on
+      // every account switch rather than once at boot.
+      await members.loadAliases();
     }
   }
 
@@ -1608,6 +1611,9 @@
     self={card.self}
     picture={chats.pictureOf(card.jid)}
     tag={members.memberOf(card.jid)?.label ?? null}
+    aliases={members.aliasesFor(card.jid)}
+    onaddalias={(alias) => members.addAlias(card.jid, alias)}
+    onremovealias={(alias) => void members.removeAlias(card.jid, alias)}
     onmessage={(jid) => {
       ui.profileCard = null;
       chats.showGroupInfo = false;

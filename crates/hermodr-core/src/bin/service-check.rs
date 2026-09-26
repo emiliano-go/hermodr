@@ -29,6 +29,7 @@ async fn main() -> Result<()> {
     let config = ServiceConfig {
         session_path: data_dir.join("session.db"),
         messages_path: data_dir.join("messages.db"),
+        aliases_path: data_dir.join("aliases.db"),
         retention,
         accept_full_history: false,
         auto_download_media: true,

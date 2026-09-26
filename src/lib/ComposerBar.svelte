@@ -62,9 +62,16 @@
     pending: PendingMedia[];
     sendOnce: boolean;
     recording: boolean;
-    mentionMatches: { jid: string; name: string; username: string | null; number: string | null }[];
+    mentionMatches: {
+      jid: string;
+      name: string;
+      username: string | null;
+      number: string | null;
+      aliases: string[];
+      token: string;
+    }[];
     mentionIndex: number;
-    onselectmention: (person: { jid: string; name: string }) => void;
+    onselectmention: (person: { jid: string; name: string; token: string }) => void;
     emojiToken: { query: string; start: number } | null;
     emojiMatches: Emoji[];
     emojiIndex: number;
@@ -214,7 +221,10 @@
         onclick={() => onselectmention(person)}
         onmouseenter={() => (mentionIndex = i)}>
         {person.name}
-        {#if person.username && person.username !== person.name}<span class="mention-handle"
+        <!-- The alias that matched, else their username. Either way it is a
+          hint: the row is addressed by name either way. -->
+        {#if person.token !== person.name}<span class="mention-handle"> - @{person.token}</span
+          >{:else if person.username && person.username !== person.name}<span class="mention-handle"
             >@{person.username}</span
           >{/if}
       </button>

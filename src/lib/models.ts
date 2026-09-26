@@ -53,6 +53,8 @@ export type SearchResult = {
   kind: string;
   saved: boolean;
   has_messages: boolean;
+  /** The contact's local aliases, which a query may have matched. */
+  aliases: string[];
 };
 export type GroupInfo = {
   subject: string | null;

@@ -26,6 +26,9 @@
     picture,
     self = false,
     tag = null,
+    aliases = [],
+    onaddalias,
+    onremovealias,
     onmessage,
     onclose,
   }: {
@@ -39,6 +42,11 @@
     self?: boolean;
     /** Their tag in the open group. */
     tag?: string | null;
+    /** The local aliases they answer to. */
+    aliases?: string[];
+    /** Stores the alias, resolving to the reason it was refused, or null. */
+    onaddalias?: (alias: string) => Promise<string | null>;
+    onremovealias?: (alias: string) => void;
     onmessage: (jid: string) => void;
     onclose: () => void;
   } = $props();
@@ -47,6 +55,12 @@
   let failed = $state(false);
   let width = $state(320);
   let height = $state(360);
+  let aliasDraft = $state("");
+  let aliasBusy = $state<string | null>(null);
+  let aliasError = $state<string | null>(null);
+  const aliasValue = $derived(aliasDraft.trim());
+  // Our own aliases would name ourselves, which `@all` already does.
+  const canAlias = $derived(!self && onaddalias !== undefined);
   let innerWidth = $state(window.innerWidth);
   let innerHeight = $state(window.innerHeight);
   // Opens beside the click and stays on screen as the loaded profile grows it.
@@ -74,6 +88,24 @@
       .map((w) => w[0].toUpperCase())
       .join(""),
   );
+
+  async function addAlias() {
+    if (!onaddalias || !aliasValue || aliasBusy) return;
+    aliasBusy = aliasValue;
+    aliasError = null;
+    // The reason is shown beside the field: a banner over the whole app for a
+    // mistyped alias would be out of place, and a rejected alias is a normal
+    // thing to hit while typing.
+    const refused = await onaddalias(aliasValue);
+    aliasBusy = null;
+    if (refused) aliasError = refused;
+    else aliasDraft = "";
+  }
+
+  function removeAlias(alias: string) {
+    if (!onremovealias || aliasBusy) return;
+    onremovealias(alias);
+  }
 </script>
 
 <svelte:window onkeydown={(e) => e.key === "Escape" && onclose()} bind:innerWidth bind:innerHeight />
@@ -117,6 +149,46 @@
         <p class="muted">Loading…</p>
       {/if}
     </div>
+
+    {#if canAlias}
+      <div class="section">
+        <h3>Aliases</h3>
+        <p class="alias-note">
+          Type <span class="alias-hint">@alias</span> in a group to mention them. These stay on this device and never change how anyone is shown.
+        </p>
+        {#if aliases.length > 0}
+          <ul class="alias-list">
+            {#each aliases as alias (alias)}
+              <li class="alias">
+                <span>@{alias}</span>
+                <button
+                  class="alias-drop"
+                  title="Remove @{alias}"
+                  aria-label="Remove @{alias}"
+                  disabled={aliasBusy !== null}
+                  onclick={() => removeAlias(alias)}><Icon name="x" size={12} /></button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+        <div class="alias-row">
+          <input
+            class="field"
+            maxlength="32"
+            placeholder="Add an alias"
+            value={aliasDraft}
+            oninput={(e) => (aliasDraft = e.currentTarget.value)}
+            onkeydown={(e) => e.key === "Enter" && addAlias()} />
+          <button
+            class="alias-add"
+            title="Add alias"
+            aria-label="Add alias"
+            disabled={aliasBusy !== null || !aliasValue}
+            onclick={addAlias}><Icon name="plus" size={16} /></button>
+        </div>
+        {#if aliasError}<p class="error-text">{aliasError}</p>{/if}
+      </div>
+    {/if}
 
     {#if !self}
       <!-- Direct chats are keyed by phone number, so prefer it over a LID. -->
@@ -240,6 +312,104 @@
   }
   .muted {
     color: var(--muted);
+  }
+  .alias-note {
+    color: var(--muted);
+    font-size: 12.5px;
+    line-height: 1.4;
+  }
+  /* The token as it will be typed in the composer. */
+  .alias-hint {
+    color: var(--accent-text);
+  }
+  .alias-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 8px 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .alias {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px 2px 2px 9px;
+    border-radius: 999px;
+    background: var(--raised);
+    color: var(--text);
+    font-size: 12px;
+  }
+  .alias-drop {
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: none;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .alias-drop:hover:not(:disabled) {
+    background: var(--raised-2);
+    color: var(--danger);
+  }
+  .alias-drop:disabled {
+    color: var(--faint);
+    cursor: default;
+  }
+  /* One field with its add button inside, on the right. */
+  .alias-row {
+    position: relative;
+    display: flex;
+    margin-top: 8px;
+  }
+  .field {
+    flex: 1;
+    min-width: 0;
+    padding: 7px 10px;
+    padding-right: 44px;
+    border: 1px solid var(--line-strong);
+    border-radius: 6px;
+    background: var(--surface);
+    color: inherit;
+    font: inherit;
+    font-size: 14px;
+  }
+  .field:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .alias-add {
+    position: absolute;
+    top: 50%;
+    right: 6px;
+    transform: translateY(-50%);
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius);
+    background: var(--accent);
+    color: var(--accent-ink);
+    cursor: pointer;
+  }
+  .alias-add:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+  .alias-add:disabled {
+    background: transparent;
+    color: var(--faint);
+    cursor: default;
+  }
+  .error-text {
+    margin: 8px 0 0;
+    color: var(--danger);
+    font-size: 13px;
   }
   .message {
     display: flex;

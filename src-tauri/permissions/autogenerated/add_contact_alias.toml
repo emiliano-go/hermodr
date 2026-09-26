@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-add-contact-alias"
+description = "Enables the add_contact_alias command without any pre-configured scope."
+commands.allow = ["add_contact_alias"]
+
+[[permission]]
+identifier = "deny-add-contact-alias"
+description = "Denies the add_contact_alias command without any pre-configured scope."
+commands.deny = ["add_contact_alias"]

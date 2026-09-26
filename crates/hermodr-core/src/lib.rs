@@ -4,6 +4,7 @@
 //! embedding WhatsApp Web. That removes the webview entirely and, more
 //! importantly, makes history sync a decision this program gets to make.
 
+pub mod aliases;
 pub mod history;
 pub mod ogg;
 pub mod service;
@@ -11,6 +12,7 @@ pub mod store;
 
 use anyhow::Result;
 
+pub use aliases::AliasStore;
 pub use history::HistoryPolicy;
 pub use service::{
     AdminReport, GroupInfo, GroupKind, InviteInfo, UserProfile, Participant, Profile, SearchResult, SendOptions, Service, ServiceConfig,

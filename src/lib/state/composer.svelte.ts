@@ -73,6 +73,13 @@ export class ComposerState {
     focusComposer() {},
   };
 
+  /**
+   * Autocomplete rows for the `@` being typed, capped at eight. A member is
+   * found by display name, by one of their local aliases, by their reserved
+   * username, or by number. `token` is what choosing the row puts in the draft:
+   * the alias that matched when one did, otherwise the name. Both are
+   * convertible on send, so the row reads the way the user typed it.
+   */
   mentionMatches = $derived.by(() => {
     const query = this.mentionQuery;
     if (query === null) return [];
@@ -81,21 +88,36 @@ export class ComposerState {
     // every member, which notifies them even with the chat muted.
     const all = chats.selectedChat?.endsWith("@g.us")
       ? [
-          { jid: "@all", name: "all", username: null, number: null },
-          { jid: "@all-override", name: "all-override", username: null, number: null },
+          { jid: "@all", name: "all", username: null, number: null, aliases: [], token: "all" },
+          {
+            jid: "@all-override",
+            name: "all-override",
+            username: null,
+            number: null,
+            aliases: [],
+            token: "all-override",
+          },
         ]
       : [];
-    // A member is found by nickname, reserved username or number, and inserted by nickname.
-    const memberList = members.participants.map((p) => ({
-      jid: p.jid,
-      name: members.displayName(p.name, p.jid),
-      username: p.username,
-      number: p.number,
-    }));
+    const memberList = members.participants.map((p) => {
+      const name = members.displayName(p.name, p.jid);
+      return {
+        jid: p.jid,
+        name,
+        username: p.username,
+        number: p.number,
+        aliases: members.aliasesFor(p.jid),
+        token: name,
+      };
+    });
     return [...all, ...memberList]
       .filter((p) =>
-        [p.name, p.username, p.number].some((field) => field?.toLowerCase().includes(needle)),
+        [p.name, p.username, p.number, ...p.aliases].some((f) => f?.toLowerCase().includes(needle)),
       )
+      .map((p) => ({
+        ...p,
+        token: p.aliases.find((a) => a.toLowerCase().includes(needle)) ?? p.name,
+      }))
       .slice(0, 8);
   });
 
@@ -241,18 +263,22 @@ export class ComposerState {
     }
   }
 
-  async selectMention(person: { jid: string; name: string }) {
+  /** Puts a chosen mention in the draft and remembers the token to convert on send. */
+  async selectMention(person: { jid: string; name: string; token: string }) {
     const input = this.inputEl;
     const token = this.currentMentionQuery();
     if (!input || !token) return;
     const caret = input.selectionStart ?? this.draft.length;
-    this.draft = this.draft.slice(0, token.start) + `@${person.name} ` + this.draft.slice(caret);
+    this.draft = this.draft.slice(0, token.start) + `@${person.token} ` + this.draft.slice(caret);
     this.mentionQuery = null;
-    if (!this.chosenMentions.some((m) => m.jid === person.jid)) {
-      this.chosenMentions = [...this.chosenMentions, { name: person.name, jid: person.jid }];
+    // Deduped by the text that went in, not by the person: the same contact
+    // addressed once by name and once by alias leaves two tokens, and dropping
+    // either one would send it as plain text.
+    if (!this.chosenMentions.some((m) => m.name === person.token)) {
+      this.chosenMentions = [...this.chosenMentions, { name: person.token, jid: person.jid }];
     }
     await tick();
-    const position = token.start + person.name.length + 2;
+    const position = token.start + person.token.length + 2;
     input.focus();
     input.setSelectionRange(position, position);
   }
@@ -373,7 +399,12 @@ export class ComposerState {
     }
   }
 
-  /** Turns the display text into wire text, naming mentions by number. */
+  /**
+   * Turns the display text into wire text, naming mentions by number. A
+   * mention goes out as `@<number>`, which every client renders as the
+   * contact's real name, so neither an alias nor a display name ever leaves
+   * this machine as itself.
+   */
   mentionPayload() {
     let text = this.draft.trim();
     const jids: string[] = [];
@@ -395,7 +426,17 @@ export class ComposerState {
       text = text.replace(token, `@${user}`);
       jids.push(mention.jid);
     }
-    return { text, jids };
+    // An alias typed without picking it from the list still means the mention,
+    // so it is converted the same way.
+    for (const { alias, jid } of members.groupAliases) {
+      const token = `@${alias}`;
+      if (!text.includes(token)) continue;
+      text = text.split(token).join(`@${jid.split("@")[0]}`);
+      jids.push(jid);
+    }
+    // The same person reached twice, once by name and once by alias, is still
+    // one notified participant.
+    return { text, jids: [...new Set(jids)] };
   }
 
   async send() {

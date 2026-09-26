@@ -26,6 +26,17 @@ export class MembersState {
   queuedNames: string[] = [];
   nameTimer: ReturnType<typeof setTimeout> | undefined = undefined;
 
+  /**
+   * Local aliases per contact, keyed by every address form the core knows that
+   * contact under, so a lookup by a group roster's LID and one by a direct
+   * chat's phone number both land on the same person.
+   *
+   * An alias is only ever an addressing aid: nothing here is shown as a name,
+   * and it is deliberately kept apart from `learnedNames`, which an alias must
+   * never be able to override.
+   */
+  aliases = $state<Record<string, string[]>>({});
+
   /** Who is typing in each chat, until they pause or ten seconds pass. */
   typing = $state<Record<string, { sender: string; state: string }[]>>({});
   typingTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -118,6 +129,52 @@ export class MembersState {
     return phoneName(name, jid);
   }
 
+  /** The aliases a contact answers to, or none. */
+  aliasesFor(jid: string) {
+    return this.aliases[bare(jid)] ?? [];
+  }
+
+  /**
+   * Reads every alias in the account. The whole set is one read: an account
+   * holds a handful, and the composer, the group filter and the profile card
+   * all want it at once.
+   */
+  async loadAliases() {
+    try {
+      this.aliases = await invoke<Record<string, string[]>>("contact_aliases");
+    } catch {
+      // An account that has not started yet has none, and the read is retried
+      // when it connects. A failed read leaves the aliases already in hand, so
+      // a dropped connection cannot make them disappear.
+    }
+  }
+
+  /**
+   * Gives a contact another alias. Returns the reason it was refused, or
+   * `null` once it is stored: the profile card shows the reason beside the
+   * field, where a whole-app banner for a mistyped alias would be out of place.
+   */
+  async addAlias(jid: string, alias: string): Promise<string | null> {
+    try {
+      await invoke("add_contact_alias", { jid, alias });
+    } catch (e) {
+      return String(e);
+    }
+    await this.loadAliases();
+    return null;
+  }
+
+  /** Drops one of a contact's aliases. */
+  async removeAlias(jid: string, alias: string) {
+    try {
+      await invoke("remove_contact_alias", { jid, alias });
+    } catch {
+      // The alias is gone from this machine either way, and the read below
+      // puts the store's version of events back if it was not.
+    }
+    await this.loadAliases();
+  }
+
   /** Who an `@<user>` token names: us, a group member, or whichever address form the core knows. */
   mentionTarget(user: string): { jid: string; name: string; self: boolean } {
     const own = session.me ? bare(session.me) : null;
@@ -152,19 +209,41 @@ export class MembersState {
   }
 
   /**
-   * `@Name` typed for a member, as older captions were sent, rewritten to the
-   * wire's `@<number>` so it draws as a mention tag too. Longest names first,
-   * so "Ana María" wins over "Ana".
+   * The open group's aliases, longest first, as the pairs a draft or a caption
+   * is rewritten with. Restricted to the roster on purpose: an alias naming
+   * somebody outside this chat is left as the words it is.
+   */
+  groupAliases = $derived.by(() => {
+    const out: { alias: string; jid: string }[] = [];
+    for (const p of this.participants) {
+      for (const alias of this.aliasesFor(p.jid)) out.push({ alias, jid: p.jid });
+    }
+    // Longest first, so one alias cannot be mistaken for the start of another.
+    return out.sort((a, b) => b.alias.length - a.alias.length);
+  });
+
+  /**
+   * `@Name` typed for a member, as older captions were sent, and `@alias` for
+   * one of their local aliases, both rewritten to the wire's `@<number>` so it
+   * draws as a mention tag too. Longest tokens first, so "Ana María" wins over
+   * "Ana".
    */
   asWireMentions(text: string) {
     if (!text.includes("@") || this.participants.length === 0) return text;
-    const named = this.participants
-      .filter((p) => p.name.length > 1 && !isPlaceholder(p.name))
-      .sort((a, b) => b.name.length - a.name.length);
+    const tokens: { token: string; user: string }[] = [];
+    for (const p of this.participants) {
+      if (p.name.length > 1 && !isPlaceholder(p.name)) {
+        tokens.push({ token: `@${p.name}`, user: p.jid.split("@")[0] });
+      }
+    }
+    // An alias is stored without a space, so it is always a whole token.
+    for (const { alias, jid } of this.groupAliases) {
+      tokens.push({ token: `@${alias}`, user: jid.split("@")[0] });
+    }
+    tokens.sort((a, b) => b.token.length - a.token.length);
     let out = text;
-    for (const p of named) {
-      const token = `@${p.name}`;
-      if (out.includes(token)) out = out.split(token).join(`@${p.jid.split("@")[0]}`);
+    for (const { token, user } of tokens) {
+      if (out.includes(token)) out = out.split(token).join(`@${user}`);
     }
     return out;
   }
@@ -296,6 +375,8 @@ export class MembersState {
   /** Mirrors resetUi: the roster is dropped, caches survive for the next switch. */
   resetAccount() {
     this.participants = [];
+    // Aliases are per account, not per chat, so they cannot survive the switch.
+    this.aliases = {};
   }
 }
 

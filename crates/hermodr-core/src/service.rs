@@ -31,6 +31,7 @@ use whatsapp_rust::{
 };
 
 use crate::{
+    aliases::AliasStore,
     history::HistoryPolicy,
     store::{LinkCard, LocalState, Media, MessageHeader, MessageStore, Quote, Retention, StoredMessage},
 };
@@ -508,6 +509,9 @@ pub struct SearchResult {
     pub saved: bool,
     /// Whether the chat already has messages locally.
     pub has_messages: bool,
+    /// The contact's local aliases, which the UI may match on. Empty for a
+    /// group: an alias addresses a person, not a room.
+    pub aliases: Vec<String>,
 }
 
 /// Everything the group info sidebar shows.
@@ -593,6 +597,9 @@ pub struct ServiceConfig {
     pub session_path: PathBuf,
     /// Message store database.
     pub messages_path: PathBuf,
+    /// Contact alias database. Kept out of the message store so aliases
+    /// survive `messages_path` being turned into an in-memory store.
+    pub aliases_path: PathBuf,
     /// How much history to keep locally.
     pub retention: Retention,
     /// Whether to pull the deep history sync during pairing.
@@ -611,6 +618,7 @@ impl ServiceConfig {
         Self {
             session_path: data_dir.join("session.db"),
             messages_path: data_dir.join("messages.db"),
+            aliases_path: data_dir.join("aliases.db"),
             retention: Retention::default(),
             accept_full_history: false,
             auto_download_media: true,
@@ -654,6 +662,8 @@ async fn fetch_group_subject(client: &Client, group: &str) -> Option<String> {
 pub struct Service {
     client: Arc<Client>,
     store: Arc<MessageStore>,
+    /// Local, per-contact aliases, kept in their own file beside the messages.
+    aliases: Arc<AliasStore>,
     events: broadcast::Sender<ServiceEvent>,
     /// Fires the shutdown signal. `None` once it has been sent.
     shutdown: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
@@ -693,9 +703,10 @@ impl Service {
     /// is guaranteed to see every event from the beginning.
     pub async fn start(config: ServiceConfig) -> Result<(Self, broadcast::Receiver<ServiceEvent>)> {
         log::info!(
-            "starting: session {}, messages {}, media {:?}, retention {:?}, full history {}",
+            "starting: session {}, messages {}, aliases {}, media {:?}, retention {:?}, full history {}",
             config.session_path.display(),
             config.messages_path.display(),
+            config.aliases_path.display(),
             config.media_dir,
             config.retention,
             config.accept_full_history,
@@ -704,6 +715,7 @@ impl Service {
             &config.messages_path,
             config.retention,
         )?);
+        let aliases = Arc::new(AliasStore::open(&config.aliases_path)?);
         let (events, initial_rx) = broadcast::channel(256);
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
 
@@ -1714,6 +1726,7 @@ impl Service {
             Self {
                 client,
                 store,
+                aliases,
                 events,
                 shutdown: Mutex::new(Some(shutdown_tx)),
                 media_dir,
@@ -2282,6 +2295,11 @@ impl Service {
 
         let local = self.store.chats()?;
         let local_jids: HashSet<String> = local.iter().map(|c| c.chat.clone()).collect();
+        // A local alias is the one thing that can find a contact whose name and
+        // number say nothing about the query, so it is matched alongside them.
+        // Read once up front: an account holds a handful of aliases.
+        let aliases = self.all_aliases()?;
+        let of = |jid: &str| -> Vec<String> { aliases.get(jid).cloned().unwrap_or_default() };
         let mut results: Vec<SearchResult> = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
 
@@ -2299,6 +2317,7 @@ impl Service {
                     name,
                     number,
                     has_messages: true,
+                    aliases: of(&chat.chat),
                 });
             }
         }
@@ -2315,6 +2334,43 @@ impl Service {
                 name,
                 number: user_part(&jid),
                 has_messages: local_jids.contains(&jid),
+                aliases: of(&jid),
+            });
+        }
+
+        // Contacts found by nothing but an alias. One row is one contact, so
+        // this runs per alias rather than per address form; the form a name is
+        // known under is preferred, since a phone number reads better than a
+        // bare LID.
+        for (jid, alias) in self.aliases.all()? {
+            if !alias.to_lowercase().contains(&needle) {
+                continue;
+            }
+            let forms = self.contact_forms(&jid);
+            if forms.iter().any(|form| seen.contains(form)) {
+                continue;
+            }
+            // A form the contact has a name under beats the one the alias was
+            // stored against, and a phone number beats a bare LID, which is a
+            // number nobody recognises.
+            let named = forms
+                .iter()
+                .find_map(|form| self.store.name_for(form).ok().flatten().filter(|n| !is_placeholder_name(n)))
+                .or_else(|| forms.iter().find(|f| f.ends_with("@s.whatsapp.net")).cloned())
+                .unwrap_or_else(|| jid.clone());
+            let number = user_part(&named);
+            let name = self.store.name_for(&named).ok().flatten().unwrap_or_else(|| number.clone());
+            for form in &forms {
+                seen.insert(form.clone());
+            }
+            results.push(SearchResult {
+                kind: "contact".to_string(),
+                saved: self.store.name_is_saved(&named),
+                jid: named.clone(),
+                name,
+                number,
+                has_messages: forms.iter().any(|form| local_jids.contains(form)),
+                aliases: of(&named),
             });
         }
 
@@ -2328,6 +2384,7 @@ impl Service {
                     kind: "group".into(),
                     saved: false,
                     has_messages: local_jids.contains(&jid),
+                    aliases: of(&jid),
                 });
             }
         }
@@ -2816,6 +2873,42 @@ impl Service {
 
     pub fn set_chat_privacy(&self, chat: &str, typing: Option<bool>, receipts: Option<bool>) -> Result<()> {
         self.store.set_chat_privacy(chat, typing, receipts)
+    }
+
+    /// The address forms one contact answers to: [`contact_forms`].
+    fn contact_forms(&self, jid: &str) -> Vec<String> {
+        contact_forms(&self.store, jid)
+    }
+
+    /// Every alias in the account, keyed by each address form of its contact.
+    ///
+    /// The account holds a handful of aliases at most, so the UI takes them
+    /// all in one go rather than asking per contact.
+    pub fn all_aliases(&self) -> Result<std::collections::HashMap<String, Vec<String>>> {
+        use std::collections::HashMap;
+        let mut out: HashMap<String, Vec<String>> = HashMap::new();
+        for (jid, alias) in self.aliases.all()? {
+            for form in self.contact_forms(&jid) {
+                out.entry(form).or_default().push(alias.clone());
+            }
+        }
+        Ok(out)
+    }
+
+    /// Gives a contact another local alias for `@` addressing. Rejected when
+    /// another contact already answers to it, so an alias names one person.
+    pub fn add_alias(&self, jid: &str, alias: &str) -> Result<()> {
+        self.aliases.add(&self.contact_forms(jid), alias)
+    }
+
+    /// Drops one of a contact's aliases. Every address form is tried, since
+    /// which one the row was written under depends on what was known at the
+    /// time the alias was added.
+    pub fn remove_alias(&self, jid: &str, alias: &str) -> Result<()> {
+        for form in self.contact_forms(jid) {
+            self.aliases.remove(&form, alias)?;
+        }
+        Ok(())
     }
 
     /// Messages members reported to this group's admins. Only admins may ask.
@@ -3736,6 +3829,26 @@ fn user_part(jid: &str) -> String {
         .next()
         .unwrap_or(jid)
         .to_string()
+}
+
+/// Every address form one contact is known under, the JID given first.
+///
+/// A contact is the same person whichever form the UI happens to hold, so
+/// alias writes go through every form and reads come back under each of them.
+/// Without this an alias added from a group roster (a LID) would be invisible
+/// to a direct chat (a phone-number JID), and the second write would be refused
+/// as a clash. A contact the core has not mapped to a twin has just the one.
+fn contact_forms(store: &MessageStore, jid: &str) -> Vec<String> {
+    let mut forms = vec![jid.to_string()];
+    let twin = match store.lid_pn(&user_part(jid)) {
+        Ok(Some((_, pn))) if jid.ends_with("@lid") => format!("{pn}@s.whatsapp.net"),
+        Ok(Some((lid, _))) => format!("{lid}@lid"),
+        _ => return forms,
+    };
+    if !forms.contains(&twin) {
+        forms.push(twin);
+    }
+    forms
 }
 
 /// Seconds since the Unix epoch.
@@ -4707,6 +4820,33 @@ fn mime_for(extension: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
+
+    /// A contact the core has mapped to a phone number answers to both forms,
+    /// so an alias added from either place is found from the other.
+    #[test]
+    fn an_alias_reaches_a_contact_through_both_of_its_address_forms() {
+        let store = MessageStore::open(Path::new(":memory:"), Retention::default()).unwrap();
+        store.set_lid_pn("12345", "59891954564").unwrap();
+        assert_eq!(
+            contact_forms(&store, "12345@lid"),
+            ["12345@lid", "59891954564@s.whatsapp.net"]
+        );
+        assert_eq!(
+            contact_forms(&store, "59891954564@s.whatsapp.net"),
+            ["59891954564@s.whatsapp.net", "12345@lid"]
+        );
+    }
+
+    /// A contact the core has not mapped has no twin, and still gets an alias.
+    #[test]
+    fn an_unmapped_contact_has_only_the_form_it_was_given() {
+        let store = MessageStore::open(Path::new(":memory:"), Retention::default()).unwrap();
+        assert_eq!(
+            contact_forms(&store, "59891954564@s.whatsapp.net"),
+            ["59891954564@s.whatsapp.net"]
+        );
+    }
 
     #[test]
     fn link_metadata_is_read_like_discord() {
