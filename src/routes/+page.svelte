@@ -1,19 +1,13 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
-  import { convertFileSrc } from "@tauri-apps/api/core";
   import { invoke } from "$lib/ipc";
   import { listen } from "@tauri-apps/api/event";
-  import AudioPlayer from "$lib/AudioPlayer.svelte";
-  import VoiceRecorder, { type Recording } from "$lib/VoiceRecorder.svelte";
   import StarredList, { type StarredItem } from "$lib/StarredList.svelte";
   import MessageFinder, { type FoundItem } from "$lib/MessageFinder.svelte";
   import ChatSettings, { type ChatRetention } from "$lib/ChatSettings.svelte";
   import ProfileCard from "$lib/ProfileCard.svelte";
   import MessageInfo from "$lib/MessageInfo.svelte";
-  import InviteCard, { inviteLink } from "$lib/InviteCard.svelte";
-  import Embed from "$lib/Embed.svelte";
-  import { displayName as phoneName, isPlaceholder, phoneLabel } from "$lib/phone";
-  import { backgroundPress } from "$lib/press";
+  import { displayName as phoneName, isPlaceholder } from "$lib/phone";
   import { polyfillCountryFlagEmojis } from "country-flag-emoji-polyfill";
   import flagFont from "country-flag-emoji-polyfill/dist/TwemojiCountryFlags.woff2?url";
 
@@ -21,21 +15,29 @@
   // bundled, so nothing is fetched at runtime; elsewhere this is a no-op.
   polyfillCountryFlagEmojis("Twemoji Country Flags", flagFont);
   import Icon, { type IconName } from "$lib/Icon.svelte";
+  import Button from "$lib/Button.svelte";
+  import Spinner from "$lib/Spinner.svelte";
+  import ConfirmDialog from "$lib/ConfirmDialog.svelte";
+  import PairingView from "$lib/PairingView.svelte";
+  import ChatSidebar from "$lib/ChatSidebar.svelte";
+  import ChatHeader from "$lib/ChatHeader.svelte";
+  import MessageList from "$lib/MessageList.svelte";
+  import ComposerBar from "$lib/ComposerBar.svelte";
+  import { hue } from "$lib/avatar";
+  import { imagePreview, rasterizeSvg } from "$lib/files";
+  import { bare, isSvg, MEDIA_LABELS } from "$lib/message";
   import Settings, { type Section } from "$lib/Settings.svelte";
   import GroupInfo, { type AdminReport } from "$lib/GroupInfo.svelte";
-  import MediaViewer, { mediaSrc, type ViewerItem } from "$lib/MediaViewer.svelte";
-  import VideoPlayer from "$lib/VideoPlayer.svelte";
-  import Logo from "$lib/Logo.svelte";
-  import ImageCropper from "$lib/ImageCropper.svelte";
+  import MediaViewer, { type ViewerItem } from "$lib/MediaViewer.svelte";
   import MessageMenu, { type MenuItem } from "$lib/MessageMenu.svelte";
   import ChatPicker from "$lib/ChatPicker.svelte";
   import { keybinds, matches } from "$lib/keybinds.svelte";
-  import ExpressionPicker, { type PickerTab } from "$lib/ExpressionPicker.svelte";
+  import type { PickerTab } from "$lib/ExpressionPicker.svelte";
+  import type { Recording } from "$lib/VoiceRecorder.svelte";
   import { loadEmojis, rememberEmoji, searchEmojis, type Emoji } from "$lib/emoji";
-  import PollCard, { type Poll } from "$lib/PollCard.svelte";
-  import EventCard, { type ChatEvent } from "$lib/EventCard.svelte";
+  import type { ChatEvent } from "$lib/models";
   import CreateDialog from "$lib/CreateDialog.svelte";
-  import { blocks, plain, type Inline } from "$lib/format";
+  import { plain } from "$lib/format";
   import {
     activeTheme,
     appPicture,
@@ -43,134 +45,25 @@
     chatPicture,
     customization,
     lensMap,
-    motion,
     save as saveCustomization,
   } from "$lib/theme.svelte";
-  import { fly } from "svelte/transition";
-  import { cubicOut } from "svelte/easing";
 
-  type StoredMessage = {
-    chat: string;
-    id: string;
-    sender: string;
-    sender_name: string | null;
-    timestamp: number;
-    from_me: boolean;
-    text: string;
-    media_kind: string | null;
-    media_path: string | null;
-    media_thumb: string | null;
-    reply_to_id: string | null;
-    reply_to_text: string | null;
-    reply_to_sender: string | null;
-    reply_to_chat: string | null;
-    reply_to_kind: string | null;
-    reply_to_thumb: string | null;
-    read: boolean;
-    revoked: boolean;
-    mentioned: boolean;
-    preview_url: string | null;
-    preview_title: string | null;
-    preview_desc: string | null;
-    preview_thumb: string | null;
-    preview_site: string | null;
-    preview_color: string | null;
-    status: string | null;
-  };
-  type ChatSummary = {
-    chat: string;
-    display_name: string | null;
-    last_message_at: number;
-    last_text: string;
-    last_from_me: boolean;
-    last_sender_name: string | null;
-    last_sender: string;
-    last_media_kind: string | null;
-    message_count: number;
-    unread_count: number;
-    mention_count: number;
-    pinned: boolean;
-  };
-  type Account = { id: string; label: string; jid: string | null };
-  type SearchResult = {
-    jid: string;
-    name: string;
-    number: string;
-    kind: string;
-    saved: boolean;
-    has_messages: boolean;
-  };
-  type GroupInfo = {
-    subject: string | null;
-    description: string | null;
-    created_at: number | null;
-    owner: string | null;
-    owner_jid: string | null;
-    participants: {
-      jid: string;
-      name: string;
-      admin: boolean;
-      owner: boolean;
-      number: string | null;
-      username: string | null;
-      label: string | null;
-    }[];
-    allow_admin_reports: boolean;
-    announce: boolean;
-    locked: boolean;
-    community: boolean;
-    announcements: boolean;
-    parent: string | null;
-    parent_name: string | null;
-    admin: boolean;
-    can_send: boolean;
-  };
-  type Retention = {
-    max_age_hours: number | null;
-    max_messages_per_chat: number | null;
-  };
-  type UiSettings = {
-    retention: Retention;
-    accept_full_history: boolean;
-    auto_download_media: boolean;
-    warn_missing_video_preview: boolean;
-    media_dir: string | null;
-    send_typing: boolean;
-    send_receipts: boolean;
-    keep_history: boolean;
-    skip_loading_screen: boolean;
-  };
-  type ConnectionState = { started: boolean; connected: boolean; qr: string | null };
-
-  /** A file staged in the composer, before it is sent. */
-  type PendingMedia = {
-    id: number;
-    file: File;
-    url: string;
-    kind: "image" | "video" | "other";
-    caption: string;
-  };
-
-  type ServiceEvent =
-    | { kind: "qrCode"; code: string }
-    | { kind: "connected" }
-    | { kind: "disconnected" }
-    | { kind: "loggedOut" }
-    | { kind: "uploadProgress"; token: string; sent: number; total: number }
-    | { kind: "message"; message: StoredMessage }
-    | { kind: "messageHint"; chat: string; id: string; sender: string; from_me: boolean; fresh: boolean }
-    | { kind: "retentionApplied"; removed: number }
-    | { kind: "namesUpdated"; count: number }
-    | { kind: "syncing"; pending: number; applied: number }
-    | { kind: "initialSyncComplete"; messages: number; chats: number }
-    | { kind: "synced" }
-    | { kind: "historyLoaded"; chats: string[] }
-    | { kind: "avatarChanged"; jid: string }
-    | { kind: "typing"; chat: string; sender: string; state: string }
-    | { kind: "presence"; jid: string; online: boolean; last_seen: number | null }
-    | { kind: "memberLabel"; chat: string; jid: string; label: string }
-    | { kind: "groupChanged"; chat: string }
-    | { kind: "marks"; chat: string };
+  import type {
+    Account,
+    ChatPrivacy,
+    ChatSummary,
+    ConnectionState,
+    GroupInfo as GroupData,
+    Marks,
+    Member,
+    Outgoing,
+    PendingMedia,
+    Retention,
+    SearchResult,
+    ServiceEvent,
+    StoredMessage,
+    UiSettings,
+  } from "$lib/models";
 
   let settingsSection = $state<Section>("accounts");
   let accountMenu = $state(false);
@@ -370,15 +263,6 @@
   let drafts: Record<string, string> = $state({});
   let composerInput: HTMLTextAreaElement | undefined = $state();
   /** Group members for the @ autocomplete. */
-  type Member = {
-    jid: string;
-    name: string;
-    number: string | null;
-    /** The member's reserved WhatsApp username, when they have one. */
-    username: string | null;
-    label: string | null;
-    admin: boolean;
-  };
   let participants: Member[] = $state([]);
   /** Last member list per group, shown while a switch reloads it so the header does not flash. */
   const memberCache: Record<string, Member[]> = {};
@@ -501,7 +385,7 @@
   const uiUnlocked = $derived(gateDone || settings.skip_loading_screen);
   let showSettings = $state(false);
   let showGroupInfo = $state(false);
-  let groupInfo: GroupInfo | null = $state(null);
+  let groupInfo: GroupData | null = $state(null);
   let groupInfoError = $state<string | null>(null);
   // The chat list width is a customization setting; older builds kept it under its own key.
   if (customization.listWidth === undefined) {
@@ -539,26 +423,15 @@
   let scroller: HTMLDivElement | undefined = $state();
   /** True while the user is reading older messages with new ones below. */
   let scrolledUp = $state(false);
-  let filePicker: HTMLInputElement | undefined = $state();
   /** Files staged for review before they are sent, shown above the composer. */
   let pending: PendingMedia[] = $state([]);
-  /** Id of the staged file whose preview/caption sheet is open. */
-  let previewId = $state<number | null>(null);
   let pendingSeq = 0;
-  let previewItem = $derived(pending.find((p) => p.id === previewId) ?? null);
 
   function bareJid(jid: string) {
     return jid.replace(/@.*$/, "");
   }
   function chatLabel(chat: ChatSummary) {
     return displayName(chat.display_name, chat.chat);
-  }
-  /** Up to two letters for an avatar, or a digit pair for a bare number. */
-  function initials(label: string) {
-    const words = label.replace(/[^\p{L}\p{N}\s]/gu, "").trim().split(/\s+/).filter(Boolean);
-    if (words.length === 0) return "#";
-    if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
-    return (words[0][0] + words[1][0]).toUpperCase();
   }
   /** Oldest first, the order the conversation is drawn in. */
   const ordered = $derived(messages.slice().reverse());
@@ -606,14 +479,6 @@
     const text = message.text.trim();
     return text === `[${message.media_kind}]` ? "" : text;
   }
-  /** A stable hue per chat, so an avatar keeps its colour across sessions. */
-  function hue(jid: string) {
-    // A device suffix would give one person two colours across typing and messages.
-    jid = jid.replace(/:\d+(?=@)/, "");
-    let h = 0;
-    for (const c of jid) h = (h * 31 + c.charCodeAt(0)) % 360;
-    return h;
-  }
   /** Preview line: our own messages are prefixed "You", group peers by name. */
   /** Who sent a chat's last message, as the list prefixes it. */
   function previewAuthor(chat: ChatSummary) {
@@ -630,21 +495,6 @@
     if (!kind || chat.last_text.trim() !== `[${kind}]`) return plain(chat.last_text, mentionName);
     return MEDIA_LABELS[kind] ?? "Attachment";
   }
-  const MEDIA_LABELS: Record<string, string> = {
-    image: "Photo",
-    video: "Video",
-    gif: "GIF",
-    audio: "Audio",
-    document: "Document",
-    sticker: "Sticker",
-  };
-  /** Kinds with a view of their own; anything else is drawn as a card. */
-  const DRAWN_KINDS = new Set(["image", "video", "gif", "audio", "document", "sticker", "poll", "event", "view_once"]);
-  const CARD_LABELS: Record<string, string> = {
-    location: "📍 Location",
-    live_location: "📍 Live location",
-    contact: "👤 Contact",
-  };
   function mediaIcon(kind: string | null): IconName | null {
     if (kind === "image" || kind === "sticker") return "image";
     if (kind === "video" || kind === "gif") return "video";
@@ -705,21 +555,6 @@
   function quoteAuthor(jid: string | null) {
     if (!jid) return "Message";
     return jid === "@me" ? "You" : senderName(jid);
-  }
-  /** Human-readable delivery state for a message we sent. */
-  function statusMark(status: string | null) {
-    switch (status) {
-      case "pending":
-        return "🕓";
-      case "sent":
-        return "✓";
-      case "delivered":
-        return "✓✓";
-      case "read":
-        return "✓✓";
-      default:
-        return "";
-    }
   }
 
   function formatTime(seconds: number) {
@@ -864,7 +699,7 @@
 
 
   /** The open group's info: members, and whether we may send (announcement mode, communities). */
-  let chatGroup = $state<GroupInfo | null>(null);
+  let chatGroup = $state<GroupData | null>(null);
   /** What kind of group the open chat is, shown before its members in the header. */
   const groupContext = $derived.by(() => {
     if (!chatGroup) return null;
@@ -883,7 +718,7 @@
       return;
     }
     try {
-      const info = await invoke<GroupInfo>("group_info", { chat });
+      const info = await invoke<GroupData>("group_info", { chat });
       memberCache[chat] = info.participants;
       if (selectedChat !== chat) return;
       chatGroup = info;
@@ -908,14 +743,6 @@
   $effect(() => {
     if (connected) void loadGroupKinds();
   });
-
-  function hostOf(url: string) {
-    try {
-      return new URL(url).hostname;
-    } catch {
-      return url;
-    }
-  }
 
   async function openUrl(url: string) {
     try {
@@ -1171,13 +998,6 @@
     }
   }
 
-  function replyIcon(kind: string | null) {
-    if (kind === "audio") return "\u{1F3B5}";
-    if (kind === "video") return "\u{1F3AC}";
-    if (kind === "document") return "\u{1F4C4}";
-    return "\u{1F4CE}";
-  }
-
   /** Scrolls a message into view by its id, and highlights it briefly. */
   function scrollToMessage(id: string) {
     const element = scroller?.querySelector(`[data-id="${id}"]`);
@@ -1215,7 +1035,7 @@
     groupInfo = null;
     groupInfoError = null;
     try {
-      groupInfo = await invoke<GroupInfo>("group_info", { chat: selectedChat });
+      groupInfo = await invoke<GroupData>("group_info", { chat: selectedChat });
     } catch (e) {
       // The query can time out on a busy server; keep the panel open so the
       // failure is visible and retryable rather than looking like a dead click.
@@ -1285,11 +1105,6 @@
     if (!connected) return;
     for (const chat of chats) loadAvatar(chat.chat);
   });
-
-  /** A JID without its device suffix, the form pictures and names are keyed by. */
-  function bare(jid: string) {
-    return jid.replace(/:\d+(?=@)/, "");
-  }
 
   /**
    * Names the core found under either address form (a LID sender, a phone
@@ -1493,7 +1308,6 @@
   let typingIdle: ReturnType<typeof setTimeout> | undefined;
 
   /** The open chat's overrides of the typing and read receipt settings; `null` follows them. */
-  type ChatPrivacy = { send_typing: boolean | null; send_receipts: boolean | null };
   let chatPrivacy: ChatPrivacy = $state({ send_typing: null, send_receipts: null });
   const chatSendsTyping = $derived(chatPrivacy.send_typing ?? settings.send_typing);
   const chatSendsReceipts = $derived(chatPrivacy.send_receipts ?? settings.send_receipts);
@@ -1577,12 +1391,6 @@
     const audience = privacy.online === "all" ? "all" : (privacy.last ?? "all");
     return audience === "none" ? "invisible" : audience === "all" ? "online" : "contacts";
   });
-  const STATUS_TEXT = {
-    offline: "Connecting…",
-    online: "Online",
-    contacts: "Online to contacts",
-    invisible: "Invisible",
-  };
 
   $effect(() => {
     if (!connected || me) return;
@@ -1942,61 +1750,6 @@
     }
   }
 
-  /**
-   * Builds a small preview image data URL.
-   *
-   * The full-size bitmap is never handed to the layout. Decoding a large photo
-   * into the render tree is what killed the webview: pasting a screenshot
-   * crashed the renderer and took the chat with it. Drawing a downscaled copy
-   * keeps the decoded surface small.
-   */
-  async function imagePreview(file: File): Promise<string> {
-    const bitmap = await createImageBitmap(file);
-    const maxSide = 480;
-    const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
-    const width = Math.max(1, Math.round(bitmap.width * scale));
-    const height = Math.max(1, Math.round(bitmap.height * scale));
-
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext("2d");
-    if (!context) {
-      bitmap.close();
-      throw new Error("no 2d context for preview");
-    }
-    context.drawImage(bitmap, 0, 0, width, height);
-    bitmap.close();
-    return canvas.toDataURL("image/jpeg", 0.7);
-  }
-
-  /** Draws an SVG to a PNG whose longer side is Full HD, since WhatsApp cannot show SVGs. */
-  async function rasterizeSvg(file: File): Promise<File> {
-    const LONG_SIDE = 1920;
-    const url = URL.createObjectURL(file);
-    try {
-      const image = new Image();
-      image.src = url;
-      await image.decode();
-      // An SVG without width and height has no intrinsic size; treat it as square.
-      const naturalWidth = image.naturalWidth || LONG_SIDE;
-      const naturalHeight = image.naturalHeight || LONG_SIDE;
-      const scale = LONG_SIDE / Math.max(naturalWidth, naturalHeight);
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, Math.round(naturalWidth * scale));
-      canvas.height = Math.max(1, Math.round(naturalHeight * scale));
-      const context = canvas.getContext("2d");
-      if (!context) throw new Error("no 2d context to draw the SVG");
-      context.imageSmoothingQuality = "high";
-      context.drawImage(image, 0, 0, canvas.width, canvas.height);
-      const blob = await new Promise<Blob | null>((done) => canvas.toBlob(done, "image/png"));
-      if (!blob) throw new Error("the SVG could not be drawn");
-      return new File([blob], `${file.name.replace(/\.svg$/i, "")}.png`, { type: "image/png" });
-    } finally {
-      URL.revokeObjectURL(url);
-    }
-  }
-
   /** Stages a file for review rather than sending it straight away. */
   async function stageFile(file: File) {
     try {
@@ -2019,13 +1772,6 @@
       // Staging must never take the chat down with it.
       error = `Could not preview that file: ${e}`;
     }
-  }
-
-  function attach(event: Event) {
-    const input = event.currentTarget as HTMLInputElement;
-    const files = Array.from(input.files ?? []);
-    input.value = "";
-    for (const file of files) void stageFile(file);
   }
 
   /** Media extensions that can be staged from a pasted file path. */
@@ -2134,58 +1880,14 @@
     for (const file of Array.from(event.dataTransfer?.files ?? [])) void stageFile(file);
   }
 
-  let cropping = $state(false);
-  $effect(() => {
-    void previewId;
-    cropping = false;
-  });
-  /**
-   * The scrim, the sheet's own padding and the video's letterbox close the preview; the image, the
-   * player's controls, the crop button, the caption field, the name and "Done" never do. While the
-   * cropper is open the sheet's gaps would throw the crop away, so only the scrim counts.
-   */
-  const previewDismiss = backgroundPress(
-    (target) =>
-      target instanceof Element &&
-      target.matches(cropping ? ".sheet-backdrop" : ".sheet-backdrop, .preview-sheet, .preview-video"),
-  );
-  /** Swaps a staged image for its cropped or resized version. */
-  async function replacePending(id: number, file: File) {
-    const item = pending.find((p) => p.id === id);
-    if (!item) return;
-    if (item.url.startsWith("blob:")) URL.revokeObjectURL(item.url);
-    item.file = file;
-    item.url = await imagePreview(file);
-    cropping = false;
-  }
-
   function removePending(id: number) {
     const item = pending.find((p) => p.id === id);
     if (item?.url.startsWith("blob:")) URL.revokeObjectURL(item.url);
     pending = pending.filter((p) => p.id !== id);
-    if (previewId === id) previewId = null;
-  }
-
-  function clearPending() {
-    for (const item of pending) {
-      if (item.url.startsWith("blob:")) URL.revokeObjectURL(item.url);
-    }
-    pending = [];
-    previewId = null;
   }
 
   /** Upload progress while attachments go out; also the double-send guard. */
   /** Files on their way out, drawn at the end of their chat until the sent message replaces them. */
-  type Outgoing = {
-    token: string;
-    chat: string;
-    kind: "image" | "video" | "other";
-    url: string;
-    name: string;
-    caption: string;
-    /** 0 to 1, from the core's upload progress. */
-    progress: number;
-  };
   let outgoing = $state<Outgoing[]>([]);
 
   /** `text` from the composer becomes the first attachment's caption, unless it has its own. */
@@ -2200,7 +1902,6 @@
     const once = sendOnce;
     // The tray empties at once; each file waits in the chat as a bubble instead.
     pending = [];
-    previewId = null;
     replyingTo = null;
     sendOnce = false;
     const batch: Outgoing[] = items.map((item) => ({
@@ -2450,11 +2151,6 @@
     }
   }
 
-  /** An SVG file sent as a document, which is drawn in place like a picture. */
-  function isSvg(m: StoredMessage) {
-    return m.media_kind === "document" && /\.svg$/i.test(m.media_path ?? m.text.split("\n")[0].trim());
-  }
-
   /** Fetches a message's media on demand. */
   // Stickers, voice notes and SVG files read as part of the conversation, so ones that
   // arrived before automatic fetching are fetched as soon as they are shown.
@@ -2485,16 +2181,6 @@
     }
   }
 
-  type Marks = {
-    reactions: { target: string; sender: string; emoji: string }[];
-    starred: string[];
-    pinned: string | null;
-    polls: Poll[];
-    events: ChatEvent[];
-    view_once: { id: string; opened: boolean }[];
-    forwarded: string[];
-    edited: string[];
-  };
   const NO_MARKS: Marks = {
     reactions: [],
     starred: [],
@@ -2517,7 +2203,6 @@
     }
   }
 
-  let attachMenu = $state(false);
   let creating = $state<"poll" | "event" | null>(null);
 
   async function create(value: unknown) {
@@ -2568,6 +2253,18 @@
   const pinnedMessage = $derived(
     marks.pinned ? (messages.find((m) => m.id === marks.pinned) ?? null) : null,
   );
+  /** Pinned bar content for the chat header. */
+  const pinnedView = $derived.by(() => {
+    const m = pinnedMessage;
+    if (!m) return null;
+    return {
+      id: m.id,
+      author: m.from_me ? "You" : senderLabel(m),
+      body: m.media_kind
+        ? plain(captionOf(m), mentionName) || MEDIA_LABELS[m.media_kind]
+        : plain(m.text, mentionName),
+    };
+  });
 
   const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
   let menu = $state<{ x: number; y: number; message: StoredMessage } | null>(null);
@@ -2750,8 +2447,6 @@
     const at = ordered.findIndex((m) => m.id === finished.id);
     autoplayId = ordered.slice(at + 1).find((m) => m.media_kind === "audio" && m.media_path)?.id ?? null;
   }
-  const VIEW_ONCE_LABEL: Record<string, string> = { image: "Photo", video: "Video", audio: "Voice message" };
-
   function openViewer(message: StoredMessage) {
     const at = viewerItems.findIndex((item) => item.id === message.id);
     if (at >= 0) viewerIndex = at;
@@ -3118,58 +2813,7 @@
   {/each}
 </svg>
 
-{#snippet runs(nodes: Inline[])}{#each nodes as n, i (i)}{#if n.kind === "text"}{n.text}{:else if n.kind === "link"}<a
-        class="link"
-        href={n.url}
-        onclick={(e) => {
-          e.preventDefault();
-          openUrl(n.url);
-        }}>{n.url}</a
-      >{:else if n.kind === "code"}<code class="inline-code">{n.text}</code>{:else if n.kind === "mention"}{@render
-        mentionPill(n.user)}{:else if n.kind === "bold"}<strong
-        >{@render runs(n.children)}</strong
-      >{:else if n.kind === "italic"}<em>{@render runs(n.children)}</em>{:else}<s
-        >{@render runs(n.children)}</s
-      >{/if}{/each}{/snippet}
-
-{#snippet mentionPill(user: string)}{@const target = mentionTarget(user)}{@const picture = avatars[target.jid] ?? null}<button
-    type="button"
-    class="mention-pill"
-    class:self={target.self}
-    onclick={(e) => openProfile(target.jid, target.name, e, target.self)}
-    ondblclick={(e) => e.stopPropagation()}
-    >{#if picture}<img src={convertFileSrc(picture)} alt="" />{:else}<span
-        class="mention-initials"
-        style="--hue: {hue(target.jid)}"
-        >{#if /\p{L}/u.test(target.name)}{initials(target.name)}{:else}<Icon name="user" size={11} />{/if}</span
-      >{/if}@{target.name}</button
-  >{/snippet}
-
-{#snippet lines(list: Inline[][])}{#each list as line, i (i)}{#if i > 0}<br />{/if}{@render runs(line)}{/each}{/snippet}
-
-<!-- WhatsApp formatting, with the time's reserved space after the last line. -->
-{#snippet formatted(text: string, mine: boolean)}
-  <span class="text"
-    >{#each blocks(asWireMentions(text)) as block, i (i)}{#if block.kind === "pre"}<pre class="pre">{block.text}</pre
-        >{:else if block.kind === "quote"}<span class="quote-block">{@render lines(block.lines)}</span
-        >{:else if block.kind === "list"}{#if block.ordered}<ol class="fmt-list">
-            {#each block.items as item, j (j)}<li>{@render runs(item)}</li>{/each}
-          </ol>{:else}<ul class="fmt-list">
-            {#each block.items as item, j (j)}<li>{@render runs(item)}</li>{/each}
-          </ul>{/if}{:else}{#if i > 0}<br />{/if}{@render lines(block.lines)}{/if}{/each}<span
-      class="meta-spacer"
-      class:mine></span
-    ></span
-  >
-{/snippet}
-
-{#snippet avatarFor(jid: string, label: string)}
-  {#if avatars[jid]}
-    <img class="avatar" src={convertFileSrc(avatars[jid]!)} alt="" />
-  {:else}
-    <span class="avatar" style="--hue: {hue(jid)}">{initials(label)}</span>
-  {/if}
-{/snippet}
+<!-- Avatar rendering lives in $lib/Avatar.svelte (initials/hue in $lib/avatar.ts). -->
 
 <!-- Window-level so a paste/drop anywhere cannot navigate the webview. -->
 <svelte:window
@@ -3193,385 +2837,75 @@
 {#if error}
   <div class="error" role="alert">
     <span>{error}</span>
-    <button class="icon" title="Dismiss" aria-label="Dismiss" onclick={() => (error = null)}>
-      <Icon name="x" size={16} />
-    </button>
+    <Button variant="icon" icon="x" iconSize={16} title="Dismiss" aria-label="Dismiss" onclick={() => (error = null)} />
   </div>
 {/if}
 
 <div class="app">
 {#if !connected || !uiUnlocked}
-  {@const stage = qrSvg ? 2 : started || connecting ? 1 : 0}
-  <!-- An account that paired before signs straight back in; pairing only shows if WhatsApp asks for a code. -->
-  {@const linked = !qrSvg ? accountList.find((a) => a.id === activeAccount && a.jid) : undefined}
-  <div class="pairing">
-    <div class="intro-glow" aria-hidden="true"></div>
-    <header class="intro-head">
-      <span class="intro-logo"><Logo size={48} /></span>
-      <div>
-        <h1>Hermóðr</h1>
-        <span class="intro-tag">WhatsApp, native on your desktop</span>
-      </div>
-      <button class="icon intro-settings" title="Settings" aria-label="Settings" onclick={() => openSettings("accounts")}>
-        <Icon name="settings" size={18} />
-      </button>
-    </header>
-
-    {#if choosingAccount}
-      <div class="intro-card resume">
-        <h2>Choose an account</h2>
-        <span class="resume-who">Several WhatsApp accounts are linked on this computer.</span>
-        <div class="account-choices">
-          {#each accountList.filter((a) => a.jid) as account (account.id)}
-            <button class="account-choice" onclick={() => chooseAccount(account.id)}>
-              {#if accountAvatars[account.id]}
-                <img class="choice-avatar" src={convertFileSrc(accountAvatars[account.id]!)} alt="" />
-              {:else}
-                <span class="choice-avatar">{initials(account.label)}</span>
-              {/if}
-              <span class="choice-text">
-                <strong>{account.label}</strong>
-                <small>{phoneName(null, account.jid!)}</small>
-              </span>
-              <Icon name="chevronRight" size={16} />
-            </button>
-          {/each}
-        </div>
-      </div>
-    {:else if linked}
-      <div class="intro-card resume">
-        {#if accountAvatars[linked.id]}
-          <img class="resume-avatar" src={convertFileSrc(accountAvatars[linked.id]!)} alt="" />
-        {:else}
-          <span class="resume-avatar">{initials(linked.label)}</span>
-        {/if}
-        <h2>{started || connecting || connected ? "Signing in" : "Welcome back"}</h2>
-        <span class="resume-who">{linked.label} · {phoneName(null, linked.jid!)}</span>
-        {#if started || connecting || connected}
-          <div class="resume-progress" role="status">
-            <div class="resume-status">
-              <span>
-                {#if finalizing}
-                  Finishing up…
-                {:else if syncPending > 0}
-                  Loading messages…
-                {:else if connected}
-                  Loading your messages…
-                {:else}
-                  Connecting to WhatsApp…
-                {/if}
-              </span>
-              {#if syncPending > 0}
-                <span class="resume-count">{Math.min(syncApplied, syncPending)} of {syncPending} · {syncPercent}%</span>
-              {/if}
-            </div>
-            <div
-              class="resume-bar"
-              class:determinate={syncPending > 0}
-              role="progressbar"
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={syncPending > 0 ? syncPercent : undefined}>
-              <span style:width={syncPending > 0 ? `${syncPercent}%` : null}></span>
-            </div>
-            {#if syncTimedOut}
-              <span class="hint">Still syncing in the background…</span>
-            {/if}
-          </div>
-        {:else}
-          <button class="primary" onclick={connect}>Connect</button>
-        {/if}
-        {#if accountList.length > 1}
-          <div class="account-bar">
-            {#each accountList as account (account.id)}
-              {#if account.id !== linked.id}
-                <button class="account" title="Switch to {account.label}" onclick={() => switchTo(account.id)}>
-                  {#if accountAvatars[account.id]}
-                    <img src={convertFileSrc(accountAvatars[account.id]!)} alt="" />
-                  {:else}
-                    <span class="account-initial">{initials(account.label)}</span>
-                  {/if}
-                  {account.label}
-                </button>
-              {/if}
-            {/each}
-          </div>
-        {/if}
-      </div>
-    {:else}
-    <div class="intro-card">
-      <section class="intro-steps">
-        <h2>Link this computer</h2>
-        <ol>
-          <li><span class="num">1</span><span>Open <strong>WhatsApp</strong> on your phone.</span></li>
-          <li>
-            <span class="num">2</span><span>Tap <strong>Menu</strong> or <strong>Settings</strong>, then <strong>Linked devices</strong>.</span>
-          </li>
-          <li><span class="num">3</span><span>Tap <strong>Link a device</strong>.</span></li>
-          <li><span class="num">4</span><span>Point your phone at this screen to scan the code.</span></li>
-        </ol>
-        <!-- Each stage lights up as the connection actually reaches it. -->
-        <div class="intro-progress" aria-label="Connection progress">
-          {#each ["Connecting to WhatsApp", "Waiting for your phone", "Linked"] as label, i (label)}
-            <span class="stage" class:done={stage > i} class:current={stage === i + 1 || (stage === 0 && i === 0)}>
-              <span class="stage-dot"></span>{label}
-            </span>
-          {/each}
-        </div>
-        {#if accountList.length > 0}
-          <div class="intro-accounts">
-            <span class="intro-label">Accounts on this computer</span>
-            <div class="account-bar">
-              {#each accountList as account (account.id)}
-                <button
-                  class="account"
-                  class:active={account.id === activeAccount}
-                  title={account.label}
-                  onclick={() => switchTo(account.id)}>
-                  {#if accountAvatars[account.id]}
-                    <img src={convertFileSrc(accountAvatars[account.id]!)} alt="" />
-                  {:else}
-                    <span class="account-initial">{initials(account.label)}</span>
-                  {/if}
-                  {account.label}
-                </button>
-              {/each}
-            </div>
-          </div>
-        {/if}
-      </section>
-
-      <section class="intro-code">
-        {#if qrSvg}
-          <div class="qr" aria-label="Pairing QR code">
-            {@html qrSvg}
-            <span class="qr-logo"><Logo size={44} /></span>
-          </div>
-          <p class="hint">The code refreshes by itself. Keep this window open while you scan.</p>
-        {:else if started || connecting}
-          <div class="qr qr-loading" aria-label="Preparing a pairing code"><span class="spinner"></span></div>
-          <p class="hint">Getting a pairing code from WhatsApp…</p>
-        {:else}
-          <div class="qr qr-idle"><Icon name="message" size={48} /></div>
-          <button class="primary" onclick={connect}>Start pairing</button>
-        {/if}
-      </section>
-    </div>
-    {/if}
-
-    <p class="intro-foot">
-      Your messages stay end-to-end encrypted. History is kept only on this computer, within the limits
-      you set in Settings.
-    </p>
-  </div>
+  <PairingView
+    {qrSvg}
+    {started}
+    {connecting}
+    {connected}
+    {choosingAccount}
+    accounts={accountList}
+    {activeAccount}
+    {accountAvatars}
+    linked={!qrSvg ? accountList.find((a) => a.id === activeAccount && a.jid) : undefined}
+    {finalizing}
+    {syncPending}
+    {syncApplied}
+    {syncPercent}
+    {syncTimedOut}
+    onconnect={connect}
+    onchoose={chooseAccount}
+    onswitch={switchTo}
+    onsettings={() => openSettings("accounts")} />
 {:else}
   <div class="layout" style="grid-template-columns: {layoutColumns}">
-    <aside class="chats">
-      <header>
-        <h1 class="title">Chats</h1>
-        <button class="icon badge-host" title="Mentions" aria-label="Mentions" onclick={() => openPings(null)}>
-          <Icon name="at" size={18} />
-          {#if unreadPings > 0}<span class="icon-badge">{unreadPings > 99 ? "99+" : unreadPings}</span>{/if}
-        </button>
-        <button class="icon" title="Starred messages" aria-label="Starred messages" onclick={openStarred}>
-          <Icon name="star" size={18} />
-        </button>
-      </header>
-      <label class="search">
-        <Icon name="search" size={15} />
-        <input
-          placeholder="Search chats and contacts"
-          bind:value={searchQuery}
-          oninput={runSearch}
-          autocomplete="off"
-        />
-      </label>
-      {#if !searchQuery.trim()}
-        <div class="filters" role="tablist" aria-label="Filter chats">
-          <button
-            class="chip"
-            class:active={chatFilter === "all"}
-            role="tab"
-            aria-selected={chatFilter === "all"}
-            onclick={() => (chatFilter = "all")}>All</button>
-          <button
-            class="chip"
-            class:active={chatFilter === "unread"}
-            role="tab"
-            aria-selected={chatFilter === "unread"}
-            onclick={() => (chatFilter = "unread")}
-            >Unread{#if unreadChats > 0}<span class="chip-count">{unreadChats}</span>{/if}</button>
-          <button
-            class="chip"
-            class:active={chatFilter === "groups"}
-            role="tab"
-            aria-selected={chatFilter === "groups"}
-            onclick={() => (chatFilter = "groups")}>Groups</button>
-        </div>
-      {/if}
-      {#if searchQuery.trim()}
-        <ul class="results">
-          {#each searchResults as result (result.jid)}
-            <li>
-              <div
-                class="chat-row"
-                role="button"
-                tabindex="0"
-                onclick={() => openFromSearch(result)}
-                onkeydown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    openFromSearch(result);
-                  }
-                }}>
-                {@render avatarFor(result.jid, result.name || result.number || result.jid)}
-                <span class="name">
-                  {#if result.kind === "group" || result.saved}
-                    {result.name}
-                  {:else}
-                    {phoneLabel(result.number) ?? result.number}{result.name && result.name !== result.number
-                      ? ` - ${result.name}`
-                      : ""}
-                  {/if}
-                </span>
-                <span class="preview">
-                  {result.kind}{result.has_messages ? "" : " · no messages yet"}
-                </span>
-              </div>
-            </li>
-          {/each}
-        </ul>
-      {:else}
-      <ul>
-        {#each visibleChats as chat (chat.chat)}
-          <li>
-            <div
-              class="chat-row"
-              class:active={chat.chat === selectedChat}
-              role="button"
-              tabindex="0"
-              onclick={() => openChat(chat.chat)}
-              onkeydown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  openChat(chat.chat);
-                }
-              }}>
-              {@render avatarFor(chat.chat, chatLabel(chat))}
-              <span class="name"
-                >{#if chat.pinned}<span class="pin"><Icon name="pin" size={12} /></span>{/if}{#if groupKinds[chat.chat]?.community}<span
-                    class="kind"
-                    title="Community"><Icon name="users" size={13} /></span
-                  >{:else if groupKinds[chat.chat]?.announcements}<span class="kind" title="Community announcements"
-                    ><Icon name="volume" size={13} /></span
-                  >{/if}{chatLabel(chat)}</span>
-              <span class="time" class:unread={chat.unread_count > 0}>{formatTime(chat.last_message_at)}</span>
-              {#if typingLabel(chat.chat)}
-                <span class="preview typing">{typingLabel(chat.chat)}</span>
-              {:else}
-                {@const author = previewAuthor(chat)}
-                {@const icon = mediaIcon(chat.last_media_kind)}
-                <span class="preview"
-                  >{#if author}{author}:&nbsp;{/if}{#if icon}<span class="preview-icon"
-                      ><Icon name={icon} size={15} /></span
-                    >{/if}{previewText(chat)}</span
-                >
-              {/if}
-              <span class="badges">
-                {#if chat.mention_count > 0}
-                  <button
-                    class="badge mention-badge"
-                    title="Jump to mention"
-                    onclick={(e) => {
-                      e.stopPropagation();
-                      openChat(chat.chat, true);
-                    }}>@</button>
-                {/if}
-                {#if chat.unread_count > 0}
-                  <span class="badge">{chat.unread_count > 99 ? "99+" : chat.unread_count}</span>
-                {/if}
-                <button
-                  class="pin-toggle"
-                  title={chat.pinned ? "Unpin" : "Pin"}
-                  aria-label={chat.pinned ? "Unpin" : "Pin"}
-                  onclick={(e) => togglePin(chat, e)}><Icon name="pin" size={14} /></button>
-              </span>
-            </div>
-          </li>
-        {/each}
-        {#if visibleChats.length === 0}
-          <li class="empty">
-            {chatFilter === "unread"
-              ? "No unread chats."
-              : chatFilter === "groups"
-                ? "No groups yet."
-                : "No conversations yet."}
-          </li>
-        {/if}
-      </ul>
-      {/if}
-
-      <footer class="user-panel">
-        {#if accountMenu}
-          <div class="account-menu" role="menu">
-            <span class="menu-label">Accounts</span>
-            {#each accountList as account (account.id)}
-              <button
-                class="menu-item"
-                class:current={account.id === activeAccount}
-                role="menuitem"
-                onclick={() => {
-                  accountMenu = false;
-                  switchTo(account.id);
-                }}>
-                {#if accountAvatars[account.id]}
-                  <img class="menu-avatar" src={convertFileSrc(accountAvatars[account.id]!)} alt="" />
-                {:else}
-                  <span class="menu-avatar" style="--hue: {hue(account.id)}">{initials(account.label)}</span>
-                {/if}
-                <span class="menu-name">{account.label}</span>
-                <span class="menu-dot"></span>
-              </button>
-            {/each}
-            <div class="menu-sep"></div>
-            <button
-              class="menu-item"
-              role="menuitem"
-              onclick={() => {
-                accountMenu = false;
-                addAccount();
-              }}><Icon name="plus" size={15} /> Add account</button>
-            <button class="menu-item" role="menuitem" onclick={() => openSettings("accounts")}>
-              <Icon name="users" size={15} /> Manage accounts
-            </button>
-          </div>
-        {/if}
-        <button
-          class="me"
-          title="Switch account"
-          aria-expanded={accountMenu}
-          onclick={() => (accountMenu = !accountMenu)}>
-          <span class="me-avatar-wrap">
-            {#if me && avatars[me]}
-              <img class="me-avatar" src="{convertFileSrc(avatars[me]!)}?v={meVersion}" alt="" />
-            {:else}
-              <span class="me-avatar" style="--hue: {hue(activeAccount ?? '')}">{initials(activeLabel)}</span>
-            {/if}
-            <span class="presence {visibility}"></span>
-          </span>
-          <span class="me-text" title={me ? `+${me.split("@")[0]}` : undefined}>
-            <span class="me-name">{activeLabel}</span>
-            <span class="me-status">{STATUS_TEXT[visibility]}</span>
-          </span>
-        </button>
-        <button
-          class="icon"
-          title="Settings"
-          aria-label="Settings"
-          onclick={() => openSettings("profile")}><Icon name="settings" size={19} /></button>
-      </footer>
-      <button type="button" class="resizer" aria-label="Resize chat list" onmousedown={startResize}></button>
-    </aside>
+    <ChatSidebar
+      bind:searchQuery
+      {searchResults}
+      {visibleChats}
+      {selectedChat}
+      {chatFilter}
+      onfilter={(filter) => (chatFilter = filter)}
+      {unreadChats}
+      {unreadPings}
+      {avatars}
+      chatLabelOf={chatLabel}
+      {formatTime}
+      typingLabelOf={typingLabel}
+      previewAuthorOf={previewAuthor}
+      previewTextOf={previewText}
+      mediaIconOf={mediaIcon}
+      {groupKinds}
+      accounts={accountList}
+      {activeAccount}
+      {activeLabel}
+      {accountAvatars}
+      {me}
+      {meVersion}
+      {visibility}
+      {accountMenu}
+      onmenutoggle={() => (accountMenu = !accountMenu)}
+      onswitchaccount={(id) => {
+        accountMenu = false;
+        void switchTo(id);
+      }}
+      onaddaccount={() => {
+        accountMenu = false;
+        void addAccount();
+      }}
+      onsettings={openSettings}
+      onpings={() => openPings(null)}
+      onstarred={openStarred}
+      onsearch={runSearch}
+      onopenresult={openFromSearch}
+      onopenchat={openChat}
+      ontogglepin={togglePin}
+      onresize={startResize} />
 
     <section class="conversation">
       {#if selectedChat}
@@ -3580,485 +2914,125 @@
           titleOverride ??
           displayName(null, selectedChat)}
         {@const typingNow = typingLabel(selectedChat)}
-        <header>
-          <div class="chat-heading">
-            {#if selectedChat.endsWith("@g.us")}
-              <button class="heading-avatar" title="Group info" aria-label="Group info" onclick={openGroupInfo}
-                >{@render avatarFor(selectedChat, title)}</button
-              >
-              <button class="chat-title" title="Group info" onclick={openGroupInfo}>
-                {title}
-                <span class="chat-sub" class:typing={typingNow}
-                  >{typingNow ?? ([groupContext, subtitle].filter(Boolean).join(" · ") || null) ??" "}</span
-                >
-              </button>
-            {:else}
-              {@render avatarFor(selectedChat, title)}
-              <span class="chat-title">
-                {title}
-                {#if typingNow}<span class="chat-sub typing">{typingNow}</span
-                  >{:else if presenceLabel(selectedChat)}<span class="chat-sub">{presenceLabel(selectedChat)}</span>{/if}
-              </span>
-            {/if}
-          </div>
-          <div class="header-tools">
-            <button
-              class="icon"
-              title="Search in this chat"
-              aria-label="Search in this chat"
-              onclick={() =>
-                (finder = {
-                  mode: "search",
-                  chat: selectedChat,
-                  items: [],
-                  reach: messages.at(-1)?.timestamp ?? null,
-                  more: !olderExhausted,
-                })}
-              ><Icon name="search" size={18} /></button>
-            {#if selectedChat.endsWith("@g.us")}
-              <button
-                class="icon"
-                title="Your mentions in this group"
-                aria-label="Your mentions in this group"
-                onclick={() => openPings(selectedChat)}><Icon name="at" size={18} /></button>
-            {/if}
-            <button
-              class="icon"
-              title="Chat settings"
-              aria-label="Chat settings"
-              onclick={() => (chatSettingsOpen = true)}><Icon name="sliders" size={18} /></button>
-          </div>
-          {#if mentionQueue.length > 0}
-            <button class="jump-mention" title="Jump to mention" onclick={jumpNextMention}>
-              <Icon name="at" size={14} />
-              {mentionCursor}/{mentionQueue.length}
-            </button>
-          {/if}
-        </header>
+        <ChatHeader
+          {selectedChat}
+          isGroup={selectedChat.endsWith("@g.us")}
+          {title}
+          avatar={avatars[selectedChat] ?? null}
+          {typingNow}
+          {subtitle}
+          {groupContext}
+          presenceText={presenceLabel(selectedChat)}
+          mentionTotal={mentionQueue.length}
+          {mentionCursor}
+          pinned={pinnedView}
+          ongroupinfo={openGroupInfo}
+          onsearch={() =>
+            (finder = {
+              mode: "search",
+              chat: selectedChat,
+              items: [],
+              reach: messages.at(-1)?.timestamp ?? null,
+              more: !olderExhausted,
+            })}
+          onpings={() => openPings(selectedChat)}
+          onsettings={() => (chatSettingsOpen = true)}
+          onjumpmention={jumpNextMention}
+          onpinnedjump={(id) => scrollToMessage(id)} />
 
-        {#if pinnedMessage}
-          <button class="pinned-bar" onclick={() => scrollToMessage(pinnedMessage.id)}>
-            <Icon name="pin" size={16} />
-            <span class="pinned-text">
-              <strong>{pinnedMessage.from_me ? "You" : senderLabel(pinnedMessage)}:</strong>
-              {pinnedMessage.media_kind
-                ? plain(captionOf(pinnedMessage), mentionName) || MEDIA_LABELS[pinnedMessage.media_kind]
-                : plain(pinnedMessage.text, mentionName)}
-            </span>
-          </button>
-        {/if}
-
-        <div
-          class="messages"
-          class:switching
-          class:group={selectedChat.endsWith("@g.us")}
-          bind:this={scroller}
-          onscroll={onScroll}>
-          {#if messages.length > 0}
-            <button class="load-older" onclick={() => loadOlder()} disabled={loadingOlder}>
-              {loadingOlder ? "Asking your phone…" : "Load older messages"}
-            </button>
-          {/if}
-          {#each ordered as message, i (message.id)}
-            {@const prev = ordered[i - 1]}
-            {@const newDay = !prev || dayKey(prev.timestamp) !== dayKey(message.timestamp)}
-            {@const first =
-              newDay || prev.from_me !== message.from_me || prev.sender !== message.sender}
-            {@const isGroup = !!selectedChat?.endsWith("@g.us")}
-            {@const viewOnce =
-              message.media_kind === "view_once"
-                ? { id: message.id, opened: true }
-                : marks.view_once.find((v) => v.id === message.id)}
-            {@const visual =
-              !message.revoked &&
-              !viewOnce &&
-              (message.media_kind === "image" ||
-                message.media_kind === "video" ||
-                message.media_kind === "gif") &&
-              !!(message.media_path || message.media_thumb)}
-            {@const caption = visual ? captionOf(message) : ""}
-            {@const showSender = first && !message.from_me && isGroup}
-            {@const reactions = reactionsFor.get(message.id)}
-            <!-- The time sits on the last line of text, as long as text ends the bubble. -->
-            {@const inlineMeta =
-              message.revoked ||
-              (!message.preview_url &&
-                (!message.media_kind || (!!caption && !!message.media_path)))}
-            {#if newDay}
-              <div class="day"><span>{dayLabel(message.timestamp)}</span></div>
-            {/if}
-            <!-- The whole row answers double-click and right-click, not just the bubble. -->
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div
-              class="msg-row"
-              class:replying={replyingTo?.id === message.id}
-              class:jumped={message.id === highlightedId}
-              class:for-me={!message.from_me &&
-                (message.mentioned || message.reply_to_sender === "@me")}
-              class:first-row={first}
-              ondblclick={() => {
-                editing = null;
-                replyingTo = message;
-                composerInput?.focus();
-              }}
-              oncontextmenu={(e) => {
-                e.preventDefault();
-                menu = { x: e.clientX, y: e.clientY, message };
-              }}>
-            <div
-              class="bubble"
-              class:media-only={visual &&
-                !caption &&
-                !message.reply_to_text &&
-                !message.preview_url &&
-                !showSender}
-              class:mine={message.from_me}
-              class:first
-              class:inline-meta={inlineMeta}
-              class:has-reactions={!!reactions}
-              class:sticker-only={message.media_kind === "sticker" &&
-                !message.reply_to_text &&
-                !showSender}
-              class:menu-open={menu?.message.id === message.id}
-              class:edited={edited.has(message.id)}
-              data-id={message.id}>
-              {#if showSender}
-                <button
-                  type="button"
-                  class="sender-avatar"
-                  title="Profile"
-                  onclick={(e) => openProfile(message.sender, senderLabel(message), e)}
-                  >{@render avatarFor(bare(message.sender), senderLabel(message))}</button>
-                <button
-                  type="button"
-                  class="sender"
-                  style="--hue: {hue(message.sender)}"
-                  onclick={(e) => openProfile(message.sender, senderLabel(message), e)}>{senderLabel(message)}</button>
-                {#if memberOf(message.sender)?.label}
-                  <span class="member-label">{memberOf(message.sender)?.label}</span>
-                {/if}
-              {/if}
-
-              {#if message.revoked}
-                <span class="revoked">This message was deleted<span class="meta-spacer"></span></span>
-              {:else}
-                {#if forwarded.has(message.id)}
-                  <span class="forwarded-mark"><Icon name="forward" size={13} /> Forwarded</span>
-                {/if}
-                {#if message.reply_to_text}
-                  <Embed
-                    compact
-                    tooltip="Go to message"
-                    label={quoteAuthor(message.reply_to_sender)}
-                    text={plain(message.reply_to_text, mentionName)}
-                    image={message.reply_to_kind === "image" && message.reply_to_thumb
-                      ? mediaSrc(message.reply_to_thumb)
-                      : null}
-                    icon={message.reply_to_kind ? replyIcon(message.reply_to_kind) : null}
-                    onclick={() => jumpToQuoted(message)}>
-                    {#if message.reply_to_chat && message.reply_to_chat !== selectedChat}
-                      <span class="quote-where">in {chatName(message.reply_to_chat)}</span>
-                    {/if}
-                  </Embed>
-                {/if}
-
-                {#if viewOnce}
-                  {@const what = VIEW_ONCE_LABEL[message.media_kind ?? ""] ?? "View once message"}
-                  {#if onceOpen?.id === message.id && message.media_kind === "audio" && message.media_path}
-                    <AudioPlayer path={message.media_path} />
-                    <button class="once-done" onclick={closeViewOnce}>Done</button>
-                  {:else if message.media_kind === "view_once"}
-                    <span class="once spent">
-                      <span class="once-mark">1</span>
-                      <span>View once message<small>Open it on your phone</small></span>
-                    </span>
-                  {:else if viewOnce.opened}
-                    <span class="once spent">
-                      <span class="once-mark">1</span>
-                      <span>{what}<small>{message.from_me ? "View once" : "Opened"}</small></span>
-                    </span>
-                  {:else}
-                    <button
-                      class="once"
-                      onclick={() => {
-                        if (!message.media_path) return downloadMedia(message);
-                        onceIndex = 0;
-                        onceOpen = message;
-                      }}>
-                      <span class="once-mark">1</span>
-                      <span>{what}<small>{message.media_path ? "View once" : "Download to view once"}</small></span>
-                    </button>
-                  {/if}
-                {:else if message.media_kind === "sticker" && message.media_path}
-                  <img class="sticker" src={convertFileSrc(message.media_path)} alt="Sticker" />
-                {:else if message.media_kind === "sticker"}
-                  <!-- Fetched on its own when shown; the placeholder keeps the sticker's space. -->
-                  <button
-                    class="sticker sticker-pending"
-                    title={downloading[message.id] ? "Loading sticker" : "Load sticker"}
-                    onclick={() => downloadMedia(message)}>
-                    {#if downloading[message.id]}<span class="spinner"></span>{:else}<Icon name="sticker" size={28} />{/if}
-                  </button>
-                {:else if message.media_kind === "image" && (message.media_path || message.media_thumb)}
-                  <button
-                    class="media-button"
-                    title={message.media_path ? "View" : "Download"}
-                    onclick={() => (message.media_path ? openViewer(message) : downloadMedia(message))}>
-                    <img
-                      class="media"
-                      src={mediaSrc((message.media_path ?? message.media_thumb)!)}
-                      alt={message.text}
-                    />
-                    {#if !message.media_path}
-                      <span class="media-overlay">
-                        <span class="media-fetch">
-                          {#if downloading[message.id]}<span class="spinner"></span>{:else}<Icon name="download" size={22} />{/if}
-                        </span>
-                      </span>
-                    {/if}
-                  </button>
-                {:else if ["image", "video", "gif"].includes(message.media_kind ?? "") && !message.media_path}
-                  <button
-                    class="media-stub"
-                    title="Download"
-                    disabled={!!downloading[message.id]}
-                    onclick={() => downloadMedia(message)}>
-                    <span class="media-fetch">
-                      {#if downloading[message.id]}<span class="spinner"></span>{:else}<Icon name="download" size={22} />{/if}
-                    </span>
-                    <span>{message.media_kind === "image" ? "Photo" : message.media_kind === "gif" ? "GIF" : "Video"}</span>
-                  </button>
-                {:else if (message.media_kind === "video" || message.media_kind === "gif") &&
-                (message.media_path || message.media_thumb)}
-                  <button
-                    class="media-button video"
-                    title={message.media_path ? "Play" : "Download"}
-                    onclick={() => (message.media_path ? openViewer(message) : downloadMedia(message))}>
-                    {#if message.media_thumb}
-                      <img class="media" src={mediaSrc(message.media_thumb)} alt="" />
-                    {/if}
-                    <span class="media-overlay">
-                      {#if message.media_kind === "gif"}GIF{:else}<span class="play">▶</span>{/if}
-                    </span>
-                  </button>
-                {:else if message.media_kind === "audio" && message.media_path}
-                  {@const voiceFrom = message.from_me ? me : bare(message.sender)}
-                  <AudioPlayer
-                    path={message.media_path}
-                    avatar={voiceFrom ? pictureOf(voiceFrom) : null}
-                    mine={message.from_me}
-                    play={autoplayId === message.id}
-                    onplayed={() => markPlayed(message)}
-                    onended={() => playNextVoice(message)}
-                    onpaused={() => (autoplayId = null)}
-                    initials={initials(message.from_me ? "You" : senderLabel(message))} />
-                {:else if message.media_kind === "audio"}
-                  <!-- Not downloaded yet: the note's own row, with the download where play will be. -->
-                  <button
-                    class="voice-pending"
-                    title="Download voice message"
-                    disabled={!!downloading[message.id]}
-                    onclick={() => downloadMedia(message)}>
-                    <span class="voice-pending-icon">
-                      {#if downloading[message.id]}<span class="spinner"></span>{:else}<Icon
-                          name="download"
-                          size={18} />{/if}
-                    </span>
-                    <span class="voice-pending-bars" aria-hidden="true">
-                      {#each Array(34) as _, i (i)}<span style="height: {20 + ((i * 37) % 60)}%"></span>{/each}
-                    </span>
-                  </button>
-                {:else if message.media_kind === "poll"}
-                  <PollCard
-                    poll={marks.polls.find((p) => p.id === message.id)}
-                    question={message.text}
-                    namer={(jid) => (jid === "@me" ? "You" : senderName(jid))}
-                    picture={(jid) => (jid === "@me" ? (me ? pictureOf(me) : null) : pictureOf(bare(jid)))}
-                    onvote={(options) =>
-                      act(() => invoke("vote_poll", { chat: message.chat, id: message.id, options }))} />
-                {:else if message.media_kind === "event"}
-                  {@const event = marks.events.find((e) => e.id === message.id)}
-                  <EventCard
-                    {event}
-                    title={message.text}
-                    onopenurl={openUrl}
-                    onrespond={(response) =>
-                      act(() => invoke("respond_event", { chat: message.chat, id: message.id, response }))}
-                    onedit={message.from_me && event
-                      ? () => (editingEvent = { chat: message.chat, event })
-                      : undefined}
-                    oncancel={message.from_me && event
-                      ? () =>
-                          act(() =>
-                            saveEvent(message.chat, message.id, { ...eventFields(event), canceled: true }),
-                          )
-                      : undefined} />
-                {:else if isSvg(message) && message.media_path}
-                  <!-- An <img> never runs an SVG's scripts, so drawing it in place is safe. -->
-                  <span class="svg-file">
-                    <img class="media" src={convertFileSrc(message.media_path)} alt={message.text} />
-                  </span>
-                {:else if message.media_kind && !DRAWN_KINDS.has(message.media_kind)}
-                  <!-- Kinds without a view of their own: a card with what the core could read. -->
-                  {@const link = message.text.match(/https?:\/\/\S+/)?.[0]}
-                  <Embed
-                    label={CARD_LABELS[message.media_kind] ?? message.media_kind}
-                    image={message.media_thumb ? mediaSrc(message.media_thumb) : null}
-                    tooltip={link}
-                    onopen={link ? () => openUrl(link) : undefined}>
-                    {@render formatted(message.text, message.from_me)}
-                  </Embed>
-                {:else if message.media_kind && (message.media_path || message.media_thumb)}
-                  <button
-                    class="file"
-                    onclick={() => message.media_path && openMedia(message.media_path)}>
-                    <Icon name="file" size={20} />
-                    <span>{message.text || message.media_kind}</span>
-                  </button>
-                {:else}
-                  {@render formatted(message.text, message.from_me)}
-                {/if}
-
-                {#if caption}
-                  {@render formatted(caption, message.from_me)}
-                {/if}
-
-                {#if message.media_kind === "document" && !message.media_path && !viewOnce}
-                  <button class="download" onclick={() => downloadMedia(message)}>
-                    <Icon name="download" size={14} />
-                    Download {message.media_kind}
-                  </button>
-                {/if}
-
-                {@const invite = inviteLink(message.text)}
-                {#if invite}
-                  <InviteCard
-                    link={invite}
-                    onopen={async (jid) => {
-                      await refreshChats();
-                      void openChat(jid);
-                    }} />
-                {:else if message.preview_url}
-                  {@const url = message.preview_url}
-                  {@const provider = message.preview_site?.trim() || hostOf(url)}
-                  {@const title = message.preview_title?.trim() !== provider ? message.preview_title?.trim() : null}
-                  {@const desc = message.preview_desc?.trim() !== url ? message.preview_desc?.trim() : null}
-                  <Embed
-                    label={provider}
-                    {title}
-                    text={desc}
-                    image={message.preview_thumb ? mediaSrc(message.preview_thumb) : null}
-                    color={message.preview_color}
-                    tooltip={url}
-                    onopen={() => openUrl(url)} />
-                {/if}
-              {/if}
-
-              <button
-                class="reply-btn"
-                title="Message options"
-                aria-label="Message options"
-                onclick={(e) => {
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  menu = { x: rect.left, y: rect.bottom + 4, message };
-                }}><Icon name="chevronDown" size={16} /></button
-              >
-              <span class="meta">
-                {#if starred.has(message.id)}<span class="star"><Icon name="star" size={11} /></span>{/if}
-                {#if edited.has(message.id)}<span class="edited-mark">Edited</span>{/if}
-                {formatTime(message.timestamp)}
-                {#if message.from_me}
-                  <span
-                    class="ticks"
-                    class:read={message.status === "read"}
-                    title={message.status ?? "pending"}
-                    >{#if message.status === "pending"}<Icon name="clock" size={11} />{:else}{statusMark(
-                        message.status,
-                      )}{/if}</span
-                  >
-                {/if}
-              </span>
-              {#if reactions}
-                {@const mine = reactions.find((r) => r.mine)?.emoji ?? null}
-                <button
-                  class="reactions"
-                  title={mine ? "Tap to remove your reaction" : "Reactions"}
-                  onclick={() =>
-                    mine &&
-                    act(() => invoke("react", { target: target(message), emoji: "" }))}>
-                  {#each reactions.slice(0, 3) as r (r.emoji)}<span>{r.emoji}</span>{/each}
-                  {#if reactions.reduce((n, r) => n + r.count, 0) > 1}
-                    <span class="reaction-count">{reactions.reduce((n, r) => n + r.count, 0)}</span>
-                  {/if}
-                </button>
-              {/if}
-            </div>
-            </div>
-          {/each}
-          {#each outgoing.filter((o) => o.chat === selectedChat) as upload (upload.token)}
-            <div class="msg-row" in:fly={{ y: 48, duration: motion(260), easing: cubicOut }}>
-              <div class="bubble mine first outgoing-upload" class:media-only={upload.kind !== "other" && !upload.caption}>
-                <div class="upload-visual" class:file-upload={upload.kind === "other" || !upload.url}>
-                  {#if upload.kind === "image" && upload.url}
-                    <img class="media" src={upload.url} alt={upload.name} />
-                  {:else if upload.kind === "video" && upload.url}
-                    <!-- svelte-ignore a11y_media_has_caption -->
-                    <video class="media" src={upload.url} preload="metadata" muted></video>
-                  {:else}
-                    <span class="upload-name"><Icon name="file" size={20} />{upload.name}</span>
-                  {/if}
-                  <span class="upload-ring" aria-label="Uploading, {Math.round(upload.progress * 100)}%">
-                    <svg viewBox="0 0 48 48" width="48" height="48">
-                      <circle class="ring-track" cx="24" cy="24" r="20" />
-                      <circle
-                        class="ring-fill"
-                        class:spinning={upload.progress === 0}
-                        cx="24"
-                        cy="24"
-                        r="20"
-                        stroke-dasharray="125.66"
-                        stroke-dashoffset={125.66 * (1 - (upload.progress || 0.12))} />
-                    </svg>
-                    <span class="ring-label">{upload.progress > 0 ? `${Math.round(upload.progress * 100)}%` : ""}</span>
-                  </span>
-                </div>
-                {#if upload.caption}<span class="upload-caption">{upload.caption}</span>{/if}
-              </div>
-            </div>
-          {/each}
-          {#if typing[selectedChat]?.length}
-            {@const typers = typing[selectedChat]}
-            <div class="bubble typing-bubble first" style="--hue: {hue(typers[0].sender)}">
-              {#if isGroupChat}
-                {@const shown = typers.slice(0, 3)}
-                {#each shown as typer (typer.sender)}
-                  <div class="typing-row" style="--hue: {hue(typer.sender)}">
-                    <span class="sender-avatar"
-                      >{@render avatarFor(typer.sender, senderName(typer.sender))}</span
-                    >
-                    <span class="sender">
-                      {memberOf(typer.sender)?.name && !isPlaceholder(memberOf(typer.sender)!.name)
-                        ? memberOf(typer.sender)!.name
-                        : senderName(typer.sender)}
-                    </span>
-                    {#if typer.state === "recording"}
-                      <span class="recording"><Icon name="mic" size={15} /> recording audio…</span>
-                    {:else}
-                      <span class="dots" aria-label="typing"><i></i><i></i><i></i></span>
-                    {/if}
-                  </div>
-                {/each}
-                {#if typers.length > shown.length}
-                  <span class="typing-more">and {typers.length - shown.length} more…</span>
-                {/if}
-              {:else if typers[0].state === "recording"}
-                <span class="recording"><Icon name="mic" size={15} /> recording audio…</span>
-              {:else}
-                <span class="dots" aria-label="typing"><i></i><i></i><i></i></span>
-              {/if}
-            </div>
-          {/if}
-        </div>
+        <MessageList
+          messages={ordered}
+          isGroup={selectedChat.endsWith("@g.us")}
+          {switching}
+          bind:scroller
+          {dayKey}
+          {dayLabel}
+          {senderLabel}
+          memberTagOf={(sender) => memberOf(sender)?.label ?? null}
+          {hue}
+          {captionOf}
+          viewOnceMarks={marks.view_once}
+          {reactionsFor}
+          starredSet={starred}
+          editedSet={edited}
+          forwardedSet={forwarded}
+          {downloading}
+          replyingToId={replyingTo?.id ?? null}
+          {highlightedId}
+          menuId={menu?.message.id ?? null}
+          polls={marks.polls}
+          events={marks.events}
+          namer={(jid) => (jid === "@me" ? "You" : senderName(jid))}
+          avatarOf={pictureOf}
+          {avatars}
+          voiceAvatarOf={(m) => {
+            const voiceFrom = m.from_me ? me : bare(m.sender);
+            return voiceFrom ? pictureOf(voiceFrom) : null;
+          }}
+          quoteAuthorOf={quoteAuthor}
+          quoteTextOf={(m) => (m.reply_to_text ? plain(m.reply_to_text, mentionName) : null)}
+          quoteChatNameOf={(m) =>
+            m.reply_to_chat && m.reply_to_chat !== selectedChat ? chatName(m.reply_to_chat) : null}
+          {autoplayId}
+          onceAudioOpenId={onceOpen?.id ?? null}
+          {loadingOlder}
+          onloadolder={() => loadOlder()}
+          uploads={outgoing.filter((o) => o.chat === selectedChat)}
+          typers={typing[selectedChat] ?? []}
+          typerLabelOf={(sender) => {
+            const member = memberOf(sender);
+            const name = member && !isPlaceholder(member.name) ? member.name : null;
+            return name ?? senderName(sender);
+          }}
+          onscroll={onScroll}
+          toWire={asWireMentions}
+          targetOf={mentionTarget}
+          onprofile={openProfile}
+          onopenurl={openUrl}
+          {formatTime}
+          onreplydraft={(m) => {
+            editing = null;
+            replyingTo = m;
+            composerInput?.focus();
+          }}
+          onmenu={(e, m) => {
+            e.preventDefault();
+            menu = { x: e.clientX, y: e.clientY, message: m };
+          }}
+          onjumpquoted={jumpToQuoted}
+          ondownload={downloadMedia}
+          onopenviewer={openViewer}
+          onopenmedia={openMedia}
+          onvote={(m, options) =>
+            act(() => invoke("vote_poll", { chat: m.chat, id: m.id, options }))}
+          onrespond={(m, response) =>
+            act(() => invoke("respond_event", { chat: m.chat, id: m.id, response }))}
+          oneditrequest={(m) => {
+            const event = marks.events.find((e) => e.id === m.id);
+            if (event) editingEvent = { chat: m.chat, event };
+          }}
+          oncancelevent={(m) => {
+            const event = marks.events.find((e) => e.id === m.id);
+            if (event) return saveEvent(m.chat, m.id, { ...eventFields(event), canceled: true });
+          }}
+          onreact={(m, emoji) => act(() => invoke("react", { target: target(m), emoji }))}
+          onmarkplayed={markPlayed}
+          onnextvoice={playNextVoice}
+          onpausevoice={() => (autoplayId = null)}
+          onreplymenu={(e, m) => {
+            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            menu = { x: rect.left, y: rect.bottom + 4, message: m };
+          }}
+          ononce={(m) => {
+            if (!m.media_path) return downloadMedia(m);
+            onceIndex = 0;
+            onceOpen = m;
+          }}
+          oncloseonce={closeViewOnce}
+          oninviteopen={async (jid) => {
+            await refreshChats();
+            void openChat(jid);
+          }} />
 
         {#if scrolledUp}
           <button class="jump" onclick={scrollToBottom}>
@@ -4066,94 +3040,47 @@
           </button>
         {/if}
 
-        {#if replyingTo}
-          <div class="reply-preview">
-            {#if replyingTo.media_kind === "image" && replyingTo.media_path}
-              <img
-                class="reply-thumb"
-                src={convertFileSrc(replyingTo.media_path)}
-                alt=""
-              />
-            {:else if replyingTo.media_kind}
-              <span class="reply-icon">{replyIcon(replyingTo.media_kind)}</span>
-            {/if}
-            <span class="reply-body">
-              <span class="reply-to"
-                >Replying to {replyingTo.from_me ? "yourself" : senderLabel(replyingTo)}</span
-              >
-              <span class="reply-snippet">{replyPreviewText(replyingTo)}</span>
-            </span>
-            <button
-              class="icon"
-              title="Cancel reply"
-              aria-label="Cancel reply"
-              onclick={() => (replyingTo = null)}><Icon name="x" size={16} /></button>
-          </div>
-        {/if}
-
-        {#if editing}
-          <div class="reply-preview editing-preview">
-            <span class="reply-icon"><Icon name="edit" size={16} /></span>
-            <span class="reply-body">
-              <span class="reply-to">Editing message</span>
-              <span class="reply-snippet">{editing.original}</span>
-            </span>
-            <button
-              class="icon"
-              title="Cancel edit"
-              aria-label="Cancel edit"
-              onclick={cancelEditing}><Icon name="x" size={16} /></button>
-          </div>
-        {/if}
-
-        {#if pending.length > 0}
-          <div class="pending">
-            {#each pending as item (item.id)}
-              <div class="pending-item">
-                <button class="pending-thumb" title="Preview and caption" onclick={() => (previewId = item.id)}>
-                  {#if item.kind === "image"}
-                    <img src={item.url} alt={item.file.name} />
-                  {:else if item.kind === "video"}
-                    <!-- svelte-ignore a11y_media_has_caption -->
-                    <video src={item.url} preload="metadata" muted></video>
-                    <span class="play-badge">▶</span>
-                  {:else}
-                    <span class="file-icon"><Icon name="file" size={26} /></span>
-                  {/if}
-                </button>
-                <span class="pending-name" title={item.file.name}>{item.file.name}</span>
-                {#if item.caption}
-                  <span class="pending-caption">{item.caption}</span>
-                {/if}
-                <button
-                  class="icon remove"
-                  title="Remove"
-                  aria-label="Remove"
-                  onclick={() => removePending(item.id)}><Icon name="x" size={12} /></button
-                >
-              </div>
-            {/each}
-            <span class="pending-status">Type a caption below, then press Enter.</span>
-          </div>
-        {/if}
-
-        {#if mentionQuery !== null && mentionMatches.length > 0}
-          <div class="mentions">
-            {#each mentionMatches as person, i (person.jid)}
-              <button
-                type="button"
-                class="mention"
-                class:active={i === mentionIndex}
-                onclick={() => selectMention(person)}
-                onmouseenter={() => (mentionIndex = i)}>
-                {person.name}
-                {#if person.username && person.username !== person.name}<span class="mention-handle"
-                    >@{person.username}</span
-                  >{/if}
-              </button>
-            {/each}
-          </div>
-        {/if}
+        <ComposerBar
+          bind:draft
+          bind:composerInput
+          {replyingTo}
+          replyAuthor={replyingTo ? (replyingTo.from_me ? "yourself" : senderLabel(replyingTo)) : ""}
+          replySnippet={replyingTo ? replyPreviewText(replyingTo) : ""}
+          {editing}
+          {pending}
+          bind:sendOnce
+          bind:recording
+          {mentionMatches}
+          bind:mentionIndex
+          onselectmention={selectMention}
+          {emojiToken}
+          {emojiMatches}
+          bind:emojiIndex
+          onselectemoji={selectEmoji}
+          bind:pickerTab
+          {selectedChat}
+          {enqueue}
+          onpickeremoji={(emoji) => insertAtCaret(emoji)}
+          onpickersent={async () => {
+            await reloadMessages();
+            await refreshChats();
+            scrollToBottom();
+          }}
+          onpickererror={(message) => (error = message)}
+          onstage={stageFile}
+          oncreatekind={(kind) => (creating = kind)}
+          oninput={onComposerInput}
+          onkey={onComposerKey}
+          onsend={() => void send()}
+          oncancelreply={() => (replyingTo = null)}
+          oncanceledit={cancelEditing}
+          onremove={removePending}
+          onsendvoice={sendVoice}
+          onvoiceerror={(message) => (error = message)}
+          onreceipts={toggleChatReceipts}
+          ontyping={toggleChatTyping}
+          {receiptsHidden}
+          {typingHidden} />
 
         {#if chatGroup && !chatGroup.can_send}
           <div class="read-only" role="status">
@@ -4164,165 +3091,6 @@
               Only admins can send messages{chatGroup.announcements ? " to this community's announcements" : " here"}.
             {/if}
           </div>
-        {:else}
-        <div class="composer-area">
-        {#if emojiToken && emojiMatches.length > 0}
-          <div class="suggest" role="listbox" aria-label="Emoji suggestions">
-            <span class="suggest-title">Emoji matching :{emojiToken.query}</span>
-            {#each emojiMatches as e, i (e.emoji)}
-              <button
-                type="button"
-                class="suggest-row"
-                class:active={i === emojiIndex}
-                role="option"
-                aria-selected={i === emojiIndex}
-                onmouseenter={() => (emojiIndex = i)}
-                onclick={() => selectEmoji(e.emoji)}>
-                <span class="suggest-emoji">{e.emoji}</span>
-                :{e.shortcodes.find((c) => c.startsWith(emojiToken?.query.toLowerCase() ?? "")) ?? e.shortcodes[0] ?? e.label}:
-              </button>
-            {/each}
-          </div>
-        {/if}
-        {#if pickerTab}
-          <ExpressionPicker
-            chat={selectedChat}
-            bind:tab={pickerTab}
-            {enqueue}
-            onemoji={(emoji) => insertAtCaret(emoji)}
-            onsent={async () => {
-              await reloadMessages();
-              await refreshChats();
-              scrollToBottom();
-            }}
-            onerror={(message) => (error = message)}
-            onclose={() => (pickerTab = null)} />
-        {/if}
-        <form class="composer" onsubmit={(e) => (e.preventDefault(), send())}>
-          {#if recording}
-            <VoiceRecorder
-              onsend={sendVoice}
-              oncancel={() => (recording = false)}
-              onerror={(message) => (error = message)} />
-          {:else}
-          <button
-            type="button"
-            class="icon attach"
-            class:active={attachMenu}
-            title="Attach"
-            aria-label="Attach"
-            aria-expanded={attachMenu}
-            onclick={() => (attachMenu = !attachMenu)}><Icon name="plus" size={22} /></button
-          >
-          {#if attachMenu}
-            <!-- svelte-ignore a11y_click_events_have_key_events -->
-            <div class="attach-catcher" role="presentation" onclick={() => (attachMenu = false)}></div>
-            <div class="attach-menu" role="menu">
-              <button
-                type="button"
-                role="menuitem"
-                onclick={() => {
-                  attachMenu = false;
-                  filePicker?.click();
-                }}><Icon name="paperclip" size={18} /> Upload a file</button>
-              <button
-                type="button"
-                role="menuitem"
-                onclick={() => {
-                  attachMenu = false;
-                  creating = "poll";
-                }}><Icon name="poll" size={18} /> Create poll</button>
-              <button
-                type="button"
-                role="menuitem"
-                onclick={() => {
-                  attachMenu = false;
-                  creating = "event";
-                }}><Icon name="calendar" size={18} /> Create event</button>
-            </div>
-          {/if}
-          <input
-            class="file-input"
-            type="file"
-            multiple
-            bind:this={filePicker}
-            onchange={attach}
-          />
-          <textarea
-            bind:this={composerInput}
-            value={draft}
-            oninput={onComposerInput}
-            onkeydown={onComposerKey}
-            rows="1"
-            placeholder={editing ? "Edit message" : pending.length > 0 ? "Add a caption (optional)" : "Type a message"}
-          ></textarea>
-          <div class="composer-tools">
-            <button
-              type="button"
-              class="icon"
-              class:active={receiptsHidden}
-              title={receiptsHidden ? "Read receipts hidden here" : "Hide read receipts here"}
-              aria-label="Hide read receipts here"
-              aria-pressed={receiptsHidden}
-              onclick={toggleChatReceipts}><Icon name={receiptsHidden ? "eyeOff" : "eye"} size={20} /></button>
-            <button
-              type="button"
-              class="icon"
-              class:active={typingHidden}
-              title={typingHidden ? "Typing not sent here" : "Stop sending typing here"}
-              aria-label="Stop sending typing here"
-              aria-pressed={typingHidden}
-              onclick={toggleChatTyping}><Icon name="keyboard" size={20} /></button>
-            <button
-              type="button"
-              class="icon tool-text"
-              class:active={pickerTab === "gif"}
-              title="GIFs"
-              onclick={() => (pickerTab = pickerTab === "gif" ? null : "gif")}>GIF</button>
-            <button
-              type="button"
-              class="icon"
-              class:active={pickerTab === "sticker"}
-              title="Stickers"
-              aria-label="Stickers"
-              onclick={() => (pickerTab = pickerTab === "sticker" ? null : "sticker")}
-              ><Icon name="sticker" size={20} /></button>
-            <button
-              type="button"
-              class="icon"
-              class:active={pickerTab === "emoji"}
-              title="Emoji"
-              aria-label="Emoji"
-              onclick={() => (pickerTab = pickerTab === "emoji" ? null : "emoji")}
-              ><Icon name="smile" size={20} /></button>
-            {#if pending.some((p) => p.kind !== "other")}
-              <button
-                type="button"
-                class="icon once-toggle"
-                class:active={sendOnce}
-                title="View once"
-                aria-label="View once"
-                aria-pressed={sendOnce}
-                onclick={() => (sendOnce = !sendOnce)}>1</button>
-            {/if}
-          </div>
-          {#if !draft.trim() && pending.length === 0}
-            <button
-              class="send ready"
-              type="button"
-              title="Record a voice message"
-              aria-label="Record a voice message"
-              onclick={() => (recording = true)}><Icon name="mic" size={19} /></button>
-          {:else}
-            <button
-              class="send ready"
-              type="submit"
-              title="Send"
-              aria-label="Send"><Icon name="send" size={18} /></button>
-          {/if}
-          {/if}
-        </form>
-        </div>
         {/if}
       {:else}
         <div class="placeholder">
@@ -4376,50 +3144,40 @@
 
 {#if deleting}
   {@const m = deleting}
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div
-    class="sheet-backdrop"
-    role="presentation"
-    onclick={(e) => e.target === e.currentTarget && (deleting = null)}>
-    <div class="sheet confirm" role="dialog" aria-modal="true" aria-label="Delete message">
-      <h2>Delete message?</h2>
-      <p class="hint">
-        {canDeleteForEveryone(m)
-          ? "Delete it for everyone in this chat, or only from your devices."
-          : "It is removed from your devices only."}
-      </p>
-      <div class="confirm-actions">
-        {#if canDeleteForEveryone(m)}
-          <button class="danger" onclick={() => deleteMessage(true)}>Delete for everyone</button>
-        {/if}
-        <button class="danger" onclick={() => deleteMessage(false)}>Delete for me</button>
-        <button onclick={() => (deleting = null)}>Cancel</button>
-      </div>
-    </div>
-  </div>
+  <ConfirmDialog
+    label="Delete message"
+    title="Delete message?"
+    hint={canDeleteForEveryone(m)
+      ? "Delete it for everyone in this chat, or only from your devices."
+      : "It is removed from your devices only."}
+    onclose={() => (deleting = null)}>
+    {#snippet actions()}
+      {#if canDeleteForEveryone(m)}
+        <button class="danger" onclick={() => deleteMessage(true)}>Delete for everyone</button>
+      {/if}
+      <button class="danger" onclick={() => deleteMessage(false)}>Delete for me</button>
+      <button onclick={() => (deleting = null)}>Cancel</button>
+    {/snippet}
+  </ConfirmDialog>
 {/if}
 
 {#if reporting}
   {@const m = reporting}
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div
-    class="sheet-backdrop"
-    role="presentation"
-    onclick={(e) => e.target === e.currentTarget && (reporting = null)}>
-    <div class="sheet confirm" role="dialog" aria-modal="true" aria-label="Report message">
-      <h2>Report to admins?</h2>
-      <p class="hint">The group's admins see this message and that you reported it. WhatsApp is not told.</p>
-      <div class="confirm-actions">
-        <button
-          class="danger"
-          onclick={() => {
-            reporting = null;
-            act(() => invoke("report_message", { chat: m.chat, id: m.id }));
-          }}>Report</button>
-        <button onclick={() => (reporting = null)}>Cancel</button>
-      </div>
-    </div>
-  </div>
+  <ConfirmDialog
+    label="Report message"
+    title="Report to admins?"
+    hint="The group's admins see this message and that you reported it. WhatsApp is not told."
+    onclose={() => (reporting = null)}>
+    {#snippet actions()}
+      <button
+        class="danger"
+        onclick={() => {
+          reporting = null;
+          act(() => invoke("report_message", { chat: m.chat, id: m.id }));
+        }}>Report</button>
+      <button onclick={() => (reporting = null)}>Cancel</button>
+    {/snippet}
+  </ConfirmDialog>
 {/if}
 
 {#if chatSettingsOpen && selectedChat}
@@ -4576,49 +3334,9 @@
     onclose={() => (showGroupInfo = false)} />
 {/if}
 
-{#if previewItem}
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div
-    class="sheet-backdrop"
-    role="presentation"
-    onpointerdown={previewDismiss.down}
-    onclick={(e) => previewDismiss.click(e) && (previewId = null)}>
-    <div
-      class="sheet preview-sheet"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Attachment preview">
-      {#if previewItem.kind === "image" && cropping}
-        <ImageCropper
-          file={previewItem.file}
-          onapply={(file) => void replacePending(previewItem!.id, file)}
-          oncancel={() => (cropping = false)} />
-      {:else if previewItem.kind === "image"}
-        <img class="preview-large" src={previewItem.url} alt={previewItem.file.name} />
-        <button class="ghost crop-button" onclick={() => (cropping = true)}>Crop or resize</button>
-      {:else if previewItem.kind === "video"}
-        <div class="preview-video">
-          <VideoPlayer src={previewItem.url} autoplay={false} />
-        </div>
-      {:else}
-        <span class="file-icon large"><Icon name="file" size={56} /></span>
-      {/if}
-      <span class="pending-name">{previewItem.file.name}</span>
-      <input
-        class="caption"
-        value={previewItem.caption}
-        oninput={(e) => previewItem && (previewItem.caption = e.currentTarget.value)}
-        placeholder="Add a caption"
-        autocomplete="off"
-      />
-      <button class="primary" onclick={() => (previewId = null)}>Done</button>
-    </div>
-  </div>
-{/if}
-
 {#if pendingJump}
   <div class="notice">
-    <span class="spinner"></span>
+    <Spinner />
     <span>Fetching older messages from your phone to find it…</span>
   </div>
 {/if}
@@ -4627,9 +3345,7 @@
   <div class="notice">
     <span>{notice}</span>
     <button class="link" onclick={muteNotice}>Do not warn again</button>
-    <button class="icon" title="Dismiss" aria-label="Dismiss" onclick={() => (notice = null)}>
-      <Icon name="x" size={16} />
-    </button>
+    <Button variant="icon" icon="x" iconSize={16} title="Dismiss" aria-label="Dismiss" onclick={() => (notice = null)} />
   </div>
 {/if}
 
@@ -4725,46 +3441,46 @@
     scrollbar-color: var(--raised-2) transparent;
   }
   /* Density: comfortable is the default look; compact and cozy scale rows and bubbles. */
-  :global(html.density-compact) .chat-row {
+  :global(html.density-compact .chat-row) {
     height: 60px;
   }
-  :global(html.density-compact) .chat-row .avatar {
+  :global(html.density-compact .chat-row .avatar) {
     width: 42px;
     height: 42px;
     font-size: 14px;
   }
-  :global(html.density-compact) .chat-row::after {
+  :global(html.density-compact .chat-row::after) {
     left: 70px;
   }
-  :global(html.density-compact) .messages {
+  :global(html.density-compact .messages) {
     gap: 1px;
   }
-  :global(html.density-compact) .bubble {
+  :global(html.density-compact .bubble) {
     padding: 4px 6px 5px 8px;
     line-height: 18px;
   }
-  :global(html.density-compact) .bubble.first {
+  :global(html.density-compact .bubble.first) {
     margin-top: 6px;
   }
-  :global(html.density-cozy) .chat-row {
+  :global(html.density-cozy .chat-row) {
     height: 82px;
   }
-  :global(html.density-cozy) .chat-row .avatar {
+  :global(html.density-cozy .chat-row .avatar) {
     width: 54px;
     height: 54px;
     font-size: 16px;
   }
-  :global(html.density-cozy) .chat-row::after {
+  :global(html.density-cozy .chat-row::after) {
     left: 82px;
   }
-  :global(html.density-cozy) .messages {
+  :global(html.density-cozy .messages) {
     gap: 4px;
   }
-  :global(html.density-cozy) .bubble {
+  :global(html.density-cozy .bubble) {
     padding: 8px 10px 10px 12px;
     line-height: 21px;
   }
-  :global(html.density-cozy) .bubble.first {
+  :global(html.density-cozy .bubble.first) {
     margin-top: 14px;
   }
   /* Animations off (setting or OS): nothing moves, whatever its duration. */
@@ -4799,7 +3515,7 @@
     flex-direction: column;
   }
   .app > .layout,
-  .app > .pairing {
+  .app > :global(.pairing) {
     flex: 1;
     min-height: 0;
   }
@@ -4820,99 +3536,11 @@
     box-shadow: var(--shadow);
     font-size: 13px;
   }
-  .error .icon {
-    color: var(--muted);
-  }
-  .pairing {
-    position: relative;
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 22px;
-    padding: 32px 24px;
-    box-sizing: border-box;
-    overflow: auto;
-    background: var(--chat-bg);
-  }
-  .intro-glow {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    background:
-      radial-gradient(60% 50% at 15% 10%, var(--accent-soft), transparent 70%),
-      radial-gradient(50% 40% at 90% 90%, color-mix(in srgb, var(--link) 12%, transparent), transparent 70%);
-  }
-  .intro-head,
-  .intro-card,
-  .intro-foot {
-    position: relative;
-    box-sizing: border-box;
-    width: min(920px, 100%);
-    flex: none;
-  }
-  .intro-head {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-  }
-  .intro-logo {
-    display: block;
-    flex: none;
-    width: 48px;
-    height: 48px;
-    border-radius: 12px;
-    overflow: hidden;
-  }
-  .intro-head h1 {
-    margin: 0;
-    font-size: 26px;
-    letter-spacing: -0.01em;
-  }
-  .intro-tag {
-    color: var(--muted);
-    font-size: 13.5px;
-  }
-  .intro-settings {
+  /* Dismiss buttons live in $lib/Button.svelte (icon variant, already muted). */
+  :global(.intro-settings) {
     margin-left: auto;
   }
-  .intro-card {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 40px;
-    padding: 40px 44px;
-    border: 1px solid var(--line-strong);
-    border-radius: 16px;
-    background: var(--surface);
-    box-shadow: var(--shadow);
-    animation: intro-in calc(0.35s * var(--motion-scale)) var(--ease) both;
-  }
-  @keyframes intro-in {
-    from {
-      opacity: 0;
-      transform: translateY(8px);
-    }
-  }
-  @media (max-width: 760px) {
-    .intro-card {
-      grid-template-columns: 1fr;
-      padding: 28px 22px;
-    }
-  }
-  .intro-card.resume {
-    grid-template-columns: 1fr;
-    justify-items: center;
-    gap: 10px;
-    width: min(460px, 100%);
-    text-align: center;
-  }
-  .intro-card.resume h2 {
-    margin: 8px 0 0;
-    font-size: 22px;
-    font-weight: 500;
-  }
-  .resume-avatar {
+  :global(.resume-avatar) {
     display: grid;
     place-items: center;
     width: 88px;
@@ -4924,42 +3552,7 @@
     font-weight: 600;
     box-shadow: 0 0 0 4px var(--accent-soft);
   }
-  .resume-who {
-    color: var(--muted);
-    font-size: 13.5px;
-  }
-  .account-choices {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    width: 100%;
-    margin-top: 16px;
-  }
-  .account-choice {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 10px 12px;
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    background: var(--raised);
-    color: var(--text);
-    font: inherit;
-    text-align: left;
-    cursor: pointer;
-    transition:
-      background calc(0.15s * var(--motion-scale)),
-      border-color calc(0.15s * var(--motion-scale)),
-      transform calc(0.15s * var(--motion-scale));
-  }
-  .account-choice:hover {
-    background: var(--raised-2);
-    border-color: var(--accent);
-  }
-  .account-choice:active {
-    transform: scale(0.99);
-  }
-  .choice-avatar {
+  :global(.choice-avatar) {
     display: grid;
     place-items: center;
     flex: none;
@@ -4970,342 +3563,31 @@
     background: var(--raised-2);
     font-weight: 600;
   }
-  .choice-text {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-  }
-  .choice-text small {
-    color: var(--muted);
-  }
-  .resume-progress {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    width: min(320px, 100%);
-    margin-top: 18px;
-  }
-  .resume-status {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    color: var(--muted);
-    font-size: 12.5px;
-  }
-  .resume-count {
-    font-variant-numeric: tabular-nums;
-  }
-  .resume-bar {
-    height: 6px;
-    border-radius: 999px;
-    background: var(--raised);
-    overflow: hidden;
-  }
-  .resume-bar span {
-    display: block;
-    width: 40%;
-    height: 100%;
-    border-radius: inherit;
-    background: var(--accent);
-    animation: indeterminate 1.2s ease-in-out infinite;
-  }
-  .resume-bar.determinate span {
-    animation: none;
-    transition: width calc(0.25s * var(--motion-scale)) var(--ease);
-  }
-  @keyframes indeterminate {
-    from {
-      transform: translateX(-100%);
-    }
-    to {
-      transform: translateX(250%);
-    }
-  }
-  .intro-card.resume .account-bar {
-    margin-top: 14px;
-    justify-content: center;
-  }
-  .intro-card.resume .account {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .intro-card.resume .account img {
+  :global(.intro-card.resume .account img) {
     width: 22px;
     height: 22px;
     border-radius: 50%;
     object-fit: cover;
   }
-  .intro-steps h2 {
-    margin: 0 0 18px;
-    font-size: 24px;
-    font-weight: 400;
-  }
-  .intro-steps ol {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-    font-size: 15px;
-    line-height: 1.45;
-  }
-  .intro-steps li {
-    display: flex;
-    gap: 12px;
-    align-items: center;
-  }
-  .intro-steps .num {
-    flex: none;
-    display: grid;
-    place-items: center;
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    border: 1px solid var(--line-strong);
-    color: var(--muted);
-    font-size: 12.5px;
-  }
-  .intro-progress {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px 18px;
-    margin-top: 26px;
-    font-size: 12.5px;
-    color: var(--faint);
-  }
-  .stage {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-  }
-  .stage-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--line-strong);
-  }
-  .stage.current {
-    color: var(--text);
-  }
-  .stage.current .stage-dot {
-    background: var(--accent);
-    box-shadow: 0 0 0 4px var(--accent-soft);
-    animation: blink-dot 1.4s ease-in-out infinite;
-  }
-  .stage.done {
-    color: var(--muted);
-  }
-  .stage.done .stage-dot {
-    background: var(--accent);
-  }
-  @keyframes blink-dot {
-    50% {
-      box-shadow: 0 0 0 7px transparent;
-    }
-  }
-  .intro-accounts {
-    margin-top: 26px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .intro-label {
-    font-size: 12px;
-    color: var(--faint);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-  .intro-accounts .account-bar {
-    justify-content: flex-start;
-    flex-wrap: wrap;
-  }
-  .intro-accounts .account {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .intro-accounts .account img,
-  .account-initial {
+  :global(.intro-accounts .account img),
+  :global(.account-initial) {
     width: 22px;
     height: 22px;
     border-radius: 50%;
     object-fit: cover;
   }
-  .account-initial {
+  :global(.account-initial) {
     display: grid;
     place-items: center;
     background: var(--raised-2);
     font-size: 10px;
-  }
-  .intro-code {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 14px;
-    text-align: center;
-    max-width: 280px;
-  }
-  .intro-foot {
-    margin: 0;
-    color: var(--faint);
-    font-size: 12.5px;
-    text-align: center;
-  }
-  .lede {
-    margin: 0;
-    color: var(--muted);
-    max-width: 44ch;
-    line-height: 1.5;
-  }
-  .hint {
-    margin: 0;
-    color: var(--faint);
-    font-size: 12px;
-    max-width: 44ch;
-    text-wrap: balance;
-  }
-  .qr {
-    position: relative;
-    background: var(--bg);
-    padding: 12px;
-    border-radius: 12px;
-    line-height: 0;
-  }
-  .qr-logo {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    display: block;
-    width: 44px;
-    height: 44px;
-    transform: translate(-50%, -50%);
-    border-radius: 10px;
-    border: 4px solid var(--bg);
-    background: var(--bg);
-    overflow: hidden;
-  }
-  .qr-loading,
-  .qr-idle {
-    display: grid;
-    place-items: center;
-    width: 264px;
-    height: 264px;
-    box-sizing: border-box;
-    color: var(--faint);
-  }
-  .qr-loading {
-    background: linear-gradient(100deg, var(--bg) 40%, var(--raised) 50%, var(--bg) 60%) 0 0 / 300% 100%;
-    animation: shimmer 1.4s linear infinite;
-  }
-  @keyframes shimmer {
-    to {
-      background-position: -150% 0;
-    }
   }
   .layout {
     display: grid;
     grid-template-columns: 300px 1fr;
     overflow: hidden;
   }
-  .resizer {
-    border: 0;
-    background: transparent;
-    padding: 0;
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    width: 6px;
-    cursor: col-resize;
-    z-index: 5;
-  }
-  .chats .resizer {
-    display: block;
-    right: -3px;
-  }
-  .chat-heading {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    min-width: 0;
-  }
-  .header-tools {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    margin-left: auto;
-    flex: none;
-  }
-  .badge-host {
-    position: relative;
-  }
-  /* Keeps the mentions button beside the starred one instead of centred. */
-  .chats header .badge-host {
-    margin-left: auto;
-  }
-  .icon-badge {
-    position: absolute;
-    top: 2px;
-    right: 0;
-    min-width: 16px;
-    height: 16px;
-    padding: 0 4px;
-    box-sizing: border-box;
-    border-radius: 999px;
-    background: var(--mention);
-    color: var(--accent-ink);
-    font-size: 10px;
-    font-weight: 700;
-    line-height: 16px;
-    text-align: center;
-    pointer-events: none;
-  }
-  .heading-avatar {
-    flex: none;
-    padding: 0;
-    border: 0;
-    border-radius: 50%;
-    background: none;
-    cursor: pointer;
-  }
-  .heading-avatar:hover {
-    filter: brightness(1.12);
-  }
-  .chat-title {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    background: transparent;
-    border: 0;
-    color: inherit;
-    font: inherit;
-    font-weight: 600;
-    padding: 0;
-    text-align: left;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  button.chat-title {
-    cursor: pointer;
-  }
-  button.chat-title:hover .chat-sub {
-    color: var(--accent-text);
-  }
-  .chat-sub {
-    font-size: 13px;
-    font-weight: 400;
-    color: var(--muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .chat-title {
-    font-size: 16px;
-    font-weight: 400;
-  }
-  .avatar {
+  :global(.avatar) {
     grid-area: avatar;
     flex: none;
     width: 49px;
@@ -5320,153 +3602,31 @@
     letter-spacing: 0.02em;
     user-select: none;
   }
-  img.avatar {
+  :global(img.avatar) {
     object-fit: cover;
     background: var(--raised);
   }
-  .conversation header .avatar {
+  :global(.conversation header .avatar) {
     width: 40px;
     height: 40px;
     font-size: 14px;
   }
-  .link {
-    color: var(--link);
-    cursor: pointer;
-  }
-  /* Keep the spaces the sender typed, and wrap long tokens. */
-  .text {
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-  }
-  .inline-code,
-  .pre {
-    font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
-    font-size: 0.92em;
-  }
-  .inline-code {
-    padding: 1px 4px;
-    border-radius: 4px;
-    background: color-mix(in srgb, var(--text) 10%, transparent);
-  }
-  .mention-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 0 5px 0 2px;
-    border-radius: 4px;
-    vertical-align: bottom;
-    font-weight: 500;
-    color: var(--mention-pill);
-    background: var(--mention-pill-soft);
-    white-space: nowrap;
-    border: 0;
-    font: inherit;
-    line-height: inherit;
-    cursor: pointer;
-  }
-  .mention-pill:hover {
-    text-decoration: underline;
-  }
-  .mention-pill.self {
-    color: var(--mention);
-    background: var(--mention-self-soft);
-  }
-  .mention-pill img,
-  .mention-initials {
+  /* Message text lives in $lib/MessageText.svelte. The mention avatar sizes
+     stay global so they reach inside it. */
+  :global(.mention-pill img),
+  :global(.mention-initials) {
     width: 16px;
     height: 16px;
     border-radius: 50%;
     flex: none;
     object-fit: cover;
   }
-  .mention-initials {
+  :global(.mention-initials) {
     display: grid;
     place-items: center;
     font-size: 8px;
     background: hsl(var(--hue) 28% 24%);
     color: hsl(var(--hue) 45% 80%);
-  }
-  .pre {
-    display: block;
-    margin: 2px 0;
-    padding: 6px 8px;
-    border-radius: 6px;
-    background: color-mix(in srgb, var(--text) 8%, transparent);
-    white-space: pre-wrap;
-  }
-  .quote-block {
-    display: block;
-    margin: 2px 0;
-    padding-left: 8px;
-    border-left: 3px solid color-mix(in srgb, var(--text) 30%, transparent);
-    color: var(--muted);
-  }
-  .fmt-list {
-    margin: 2px 0;
-    padding-left: 20px;
-    white-space: normal;
-  }
-  .chats {
-    position: relative;
-    overflow: hidden;
-    background: var(--bg);
-    border-right: 1px solid var(--line);
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-  }
-  .chats header,
-  .conversation header {
-    min-width: 0;
-    height: 59px;
-    box-sizing: border-box;
-    flex: none;
-    overflow: hidden;
-    padding: 0 12px 0 16px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 8px;
-  }
-  .chats header {
-    height: 64px;
-  }
-  .conversation header {
-    background: var(--surface);
-  }
-  .title {
-    margin: 0;
-    font-size: 22px;
-    font-weight: 700;
-  }
-  .account-bar {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    overflow: hidden;
-  }
-  .account {
-    background: transparent;
-    border: 0;
-    color: var(--muted);
-    font: inherit;
-    font-size: 12px;
-    padding: 4px 10px;
-    border-radius: 4px;
-    cursor: pointer;
-    max-width: 120px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .account:hover {
-    color: var(--text);
-  }
-  .account.active {
-    background: var(--raised);
-    color: var(--text);
-    font-weight: 600;
   }
   .notice {
     position: fixed;
@@ -5492,209 +3652,30 @@
     cursor: pointer;
     white-space: nowrap;
   }
-  .search {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin: 0 12px 8px;
-    padding: 0 12px;
-    height: 36px;
-    flex: none;
-    background: var(--surface);
-    border: 1px solid transparent;
-    border-radius: 999px;
-    color: var(--faint);
-    cursor: text;
-  }
-  .search:focus-within {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-soft);
-  }
-  .search input {
-    flex: 1;
-    min-width: 0;
-    background: transparent;
-    border: 0;
-    outline: none;
-    padding: 0;
-    color: var(--text);
-    font: inherit;
-  }
-  .search input:focus-visible {
-    box-shadow: none;
-  }
-  .search input::placeholder {
-    color: var(--muted);
-  }
-  .filters {
-    display: flex;
-    gap: 8px;
-    padding: 0 12px 8px;
-    flex: none;
-  }
-  .chip {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    background: var(--surface);
-    border: 0;
-    border-radius: 999px;
-    color: var(--muted);
-    font: inherit;
-    font-size: 14px;
-    padding: 5px 12px;
-    cursor: pointer;
-  }
-  .chip:hover {
-    background: var(--raised);
-  }
-  .chip.active {
-    background: var(--accent-soft);
-    color: var(--accent);
-  }
-  .chip-count {
-    font-size: 12px;
-  }
-  .results .preview {
-    color: var(--faint);
-  }
-  .chats ul {
-    list-style: none;
+  /* Small dim helper text, shared by the pairing view and the empty-chat hint. */
+  :global(.hint) {
     margin: 0;
-    padding: 0;
-    overflow-y: auto;
-    overflow-x: hidden;
-    flex: 1;
+    color: var(--faint);
+    font-size: 12px;
+    max-width: 44ch;
+    text-wrap: balance;
   }
-  .chat-row {
-    position: relative;
-    box-sizing: border-box;
-    width: 100%;
-    height: 72px;
-    min-width: 0;
-    overflow: hidden;
-    display: grid;
-    grid-template-columns: auto 1fr auto;
-    grid-template-areas: "avatar name time" "avatar preview badge";
-    gap: 2px 15px;
-    text-align: left;
-    background: transparent;
-    color: inherit;
-    border: 0;
-    padding: 0 15px 0 13px;
-    cursor: pointer;
-    font: inherit;
-    align-items: center;
-    align-content: center;
-  }
-  /* The divider starts after the avatar, as in WhatsApp. */
-  .chat-row::after {
-    content: "";
+  /* The play triangle over pending videos and unloaded media, in the composer and bubbles. */
+  :global(.play-badge) {
     position: absolute;
-    left: 77px;
-    right: 0;
-    bottom: 0;
-    border-bottom: 1px solid var(--line);
-  }
-  .chat-row:hover {
-    background: var(--surface);
-  }
-  .chat-row.active {
-    background: var(--raised);
-  }
-  .chat-row:focus-visible {
-    outline-offset: -2px;
-  }
-  .badges {
-    grid-area: badge;
+    inset: 0;
     display: flex;
     align-items: center;
-    gap: 4px;
-  }
-  .pin {
-    display: inline-flex;
-    vertical-align: -1px;
-    margin-right: 4px;
-    color: var(--faint);
-  }
-  .badge.mention-badge {
-    background: var(--accent-soft);
-    color: var(--accent-text);
-    border: 0;
-    cursor: pointer;
-    font: inherit;
-    font-size: 11px;
-    font-weight: 700;
-  }
-  .pin-toggle {
-    display: none;
-    background: transparent;
-    border: 0;
-    color: var(--faint);
-    padding: 2px;
-    border-radius: 4px;
-    cursor: pointer;
-  }
-  .pin-toggle:hover {
+    justify-content: center;
     color: var(--text);
+    font-size: 28px;
+    text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
+    pointer-events: none;
   }
-  .chat-row:hover .pin-toggle,
-  .pin-toggle:focus-visible {
-    display: block;
-  }
-  .jump-mention {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    background: var(--accent-soft);
-    color: var(--accent-text);
-    border: 0;
-    border-radius: 999px;
-    padding: 4px 10px;
-    font: inherit;
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .name {
-    grid-area: name;
-    min-width: 0;
-    font-weight: 500;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .time {
-    grid-area: time;
-    color: var(--muted);
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
-  }
-  .time.unread {
-    color: var(--accent);
-  }
-  .chat-row .name {
-    font-size: 17px;
-    font-weight: 400;
-  }
-  .chat-row .preview {
-    font-size: 14px;
-    color: var(--muted);
-  }
-  .preview.typing,
-  .chat-sub.typing {
-    color: var(--accent);
-  }
-  .preview-icon {
-    display: inline-flex;
-    vertical-align: -2px;
-    margin-right: 4px;
-  }
-  .messages.group {
-    --pad-l: max(56px, 7%);
-  }
+  /* Chat filter pills live in $lib/Button.svelte (chip variant). */
   /* Beside the first bubble of a run, outside the tail. */
-  .sender-avatar {
+  /* Sender names and avatars render in MessageBubble and TypingIndicator. */
+  :global(.sender-avatar) {
     position: absolute;
     left: -38px;
     top: 0;
@@ -5704,73 +3685,12 @@
     background: none;
     cursor: pointer;
   }
-  .sender-avatar .avatar {
+  :global(.sender-avatar .avatar) {
     width: 28px;
     height: 28px;
     font-size: 11px;
   }
-  .preview {
-    grid-area: preview;
-    min-width: 0;
-    color: var(--muted);
-    font-size: 12px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .badge {
-    display: grid;
-    place-items: center;
-    background: var(--accent);
-    color: var(--accent-ink);
-    font-size: 12px;
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
-    border-radius: 999px;
-    height: 20px;
-    padding: 0 6px;
-    min-width: 20px;
-    box-sizing: border-box;
-  }
-  .empty {
-    padding: 16px 10px;
-    color: var(--faint);
-  }
-  .user-panel {
-    position: relative;
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    height: 62px;
-    box-sizing: border-box;
-    padding: 0 8px;
-    background: var(--surface);
-  }
-  .user-panel .me {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 4px 6px;
-    background: transparent;
-    border: 0;
-    border-radius: 8px;
-    color: inherit;
-    font: inherit;
-    text-align: left;
-    cursor: pointer;
-  }
-  .user-panel .me:hover,
-  .user-panel .me[aria-expanded="true"] {
-    background: var(--raised);
-  }
-  .me-avatar-wrap {
-    position: relative;
-    flex: none;
-  }
-  .me-avatar {
+  :global(.me-avatar) {
     display: grid;
     place-items: center;
     width: 36px;
@@ -5782,87 +3702,10 @@
     font-size: 13px;
     font-weight: 500;
   }
-  .presence {
-    position: absolute;
-    right: -1px;
-    bottom: -1px;
-    width: 11px;
-    height: 11px;
-    border-radius: 50%;
-    background: var(--faint);
-    box-shadow: 0 0 0 3px var(--surface);
-  }
-  .presence.online {
-    background: var(--accent);
-  }
   /* Half-lit: online, but only contacts can see it. */
-  .presence.contacts {
-    background: linear-gradient(90deg, var(--accent) 50%, var(--faint) 50%);
-  }
   /* Discord's invisible: a hollow grey ring. */
-  .presence.invisible {
-    background: var(--surface);
-    border: 3px solid var(--muted);
-    box-sizing: border-box;
-  }
-  .me-text {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    line-height: 1.25;
-  }
-  .me-name {
-    font-size: 14px;
-    font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .me-status {
-    font-size: 12px;
-    color: var(--muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .account-menu {
-    position: absolute;
-    left: 8px;
-    right: 8px;
-    bottom: calc(100% + 6px);
-    z-index: 20;
-    display: flex;
-    flex-direction: column;
-    padding: 6px;
-    background: var(--surface);
-    border: 1px solid var(--line-strong);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow);
-  }
-  .menu-label {
-    padding: 6px 8px 4px;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--muted);
-  }
-  .menu-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px;
-    background: transparent;
-    border: 0;
-    border-radius: 6px;
-    color: var(--text);
-    font: inherit;
-    font-size: 14px;
-    text-align: left;
-    cursor: pointer;
-  }
-  .menu-item:hover {
-    background: var(--raised);
-  }
-  .menu-avatar {
+  /* Menu rows live in $lib/Button.svelte (menu variant). */
+  :global(.menu-avatar) {
     display: grid;
     place-items: center;
     width: 28px;
@@ -5874,33 +3717,6 @@
     color: hsl(var(--hue, 160) 45% 80%);
     font-size: 11px;
   }
-  .menu-name {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .menu-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    border: 2px solid var(--muted);
-    box-sizing: border-box;
-  }
-  .menu-item.current .menu-dot {
-    background: var(--accent);
-    border-color: var(--accent);
-  }
-  .menu-sep {
-    height: 1px;
-    margin: 6px 4px;
-    background: var(--line-strong);
-  }
-  .account.add {
-    display: grid;
-    place-items: center;
-  }
   .conversation {
     display: flex;
     flex-direction: column;
@@ -5909,204 +3725,25 @@
     position: relative;
     background: var(--chat-bg);
   }
-  .day {
-    display: flex;
-    justify-content: center;
-    margin: 12px 0 8px;
-  }
-  .day span {
-    background: var(--surface);
-    color: var(--muted);
-    font-size: 12.5px;
-    padding: 5px 12px;
-    border-radius: var(--radius-sm);
-    box-shadow: 0 1px 0.5px rgba(11, 20, 26, 0.13);
-  }
-  .load-older {
-    align-self: center;
-    background: var(--surface);
-    border: 0;
-    border-radius: var(--radius-sm);
-    color: var(--muted);
-    font: inherit;
-    font-size: 12.5px;
-    padding: 5px 12px;
-    margin-bottom: 4px;
-    cursor: pointer;
-  }
-  .load-older:hover:not(:disabled) {
-    background: var(--raised);
-    color: var(--text);
-  }
-  .load-older:disabled {
-    cursor: progress;
-    opacity: 0.7;
-  }
-  .messages {
-    flex: 1;
-    overflow-y: auto;
-    overflow-x: hidden;
-    min-width: 0;
-    /* Rows carry the side padding so their highlight spans the full width. */
-    --pad-l: clamp(16px, 7%, 90px);
-    --pad-r: clamp(16px, 7%, 90px);
-    padding: 12px 0 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    transition:
-      opacity calc(0.22s * var(--motion-scale)) var(--ease),
-      transform calc(0.22s * var(--motion-scale)) var(--ease);
-  }
-  .messages.switching {
-    opacity: 0;
-    transform: translateY(8px);
-    transition-duration: calc(0.08s * var(--motion-scale));
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .messages,
-    .messages.switching {
-      transition: none;
-      transform: none;
-    }
-  }
-  .messages > .bubble {
-    margin-left: var(--pad-l);
-    margin-right: var(--pad-r);
-  }
-  .msg-row {
-    display: flex;
-    flex-direction: column;
-    padding: 1px var(--pad-r) 1px var(--pad-l);
-    transition: background-color calc(0.6s * var(--motion-scale)) var(--ease);
-  }
-  .msg-row:hover {
-    background: var(--row-hover);
-    transition-duration: calc(0.15s * var(--motion-scale));
-  }
-  /* The message a reply is being drafted to. */
-  .msg-row.replying {
-    background: var(--replying-soft);
-    box-shadow: inset 3px 0 0 var(--replying);
-  }
-  /* Mentions of us and replies to us, as Discord marks them. */
-  .msg-row.for-me {
-    background: var(--mention-soft);
-    box-shadow: inset 3px 0 0 var(--mention);
-  }
-  .msg-row.for-me:hover {
-    background: color-mix(in srgb, var(--mention-soft), var(--row-hover));
-  }
-  /* The message a quote or mention jump landed on. */
-  .msg-row.jumped {
-    background: var(--jump-soft);
-    transition-duration: calc(0.15s * var(--motion-scale));
-  }
-  .bubble {
-    max-width: 70%;
-    /* Without this a flex item refuses to shrink below its content, so a large
-       image stretches the bubble instead of being scaled down to fit it. */
-    min-width: 0;
-    /* The message list is a flex column, so bubbles shrink by default. With a
-       few hundred of them they squash to one line and `overflow: hidden` clips
-       the text away, which looks like every message collapsing. */
-    flex-shrink: 0;
-    align-self: flex-start;
-    position: relative;
-    max-width: 65%;
-    background: var(--bubble);
-    border-radius: var(--radius-sm);
-    box-shadow: 0 1px 0.5px rgba(11, 20, 26, 0.13);
-    padding: 6px 7px 8px 9px;
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    line-height: 19px;
-    word-break: break-word;
-    overflow-wrap: anywhere;
-  }
-  .bubble.first {
-    margin-top: 10px;
-  }
-  .bubble.mine {
-    align-self: flex-end;
-    background: var(--bubble-mine);
-  }
-  /* The tail marks the first bubble of a run from one sender. */
-  .bubble.first:not(.mine) {
-    border-top-left-radius: 0;
-  }
-  .bubble.first.mine {
-    border-top-right-radius: 0;
-  }
-  /* 1px wider than it shows and tucked into the bubble, so no seam renders
-     where the two meet. */
-  .bubble.first::before {
-    content: "";
-    position: absolute;
-    top: 0;
-    width: 9px;
-    height: 13px;
-    background: inherit;
-  }
-  .bubble.first:not(.mine)::before {
-    left: -8px;
-    clip-path: polygon(0 0, 100% 0, 100% 100%);
-  }
-  .bubble.first.mine::before {
-    right: -8px;
-    clip-path: polygon(0 0, 100% 0, 0 100%);
-  }
-  .bubble.media-only {
-    padding: 3px;
-  }
-  .bubble.media-only .media,
-  .bubble.media-only .media-button.video {
-    border-radius: calc(var(--radius-sm) - 2px);
-  }
-  .bubble.inline-meta .meta {
-    position: absolute;
-    right: 7px;
-    bottom: 4px;
-  }
-  /* Reserves room on the last line so the time never covers text. */
-  .meta-spacer {
+  /* Reserves room on the last line so the time never covers text. The spacer
+     renders in MessageText while the bubble context lives in MessageBubble.
+     Widths cover the widest metas measured (12h clock + star + "Edited":
+     theirs 48px, mine 76px, edited mine 109px) plus headroom for wider fonts. */
+  :global(.meta-spacer) {
     display: inline-block;
-    width: 44px;
+    width: 52px;
     height: 1px;
   }
-  .meta-spacer.mine {
-    width: 62px;
+  :global(.meta-spacer.mine) {
+    width: 88px;
   }
-  .bubble.edited .meta-spacer {
-    width: 86px;
+  :global(.bubble.edited .meta-spacer) {
+    width: 94px;
   }
-  .bubble.edited .meta-spacer.mine {
-    width: 104px;
+  :global(.bubble.edited .meta-spacer.mine) {
+    width: 120px;
   }
-  .edited-mark {
-    font-style: italic;
-  }
-  .forwarded-mark {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    margin-bottom: 2px;
-    color: var(--muted);
-    font-size: 12.5px;
-    font-style: italic;
-  }
-  /* The time sits on the picture instead of below it. */
-  .bubble.media-only .meta {
-    position: absolute;
-    right: 9px;
-    bottom: 8px;
-    padding: 1px 7px;
-    border-radius: 999px;
-    background: rgba(6, 8, 10, 0.55);
-    color: #eef0f2;
-  }
-  .sender {
+  :global(.sender) {
     align-self: flex-start;
     padding: 0;
     border: 0;
@@ -6118,404 +3755,11 @@
     color: hsl(var(--hue) 65% 68%);
     text-align: left;
   }
-  button.sender {
+  :global(button.sender) {
     cursor: pointer;
   }
-  button.sender:hover {
+  :global(button.sender:hover) {
     text-decoration: underline;
-  }
-  .member-label {
-    margin-top: -4px;
-    font-size: 12px;
-    color: var(--muted);
-  }
-  .revoked {
-    font-style: italic;
-    color: var(--faint);
-  }
-  .media {
-    /* Cap both axes: width keeps it inside the bubble, height stops a tall
-       photo from filling the viewport. */
-    max-width: 100%;
-    max-height: 320px;
-    width: auto;
-    height: auto;
-    object-fit: contain;
-    border-radius: 6px;
-    display: block;
-  }
-  .voice-pending {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    width: 280px;
-    max-width: 100%;
-    padding: 6px 2px;
-    border: 0;
-    background: none;
-    color: inherit;
-    cursor: pointer;
-  }
-  .voice-pending:disabled {
-    cursor: progress;
-  }
-  .voice-pending-icon {
-    display: grid;
-    place-items: center;
-    width: 38px;
-    height: 38px;
-    flex: none;
-    border-radius: 50%;
-    border: 2px solid var(--accent);
-    color: var(--accent);
-  }
-  .voice-pending:hover:not(:disabled) .voice-pending-icon {
-    background: var(--accent-soft);
-  }
-  .voice-pending-bars {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    height: 24px;
-  }
-  .voice-pending-bars span {
-    flex: 1;
-    border-radius: 2px;
-    background: color-mix(in srgb, var(--text) 22%, transparent);
-  }
-  .once {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    min-width: 200px;
-    padding: 6px 4px;
-    border: 0;
-    background: none;
-    color: inherit;
-    font: inherit;
-    text-align: left;
-    cursor: pointer;
-  }
-  .once > span:last-child {
-    display: flex;
-    flex-direction: column;
-  }
-  .once small {
-    color: var(--muted);
-    font-size: 12px;
-  }
-  .once.spent {
-    cursor: default;
-    color: var(--muted);
-  }
-  .once-mark {
-    display: grid;
-    place-items: center;
-    width: 26px;
-    height: 26px;
-    flex: none;
-    border: 2px dashed var(--accent);
-    border-radius: 50%;
-    color: var(--accent);
-    font-size: 12px;
-    font-weight: 700;
-  }
-  .once.spent .once-mark {
-    border-color: var(--faint);
-    color: var(--faint);
-  }
-  .once-done {
-    align-self: flex-end;
-    padding: 4px 12px;
-    border: 0;
-    border-radius: 999px;
-    background: var(--accent-soft);
-    color: var(--accent-text);
-    font: inherit;
-    font-size: 12.5px;
-    cursor: pointer;
-  }
-  .file {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    background: rgba(0, 0, 0, 0.18);
-    border: 0;
-    border-radius: var(--radius-sm);
-    padding: 8px 12px 8px 10px;
-    font: inherit;
-    color: var(--text);
-    cursor: pointer;
-    text-align: left;
-  }
-  .file:hover {
-    background: rgba(0, 0, 0, 0.28);
-  }
-  .file :global(svg) {
-    color: var(--accent-text);
-  }
-  /* Media opens in the system viewer, so the whole preview is the button. */
-  .media-button {
-    position: relative;
-    display: block;
-    padding: 0;
-    border: 0;
-    background: transparent;
-    cursor: zoom-in;
-    line-height: 0;
-  }
-  .media-button.video {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    padding: 14px 16px;
-    cursor: pointer;
-    background: var(--bg);
-    border-radius: 6px;
-    min-width: 180px;
-    min-height: 100px;
-  }
-  .media-overlay {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text);
-    font-size: 14px;
-    font-weight: 700;
-    letter-spacing: 1px;
-    text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
-    pointer-events: none;
-  }
-  .media-overlay .play {
-    display: grid;
-    place-items: center;
-    width: 44px;
-    height: 44px;
-    padding-left: 3px;
-    box-sizing: border-box;
-    border-radius: 999px;
-    background: rgba(6, 8, 10, 0.6);
-    font-size: 16px;
-    text-shadow: none;
-  }
-  .play-badge {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text);
-    font-size: 28px;
-    text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
-    pointer-events: none;
-  }
-  .upload-visual {
-    position: relative;
-    display: grid;
-    place-items: center;
-    border-radius: 8px;
-    overflow: hidden;
-  }
-  .upload-visual .media {
-    display: block;
-    max-width: 280px;
-    max-height: 320px;
-    filter: brightness(0.7);
-  }
-  .upload-visual.file-upload {
-    min-width: 220px;
-    min-height: 72px;
-    gap: 8px;
-    padding: 10px;
-  }
-  .upload-name {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    max-width: 240px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .upload-ring {
-    position: absolute;
-    inset: 0;
-    display: grid;
-    place-items: center;
-  }
-  .file-upload .upload-ring {
-    position: static;
-  }
-  .upload-ring svg {
-    grid-area: 1 / 1;
-    transform: rotate(-90deg);
-    border-radius: 50%;
-    background: var(--scrim);
-  }
-  .upload-ring circle {
-    fill: none;
-    stroke-width: 3.5;
-  }
-  .ring-track {
-    stroke: rgba(255, 255, 255, 0.2);
-  }
-  .ring-fill {
-    stroke: #fff;
-    stroke-linecap: round;
-    transition: stroke-dashoffset calc(0.25s * var(--motion-scale)) linear;
-  }
-  .ring-fill.spinning {
-    transform-origin: 24px 24px;
-    animation: spin 0.9s linear infinite;
-  }
-  .ring-label {
-    grid-area: 1 / 1;
-    color: #fff;
-    font-size: 11px;
-    font-weight: 600;
-  }
-  .upload-caption {
-    display: block;
-    padding: 6px 4px 2px;
-  }
-  .svg-file .media {
-    width: 280px;
-    max-width: 100%;
-    max-height: 320px;
-    object-fit: contain;
-    padding: 8px;
-    box-sizing: border-box;
-    background: repeating-conic-gradient(var(--raised) 0 25%, var(--raised-2) 0 50%) 0 0 / 16px 16px;
-  }
-  .media-fetch {
-    display: grid;
-    place-items: center;
-    width: 48px;
-    height: 48px;
-    border-radius: 50%;
-    background: var(--scrim);
-    color: #fff;
-    font-size: 0;
-    text-shadow: none;
-  }
-  .media-stub {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    width: 260px;
-    max-width: 100%;
-    aspect-ratio: 4 / 3;
-    border: 0;
-    border-radius: 8px;
-    background: linear-gradient(135deg, var(--raised), var(--raised-2));
-    color: var(--muted);
-    font: inherit;
-    font-size: 12.5px;
-    cursor: pointer;
-  }
-  .media-stub:hover .media-fetch {
-    background: var(--accent);
-  }
-  .download {
-    align-self: flex-start;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    background: rgba(0, 0, 0, 0.2);
-    border: 0;
-    border-radius: 999px;
-    color: var(--accent-text);
-    font: inherit;
-    font-size: 12px;
-    padding: 4px 12px 4px 10px;
-    cursor: pointer;
-  }
-  .download:hover {
-    background: rgba(0, 0, 0, 0.32);
-  }
-  .file-icon {
-    color: var(--muted);
-  }
-  .meta {
-    font-size: 11px;
-    line-height: 15px;
-    font-variant-numeric: tabular-nums;
-    color: color-mix(in srgb, var(--text) 60%, transparent);
-    align-self: flex-end;
-    display: flex;
-    align-items: center;
-    gap: 3px;
-    white-space: nowrap;
-  }
-  .reply-btn {
-    position: absolute;
-    top: 3px;
-    right: 3px;
-    z-index: 1;
-    display: flex;
-    padding: 3px;
-    background: inherit;
-    border: 0;
-    border-radius: 999px;
-    color: var(--muted);
-    cursor: pointer;
-    opacity: 0;
-  }
-  .bubble.mine .reply-btn {
-    background: var(--bubble-mine);
-  }
-  .bubble:not(.mine) .reply-btn {
-    background: var(--bubble);
-  }
-  .bubble:hover .reply-btn,
-  .bubble.menu-open .reply-btn,
-  .reply-btn:focus-visible {
-    opacity: 1;
-  }
-  .bubble.has-reactions {
-    margin-bottom: 16px;
-  }
-  .sticker {
-    width: 160px;
-    height: 160px;
-    object-fit: contain;
-    display: block;
-  }
-  .sticker-pending {
-    display: grid;
-    place-items: center;
-    border: 0;
-    border-radius: 18px;
-    color: var(--faint);
-    cursor: pointer;
-    background: linear-gradient(100deg, var(--surface) 40%, var(--raised) 50%, var(--surface) 60%) 0 0 / 300% 100%;
-    animation: shimmer 1.4s linear infinite;
-  }
-  /* Stickers float free of a bubble, as in WhatsApp. */
-  .bubble.sticker-only {
-    background: transparent;
-    box-shadow: none;
-    padding: 0;
-  }
-  .bubble.sticker-only::before {
-    display: none;
-  }
-  .bubble.sticker-only .meta {
-    align-self: flex-end;
-    padding: 1px 7px;
-    border-radius: 999px;
-    background: var(--surface);
-  }
-  .composer-area {
-    position: relative;
-    flex: none;
   }
   /* In place of the composer where we may not write. */
   .read-only {
@@ -6532,68 +3776,9 @@
     font-size: 13.5px;
     text-align: center;
   }
-  .kind {
-    display: inline-flex;
-    vertical-align: -1px;
-    margin-right: 5px;
-    color: var(--muted);
-  }
-  .attach.active {
-    color: var(--accent);
-  }
-  .attach-catcher {
-    position: fixed;
-    inset: 0;
-    z-index: 55;
-  }
-  .attach-menu {
-    position: absolute;
-    left: 10px;
-    bottom: calc(100% + 6px);
-    z-index: 56;
-    display: flex;
-    flex-direction: column;
-    min-width: 200px;
-    padding: 6px;
-    background: var(--surface);
-    border: 1px solid var(--line-strong);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow);
-  }
-  .attach-menu button {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 9px 10px;
-    border: 0;
-    border-radius: 6px;
-    background: transparent;
-    color: var(--text);
-    font: inherit;
-    font-size: 14.5px;
-    text-align: left;
-    cursor: pointer;
-  }
-  .attach-menu button :global(svg) {
-    color: var(--accent);
-  }
-  .attach-menu button:hover {
-    background: var(--raised);
-  }
-  .composer-tools {
-    display: flex;
-    align-items: center;
-    align-self: center;
-    gap: 2px;
-  }
-  .composer-tools .icon {
-    width: 38px;
-    height: 38px;
-  }
-  .composer-tools .icon.active {
-    color: var(--accent);
-  }
-  .once-toggle {
+  /* Active tint comes from Button itself. */
+  /* Active tint comes from Button itself; the ring keeps its dashed/solid states. */
+  :global(.once-toggle) {
     width: 24px;
     height: 24px;
     border: 2px dashed currentColor;
@@ -6602,203 +3787,18 @@
     font-size: 11px;
     font-weight: 800;
   }
-  .once-toggle.active {
+  :global(.once-toggle.on) {
     border-style: solid;
   }
-  .tool-text {
+  :global(.tool-text) {
     font: inherit;
     font-size: 11px;
     font-weight: 800;
     letter-spacing: 0.04em;
   }
   /* Discord-style completion list over the composer. */
-  .suggest {
-    position: absolute;
-    left: 12px;
-    right: 12px;
-    bottom: calc(100% + 6px);
-    z-index: 50;
-    display: flex;
-    flex-direction: column;
-    max-height: 360px;
-    overflow-y: auto;
-    padding: 8px;
-    background: var(--surface);
-    border: 1px solid var(--line-strong);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow);
-  }
-  .suggest-title {
-    padding: 2px 8px 6px;
-    font-size: 11.5px;
-    font-weight: 700;
-    letter-spacing: 0.02em;
-    text-transform: uppercase;
-    color: var(--muted);
-  }
-  .suggest-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 6px 8px;
-    border: 0;
-    border-radius: 6px;
-    background: transparent;
-    color: var(--text);
-    font: inherit;
-    font-size: 14.5px;
-    text-align: left;
-    cursor: pointer;
-  }
-  .suggest-row.active {
-    background: var(--raised);
-  }
-  .suggest-emoji {
-    font-size: 20px;
-    width: 26px;
-    text-align: center;
-  }
   /* WhatsApp's reaction pill, hanging off the bubble's bottom edge. */
-  .reactions {
-    position: absolute;
-    bottom: -16px;
-    left: 8px;
-    display: flex;
-    align-items: center;
-    gap: 1px;
-    padding: 2px 6px;
-    border: 1px solid var(--chat-bg);
-    border-radius: 999px;
-    background: var(--surface);
-    font: inherit;
-    font-size: 13px;
-    line-height: 18px;
-    color: var(--muted);
-    cursor: pointer;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-  }
-  .bubble.mine .reactions {
-    left: auto;
-    right: 8px;
-  }
-  .reaction-count {
-    margin-left: 3px;
-    font-size: 12px;
-  }
-  .star {
-    display: inline-flex;
-  }
-  .pinned-bar {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 8px 16px;
-    border: 0;
-    border-top: 1px solid var(--line);
-    background: var(--surface);
-    color: var(--muted);
-    font: inherit;
-    font-size: 13.5px;
-    text-align: left;
-    cursor: pointer;
-  }
-  .pinned-bar:hover {
-    background: var(--raised);
-  }
-  .pinned-text {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .pinned-text strong {
-    color: var(--text);
-    font-weight: 600;
-  }
-  .sheet.confirm {
-    width: min(400px, 90vw);
-  }
-  .sheet.confirm h2 {
-    margin: 0;
-    font-size: 17px;
-    font-weight: 600;
-  }
-  .confirm-actions {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 4px;
-  }
-  .confirm-actions button {
-    padding: 8px 14px;
-    border: 0;
-    border-radius: 999px;
-    background: transparent;
-    color: var(--accent);
-    font: inherit;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .confirm-actions button:hover {
-    background: var(--raised);
-  }
-  .confirm-actions button.danger {
-    color: var(--danger);
-  }
-  .typing-bubble {
-    padding: 8px 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-  .typing-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .typing-more {
-    color: var(--muted);
-    font-size: 12.8px;
-    padding-left: 2px;
-  }
-  .dots {
-    display: flex;
-    gap: 4px;
-    padding: 4px 2px;
-  }
-  .dots i {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: hsl(var(--hue) 65% 68%);
-    animation: blink 1.2s infinite ease-in-out;
-  }
-  .dots i:nth-child(2) {
-    animation-delay: calc(0.15s * var(--motion-scale));
-  }
-  .dots i:nth-child(3) {
-    animation-delay: calc(0.3s * var(--motion-scale));
-  }
-  @keyframes blink {
-    0%,
-    60%,
-    100% {
-      opacity: 0.35;
-      transform: translateY(0);
-    }
-    30% {
-      opacity: 1;
-      transform: translateY(-3px);
-    }
-  }
-  .recording {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--accent);
-    font-size: 13px;
-  }
+  /* Confirm sheets live in $lib/ConfirmDialog.svelte. */
   .placeholder {
     margin: auto;
     display: flex;
@@ -6842,316 +3842,11 @@
   .jump:hover {
     background: var(--line-strong);
   }
-  .pending {
-    display: flex;
-    align-items: flex-end;
-    flex-wrap: wrap;
-    gap: 12px;
-    padding: 8px 14px;
-    background: var(--surface);
-    border-top: 1px solid var(--line);
-  }
-  .pending-item {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    width: 120px;
-  }
-  .pending-thumb {
-    position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    width: 120px;
-    height: 72px;
-    overflow: hidden;
-    border: 1px solid var(--line-strong);
-    border-radius: 6px;
-    background: var(--bg);
-    color: var(--text);
-    cursor: pointer;
-  }
-  .pending-status {
-    align-self: center;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    color: var(--muted);
-    font-size: 13px;
-  }
-  .spinner {
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
-    border-top-color: var(--accent);
-    animation: spin 0.8s linear infinite;
-  }
-  .send.ready {
-    color: var(--accent);
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  .pending-thumb img,
-  .pending-thumb video {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
-  .pending-name {
-    font-size: 11px;
-    color: var(--muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .pending-caption {
-    font-size: 11px;
-    color: var(--accent-text);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .pending .remove {
-    position: absolute;
-    top: -6px;
-    right: -6px;
-    width: 20px;
-    height: 20px;
-    min-width: 0;
-    min-height: 0;
-    border-radius: 999px;
-    background: var(--raised-2);
-    color: var(--text);
-    box-shadow: 0 0 0 2px var(--surface);
-  }
-  .caption {
-    background: var(--bg);
-    border: 1px solid var(--line-strong);
-    border-radius: 6px;
-    padding: 8px 10px;
-    color: inherit;
-    font: inherit;
-  }
-  .preview-sheet {
-    width: min(680px, 80vw);
-  }
-  .preview-large {
-    max-width: 100%;
-    max-height: 60vh;
-    border-radius: 8px;
-    object-fit: contain;
-  }
-  /* VideoPlayer sizes itself to a size container. */
-  .preview-video {
-    width: 100%;
-    height: 50vh;
-    container-type: size;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .crop-button {
-    align-self: center;
-  }
-  .quote-where {
-    flex: none;
-    max-width: 16ch;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 11px;
-    color: #71717a;
-  }
-  .ticks {
-    font-size: 10px;
-    letter-spacing: -2px;
-  }
-  .ticks.read {
-    color: var(--link);
-  }
-  .reply-preview {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin: 0 14px;
-    padding: 8px 8px 8px 12px;
-    background: var(--surface);
-    border-left: 3px solid var(--accent);
-    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-    font-size: 12px;
-    color: var(--muted);
-  }
-  .reply-body {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-  }
-  .reply-to {
-    color: var(--accent-text);
-    font-weight: 600;
-  }
-  .reply-body span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .reply-thumb {
-    width: 32px;
-    height: 32px;
-    object-fit: cover;
-    border-radius: 4px;
-    flex: none;
-  }
-  .reply-icon {
-    font-size: 16px;
-    flex: none;
-  }
-  .mentions {
-    display: flex;
-    flex-direction: column;
-    max-height: 180px;
-    overflow-y: auto;
-    background: var(--surface);
-    border-top: 1px solid var(--line);
-  }
-  .mention {
-    text-align: left;
-    background: transparent;
-    border: 0;
-    color: inherit;
-    font: inherit;
-    padding: 7px 14px;
-    cursor: pointer;
-  }
-  .mention.active,
-  .mention:hover {
-    background: var(--raised);
-  }
-  .mention-handle {
-    margin-left: 6px;
-    color: var(--muted);
-    font-size: 12.5px;
-  }
-  .composer {
-    display: flex;
-    align-items: flex-end;
-    gap: 6px;
-    padding: 5px 16px 5px 10px;
-    min-height: 62px;
-    box-sizing: border-box;
-    background: var(--surface);
-    flex: none;
-  }
-  .composer > input:not(.file-input),
-  .composer > textarea {
-    flex: 1;
-    align-self: center;
-    background: var(--raised);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    padding: 9px 12px;
-    color: inherit;
-    font: inherit;
-  }
-  .composer > textarea {
-    resize: none;
-    line-height: 1.4;
-    field-sizing: content;
-    box-sizing: border-box;
-    max-height: 140px;
-  }
-  .composer > textarea::placeholder {
-    color: var(--faint);
-  }
-  .file-input {
-    display: none;
-  }
-  .attach,
-  .send {
+  /* Shared button shapes live in $lib/Button.svelte. The attach button keeps
+     its composer box here since it arrives through Button's `cls`. */
+  :global(.attach) {
     width: 42px;
     height: 42px;
     margin-bottom: 5px;
-  }
-  .send {
-    flex: none;
-    display: grid;
-    place-items: center;
-    padding: 0;
-    border: 0;
-    border-radius: 999px;
-    background: transparent;
-    color: var(--muted);
-    cursor: pointer;
-  }
-  .send:hover:not(:disabled) {
-    color: var(--accent);
-  }
-  .send:disabled {
-    color: var(--faint);
-    cursor: default;
-  }
-  .primary {
-    background: var(--accent);
-    color: var(--accent-ink);
-    border: 0;
-    border-radius: var(--radius-sm);
-    padding: 8px 16px;
-    cursor: pointer;
-    font: inherit;
-    font-weight: 600;
-  }
-  .primary:hover:not(:disabled) {
-    background: var(--accent-hover);
-  }
-  .primary:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-  .icon {
-    display: inline-grid;
-    place-items: center;
-    min-width: 32px;
-    min-height: 32px;
-    padding: 0;
-    background: transparent;
-    border: 0;
-    border-radius: 8px;
-    color: var(--muted);
-    cursor: pointer;
-  }
-  .icon:hover {
-    background: var(--raised);
-    color: var(--text);
-  }
-  .sheet-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 250;
-    background: var(--scrim);
-    backdrop-filter: blur(2px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .sheet {
-    background: var(--surface);
-    border: 1px solid var(--line-strong);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow);
-    padding: 20px 22px;
-    width: min(460px, 90vw);
-    max-height: 86vh;
-    overflow-y: auto;
-    box-sizing: border-box;
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
   }
 </style>
