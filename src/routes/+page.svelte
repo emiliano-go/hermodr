@@ -4338,15 +4338,17 @@
 </div>
 
 {#if menu}
-  {@const m = menu.message}
-  <MessageMenu
-    x={menu.x}
-    y={menu.y}
-    items={menuItems(m)}
-    reactions={QUICK_REACTIONS}
-    current={reactionsFor.get(m.id)?.find((r) => r.mine)?.emoji ?? null}
-    onreact={(emoji) => act(() => invoke("react", { target: target(m), emoji }))}
-    onclose={() => (menu = null)} />
+  {#key menu}
+    {@const m = menu.message}
+    <MessageMenu
+      x={menu.x}
+      y={menu.y}
+      items={menuItems(m)}
+      reactions={QUICK_REACTIONS}
+      current={reactionsFor.get(m.id)?.find((r) => r.mine)?.emoji ?? null}
+      onreact={(emoji) => act(() => invoke("react", { target: target(m), emoji }))}
+      onclose={() => (menu = null)} />
+  {/key}
 {/if}
 
 {#if creating}

@@ -39,39 +39,68 @@
   let pos = $state({ left: 0, top: 0 });
   let closing = $state(false);
 
-  /** Fades out, then tells the parent to drop the menu. */
+  /**
+   * Fades out, then tells the parent to drop the menu.
+   *
+   * The removal is deferred past the event that dismissed it (a right-click
+   * here crashed WebKitGTK when the overlay vanished mid-dispatch), so the wait
+   * is a frame plus the fade rather than a bare timeout.
+   */
   function close() {
     if (closing) return;
     closing = true;
-    setTimeout(onclose, motion(120));
+    const ms = Math.max(1, motion(120));
+    requestAnimationFrame(() => setTimeout(onclose, ms));
   }
 
-  // Opens at the pointer but never past the window's edges.
+  // Position after paint, then focus. Doing either during the opening click
+  // can race the engine's own focus/context-menu handling.
   onMount(() => {
-    const rect = menu!.getBoundingClientRect();
-    pos = {
-      left: Math.max(8, Math.min(x, window.innerWidth - rect.width - 8)),
-      top: Math.max(8, Math.min(y, window.innerHeight - rect.height - 8)),
+    requestAnimationFrame(() => {
+      const rect = menu?.getBoundingClientRect();
+      if (rect) {
+        pos = {
+          left: Math.max(8, Math.min(x, window.innerWidth - rect.width - 8)),
+          top: Math.max(8, Math.min(y, window.innerHeight - rect.height - 8)),
+        };
+      }
+      menu?.querySelector("button")?.focus();
+    });
+
+    // Outside dismissal runs in the capture phase so the second right-click is
+    // consumed before it reaches the message behind the menu.
+    const outside = (target: EventTarget | null) =>
+      menu ? !menu.contains(target as Node) : true;
+    const onPointerDown = (event: PointerEvent) => {
+      if (outside(event.target)) close();
     };
-    menu!.querySelector("button")?.focus();
+    const onContextMenu = (event: MouseEvent) => {
+      if (menu?.contains(event.target as Node)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      close();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+      }
+    };
+    const onResize = () => close();
+
+    window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("contextmenu", onContextMenu, true);
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("contextmenu", onContextMenu, true);
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("resize", onResize);
+    };
   });
 </script>
 
-<svelte:window
-  onkeydown={(e) => e.key === "Escape" && close()}
-  onblur={close}
-  onresize={close} />
-
-<!-- svelte-ignore a11y_click_events_have_key_events -->
-<div
-  class="catcher"
-  class:closing
-  role="presentation"
-  onclick={close}
-  oncontextmenu={(e) => {
-    e.preventDefault();
-    close();
-  }}></div>
 <div class="menu" class:closing role="menu" bind:this={menu} style="left: {pos.left}px; top: {pos.top}px">
   <div class="reactions">
     {#each reactions as emoji (emoji)}
@@ -103,11 +132,6 @@
 </div>
 
 <style>
-  .catcher {
-    position: fixed;
-    inset: 0;
-    z-index: 270;
-  }
   .menu {
     position: fixed;
     z-index: 271;
@@ -136,10 +160,6 @@
       opacity: 0;
       transform: scale(0.96);
     }
-  }
-  /* The click that closed the menu is done; the next one should reach the chat. */
-  .catcher.closing {
-    pointer-events: none;
   }
   .reactions {
     display: flex;
