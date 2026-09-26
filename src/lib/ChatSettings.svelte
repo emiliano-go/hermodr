@@ -19,6 +19,7 @@
   } from "$lib/theme.svelte";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { invoke } from "$lib/ipc";
+  import Button from "$lib/Button.svelte";
   import Icon from "$lib/Icon.svelte";
 
   let {
@@ -254,8 +255,8 @@
     </div>
 
     <footer>
-      <button class="ghost" onclick={onclose}>Cancel</button>
-      <button class="primary" disabled={!dirty || busy} onclick={save}>{busy ? "Saving…" : "Save"}</button>
+      <Button variant="ghost" onclick={onclose}>Cancel</Button>
+      <Button variant="primary" disabled={!dirty || busy} onclick={save}>{busy ? "Saving…" : "Save"}</Button>
     </footer>
   </div>
 </div>
@@ -481,27 +482,5 @@
     border-top: 1px solid var(--line);
     background: var(--surface);
   }
-  .ghost,
-  .primary {
-    padding: 8px 16px;
-    border: 0;
-    border-radius: var(--radius);
-    font: inherit;
-    cursor: pointer;
-  }
-  .ghost {
-    background: transparent;
-    color: var(--text);
-  }
-  .ghost:hover {
-    background: var(--raised);
-  }
-  .primary {
-    background: var(--accent);
-    color: var(--accent-ink);
-  }
-  .primary:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
+  /* Footer actions live in $lib/Button.svelte (ghost/primary variants). */
 </style>

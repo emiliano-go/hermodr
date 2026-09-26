@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
+  import Button from "$lib/Button.svelte";
 
   let {
     file,
@@ -138,11 +139,11 @@
       </select>
     {/if}
     <span class="spacer"></span>
-    <button type="button" class="ghost" onclick={oncancel}>Cancel</button>
+    <Button variant="ghost" type="button" onclick={oncancel}>Cancel</Button>
     {#if altLabel && onalt}
-      <button type="button" class="ghost" onclick={() => apply(onalt)}>{altLabel}</button>
+      <Button variant="ghost" type="button" onclick={() => apply(onalt)}>{altLabel}</Button>
     {/if}
-    <button type="button" class="primary" onclick={() => apply()}>{applyLabel}</button>
+    <Button variant="primary" type="button" onclick={() => apply()}>{applyLabel}</Button>
   </div>
 </div>
 
@@ -223,24 +224,5 @@
     background: var(--raised);
     color: var(--text);
     font: inherit;
-  }
-  .ghost,
-  .primary {
-    padding: 7px 14px;
-    border: 0;
-    border-radius: var(--radius);
-    font: inherit;
-    cursor: pointer;
-  }
-  .ghost {
-    background: transparent;
-    color: var(--text);
-  }
-  .ghost:hover {
-    background: var(--raised);
-  }
-  .primary {
-    background: var(--accent);
-    color: var(--accent-ink);
   }
 </style>

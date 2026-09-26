@@ -34,6 +34,37 @@ export function statusMark(status: string | null) {
   }
 }
 
+/** A media message's caption. Uncaptioned media is stored as `[kind]`. */
+export function captionOf(message: StoredMessage) {
+  const text = message.text.trim();
+  return text === `[${message.media_kind}]` ? "" : text;
+}
+
+export function dayKey(ts: number) {
+  return new Date(ts * 1000).toDateString();
+}
+
+export function dayLabel(ts: number) {
+  const day = new Date(ts * 1000);
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+  if (day.toDateString() === today.toDateString()) return "Today";
+  if (day.toDateString() === yesterday.toDateString()) return "Yesterday";
+  return day.toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "long",
+    year: day.getFullYear() === today.getFullYear() ? undefined : "numeric",
+  });
+}
+
+export function formatTime(seconds: number) {
+  return new Date(seconds * 1000).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export const MEDIA_LABELS: Record<string, string> = {
   image: "Photo",
   video: "Video",

@@ -37,6 +37,7 @@
   import { invoke } from "$lib/ipc";
   import { getVersion } from "@tauri-apps/api/app";
   import Icon from "$lib/Icon.svelte";
+  import Button from "$lib/Button.svelte";
   import Customization from "$lib/Customization.svelte";
   import Panel from "$lib/Panel.svelte";
   import {
@@ -617,11 +618,11 @@
                   {capturing === action.id ? "Press keys…" : keyLabel(keybinds[action.id])}
                 </button>
                 {#if !isDefault(action.id)}
-                  <button
-                    class="ghost"
+                  <Button
+                    variant="ghost"
                     title="Reset to default"
                     aria-label="Reset {action.label} to default"
-                    onclick={() => resetBinding(action.id)}>Reset</button>
+                    onclick={() => resetBinding(action.id)}>Reset</Button>
                 {/if}
               </div>
             </div>
