@@ -1284,9 +1284,10 @@
     const named = participants
       .filter((p) => p.name.length > 1 && !isPlaceholder(p.name))
       .sort((a, b) => b.name.length - a.name.length);
+    let out = text;
     for (const p of named) {
       const token = `@${p.name}`;
-      if (text.includes(token)) text = text.split(token).join(`@${p.jid.split("@")[0]}`);
+      if (out.includes(token)) out = out.split(token).join(`@${p.jid.split("@")[0]}`);
     }
     wireMentionCache.set(text, out);
     return out;
