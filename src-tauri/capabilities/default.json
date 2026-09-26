@@ -23,6 +23,7 @@
     "allow-connection-state",
     "allow-resolve-names",
     "allow-mark-read",
+    "allow-mark-read-until",
     "allow-send-reply",
     "allow-send-media",
     "allow-open-path",

@@ -1,7 +1,7 @@
-//! Tauri shell for Hermóðr.
+//! Tauri shell for Postal.
 //!
 //! The window only renders our own UI; WhatsApp is spoken natively by
-//! [`hermodr_core`]. There is no webview pointed at a remote site, so none of
+//! [`postal_core`]. There is no webview pointed at a remote site, so none of
 //! the history, memory, or compositing problems of that approach apply.
 
 use std::{
@@ -12,7 +12,7 @@ use std::{
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 
-use hermodr_core::{
+use postal_core::{
     ChatSummary, Retention, SendOptions, Service, ServiceConfig, ServiceEvent, StoredMessage,
     VoiceNote,
 };
@@ -249,7 +249,7 @@ fn migrate_media(app: &AppHandle, accounts: &AccountsFile) {
         if !db.exists() {
             continue;
         }
-        match hermodr_core::MessageStore::open(&db, Retention::default()) {
+        match postal_core::MessageStore::open(&db, Retention::default()) {
             Ok(store) => {
                 if let Err(e) = store.relocate_media(&from, &to) {
                     log::warn!("media migration for {}: {e}", account.id);
@@ -430,7 +430,7 @@ fn is_stale_session(name: &str, current: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_stale_session, Account, AccountsFile, DEFAULT_ACCOUNT_LABEL};
+    use super::{is_stale_session, move_dir, Account, AccountsFile, DEFAULT_ACCOUNT_LABEL};
 
     #[test]
     fn stale_sessions_spare_the_active_wal() {
@@ -520,6 +520,30 @@ mod tests {
         };
         assert!(file.seed_label("default", "  Ada Lovelace  "));
         assert_eq!(label_of(&file, "default"), "Ada Lovelace");
+    }
+
+    #[test]
+    fn migration_adopts_the_old_directory_once() {
+        let root = std::env::temp_dir().join(format!("postal-migrate-{}", std::process::id()));
+        let from = root.join("old");
+        let to = root.join("new");
+        std::fs::create_dir_all(from.join("accounts")).unwrap();
+        std::fs::write(from.join("session.db"), b"session").unwrap();
+        std::fs::write(from.join("accounts").join("a.db"), b"account").unwrap();
+
+        move_dir(&from, &to);
+        assert!(!from.exists());
+        assert_eq!(std::fs::read(to.join("session.db")).unwrap(), b"session");
+        assert_eq!(std::fs::read(to.join("accounts").join("a.db")).unwrap(), b"account");
+
+        // A second run must not touch a new directory that already exists.
+        std::fs::create_dir_all(&from).unwrap();
+        std::fs::write(from.join("stale"), b"stale").unwrap();
+        move_dir(&from, &to);
+        assert!(from.join("stale").exists());
+        assert!(!to.join("stale").exists());
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
 
@@ -830,7 +854,7 @@ async fn forward_message(
 }
 
 #[tauri::command(async)]
-fn marks(state: State<'_, AppState>, chat: String) -> Result<hermodr_core::ChatMarks, String> {
+fn marks(state: State<'_, AppState>, chat: String) -> Result<postal_core::ChatMarks, String> {
     state.service()?.marks(&chat).map_err(|e| e.to_string())
 }
 
@@ -887,7 +911,7 @@ async fn send_voice(
     view_once: Option<bool>,
 ) -> Result<(), String> {
     let webm = BASE64.decode(data.as_bytes()).map_err(|e| e.to_string())?;
-    let ogg = hermodr_core::ogg::webm_to_ogg(&webm).map_err(|e| e.to_string())?;
+    let ogg = postal_core::ogg::webm_to_ogg(&webm).map_err(|e| e.to_string())?;
     let reply = match (reply_to_id, reply_to_sender, reply_to_text) {
         (Some(id), Some(sender), Some(text)) => Some((id, sender, text)),
         _ => None,
@@ -943,7 +967,7 @@ struct EventForm {
     canceled: bool,
 }
 
-impl From<EventForm> for hermodr_core::NewEvent {
+impl From<EventForm> for postal_core::NewEvent {
     fn from(event: EventForm) -> Self {
         Self {
             name: event.name.trim().to_string(),
@@ -970,7 +994,7 @@ async fn edit_event(state: State<'_, AppState>, chat: String, id: String, event:
 
 /// Who got, read and played one of our messages.
 #[tauri::command(async)]
-fn message_info(state: State<'_, AppState>, id: String) -> Result<Vec<hermodr_core::MessageReceipt>, String> {
+fn message_info(state: State<'_, AppState>, id: String) -> Result<Vec<postal_core::MessageReceipt>, String> {
     state.service()?.message_info(&id).map_err(|e| e.to_string())
 }
 
@@ -1004,7 +1028,7 @@ fn search_messages(
 struct ChatSettings {
     /// The chat's auto download override, `None` when it follows the global one.
     auto_download: Option<bool>,
-    retention: hermodr_core::ChatRetention,
+    retention: postal_core::ChatRetention,
     /// Typing and read receipt overrides, `None` when following the global ones.
     send_typing: Option<bool>,
     send_receipts: Option<bool>,
@@ -1026,14 +1050,14 @@ fn chat_settings(state: State<'_, AppState>, chat: String) -> Result<ChatSetting
 fn set_chat_retention(
     state: State<'_, AppState>,
     chat: String,
-    retention: hermodr_core::ChatRetention,
+    retention: postal_core::ChatRetention,
 ) -> Result<(), String> {
     state.service()?.set_chat_retention(&chat, &retention).map_err(|e| e.to_string())
 }
 
 /// Messages reported to a group's admins.
 #[tauri::command]
-async fn admin_reports(state: State<'_, AppState>, chat: String) -> Result<Vec<hermodr_core::AdminReport>, String> {
+async fn admin_reports(state: State<'_, AppState>, chat: String) -> Result<Vec<postal_core::AdminReport>, String> {
     state.service()?.admin_reports(&chat).await.map_err(|e| e.to_string())
 }
 
@@ -1218,7 +1242,7 @@ async fn edit_message(
 async fn participants(
     state: State<'_, AppState>,
     chat: String,
-) -> Result<Vec<hermodr_core::Participant>, String> {
+) -> Result<Vec<postal_core::Participant>, String> {
     state
         .service()?
         .participants(&chat)
@@ -1231,7 +1255,7 @@ async fn participants(
 async fn group_info(
     state: State<'_, AppState>,
     chat: String,
-) -> Result<hermodr_core::GroupInfo, String> {
+) -> Result<postal_core::GroupInfo, String> {
     state
         .service()?
         .group_info(&chat)
@@ -1243,7 +1267,7 @@ async fn group_info(
 #[tauri::command]
 async fn group_kinds(
     state: State<'_, AppState>,
-) -> Result<std::collections::HashMap<String, hermodr_core::GroupKind>, String> {
+) -> Result<std::collections::HashMap<String, postal_core::GroupKind>, String> {
     Ok(state.service()?.group_kinds().await)
 }
 
@@ -1261,7 +1285,7 @@ fn open_url(url: String) -> Result<(), String> {
 async fn search(
     state: State<'_, AppState>,
     query: String,
-) -> Result<Vec<hermodr_core::SearchResult>, String> {
+) -> Result<Vec<postal_core::SearchResult>, String> {
     state.service()?.search(&query).await.map_err(|e| e.to_string())
 }
 
@@ -1448,7 +1472,7 @@ async fn watch_presence(state: State<'_, AppState>, jid: String) -> Result<(), S
 }
 
 #[tauri::command]
-async fn profile(state: State<'_, AppState>) -> Result<hermodr_core::Profile, String> {
+async fn profile(state: State<'_, AppState>) -> Result<postal_core::Profile, String> {
     state.service()?.profile().await.map_err(|e| e.to_string())
 }
 
@@ -1503,13 +1527,13 @@ async fn avatar(state: State<'_, AppState>, jid: String) -> Result<Option<String
 
 /// Someone's profile card: names, number, username, about.
 #[tauri::command]
-async fn user_profile(state: State<'_, AppState>, jid: String) -> Result<hermodr_core::UserProfile, String> {
+async fn user_profile(state: State<'_, AppState>, jid: String) -> Result<postal_core::UserProfile, String> {
     state.service()?.user_profile(&jid).await.map_err(|e| e.to_string())
 }
 
 /// The group behind an invite link, without joining it.
 #[tauri::command]
-async fn invite_info(state: State<'_, AppState>, link: String) -> Result<hermodr_core::InviteInfo, String> {
+async fn invite_info(state: State<'_, AppState>, link: String) -> Result<postal_core::InviteInfo, String> {
     state.service()?.invite_info(&link).await.map_err(|e| e.to_string())
 }
 
@@ -1551,7 +1575,7 @@ fn unread_mentions(state: State<'_, AppState>, chat: String) -> Result<Vec<Strin
 /// Renders a pairing code as SVG for the UI to display.
 #[tauri::command]
 fn qr_svg(value: String) -> Result<String, String> {
-    hermodr_core::qr_svg(&value).map_err(|e| e.to_string())
+    postal_core::qr_svg(&value).map_err(|e| e.to_string())
 }
 
 /// Current settings.
@@ -1573,6 +1597,63 @@ fn set_settings(app: AppHandle, state: State<'_, AppState>, settings: UiSettings
     Ok(())
 }
 
+/// Bundle identifier from before the rename to Postal. Data written under it is
+/// moved over on first launch of the renamed app.
+const LEGACY_IDENTIFIER: &str = "com.hermodr.app";
+/// Current bundle identifier; must match `tauri.conf.json`.
+const IDENTIFIER: &str = "com.postal.app";
+
+/// Adopts a pre-rename install: when the old bundle's data, config or cache
+/// directory exists and the new one does not, it is moved over, keeping the
+/// WhatsApp session, message history, settings and webview storage.
+fn migrate_bundle_id() {
+    for base in [dirs::data_dir(), dirs::config_dir(), dirs::cache_dir()] {
+        let Some(base) = base else { continue };
+        move_dir(&base.join(LEGACY_IDENTIFIER), &base.join(IDENTIFIER));
+    }
+    rename_legacy_logs();
+}
+
+/// Renames `from` onto `to` when only the old path exists, copying across
+/// filesystems when a rename is not possible.
+fn move_dir(from: &std::path::Path, to: &std::path::Path) {
+    if !from.is_dir() || to.exists() {
+        return;
+    }
+    if std::fs::rename(from, to).is_ok() {
+        return;
+    }
+    if copy_dir(from, to).is_err() {
+        eprintln!("could not migrate {} to {}", from.display(), to.display());
+    }
+}
+
+/// Recursively copies, then removes the source once the copy is complete.
+fn copy_dir(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), target)?;
+        }
+    }
+    std::fs::remove_dir_all(from)
+}
+
+/// The log moved with the data directory; its name changed with the app.
+fn rename_legacy_logs() {
+    let Some(dir) = dirs::data_dir().map(|d| d.join(IDENTIFIER)) else { return };
+    for (from, to) in [("hermodr.log", "postal.log"), ("hermodr.log.old", "postal.log.old")] {
+        let from = dir.join(from);
+        if from.is_file() {
+            let _ = std::fs::rename(&from, dir.join(to));
+        }
+    }
+}
+
 /// Copies log output to stderr and to the log file. The file is unbuffered so
 /// a line written before an abort is on disk.
 struct Tee(std::fs::File);
@@ -1591,18 +1672,18 @@ impl std::io::Write for Tee {
 
 /// Where [`init_logging`] writes.
 fn log_path(app: &AppHandle) -> PathBuf {
-    data_dir(app).join("hermodr.log")
+    data_dir(app).join("postal.log")
 }
 
-/// Sends logs and panics to `<app data>/hermodr.log` as well as stderr, which
+/// Sends logs and panics to `<app data>/postal.log` as well as stderr, which
 /// is discarded when the app is launched from a desktop entry. Past 5 MB the
-/// file moves to `hermodr.log.old`, so the run before a crash is still there.
+/// file moves to `postal.log.old`, so the run before a crash is still there.
 fn init_logging(path: &std::path::Path) {
     // Our crates and the UI (`ui`) log at info, debug in dev builds; history
     // sync and peer requests fail silently otherwise. RUST_LOG overrides.
     let ours = if cfg!(debug_assertions) { "debug" } else { "info" };
     let filter = format!(
-        "warn,hermodr_lib={ours},hermodr_core={ours},ui={ours},\
+        "warn,postal_lib={ours},postal_core={ours},ui={ours},\
          whatsapp_rust::history_sync=info,whatsapp_rust::pdo=info"
     );
     let mut builder = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(filter));
@@ -1634,7 +1715,7 @@ fn init_logging(path: &std::path::Path) {
     }
     builder.init();
     log::info!(
-        "Hermóðr {} on {} {}",
+        "Postal {} on {} {}",
         env!("CARGO_PKG_VERSION"),
         std::env::consts::OS,
         std::env::consts::ARCH,
@@ -1673,6 +1754,9 @@ fn is_hyprland() -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Before any app path resolves, adopt an install from before the rename.
+    migrate_bundle_id();
+
     // WebKitGTK's DMA-BUF renderer fails to create GBM buffers under Wayland
     // (Hyprland), aborting with "Gdk Error 71". This affects our own UI webview
     // as much as it did the old one.
@@ -1698,7 +1782,7 @@ pub fn run() {
             // `javascript_can_access_clipboard` is set, and it does not deliver
             // them through the paste event's clipboardData.
             let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
-                .title("Hermóðr")
+                .title("Postal")
                 .inner_size(1000.0, 720.0)
                 .min_inner_size(480.0, 360.0)
                 .decorations(!is_hyprland())
@@ -1708,8 +1792,11 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             let builder = builder.disable_drag_drop_handler();
             let window = builder.build()?;
-            #[cfg(debug_assertions)]
-            window.open_devtools();
+            // Only the dev server gets the inspector; scripts/install-dev.sh
+            // installs debug builds, which are not "dev" runs.
+            if tauri::is_dev() {
+                window.open_devtools();
+            }
 
             Ok(())
         })

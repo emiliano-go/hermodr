@@ -57,7 +57,7 @@
   <header class="intro-head">
     <span class="intro-logo"><Logo size={48} /></span>
     <div>
-      <h1>Hermóðr</h1>
+      <h1>Postal</h1>
       <span class="intro-tag">WhatsApp, native on your desktop</span>
     </div>
     <Button

@@ -19,7 +19,7 @@ say "stopping the running instance"
 stop_app() {
   pkill -9 -f "$ROOT/node_modules" 2>/dev/null || true
   local pid
-  for pid in $(pgrep -f "$ROOT/src-tauri/target/(debug|release)/hermodr|$HOME/.local/bin/hermodr|/\.mount_[^/]*/(AppRun|usr/bin/hermodr)" 2>/dev/null); do
+  for pid in $(pgrep -f "$ROOT/src-tauri/target/(debug|release)/(postal|hermodr)|$HOME/.local/bin/(postal|hermodr)|/\.mount_[^/]*/(AppRun|usr/bin/(postal|hermodr))" 2>/dev/null); do
     pkill -9 -P "$pid" 2>/dev/null || true
     kill -9 "$pid" 2>/dev/null || true
   done

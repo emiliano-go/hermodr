@@ -71,7 +71,7 @@ export function searchEmojis(all: Emoji[], query: string, limit = 24): Emoji[] {
     .map((x) => x.e);
 }
 
-const RECENT_KEY = "hermodr.recentEmoji";
+const RECENT_KEY = "postal.recentEmoji";
 
 export function recentEmojis(): string[] {
   try {

@@ -63,7 +63,7 @@
         <header class="intro-head">
           <img class="intro-logo" src={appIcon} alt="" />
           <div>
-            <h1>Hermóðr</h1>
+            <h1>Postal</h1>
             <span class="intro-tag">WhatsApp, native on your desktop</span>
           </div>
           <span class="icon intro-settings"><Icon name="settings" size={18} /></span>

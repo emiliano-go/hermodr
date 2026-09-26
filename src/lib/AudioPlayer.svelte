@@ -1,13 +1,13 @@
 <script lang="ts" module>
   const BARS = 42;
   const RATES = [1, 1.5, 2];
-  const RATE_KEY = "hermodr.voiceRate";
+  const RATE_KEY = "postal.voiceRate";
   /** Decoded shape and length per file, so scrolling back does not decode again. */
   const shapes = new Map<string, { peaks: number[]; duration: number }>();
   /** Only one voice note plays at a time, as in WhatsApp. */
   let playingNow: HTMLAudioElement | null = null;
 
-  const HEARD_KEY = "hermodr.heardVoice";
+  const HEARD_KEY = "postal.heardVoice";
   /** Notes already played here; unplayed ones keep WhatsApp's green. */
   const heardNotes: Set<string> = (() => {
     try {
@@ -61,6 +61,8 @@
 
   let {
     path,
+    /** Stored length in seconds, so the time shows before the file is decoded. */
+    duration: storedDuration = null,
     avatar = null,
     initials = "",
     mine = false,
@@ -70,6 +72,7 @@
     onpaused,
   }: {
     path: string;
+    duration?: number | null;
     /** The sender's picture, shown beside the note as WhatsApp does. */
     avatar?: string | null;
     initials?: string;
@@ -100,7 +103,9 @@
   let wave: HTMLDivElement | undefined = $state();
   let scrubbing = false;
 
-  const duration = $derived(shape?.duration ?? 0);
+  // The stored length covers notes that were never decoded here; the decoded
+  // file refines it (and brings the waveform) once it loads.
+  const duration = $derived(shape?.duration ?? storedDuration ?? 0);
   const progress = $derived(duration ? Math.min(1, current / duration) : 0);
 
   /** Type the media element expects, from the stored file extension. */

@@ -163,7 +163,7 @@ pub fn webm_to_ogg(webm: &[u8]) -> anyhow::Result<Vec<u8>> {
         .filter(|h| h.starts_with(b"OpusHead"))
         .ok_or_else(|| anyhow::anyhow!("the recording's audio is not Opus"))?;
     let mut tags = b"OpusTags".to_vec();
-    let vendor = b"hermodr";
+    let vendor = b"postal";
     tags.extend_from_slice(&(vendor.len() as u32).to_le_bytes());
     tags.extend_from_slice(vendor);
     tags.extend_from_slice(&0u32.to_le_bytes());

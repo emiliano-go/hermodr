@@ -14,6 +14,7 @@ export type StoredMessage = {
   media_kind: string | null;
   media_path: string | null;
   media_thumb: string | null;
+  media_duration: number | null;
   reply_to_id: string | null;
   reply_to_text: string | null;
   reply_to_sender: string | null;

@@ -6,7 +6,7 @@
 //!   3. Refuse the initial history sync, then measure memory.
 //!   4. Send and receive a text message.
 //!
-//! Run with: `cargo run -p hermodr-core --bin spike`
+//! Run with: `cargo run -p postal-core --bin spike`
 //!
 //! Set `SPIKE_HISTORY=accept` to allow the initial history sync, so the
 //! difference between the two modes can be measured.
@@ -14,7 +14,7 @@
 use std::{env, time::Duration};
 
 use anyhow::Result;
-use hermodr_core::HistoryPolicy;
+use postal_core::HistoryPolicy;
 use qrcode::render::unicode;
 use qrcode::QrCode;
 use whatsapp_rust::prelude::*;

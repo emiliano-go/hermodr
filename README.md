@@ -1,6 +1,6 @@
-# Hermóðr
+# Postal
 
-![Hermóðr](assets/banner.jpg)
+![Postal](assets/banner.jpg)
 
 A native WhatsApp desktop client. It speaks the WhatsApp multi-device protocol
 directly instead of embedding WhatsApp Web in a browser engine.
@@ -14,7 +14,7 @@ the account's **entire message history** into local storage and then keeps it in
 memory. On a large account that means tens of gigabytes downloaded, multi-
 gigabyte memory use, and a client that gets slower the more history you have.
 
-Hermóðr takes the other path. Because it implements the protocol itself:
+Postal takes the other path. Because it implements the protocol itself:
 
 - **History sync is a decision this program makes.** Pairing brings the recent
   window only unless *Settings → Storage & history → Download full history when
@@ -31,7 +31,7 @@ Hermóðr takes the other path. Because it implements the protocol itself:
 
 Against a real account, comparing the old webview approach with this one:
 
-| Metric | Altus (WhatsApp Web in a webview) | Hermóðr |
+| Metric | Altus (WhatsApp Web in a webview) | Postal |
 | --- | --- | --- |
 | CPU, idle | ~200% of one core, sustained | **~0.3%** |
 | Memory, whole app | ~2.2 GB, climbing to ~23 GB | **~600 MB** |
@@ -44,7 +44,7 @@ point is that nothing history-sized accumulates either way.
 
 CPU was sampled with `pidstat` in 30-second windows. Altus held 130-220% of one
 core the entire time and its RSS kept climbing toward the full 23 GB history, so
-it never reaches a true idle. Hermóðr sits under 1% when idle.
+it never reaches a true idle. Postal sits under 1% when idle.
 
 This is not a knock on Altus. It is a good project, and a fairly optimized one;
 the numbers above are a property of the approach, not of its authors. Any client
@@ -58,15 +58,15 @@ profiles are reclaimed on startup (**97 MB → 5.8 MB**).
 
 ## The name
 
-**Hermóðr** (roughly **"HAIR-moth"**, the `ð` a voiced *th* as in "the") is
-the messenger of the Norse gods, who rode Sleipnir down to Hel to carry a plea
-for his brother Baldr. A god whose job is to carry a message between realms is
-a fitting namesake for a chat client. More in [docs/name.md](docs/name.md).
+**Postal** is the service that carries a letter from one person to another:
+it takes what you wrote, routes it, and hands it over intact. A chat client
+does the same with messages, one delivery at a time. More in
+[docs/name.md](docs/name.md).
 
 ## Architecture
 
 ```
-crates/hermodr-core/    protocol client, storage, retention
+crates/postal-core/    protocol client, storage, retention
   history.rs            which history-sync chunks to accept
   store.rs              SQLite message store + retention policy
   service.rs            connection lifecycle, typed event stream
@@ -74,7 +74,7 @@ src-tauri/              Tauri shell: commands and event forwarding
 src/                    Svelte 5 UI (chat list, conversation, pairing)
 ```
 
-`hermodr-core` is built on [`whatsapp-rust`](https://github.com/oxidezap/whatsapp-rust),
+`postal-core` is built on [`whatsapp-rust`](https://github.com/oxidezap/whatsapp-rust),
 a pure-Rust implementation of the WhatsApp multi-device protocol.
 
 ## Installing
@@ -82,12 +82,12 @@ a pure-Rust implementation of the WhatsApp multi-device protocol.
 Releases ship an AppImage. Download it from the releases page, or run:
 
 ```console
-curl -fsSL https://raw.githubusercontent.com/emiliano-go/hermodr/master/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/emiliano-go/postal/master/scripts/install.sh | sh
 ```
 
 The installer pins the release tag and checks the AppImage against the release's
 `SHA256SUMS` and GitHub's own digest before replacing anything; set
-`HERMODR_VERSION=v0.1.0` to install a specific release.
+`POSTAL_VERSION=v0.1.0` to install a specific release.
 
 ## Building
 
@@ -121,17 +121,17 @@ On Wayland, WebKitGTK's DMA-BUF renderer fails with `Gdk Error 71`. The app sets
 Two binaries exercise the core without the UI:
 
 ```console
-cargo run -p hermodr-core --bin spike          # pair by QR, print a terminal QR
-cargo run -p hermodr-core --bin service-check  # store messages, show retention
+cargo run -p postal-core --bin spike          # pair by QR, print a terminal QR
+cargo run -p postal-core --bin service-check  # store messages, show retention
 ```
 
 `spike` renders its pairing code as Unicode blocks, so it needs no image viewer.
 Set `SPIKE_HISTORY=accept` to compare behaviour when the full history is allowed.
 
-The app itself logs to `hermodr.log` in its data directory (*Settings → About →
+The app itself logs to `postal.log` in its data directory (*Settings → About →
 Open log*): connection changes, sync progress, per-batch timings, failed store
 writes, failed UI commands and crashes with a backtrace. `RUST_LOG` overrides
-the levels; past 5 MB the file moves to `hermodr.log.old`.
+the levels; past 5 MB the file moves to `postal.log.old`.
 
 ## Media
 
@@ -156,7 +156,7 @@ files.
 ## Testing
 
 ```console
-cargo test -p hermodr-core
+cargo test -p postal-core
 pnpm check
 node --experimental-strip-types src/lib/format.ts
 node --experimental-strip-types src/lib/phone.ts

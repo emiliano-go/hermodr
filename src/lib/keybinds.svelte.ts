@@ -32,7 +32,7 @@ const DEFAULTS: Record<Action, string> = {
   jumpUnread: "Alt+ArrowUp",
 };
 
-const KEY = "hermodr.keybinds";
+const KEY = "postal.keybinds";
 
 function parse(text: string): Binding {
   const parts = text.split("+").map((p) => p.trim());

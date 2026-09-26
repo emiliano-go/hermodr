@@ -1,4 +1,5 @@
 <script lang="ts">
+  import "$lib/legacy";
   import { onMount, tick, untrack } from "svelte";
   import { invoke } from "$lib/ipc";
   import { listen } from "@tauri-apps/api/event";
@@ -155,7 +156,7 @@
   // The chat list width is a customization setting; older builds kept it under its own key.
   if (customization.listWidth === undefined) {
     try {
-      customization.listWidth = Number(localStorage.getItem("hermodr.sidebarWidth")) || 300;
+      customization.listWidth = Number(localStorage.getItem("postal.sidebarWidth")) || 300;
     } catch {
       customization.listWidth = 300;
     }
@@ -445,7 +446,7 @@
     const own = session.activeAccount && session.me ? chats.avatars[session.me] : null;
     if (!own) return;
     try {
-      localStorage.setItem(`hermodr.avatar.${session.activeAccount}`, own);
+      localStorage.setItem(`postal.avatar.${session.activeAccount}`, own);
     } catch {
       // Storage may be unavailable; the picture then only shows once connected.
     }
@@ -1174,7 +1175,7 @@
 </script>
 
 <svelte:head>
-  <title>Hermóðr</title>
+  <title>Postal</title>
   {@html extensionCss}
   {@html chatPictureCss}
 </svelte:head>

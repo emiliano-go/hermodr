@@ -2,7 +2,7 @@ import { invoke as call, type InvokeArgs, type InvokeOptions } from "@tauri-apps
 
 type Level = "error" | "warn" | "info" | "debug";
 
-/** Writes a line to hermodr.log under the `ui` target. Never throws. */
+/** Writes a line to postal.log under the `ui` target. Never throws. */
 export function log(level: Level, message: string) {
   call("frontend_log", { level, message }).catch(() => {});
 }

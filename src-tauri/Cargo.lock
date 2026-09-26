@@ -1856,42 +1856,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
-name = "hermodr"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "dunce",
- "env_logger",
- "hermodr-core",
- "log",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tokio",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "hermodr-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "buffa",
- "image",
- "log",
- "qrcode",
- "rusqlite",
- "serde",
- "serde_json",
- "tokio",
- "ureq",
- "whatsapp-rust",
- "windows",
-]
-
-[[package]]
 name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3098,6 +3062,43 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "10ab3eb7f3becc3a1cbc4f2c6f20267996cfc1a6467a873763411b136a122715"
 dependencies = [
  "portable-atomic",
+]
+
+[[package]]
+name = "postal"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "dirs",
+ "dunce",
+ "env_logger",
+ "log",
+ "postal-core",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tokio",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "postal-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "buffa",
+ "image",
+ "log",
+ "qrcode",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tokio",
+ "ureq",
+ "whatsapp-rust",
+ "windows",
 ]
 
 [[package]]

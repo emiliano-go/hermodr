@@ -1,6 +1,6 @@
-//! Core of the Hermóðr native client.
+//! Core of the Postal native client.
 //!
-//! Hermóðr talks the WhatsApp multi-device protocol directly instead of
+//! Postal talks the WhatsApp multi-device protocol directly instead of
 //! embedding WhatsApp Web. That removes the webview entirely and, more
 //! importantly, makes history sync a decision this program gets to make.
 

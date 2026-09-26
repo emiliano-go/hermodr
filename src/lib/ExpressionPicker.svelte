@@ -45,7 +45,7 @@
   let grid: HTMLDivElement | undefined = $state();
   let fileInput: HTMLInputElement | undefined = $state();
 
-  const FAV_KEY = "hermodr.favStickers";
+  const FAV_KEY = "postal.favStickers";
   let favourites = $state<string[]>(
     (() => {
       try {
@@ -60,7 +60,7 @@
     loadEmojis().then((list) => (emojis = list));
   });
 
-  const SIZE_KEY = "hermodr.pickerSize";
+  const SIZE_KEY = "postal.pickerSize";
   let size = $state<{ w: number; h: number }>(
     (() => {
       try {

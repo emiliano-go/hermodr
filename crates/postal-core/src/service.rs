@@ -94,7 +94,7 @@ fn recall_allowed(chat: &str) -> bool {
     true
 }
 
-/// What this device asks for when it links: named as Hermóðr on the phone's
+/// What this device asks for when it links: named as Postal on the phone's
 /// linked devices, and with full history a backfill of every chat but only
 /// its recent days, telling the phone older history will be asked for on
 /// demand (a reply to something older fetches that chat's past). Only read at
@@ -141,7 +141,7 @@ async fn other_form(client: &Client, store: &MessageStore, bare: &Jid) -> Option
 fn pairing_props(full_history: bool) -> whatsapp_rust::wacore::store::DevicePropsOverride {
     use wa::device_props::{HistorySyncConfig, PlatformType};
     let props = whatsapp_rust::wacore::store::DevicePropsOverride::new()
-        .with_os("Hermóðr")
+        .with_os("Postal")
         .with_platform_type(PlatformType::UWP);
     if !full_history {
         return props;
@@ -174,7 +174,7 @@ fn pairing_props(full_history: bool) -> whatsapp_rust::wacore::store::DeviceProp
 /// votes can still be applied to their parent message. The library's default
 /// horizon is 30 days for text and 90 for polls, which on an account with
 /// hundreds of thousands of messages grows the session database into the
-/// hundreds of megabytes. Since Hermóðr only keeps messages for
+/// hundreds of megabytes. Since Postal only keeps messages for
 /// [`Retention::max_age_hours`], keeping keys far beyond that window protects
 /// add-ons for messages that no longer exist. The horizon is therefore capped
 /// at the message window, with a floor of an hour so edits arriving slightly
@@ -3377,6 +3377,7 @@ impl Service {
             Some(context)
         };
 
+        let voice_seconds = voice.as_ref().map(|v| v.seconds);
         let mut message = match kind {
             "image" => media::image_message(
                 upload,
@@ -3406,7 +3407,7 @@ impl Service {
                     // An ogg/opus attachment is a voice note, which is how
                     // WhatsApp records and replays them.
                     ptt: Some(extension == "ogg"),
-                    duration_seconds: voice.as_ref().map(|v| v.seconds),
+                    duration_seconds: voice_seconds,
                     waveform: voice.map(|v| v.waveform),
                     context_info: context,
                 },
@@ -3424,6 +3425,12 @@ impl Service {
             ),
         };
         if view_once {
+            // Documents have no view-once form, so a file the UI staged as a
+            // photo but the extension sends as a document fails loudly instead
+            // of going out as an ordinary attachment.
+            if kind == "document" {
+                anyhow::bail!("view-once only works for photos, videos and voice notes");
+            }
             if let Some(m) = message.image_message.as_option_mut() {
                 m.view_once = Some(true);
             }
@@ -3433,6 +3440,9 @@ impl Service {
             if let Some(m) = message.audio_message.as_option_mut() {
                 m.view_once = Some(true);
             }
+            // WhatsApp renders one-time media from the V2 container; the inline
+            // flags above are hints kept for clients that read them.
+            message = wrap_view_once(message);
         }
 
         let result = self.client.send_message(to, message).await?;
@@ -3460,6 +3470,7 @@ impl Service {
         let kind = if gif && kind == "video" { "gif" } else { kind };
         let mut stored = self.own_message(chat, &result.message_id, caption.unwrap_or_default(), kind, to_self);
         stored.media.path = stored_path;
+        stored.media.duration = voice_seconds;
         if let Some((id, sender, text)) = reply {
             stored.quote = Quote { id: Some(id), text: Some(text), sender: Some(sender), ..Default::default() };
         }
@@ -3870,6 +3881,8 @@ struct MediaInfo {
     downloadable: Box<dyn Downloadable + Send + Sync>,
     /// The small JPEG the message carries, available without downloading.
     thumb: Option<Vec<u8>>,
+    /// Audio length in seconds, when the message carries it.
+    duration: Option<u32>,
     /// A document's own extension, so the file opens as what it is.
     ext: Option<String>,
 }
@@ -3898,6 +3911,7 @@ fn detect_media(message: &wa::Message) -> Option<MediaInfo> {
             media_type: MediaType::Image,
             downloadable: Box::new(image.clone()),
             thumb: image.jpeg_thumbnail.clone(),
+            duration: None,
             ext: None,
         });
     }
@@ -3912,6 +3926,7 @@ fn detect_media(message: &wa::Message) -> Option<MediaInfo> {
             media_type: MediaType::Video,
             downloadable: Box::new(video.clone()),
             thumb: video.jpeg_thumbnail.clone(),
+            duration: None,
             ext: None,
         });
     }
@@ -3921,6 +3936,7 @@ fn detect_media(message: &wa::Message) -> Option<MediaInfo> {
             media_type: MediaType::Audio,
             downloadable: Box::new(audio.clone()),
             thumb: None,
+            duration: audio.seconds,
             ext: None,
         });
     }
@@ -3930,6 +3946,7 @@ fn detect_media(message: &wa::Message) -> Option<MediaInfo> {
             media_type: MediaType::Document,
             downloadable: Box::new(document.clone()),
             thumb: document.jpeg_thumbnail.clone(),
+            duration: None,
             ext: document_extension(document),
         });
     }
@@ -3939,6 +3956,7 @@ fn detect_media(message: &wa::Message) -> Option<MediaInfo> {
             media_type: MediaType::Sticker,
             downloadable: Box::new(sticker.clone()),
             thumb: None,
+            duration: None,
             ext: None,
         });
     }
@@ -3960,6 +3978,22 @@ fn sticker_webp(bytes: &[u8]) -> Option<Vec<u8>> {
         .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::WebP)
         .ok()?;
     Some(out)
+}
+
+/// Nests a media message in the V2 view-once container.
+///
+/// The protocol library sends a caller-built message unchanged, so the container
+/// is ours to build; its classification unwraps it for the stanza type and the
+/// `<meta view_once="true"/>` hint, and recipients render what is inside as
+/// one-time media.
+fn wrap_view_once(message: wa::Message) -> wa::Message {
+    wa::Message {
+        view_once_message_v2: MessageField::some(wa::message::FutureProofMessage {
+            message: MessageField::some(message),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
 }
 
 /// Converts a protocol message into a storable one, downloading any media.
@@ -4030,9 +4064,11 @@ async fn stored_message(
     let mut media_path = None;
     let mut media_thumb = None;
     let mut media_ref = None;
+    let mut media_duration = None;
 
     if let Some(media) = detect_media(message) {
         media_kind = Some(media.kind.to_string());
+        media_duration = media.duration;
 
         // The thumbnail rides in the message, so it is kept even when the file
         // itself is not downloaded.
@@ -4119,7 +4155,7 @@ async fn stored_message(
     Some(StoredMessage {
         header,
         text,
-        media: Media { kind: media_kind, path: media_path, thumb: media_thumb, locator: media_ref },
+        media: Media { kind: media_kind, path: media_path, thumb: media_thumb, duration: media_duration, locator: media_ref },
         quote,
         link: link_preview(message),
         ..Default::default()
@@ -4966,7 +5002,7 @@ mod tests {
         let json = serde_json::to_string(&message).expect("message event must serialize");
         assert!(json.contains("\"message\""), "missing payload: {json}");
         // The UI reads one flat object keyed by column names.
-        for key in ["\"chat\":\"a@s\"", "\"media_kind\"", "\"reply_to_id\"", "\"preview_url\"", "\"status\""] {
+        for key in ["\"chat\":\"a@s\"", "\"media_kind\"", "\"media_duration\"", "\"reply_to_id\"", "\"preview_url\"", "\"status\""] {
             assert!(json.contains(key), "missing {key}: {json}");
         }
         for key in ["\"header\"", "\"media\"", "\"locator\"", "\"media_ref\""] {
@@ -5046,5 +5082,30 @@ mod tests {
             config.msg_secret_retention.text,
             Duration::from_secs(30 * 86_400)
         );
+    }
+
+    #[test]
+    fn view_once_media_is_nested_in_the_v2_container() {
+        for message in [
+            wa::Message {
+                image_message: MessageField::some(wa::message::ImageMessage::default()),
+                ..Default::default()
+            },
+            wa::Message {
+                video_message: MessageField::some(wa::message::VideoMessage::default()),
+                ..Default::default()
+            },
+            wa::Message {
+                audio_message: MessageField::some(wa::message::AudioMessage::default()),
+                ..Default::default()
+            },
+        ] {
+            let wrapped = wrap_view_once(message);
+            let outer = wrapped.view_once_message_v2.as_option().expect("v2 wrapper");
+            let inner = outer.message.as_option().expect("wrapped message");
+            assert!(
+                inner.image_message.is_set() || inner.video_message.is_set() || inner.audio_message.is_set()
+            );
+        }
     }
 }

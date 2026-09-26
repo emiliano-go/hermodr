@@ -156,7 +156,7 @@
     { id: "startup", label: "Startup", group: "App settings" },
     { id: "keybinds", label: "Keybinds", group: "App settings" },
     { id: "appearance", label: "Customization", group: "App settings" },
-    { id: "about", label: "About", group: "Hermóðr" },
+    { id: "about", label: "About", group: "Postal" },
   ]);
   $effect(() => {
     if (!NAV.some((n) => n.id === section)) section = "accounts";
@@ -469,8 +469,8 @@
             <div>
               <span class="setting-title">Keep history on this computer</span>
               <span class="setting-desc">
-                Off keeps messages in memory only: they show while Hermóðr runs and are gone when it
-                quits. Applies the next time Hermóðr starts; clear history below to remove what is
+                Off keeps messages in memory only: they show while Postal runs and are gone when it
+                quits. Applies the next time Postal starts; clear history below to remove what is
                 already saved.
               </span>
             </div>
@@ -569,7 +569,7 @@
           <div class="setting stack">
             <div>
               <span class="setting-title">Download folder</span>
-              <span class="setting-desc">Empty uses the app cache. Applies the next time Hermóðr starts.</span>
+              <span class="setting-desc">Empty uses the app cache. Applies the next time Postal starts.</span>
             </div>
             <input
               class="field wide"
@@ -641,7 +641,7 @@
         {:else}
           <h2>About</h2>
           <div class="setting">
-            <span class="setting-title">Hermóðr</span>
+            <span class="setting-title">Postal</span>
             <span class="muted">{version ? `Version ${version}` : ""}</span>
           </div>
           <p class="lede">A native WhatsApp client that speaks the protocol directly.</p>

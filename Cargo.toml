@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/hermodr-core"]
+members = ["crates/postal-core"]
 # The Tauri app has its own manifest that depends on a local Tauri checkout, so
 # it stays outside this workspace rather than nesting one inside the other.
 exclude = ["src-tauri"]
@@ -9,7 +9,7 @@ resolver = "2"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/emiliano-go/hermodr"
+repository = "https://github.com/emiliano-go/postal"
 
 [workspace.dependencies]
 # Pinned to a revision rather than the crates.io release: history-sync admission

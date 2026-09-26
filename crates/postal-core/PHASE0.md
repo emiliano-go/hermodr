@@ -43,7 +43,7 @@ processing live events, not the unbounded growth seen in v1.
 
 ```console
 $ rm -f spike.db*
-$ cargo run -p hermodr-core --bin spike
+$ cargo run -p postal-core --bin spike
 ```
 
 `SPIKE_HISTORY=accept` accepts the deep history sync, for comparison.

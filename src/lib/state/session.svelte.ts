@@ -7,7 +7,7 @@ import { ui } from "./ui.svelte";
 
 function storedZoom() {
   try {
-    const saved = Number(localStorage.getItem("hermodr.zoom"));
+    const saved = Number(localStorage.getItem("postal.zoom"));
     return Number.isFinite(saved) && saved ? Math.min(2, Math.max(0.6, saved)) : 1;
   } catch {
     return 1;
@@ -57,7 +57,7 @@ export class SessionState {
     skip_loading_screen: false,
   });
 
-  /** Interface scale, persisted under `hermodr.zoom`; Ctrl +/-/0 adjust it. */
+  /** Interface scale, persisted under `postal.zoom`; Ctrl +/-/0 adjust it. */
   zoom = $state(storedZoom());
 
   activeLabel = $derived(this.accountList.find((a) => a.id === this.activeAccount)?.label ?? "WhatsApp");
@@ -87,7 +87,7 @@ export class SessionState {
   applyZoom() {
     document.documentElement.style.zoom = String(this.zoom);
     try {
-      localStorage.setItem("hermodr.zoom", String(this.zoom));
+      localStorage.setItem("postal.zoom", String(this.zoom));
     } catch {
       // The scale lasts this session then.
     }

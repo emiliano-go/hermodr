@@ -1,6 +1,6 @@
 //! Message and chat storage.
 //!
-//! Hermóðr keeps its own history rather than relying on the protocol library,
+//! Postal keeps its own history rather than relying on the protocol library,
 //! which stores none. That makes retention ours to enforce: the [`Retention`]
 //! policy bounds what is kept, so the store cannot grow without limit the way a
 //! synced WhatsApp Web profile does.
@@ -108,6 +108,10 @@ pub struct Media {
     /// in the row), a file path for older rows.
     #[serde(rename = "media_thumb")]
     pub thumb: Option<String>,
+    /// Audio/voice-note length in seconds, when the message carries it. Lets
+    /// the bubble show the time before the file is decoded or played.
+    #[serde(rename = "media_duration")]
+    pub duration: Option<u32>,
     /// The media submessage, kept so the file can be downloaded on demand when
     /// automatic downloads are off: keys, hashes and URL, without thumbnail or
     /// quote, typically a few hundred bytes. Internal: not handed to the UI.
@@ -200,7 +204,7 @@ const MESSAGE_COLUMNS: &str = "m.chat, m.id, m.sender, m.timestamp, m.from_me, m
     m.read, m.revoked, m.status, m.reply_to_sender, m.mentioned,
     m.preview_url, m.preview_title, m.preview_desc, m.preview_thumb,
     m.reply_to_kind, m.reply_to_thumb, m.media_thumb, m.media_ref, m.reply_to_chat,
-    m.preview_site, m.preview_color";
+    m.preview_site, m.preview_color, m.media_duration";
 
 fn message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
     Ok(StoredMessage {
@@ -217,6 +221,7 @@ fn message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
             kind: row.get(7)?,
             path: row.get(8)?,
             thumb: row.get(22)?,
+            duration: row.get(27)?,
             locator: row.get(23)?,
         },
         quote: Quote {
@@ -505,6 +510,10 @@ impl MessageStore {
             )?;
         }
 
+        if !existing.iter().any(|c| c == "media_duration") {
+            conn.execute("ALTER TABLE messages ADD COLUMN media_duration INTEGER", [])?;
+        }
+
         // Chat pins, mirrored from the account so they match the phone.
         conn.execute("CREATE TABLE IF NOT EXISTS pins (jid TEXT PRIMARY KEY)", [])?;
         // Per-message state that is not part of the message itself.
@@ -672,9 +681,9 @@ impl MessageStore {
                   read, revoked, mentioned, status,
                   preview_url, preview_title, preview_desc, preview_thumb,
                   reply_to_kind, reply_to_thumb, media_thumb, media_ref, reply_to_chat,
-                  preview_site, preview_color)
+                  preview_site, preview_color, media_duration)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                     ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)
+                     ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)
              ON CONFLICT(chat, id) DO UPDATE SET
                  sender = excluded.sender,
                  timestamp = excluded.timestamp,
@@ -690,7 +699,7 @@ impl MessageStore {
                  read = MAX(read, excluded.read),
                  revoked = excluded.revoked,
                  mentioned = MAX(mentioned, excluded.mentioned),
-                 status = CASE WHEN ?27 >(CASE status WHEN 'pending' THEN 0 WHEN 'sent' THEN 1
+                 status = CASE WHEN ?28 >(CASE status WHEN 'pending' THEN 0 WHEN 'sent' THEN 1
                                            WHEN 'delivered' THEN 2 WHEN 'read' THEN 3 ELSE -1 END)
                           THEN excluded.status ELSE status END,
                  preview_url = excluded.preview_url,
@@ -701,6 +710,7 @@ impl MessageStore {
                  reply_to_thumb = excluded.reply_to_thumb,
                  media_thumb = COALESCE(media_thumb, excluded.media_thumb),
                  media_ref = COALESCE(excluded.media_ref, media_ref),
+                 media_duration = COALESCE(excluded.media_duration, media_duration),
                  reply_to_chat = excluded.reply_to_chat,
                  preview_site = excluded.preview_site,
                  preview_color = excluded.preview_color
@@ -732,6 +742,7 @@ impl MessageStore {
                 message.quote.chat,
                 message.link.site,
                 message.link.color,
+                message.media.duration,
                 message.local.status.as_deref().map(status_rank).unwrap_or(-1),
             ],
         )?;
@@ -2107,6 +2118,19 @@ mod tests {
     }
 
     #[test]
+    fn audio_duration_survives_a_replay_without_it() {
+        let s = store(Retention::unlimited());
+        let mut note = msg("a@s", "1", 0, "[audio]");
+        note.media = Media { kind: Some("audio".into()), duration: Some(7), ..Default::default() };
+        s.insert_message(&note).unwrap();
+        assert_eq!(s.message("a@s", "1").unwrap().media.duration, Some(7));
+        // A replay carrying no metadata must not erase the kept length.
+        note.media.duration = None;
+        s.insert_message(&note).unwrap();
+        assert_eq!(s.message("a@s", "1").unwrap().media.duration, Some(7));
+    }
+
+    #[test]
     fn drops_messages_older_than_the_window() {
         let s = store(Retention {
             max_age_hours: Some(24),
@@ -2296,7 +2320,7 @@ mod tests {
 
     #[test]
     fn relocate_media_moves_only_referenced_files() {
-        let root = std::env::temp_dir().join(format!("hermodr-relocate-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("postal-relocate-{}", std::process::id()));
         let (shared, to) = (root.join("shared"), root.join("app"));
         std::fs::create_dir_all(&shared).unwrap();
         std::fs::write(shared.join("1.jpg"), b"ours").unwrap();

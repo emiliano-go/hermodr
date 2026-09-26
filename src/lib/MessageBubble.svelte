@@ -116,7 +116,7 @@
     {#if vm.viewOnce}
       {@const what = VIEW_ONCE_LABEL[message.media_kind ?? ""] ?? "View once message"}
       {#if vm.onceAudioOpen && message.media_kind === "audio" && message.media_path}
-        <AudioPlayer path={message.media_path} />
+        <AudioPlayer path={message.media_path} duration={message.media_duration} />
         <button class="once-done" onclick={() => api.oncloseonce()}>Done</button>
       {:else if message.media_kind === "view_once"}
         <span class="once spent">
@@ -191,6 +191,7 @@
     {:else if message.media_kind === "audio" && message.media_path}
       <AudioPlayer
         path={message.media_path}
+        duration={message.media_duration}
         avatar={vm.voiceAvatar}
         mine={message.from_me}
         play={vm.autoplay}

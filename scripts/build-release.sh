@@ -39,8 +39,8 @@ APPIMAGE="$(ls -t src-tauri/target/release/bundle/appimage/*.AppImage 2>/dev/nul
 if [ -n "$APPIMAGE" ]; then
   OUT="$ROOT/dist"
   mkdir -p "$OUT"
-  cp "$APPIMAGE" "$OUT/Hermodr-x86_64.AppImage"
-  cp src-tauri/icons/icon.png "$OUT/hermodr.png"
-  (cd "$OUT" && sha256sum Hermodr-x86_64.AppImage hermodr.png > SHA256SUMS)
-  say "release assets in $OUT: upload Hermodr-x86_64.AppImage, hermodr.png and SHA256SUMS"
+  cp "$APPIMAGE" "$OUT/Postal-x86_64.AppImage"
+  cp src-tauri/icons/icon.png "$OUT/postal.png"
+  (cd "$OUT" && sha256sum Postal-x86_64.AppImage postal.png > SHA256SUMS)
+  say "release assets in $OUT: upload Postal-x86_64.AppImage, postal.png and SHA256SUMS"
 fi

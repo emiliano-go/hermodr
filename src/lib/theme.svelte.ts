@@ -461,7 +461,7 @@ export const BUILT_IN: Theme[] = [
   },
 ];
 
-const KEY = "hermodr.customization";
+const KEY = "postal.customization";
 
 function load(): Saved {
   try {

@@ -4,14 +4,14 @@
 //! enforce retention, and send a reply. Unlike the spike, this goes through the
 //! service layer the UI will use.
 //!
-//! Run with: `cargo run -p hermodr-core --bin service-check`
+//! Run with: `cargo run -p postal-core --bin service-check`
 //!
 //! Set `SPIKE_SEND=<chat-jid>` to send a message to that chat once connected.
 
 use std::{env, path::PathBuf, time::Duration};
 
 use anyhow::Result;
-use hermodr_core::{Retention, Service, ServiceConfig, ServiceEvent};
+use postal_core::{Retention, Service, ServiceConfig, ServiceEvent};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -73,7 +73,7 @@ async fn main() -> Result<()> {
                 println!("[check] connected");
                 if let Some(chat) = &send_target {
                     if !sent {
-                        match service.send_text(chat, "test from hermodr-core", Vec::new()).await {
+                        match service.send_text(chat, "test from postal-core", Vec::new()).await {
                             Ok(()) => println!("[check] sent test message to {chat}"),
                             Err(e) => println!("[check] send failed: {e}"),
                         }

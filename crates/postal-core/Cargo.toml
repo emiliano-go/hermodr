@@ -1,10 +1,10 @@
 [package]
-name = "hermodr-core"
+name = "postal-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "WhatsApp protocol core for Hermóðr, built on whatsapp-rust"
+description = "WhatsApp protocol core for Postal, built on whatsapp-rust"
 
 [dependencies]
 whatsapp-rust = { workspace = true }

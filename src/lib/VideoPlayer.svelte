@@ -15,7 +15,7 @@
     onerror?: () => void;
   } = $props();
 
-  const KEY = "hermodr.player";
+  const KEY = "postal.player";
   const RATES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 
   function load(): { volume: number; muted: boolean; rate: number } {

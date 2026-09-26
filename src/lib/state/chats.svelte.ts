@@ -219,7 +219,7 @@ export class ChatsState {
 
   rememberedAvatar(id: string): string | null {
     try {
-      return localStorage.getItem(`hermodr.avatar.${id}`);
+      return localStorage.getItem(`postal.avatar.${id}`);
     } catch {
       return null;
     }

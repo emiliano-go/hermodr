@@ -10,6 +10,7 @@ const COMMANDS: &[&str] = &[
     "chats",
     "resolve_names",
     "mark_read",
+    "mark_read_until",
     "send_reply",
     "send_media",
     "send_text",
