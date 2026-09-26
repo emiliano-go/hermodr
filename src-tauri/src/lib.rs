@@ -1506,7 +1506,9 @@ pub fn run() {
             // when Tauri's own drag and drop handler is off.
             #[cfg(target_os = "windows")]
             let builder = builder.disable_drag_drop_handler();
-            builder.build()?;
+            let window = builder.build()?;
+            #[cfg(debug_assertions)]
+            window.open_devtools();
 
             Ok(())
         })
