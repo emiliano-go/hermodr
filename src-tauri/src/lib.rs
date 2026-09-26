@@ -1471,6 +1471,13 @@ fn open_log(app: AppHandle) -> Result<(), String> {
     shell_open(log_path(&app).as_os_str())
 }
 
+fn is_hyprland() -> bool {
+    std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok()
+        || std::env::var("XDG_CURRENT_DESKTOP")
+            .map(|v| v.eq_ignore_ascii_case("hyprland"))
+            .unwrap_or(false)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // WebKitGTK's DMA-BUF renderer fails to create GBM buffers under Wayland
@@ -1501,6 +1508,7 @@ pub fn run() {
                 .title("Hermóðr")
                 .inner_size(1000.0, 720.0)
                 .min_inner_size(480.0, 360.0)
+                .decorations(!is_hyprland())
                 .enable_clipboard_access();
             // WebView2 only delivers dropped files to the page's drop handler
             // when Tauri's own drag and drop handler is off.

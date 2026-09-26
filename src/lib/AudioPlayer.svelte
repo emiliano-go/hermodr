@@ -54,7 +54,7 @@
 </script>
 
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { invoke } from "$lib/ipc";
   import Icon from "$lib/Icon.svelte";
@@ -64,7 +64,10 @@
     avatar = null,
     initials = "",
     mine = false,
+    play = false,
     onplayed,
+    onended,
+    onpaused,
   }: {
     path: string;
     /** The sender's picture, shown beside the note as WhatsApp does. */
@@ -72,8 +75,14 @@
     initials?: string;
     /** Our own notes never show as unplayed. */
     mine?: boolean;
+    /** Start as soon as this turns true, for the queue behind a voice note. */
+    play?: boolean;
     /** Called the first time the note plays here, for the played receipt. */
     onplayed?: () => void;
+    /** Called when the note reaches its end on its own, to chain to the next. */
+    onended?: () => void;
+    /** Called on a manual pause, so a chain does not survive it. */
+    onpaused?: () => void;
   } = $props();
   // svelte-ignore state_referenced_locally
   let heard = $state(mine || heardNotes.has(path));
@@ -138,9 +147,8 @@
     if (playingNow === audio) playingNow = null;
   });
 
-  async function toggle() {
+  async function start() {
     if (!audio || failed) return;
-    if (!audio.paused) return audio.pause();
     if (!src && !(await ensureLoaded())) return;
     if (playingNow && playingNow !== audio) playingNow.pause();
     playingNow = audio;
@@ -157,6 +165,18 @@
       onplayed?.();
     }
   }
+
+  async function toggle() {
+    if (!audio || failed) return;
+    if (!audio.paused) return audio.pause();
+    await start();
+  }
+
+  // The parent chains voice notes by flipping `play` on the next one; only that
+  // change matters, not the playback state starting depends on.
+  $effect(() => {
+    if (play) untrack(() => void start());
+  });
 
   // timeupdate fires a few times a second; follow the playhead every frame instead.
   $effect(() => {
@@ -219,7 +239,8 @@
       {/each}
       <span class="knob" style="left: {progress * 100}%"></span>
     </div>
-    <span class="time">{clock(paused && current === 0 ? duration : current)}</span>
+    <!-- Until the file decodes, the length is unknown; 0:00 would read as an empty note. -->
+    <span class="time">{duration || current > 0 ? clock(paused && current === 0 ? duration : current) : "--:--"}</span>
   </div>
 
   {#if !paused || current > 0}
@@ -242,7 +263,11 @@
     bind:paused
     ontimeupdate={() => !scrubbing && (current = audio?.currentTime ?? 0)}
     onerror={() => src && (failed = true)}
-    onended={() => (current = 0)}></audio>
+    onpause={() => onpaused?.()}
+    onended={() => {
+      current = 0;
+      onended?.();
+    }}></audio>
 </div>
 
 <style>

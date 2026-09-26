@@ -24,7 +24,7 @@
   import GroupInfo, { type AdminReport } from "$lib/GroupInfo.svelte";
   import MediaViewer, { mediaSrc, type ViewerItem } from "$lib/MediaViewer.svelte";
   import VideoPlayer from "$lib/VideoPlayer.svelte";
-  import appIcon from "../../src-tauri/icons/128x128.png";
+  import Logo from "$lib/Logo.svelte";
   import ImageCropper from "$lib/ImageCropper.svelte";
   import MessageMenu, { type MenuItem } from "$lib/MessageMenu.svelte";
   import ChatPicker from "$lib/ChatPicker.svelte";
@@ -255,6 +255,27 @@
   let qrSvg = $state<string | null>(null);
   let chats: ChatSummary[] = $state([]);
   let selectedChat = $state<string | null>(null);
+  /** Interface scale, persisted under `hermodr.zoom`; Ctrl +/-/0 adjust it. */
+  function storedZoom() {
+    try {
+      const saved = Number(localStorage.getItem("hermodr.zoom"));
+      return Number.isFinite(saved) && saved ? Math.min(2, Math.max(0.6, saved)) : 1;
+    } catch {
+      return 1;
+    }
+  }
+  let zoom = $state(storedZoom());
+  function setZoom(next: number) {
+    zoom = Math.min(2, Math.max(0.6, Math.round(next * 10) / 10));
+  }
+  $effect(() => {
+    document.documentElement.style.zoom = String(zoom);
+    try {
+      localStorage.setItem("hermodr.zoom", String(zoom));
+    } catch {
+      // The scale lasts this session then.
+    }
+  });
 
   /** The open chat's own background picture, loaded from IndexedDB. */
   let chatPictureUrl = $state<string | null>(null);
@@ -280,6 +301,8 @@
     return `<style data-chat-picture>.conversation { background: linear-gradient(${dim}, ${dim}), url("${chatPictureUrl}") center / cover no-repeat !important; }</style>`;
   });
   let messages: StoredMessage[] = $state([]);
+  /** Voice note to play next, set when the previous one ends on its own. */
+  let autoplayId = $state<string | null>(null);
   /** Offline-backlog progress: how many were announced and how many arrived. */
   let syncPending = $state(0);
   let syncSeen = $state(0);
@@ -560,10 +583,40 @@
     if (kind === "document") return "file";
     return null;
   }
+  /** Every address form for a member, so lookups do not scan the roster per render. */
+  const memberByAddress = $derived.by(() => {
+    const m = new Map<string, Member>();
+    for (const p of participants) {
+      const b = bare(p.jid);
+      m.set(b, p);
+      m.set(p.jid, p);
+      m.set(b.split("@")[0], p);
+      if (p.number) m.set(p.number, p);
+    }
+    return m;
+  });
+  /** First real push name per sender address, collected once instead of a scan per render. */
+  const senderNames = $derived.by(() => {
+    const m = new Map<string, string>();
+    for (const msg of messages) {
+      if (msg.from_me || !msg.sender_name || isPlaceholder(msg.sender_name)) continue;
+      const b = bare(msg.sender);
+      if (!m.has(b)) m.set(b, msg.sender_name);
+    }
+    return m;
+  });
+  /** Push names keyed by member, so a LID sender still names its member. */
+  const memberNames = $derived.by(() => {
+    const m = new Map<string, string>();
+    for (const [sender, name] of senderNames) {
+      const member = memberByAddress.get(sender);
+      if (member && !m.has(member.jid)) m.set(member.jid, name);
+    }
+    return m;
+  });
   /** The group member a sender is, matched by LID or by phone number. */
   function memberOf(jid: string) {
-    const b = bare(jid);
-    return memberByJid.get(b) ?? memberByNumber.get(b.split("@")[0]);
+    return memberByAddress.get(bare(jid));
   }
   function senderLabel(message: StoredMessage) {
     // The message row joins names on one address form only; the member list
@@ -575,7 +628,7 @@
   /** Resolves a JID to a known name, falling back to the bare address. */
   function senderName(jid: string) {
     const b = bare(jid);
-    const known = senderNameByJid.get(b);
+    const known = senderNames.get(b);
     const member = memberOf(jid)?.name;
     return displayName(known && !isPlaceholder(known) ? known : (member ?? known), jid);
   }
@@ -676,6 +729,7 @@
     if (!chat.endsWith("@g.us")) invoke("watch_presence", { jid: chat }).catch(() => {});
     titleOverride = label;
     scrolledUp = false;
+    autoplayId = null;
     recall = null;
     olderExhausted = false;
     loadOnScroll = true;
@@ -1185,24 +1239,41 @@
   /** Who an `@<user>` token names: us, a group member, or whichever address form the core knows. */
   function mentionTarget(user: string): { jid: string; name: string; self: boolean } {
     const own = me ? bare(me) : null;
-    const member = memberByUser.get(user);
+    const member = participants.find((p) => p.jid.split("@")[0] === user || p.number === user);
     if (own && (own.split("@")[0] === user || member?.number === own.split("@")[0])) {
       // Our own contact card may be saved under a nickname; show our push name.
       return { jid: own, name: displayName(null, own), self: true };
     }
     if (member) {
       // A push name seen on any of their messages here beats the member list's bare number.
-      const spoken = spokenByMember.get(member);
+      const spoken = messages.find(
+        (m) => m.sender_name && !isPlaceholder(m.sender_name) && memberOf(m.sender) === member,
+      )?.sender_name;
       const named = spoken ?? (isPlaceholder(member.name) ? null : member.name);
       return { jid: member.jid, name: displayName(named, member.jid), self: false };
     }
+    // Cached names only: one message can mention hundreds of numbers, and a
+    // lookup for each would flood the core and lag the whole app.
     const lid = `${user}@lid`;
     const pn = `${user}@s.whatsapp.net`;
-    const lidName = displayName(null, lid);
-    const pnName = displayName(null, pn);
-    const lidKnown = !!learnedNames[lid] && !/^\d+$/.test(learnedNames[lid]);
-    return lidKnown ? { jid: lid, name: lidName, self: false } : { jid: pn, name: pnName, self: false };
+    const lidName = learnedNames[lid];
+    const lidKnown = !!lidName && !/^\d+$/.test(lidName);
+    return lidKnown
+      ? { jid: lid, name: phoneName(lidName, lid), self: false }
+      : { jid: pn, name: phoneName(null, pn), self: false };
   }
+  /** Members whose name is worth rewriting, longest first, rebuilt only on roster change. */
+  const namedMembers = $derived(
+    participants
+      .filter((p) => p.name.length > 1 && !isPlaceholder(p.name))
+      .sort((a, b) => b.name.length - a.name.length),
+  );
+  /** Already rewritten texts, so a re-render does not scan every member name again. */
+  const wireMentionCache = new Map<string, string>();
+  $effect(() => {
+    void namedMembers;
+    wireMentionCache.clear();
+  });
   /**
    * `@Name` typed for a member, as older captions were sent, rewritten to the
    * wire's `@<number>` so it draws as a mention tag too. Longest names first,
@@ -1210,15 +1281,22 @@
    */
   function asWireMentions(text: string) {
     if (!text.includes("@") || participants.length === 0) return text;
-    for (const p of sortedNamedMembers) {
-      if (text.includes(p.token)) text = text.split(p.token).join(p.wire);
+    const named = participants
+      .filter((p) => p.name.length > 1 && !isPlaceholder(p.name))
+      .sort((a, b) => b.name.length - a.name.length);
+    for (const p of named) {
+      const token = `@${p.name}`;
+      if (text.includes(token)) text = text.split(token).join(`@${p.jid.split("@")[0]}`);
     }
-    return text;
+    wireMentionCache.set(text, out);
+    return out;
   }
   /** The profile card open beside a mention, name or picture. */
   let profileCard = $state<{ jid: string; name: string; x: number; y: number; self: boolean } | null>(null);
   function openProfile(jid: string, name: string, event: MouseEvent, self = false) {
     event.stopPropagation();
+    // Pills and names render from cache only; the click is what fetches.
+    loadAvatar(bare(jid));
     profileCard = { jid: bare(jid), name, x: event.clientX, y: event.clientY, self };
   }
 
@@ -1234,7 +1312,9 @@
   // Group members get their picture next to their messages.
   $effect(() => {
     if (!connected || !selectedChat?.endsWith("@g.us")) return;
-    for (const message of messages) if (!message.from_me) loadAvatar(bare(message.sender));
+    // Recent senders only: a group with hundreds of members must not fire a
+    // picture request for every sender the moment the chat opens.
+    for (const message of messages.slice(-80)) if (!message.from_me) loadAvatar(bare(message.sender));
   });
 
   /** Each account's own picture as last seen, so it shows before that account connects. */
@@ -2444,6 +2524,11 @@
     if (message.from_me) return;
     invoke("mark_played", { chat: message.chat, id: message.id, sender: message.sender }).catch(() => {});
   }
+  /** The note after `finished` in the conversation, so the next one can autoplay. */
+  function playNextVoice(finished: StoredMessage) {
+    const at = ordered.findIndex((m) => m.id === finished.id);
+    autoplayId = ordered.slice(at + 1).find((m) => m.media_kind === "audio" && m.media_path)?.id ?? null;
+  }
   const VIEW_ONCE_LABEL: Record<string, string> = { image: "Photo", video: "Video", audio: "Voice message" };
 
   function openViewer(message: StoredMessage) {
@@ -2514,6 +2599,24 @@
     // Typing anywhere lands in the composer, so a chat can be answered without
     // clicking the field first.
     const onAnyKey = (event: KeyboardEvent) => {
+      // Ctrl +/-/0 resize the whole interface, whether or not a chat is open.
+      if (event.ctrlKey) {
+        if (event.key === "=" || event.key === "+") {
+          event.preventDefault();
+          setZoom(zoom + 0.1);
+          return;
+        }
+        if (event.key === "-") {
+          event.preventDefault();
+          setZoom(zoom - 0.1);
+          return;
+        }
+        if (event.key === "0") {
+          event.preventDefault();
+          setZoom(1);
+          return;
+        }
+      }
       if (!selectedChat || !composerInput) return;
       if (event.ctrlKey || event.metaKey || event.altKey) return;
       const target = event.target as HTMLElement | null;
@@ -2723,7 +2826,7 @@
         >{@render runs(n.children)}</s
       >{/if}{/each}{/snippet}
 
-{#snippet mentionPill(user: string)}{@const target = mentionTarget(user)}{@const picture = pictureOf(target.jid)}<button
+{#snippet mentionPill(user: string)}{@const target = mentionTarget(user)}{@const picture = avatars[target.jid] ?? null}<button
     type="button"
     class="mention-pill"
     class:self={target.self}
@@ -2798,7 +2901,7 @@
   <div class="pairing">
     <div class="intro-glow" aria-hidden="true"></div>
     <header class="intro-head">
-      <img class="intro-logo" src={appIcon} alt="" />
+      <span class="intro-logo"><Logo size={48} /></span>
       <div>
         <h1>Hermóðr</h1>
         <span class="intro-tag">WhatsApp, native on your desktop</span>
@@ -2923,7 +3026,7 @@
         {#if qrSvg}
           <div class="qr" aria-label="Pairing QR code">
             {@html qrSvg}
-            <img class="qr-logo" src={appIcon} alt="" />
+            <span class="qr-logo"><Logo size={44} /></span>
           </div>
           <p class="hint">The code refreshes by itself. Keep this window open while you scan.</p>
         {:else if started || connecting}
@@ -3424,7 +3527,10 @@
                     path={message.media_path}
                     avatar={voiceFrom ? pictureOf(voiceFrom) : null}
                     mine={message.from_me}
+                    play={autoplayId === message.id}
                     onplayed={() => markPlayed(message)}
+                    onended={() => playNextVoice(message)}
+                    onpaused={() => (autoplayId = null)}
                     initials={initials(message.from_me ? "You" : senderLabel(message))} />
                 {:else if message.media_kind === "audio"}
                   <!-- Not downloaded yet: the note's own row, with the download where play will be. -->
@@ -4394,9 +4500,12 @@
     gap: 14px;
   }
   .intro-logo {
+    display: block;
+    flex: none;
     width: 48px;
     height: 48px;
     border-radius: 12px;
+    overflow: hidden;
   }
   .intro-head h1 {
     margin: 0;
@@ -4711,12 +4820,14 @@
     position: absolute;
     top: 50%;
     left: 50%;
+    display: block;
     width: 44px;
     height: 44px;
     transform: translate(-50%, -50%);
     border-radius: 10px;
     border: 4px solid var(--bg);
     background: var(--bg);
+    overflow: hidden;
   }
   .qr-loading,
   .qr-idle {
