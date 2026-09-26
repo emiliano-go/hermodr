@@ -303,6 +303,54 @@
   let participants: Member[] = $state([]);
   /** Last member list per group, shown while a switch reloads it so the header does not flash. */
   const memberCache: Record<string, Member[]> = {};
+  /** O(1) member lookups, rebuilt only when the member list changes. */
+  const memberByJid = $derived.by(() => {
+    const m = new Map<string, Member>();
+    for (const p of participants) if (!m.has(p.jid)) m.set(p.jid, p);
+    return m;
+  });
+  const memberByNumber = $derived.by(() => {
+    const m = new Map<string, Member>();
+    for (const p of participants) if (p.number && !m.has(p.number)) m.set(p.number, p);
+    return m;
+  });
+  /** `@<user>` token to member, by either address form. First entry wins, as `find` did. */
+  const memberByUser = $derived.by(() => {
+    const m = new Map<string, Member>();
+    for (const p of participants) {
+      const user = p.jid.split("@")[0];
+      if (!m.has(user)) m.set(user, p);
+      if (p.number && !m.has(p.number)) m.set(p.number, p);
+    }
+    return m;
+  });
+  /** First push name seen per member, replacing the per-mention `messages.find` scan. */
+  const spokenByMember = $derived.by(() => {
+    const m = new Map<Member, string>();
+    for (const msg of messages) {
+      if (!msg.sender_name || isPlaceholder(msg.sender_name)) continue;
+      const member = memberOf(msg.sender);
+      if (member && !m.has(member)) m.set(member, msg.sender_name);
+    }
+    return m;
+  });
+  /** First sender name seen per bare JID, replacing the per-render `messages.find` scan. */
+  const senderNameByJid = $derived.by(() => {
+    const m = new Map<string, string>();
+    for (const msg of messages) {
+      if (!msg.sender_name) continue;
+      const b = bare(msg.sender);
+      if (!m.has(b)) m.set(b, msg.sender_name);
+    }
+    return m;
+  });
+  /** Mentionable members, longest names first, computed once per member list. */
+  const sortedNamedMembers = $derived.by(() =>
+    participants
+      .filter((p) => p.name.length > 1 && !isPlaceholder(p.name))
+      .sort((a, b) => b.name.length - a.name.length)
+      .map((p) => ({ token: `@${p.name}`, wire: `@${p.jid.split("@")[0]}` })),
+  );
   /** Open mention query, or null while the autocomplete is closed. */
   let mentionQuery = $state<string | null>(null);
   /** Unread mentions in the open chat, oldest first, for jump-to-mention. */
@@ -515,8 +563,7 @@
   /** The group member a sender is, matched by LID or by phone number. */
   function memberOf(jid: string) {
     const b = bare(jid);
-    const user = b.split("@")[0];
-    return participants.find((p) => p.jid === b || p.number === user);
+    return memberByJid.get(b) ?? memberByNumber.get(b.split("@")[0]);
   }
   function senderLabel(message: StoredMessage) {
     // The message row joins names on one address form only; the member list
@@ -528,7 +575,7 @@
   /** Resolves a JID to a known name, falling back to the bare address. */
   function senderName(jid: string) {
     const b = bare(jid);
-    const known = messages.find((m) => bare(m.sender) === b && m.sender_name)?.sender_name;
+    const known = senderNameByJid.get(b);
     const member = memberOf(jid)?.name;
     return displayName(known && !isPlaceholder(known) ? known : (member ?? known), jid);
   }
@@ -1138,16 +1185,14 @@
   /** Who an `@<user>` token names: us, a group member, or whichever address form the core knows. */
   function mentionTarget(user: string): { jid: string; name: string; self: boolean } {
     const own = me ? bare(me) : null;
-    const member = participants.find((p) => p.jid.split("@")[0] === user || p.number === user);
+    const member = memberByUser.get(user);
     if (own && (own.split("@")[0] === user || member?.number === own.split("@")[0])) {
       // Our own contact card may be saved under a nickname; show our push name.
       return { jid: own, name: displayName(null, own), self: true };
     }
     if (member) {
       // A push name seen on any of their messages here beats the member list's bare number.
-      const spoken = messages.find(
-        (m) => m.sender_name && !isPlaceholder(m.sender_name) && memberOf(m.sender) === member,
-      )?.sender_name;
+      const spoken = spokenByMember.get(member);
       const named = spoken ?? (isPlaceholder(member.name) ? null : member.name);
       return { jid: member.jid, name: displayName(named, member.jid), self: false };
     }
@@ -1165,12 +1210,8 @@
    */
   function asWireMentions(text: string) {
     if (!text.includes("@") || participants.length === 0) return text;
-    const named = participants
-      .filter((p) => p.name.length > 1 && !isPlaceholder(p.name))
-      .sort((a, b) => b.name.length - a.name.length);
-    for (const p of named) {
-      const token = `@${p.name}`;
-      if (text.includes(token)) text = text.split(token).join(`@${p.jid.split("@")[0]}`);
+    for (const p of sortedNamedMembers) {
+      if (text.includes(p.token)) text = text.split(p.token).join(p.wire);
     }
     return text;
   }
