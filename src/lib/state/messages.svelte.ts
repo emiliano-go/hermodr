@@ -71,6 +71,12 @@ export class MessagesState {
   mentionQueue = $state<string[]>([]);
   mentionCursor = $state(0);
 
+  /** Oldest unread incoming message when the open chat was entered; shows the divider. */
+  firstUnreadId = $state<string | null>(null);
+  /** Last message marked read while scrolling, so marking only happens on change. */
+  lastMarkedId: string | null = null;
+  readMarkTimer: ReturnType<typeof setTimeout> | undefined = undefined;
+
   /** Resolved whenever a recall ends, however it ends. */
   recallWaiters: (() => void)[] = [];
 
@@ -94,6 +100,10 @@ export class MessagesState {
     // A slow response must not overwrite a newer conversation.
     if (seq !== this.messagesSeq) return;
     this.messages = loaded;
+    // The divider only makes sense while its message is still loaded.
+    if (this.firstUnreadId && !loaded.some((m) => m.id === this.firstUnreadId)) {
+      this.firstUnreadId = null;
+    }
     if (keepPlace && el) {
       await tick();
       el.scrollTop = el.scrollHeight - fromBottom;

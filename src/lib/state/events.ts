@@ -50,7 +50,7 @@ function deferRefresh(chat: string | null, markRead = false) {
 
 /** Coalesces an event burst into at most one chat-list reload per 200 ms. */
 let chatsQueued = false;
-function queueRefreshChats() {
+export function queueRefreshChats() {
   if (chatsQueued) return;
   chatsQueued = true;
   setTimeout(() => {
@@ -79,7 +79,7 @@ function queueReloadMessages(
     if (chats.selectedChat !== queued.chat) return;
     await messages.reloadMessages(queued.chat);
     if (queued.follow) host.scrollToBottom();
-    if (queued.markRead && document.hasFocus()) {
+    if (queued.markRead && !ui.scrolledUp && document.hasFocus()) {
       await invoke("mark_read", { chat: queued.chat }).catch(() => {});
       queueRefreshChats();
     }

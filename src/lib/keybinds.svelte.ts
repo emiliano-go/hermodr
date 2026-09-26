@@ -6,7 +6,7 @@
  * and `Ctrl+ArrowUp` never collide.
  */
 
-export type Action = "cancelReply" | "historyPrev" | "historyNext" | "editLast";
+export type Action = "cancelReply" | "historyPrev" | "historyNext" | "editLast" | "jumpUnread";
 
 export type Binding = {
   key: string;
@@ -21,6 +21,7 @@ export const ACTIONS: { id: Action; label: string; description: string }[] = [
   { id: "historyPrev", label: "Previous sent message", description: "Recalls the previous message you sent into the composer." },
   { id: "historyNext", label: "Next sent message", description: "Walks forward through recalled messages." },
   { id: "editLast", label: "Edit last message", description: "Loads your last sent message into the composer for editing." },
+  { id: "jumpUnread", label: "Jump to first unread", description: "Scrolls the open chat to its unread divider." },
 ];
 
 const DEFAULTS: Record<Action, string> = {
@@ -28,6 +29,7 @@ const DEFAULTS: Record<Action, string> = {
   historyPrev: "ArrowUp",
   historyNext: "ArrowDown",
   editLast: "Ctrl+ArrowUp",
+  jumpUnread: "Alt+ArrowUp",
 };
 
 const KEY = "hermodr.keybinds";
