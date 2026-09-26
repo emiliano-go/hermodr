@@ -73,7 +73,6 @@ const COMMANDS: &[&str] = &[
     "open_log",
     "download_media",
     "set_chat_auto_download",
-    "mark_read_until",
     "set_chat_privacy",
     "contact_aliases",
     "add_contact_alias",

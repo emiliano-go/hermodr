@@ -85,7 +85,6 @@
     "allow-open-log",
     "allow-download-media",
     "allow-set-chat-auto-download",
-    "allow-mark-read-until",
     "allow-set-chat-privacy",
     "allow-contact-aliases",
     "allow-add-contact-alias",
