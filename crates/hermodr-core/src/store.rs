@@ -2027,6 +2027,27 @@ mod tests {
     }
 
     #[test]
+    fn burst_of_inbound_messages_lands_once_with_one_chat_summary() {
+        // Regression coverage: a burst of inbound messages must be writable in
+        // one batch and readable with one chat-list query and one conversation
+        // query, instead of a refresh per message.
+        let s = store(Retention::unlimited());
+        let started = std::time::Instant::now();
+        {
+            let _commit = s.batch();
+            for i in 0..500 {
+                s.insert_message(&msg("burst@s", &i.to_string(), 0, &format!("message {i}"))).unwrap();
+            }
+        }
+        assert_eq!(s.chats().unwrap().len(), 1);
+        let summary = &s.chats().unwrap()[0];
+        assert_eq!(summary.message_count, 500);
+        assert_eq!(summary.unread_count, 500);
+        assert_eq!(s.messages_for("burst@s", 500).unwrap().len(), 500);
+        eprintln!("burst 500: batch insert + chats + messages in {:?}", started.elapsed());
+    }
+
+    #[test]
     fn replayed_messages_never_regress_local_state() {
         let s = store(Retention::unlimited());
         let mut sent = msg("a@s", "1", 0, "hi");

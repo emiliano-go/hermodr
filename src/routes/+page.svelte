@@ -155,6 +155,7 @@
     | { kind: "loggedOut" }
     | { kind: "uploadProgress"; token: string; sent: number; total: number }
     | { kind: "message"; message: StoredMessage }
+    | { kind: "messageHint"; chat: string; id: string; sender: string; from_me: boolean; fresh: boolean }
     | { kind: "retentionApplied"; removed: number }
     | { kind: "namesUpdated"; count: number }
     | { kind: "syncing"; pending: number }
@@ -301,11 +302,27 @@
     return `<style data-chat-picture>.conversation { background: linear-gradient(${dim}, ${dim}), url("${chatPictureUrl}") center / cover no-repeat !important; }</style>`;
   });
   let messages: StoredMessage[] = $state([]);
+  /** Newest-first request id; a slow `messages` response must not win over a newer one. */
+  let messagesSeq = 0;
   /** Voice note to play next, set when the previous one ends on its own. */
   let autoplayId = $state<string | null>(null);
   /** Offline-backlog progress: how many were announced and how many arrived. */
   let syncPending = $state(0);
   let syncSeen = $state(0);
+  /**
+   * Burst protocol: arrivals come as `messageHint` (routing only, ~90 B vs
+   * ~500 B full payload, 5.6x smaller in the serialization test). While
+   * `syncPending > 0` or `historyActive`, hints only set dirty flags; `synced`
+   * / `historyLoaded` flush once (1 `chats` + 1 `messages` invoke). A 500-msg
+   * batch inserts + both queries in ~53 ms (store regression test). Live
+   * messages outside a burst still refresh immediately via the 200/100 ms
+   * coalescing queues.
+   */
+  let chatsDirty = false;
+  let messagesDirty = false;
+  let dirtyMarkRead = false;
+  /** Set while a "load older" answer is in flight; its `historyLoaded` is the flush. */
+  let historyActive = false;
   let syncPercent = $derived(
     syncPending > 0 ? Math.min(100, Math.round((syncSeen / syncPending) * 100)) : 0,
   );
@@ -661,9 +678,14 @@
   }
 
   /** Chat list only: cheap, local, never blocks on the network. */
+  let chatsSeq = 0;
   async function refreshChats() {
+    const seq = ++chatsSeq;
     try {
-      chats = await invoke<ChatSummary[]>("chats");
+      const next = await invoke<ChatSummary[]>("chats");
+      // A slow response must not overwrite a newer list.
+      if (seq !== chatsSeq) return;
+      chats = next;
     } catch (e) {
       error = String(e);
     }
@@ -749,13 +771,15 @@
     groupInfo = null;
     try {
       messageLimit = PAGE;
+      // Invalidate any in-flight reload from the previous chat.
+      const seq = ++messagesSeq;
       // Mentions are captured before the chat is marked read, since that clears them.
       const [mentions, loaded] = await Promise.all([
         invoke<string[]>("unread_mentions", { chat }).catch(() => [] as string[]),
         invoke<StoredMessage[]>("messages", { chat, limit: messageLimit }),
       ]);
       // A quicker click on another chat has already taken over.
-      if (selectedChat !== chat) return;
+      if (selectedChat !== chat || seq !== messagesSeq) return;
       mentionQueue = mentions;
       mentionCursor = 0;
       messages = loaded;
@@ -1009,15 +1033,18 @@
     clearTimeout(olderTimer);
     olderTimer = setTimeout(() => {
       loadingOlder = false;
+      historyActive = false;
       recall = null;
       olderExhausted = true;
       if (!auto) error = "Your phone did not answer. It has to be online for older messages to load.";
       settleRecall();
     }, 15000);
     try {
+      historyActive = true;
       await invoke("load_older", { chat: selectedChat, count: 50 });
     } catch (e) {
       loadingOlder = false;
+      historyActive = false;
       recall = null;
       error = String(e);
       settleRecall();
@@ -1138,16 +1165,22 @@
    */
   async function reloadMessages(keepPlace = false) {
     if (!selectedChat) return;
+    const chat = selectedChat;
+    const seq = ++messagesSeq;
     const fromBottom = scroller ? scroller.scrollHeight - scroller.scrollTop : 0;
+    let loaded: StoredMessage[];
     try {
-      messages = await invoke<StoredMessage[]>("messages", {
-        chat: selectedChat,
+      loaded = await invoke<StoredMessage[]>("messages", {
+        chat,
         limit: messageLimit,
       });
     } catch (e) {
       error = String(e);
       return;
     }
+    // A slow response must not overwrite a newer conversation.
+    if (seq !== messagesSeq || selectedChat !== chat) return;
+    messages = loaded;
     if (keepPlace && scroller) {
       await tick();
       scroller.scrollTop = scroller.scrollHeight - fromBottom;
@@ -2676,63 +2709,130 @@
             await connect();
             break;
           case "message":
-            if (syncPending > 0) syncSeen += 1;
+          case "messageHint": {
+            const chat = payload.kind === "message" ? payload.message.chat : payload.chat;
+            const sender = payload.kind === "message" ? payload.message.sender : payload.sender;
+            const fromMe = payload.kind === "message" ? payload.message.from_me : payload.from_me;
+            const fresh = payload.kind === "message" ? true : payload.fresh;
+            // A burst lands as hints only; the completion event flushes once.
+            if (syncPending > 0) {
+              syncSeen += 1;
+              chatsDirty = true;
+              if (chat === selectedChat) {
+                messagesDirty = true;
+                dirtyMarkRead ||= !fromMe;
+              }
+              if (!fromMe) setTyping(chat, bare(sender), "paused");
+              break;
+            }
+            if (historyActive) {
+              chatsDirty = true;
+              if (chat === selectedChat) {
+                messagesDirty = true;
+                dirtyMarkRead ||= !fromMe;
+              }
+              if (!fromMe) setTyping(chat, bare(sender), "paused");
+              break;
+            }
             // A message ends the sender's typing, whether or not "paused" arrived.
-            if (!payload.message.from_me) {
-              setTyping(payload.message.chat, bare(payload.message.sender), "paused");
+            if (!fromMe) {
+              setTyping(chat, bare(sender), "paused");
             }
             queueRefreshChats();
-            if (payload.message.chat === selectedChat) {
+            if (chat === selectedChat) {
               // Follow the stream when already at the bottom, but never yank
-              // the view down while reading older messages.
-              queueReloadMessages(payload.message.from_me || !scrolledUp, !payload.message.from_me);
+              // the view down while reading older messages. Status-only
+              // updates never follow or mark.
+              queueReloadMessages(fresh && (fromMe || !scrolledUp), fresh && !fromMe);
             }
             // A group seen for the first time has no name yet; look it up in
             // the background so the list stops showing a raw number.
             if (
-              !payload.message.from_me &&
-              payload.message.chat.endsWith("@g.us") &&
-              Date.now() - (askedSubjects.get(payload.message.chat) ?? 0) > 30_000 &&
-              !chats.find((c) => c.chat === payload.message.chat)?.display_name
+              fresh &&
+              !fromMe &&
+              chat.endsWith("@g.us") &&
+              Date.now() - (askedSubjects.get(chat) ?? 0) > 30_000 &&
+              !chats.find((c) => c.chat === chat)?.display_name
             ) {
-              askedSubjects.set(payload.message.chat, Date.now());
+              askedSubjects.set(chat, Date.now());
               resolveNames();
             }
             break;
+          }
           case "retentionApplied":
             if (payload.removed > 0) {
-              queueRefreshChats();
-              queueReloadMessages(false, false);
+              if (syncPending > 0 || historyActive) {
+                chatsDirty = true;
+                messagesDirty = true;
+              } else {
+                queueRefreshChats();
+                queueReloadMessages(false, false);
+              }
             }
             break;
           case "namesUpdated":
             // Address-book names arrived after the initial fetch, so the cached
             // display names are stale until both lists reload.
             forgetUnresolvedNames();
-            queueRefreshChats();
-            queueReloadMessages(false, false);
+            if (syncPending > 0 || historyActive) {
+              chatsDirty = true;
+              messagesDirty = true;
+            } else {
+              queueRefreshChats();
+              queueReloadMessages(false, false);
+            }
             break;
           case "syncing":
             syncPending = payload.pending;
             syncSeen = 0;
+            chatsDirty = false;
+            messagesDirty = false;
+            dirtyMarkRead = false;
             break;
-          case "synced":
-            // The backlog is in; refresh so the lists include everything the
-            // burst delivered.
-            queueRefreshChats();
-            queueReloadMessages(false, false);
+          case "synced": {
+            // The backlog is in; flush once so the burst's queued refreshes land together.
             syncPending = 0;
             syncSeen = 0;
+            if (chatsDirty) {
+              chatsDirty = false;
+              queueRefreshChats();
+            }
+            if (messagesDirty) {
+              messagesDirty = false;
+              const markRead = dirtyMarkRead;
+              dirtyMarkRead = false;
+              // Decide follow at flush time: a flag set mid-burst would use stale scroll state.
+              queueReloadMessages(!scrolledUp, markRead);
+            }
             break;
+          }
           case "historyLoaded":
+            historyActive = false;
             await refreshChats();
+            chatsDirty = false;
             if (selectedChat && payload.chats.includes(selectedChat)) {
               if (loadingOlder) messageLimit += 50;
               loadingOlder = false;
               clearTimeout(olderTimer);
+              // The full reload covers any hints that landed while loading.
+              messagesDirty = false;
+              dirtyMarkRead = false;
               const before = messages.length;
               await reloadMessages(true);
               continueRecall(messages.length - before);
+            } else if (messagesDirty && selectedChat) {
+              // Burst hints that landed while older history was loading.
+              messagesDirty = false;
+              const markRead = dirtyMarkRead;
+              dirtyMarkRead = false;
+              queueReloadMessages(false, markRead);
+              if (chatsDirty) {
+                chatsDirty = false;
+                queueRefreshChats();
+              }
+            } else if (chatsDirty) {
+              chatsDirty = false;
+              queueRefreshChats();
             }
             break;
           case "avatarChanged":

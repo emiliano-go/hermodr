@@ -37,9 +37,12 @@ use crate::{
 
 /// Asks the phone for `count` messages older than the oldest one stored in
 /// `chat`; they arrive later as a history sync.
-async fn fetch_older(client: &Arc<Client>, store: &MessageStore, chat: &str, count: i32) -> Result<()> {
+///
+/// Returns the request session the phone will answer, or `None` when the chat
+/// has nothing stored to page back from and no request was made.
+async fn fetch_older(client: &Arc<Client>, store: &MessageStore, chat: &str, count: i32) -> Result<Option<String>> {
     let Some((id, from_me, timestamp)) = store.oldest_message(chat)? else {
-        return Ok(());
+        return Ok(None);
     };
     let jid: Jid = chat.parse()?;
     let session = client
@@ -47,7 +50,32 @@ async fn fetch_older(client: &Arc<Client>, store: &MessageStore, chat: &str, cou
         .await
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
     log::info!("asked the phone for {count} messages before {id} in {chat} (session {session})");
-    Ok(())
+    Ok(Some(session))
+}
+
+/// How long a "load older" request stays waitable before it is forgotten.
+const OLDER_WAIT: Duration = Duration::from_secs(120);
+
+/// Pending "load older" requests, keyed by the session the phone will answer.
+///
+/// The UI waits on the answer, so the core has to know which request an
+/// incoming history sync completes; the session is what the phone echoes back.
+#[derive(Default)]
+struct OlderWaits {
+    entries: std::collections::HashMap<String, (std::time::Instant, String)>,
+}
+
+impl OlderWaits {
+    /// Registers a request, dropping any that were never answered.
+    fn remember(&mut self, now: std::time::Instant, session: &str, chat: &str) {
+        self.entries.retain(|_, (at, _)| now.duration_since(*at) < OLDER_WAIT);
+        self.entries.insert(session.to_string(), (now, chat.to_string()));
+    }
+
+    /// The chat a request was for, once and only once.
+    fn resolve(&mut self, session: &str) -> Option<String> {
+        self.entries.remove(session).map(|(_, chat)| chat)
+    }
 }
 
 /// Whether a chat may pull its past again for an unknown quote: once a minute,
@@ -266,6 +294,12 @@ pub enum ServiceEvent {
     /// Boxed because `StoredMessage` is far larger than the other variants, and
     /// every clone of the enum is stored in the broadcast buffer.
     Message { message: Box<StoredMessage> },
+    /// A lightweight invalidation for the same arrival: the row is already in
+    /// the store, so the UI refetches instead of parsing a full payload.
+    /// Emitted alongside `Message`; burst paths send only this.
+    /// `fresh` is a new arrival (follow, typing clear, subject lookup);
+    /// status-only updates (receipts, acks, media fill-in) send `false`.
+    MessageHint { chat: String, id: String, sender: String, from_me: bool, fresh: bool },
     /// Message history was changed by retention, so the UI should refresh.
     RetentionApplied { removed: usize },
     /// Address-book names were learned, so cached chats and messages now hold
@@ -277,6 +311,10 @@ pub enum ServiceEvent {
     /// The backlog finished draining.
     Synced,
     /// History sync stored older messages for these chats.
+    ///
+    /// Also sent when the phone answered with nothing new (or nothing at
+    /// all): without it the UI's "load older" wait only ends on its timeout
+    /// and reports a failure that never happened.
     HistoryLoaded { chats: Vec<String> },
     /// A chat's profile picture changed, so its cached avatar is stale.
     AvatarChanged { jid: String },
@@ -293,6 +331,20 @@ pub enum ServiceEvent {
     Marks { chat: String },
     /// Bytes of an outgoing file sent so far, named by the caller's token.
     UploadProgress { token: String, sent: u64, total: u64 },
+}
+
+impl ServiceEvent {
+    /// Lightweight invalidation for a stored message: the UI refetches the row
+    /// instead of parsing a full payload per event.
+    fn hint(message: &StoredMessage, fresh: bool) -> ServiceEvent {
+        ServiceEvent::MessageHint {
+            chat: message.header.chat.clone(),
+            id: message.header.id.clone(),
+            sender: message.header.sender.clone(),
+            from_me: message.header.from_me,
+            fresh,
+        }
+    }
 }
 
 /// The account's own profile and privacy, as the settings panel edits them.
@@ -580,6 +632,10 @@ pub struct Service {
     /// Every group the account is in, `(jid, subject)`, filled on first search.
     /// Shared with the event handler, which drops it when any group changes.
     groups_cache: Arc<Mutex<Vec<whatsapp_rust::GroupOverview>>>,
+    /// Pending "load older" requests, request session to the chat it was for.
+    /// Shared with the event handler, which completes one when the phone's
+    /// history sync carries that session back.
+    older_waits: Arc<Mutex<OlderWaits>>,
 }
 
 impl Service {
@@ -637,6 +693,8 @@ impl Service {
         let group_cache_for_events = group_cache.clone();
         let groups_cache: Arc<Mutex<Vec<whatsapp_rust::GroupOverview>>> = Arc::default();
         let groups_cache_for_events = groups_cache.clone();
+        let older_waits: Arc<Mutex<OlderWaits>> = Arc::default();
+        let older_waits_for_events = older_waits.clone();
         // Auto-downloads run beside the event handler, so a long backlog of media
         // never holds up the messages behind it.
         let downloads = Arc::new(tokio::sync::Semaphore::new(4));
@@ -748,6 +806,7 @@ impl Service {
                     let media_dir = media_dir_for_events.clone();
                     let group_cache = group_cache_for_events.clone();
                     let groups_cache = groups_cache_for_events.clone();
+                    let older_waits = older_waits_for_events.clone();
                     let downloads = downloads.clone();
                     async move {
                         match event.as_ref() {
@@ -1010,9 +1069,7 @@ impl Service {
                                             if let Ok(updated) =
                                                 store.message(&chat, &target)
                                             {
-                                                let _ = events.send(ServiceEvent::Message {
-                                                    message: Box::new(updated),
-                                                });
+                                                let _ = events.send(ServiceEvent::hint(&updated, false));
                                             }
                                         }
                                         continue;
@@ -1021,9 +1078,7 @@ impl Service {
                                     if let Some((target, text)) = edit_of(&inbound.message) {
                                         if let Ok(true) = store.update_message_content(&chat, &target, &text) {
                                             if let Ok(updated) = store.message(&chat, &target) {
-                                                let _ = events.send(ServiceEvent::Message {
-                                                    message: Box::new(updated),
-                                                });
+                                                let _ = events.send(ServiceEvent::hint(&updated, false));
                                             }
                                             let _ = events.send(ServiceEvent::Marks { chat: chat.clone() });
                                         }
@@ -1076,7 +1131,7 @@ impl Service {
                                         }
                                         _ => None,
                                     };
-                                    let _ = events.send(ServiceEvent::Message { message: Box::new(message) });
+                                    let _ = events.send(ServiceEvent::hint(&message, true));
                                     if let Some((client, dir, id)) = fetch {
                                         let (store, events, downloads, chat) =
                                             (store.clone(), events.clone(), downloads.clone(), chat.clone());
@@ -1084,7 +1139,8 @@ impl Service {
                                             let Ok(_permit) = downloads.acquire().await else { return };
                                             match fetch_media(&client, &store, &dir, &chat, &id).await {
                                                 Ok(updated) => {
-                                                    let _ = events.send(ServiceEvent::Message { message: Box::new(updated) });
+                                                    // Non-fresh: the row refetches coalesced, no follow or lookup.
+                                                    let _ = events.send(ServiceEvent::hint(&updated, false));
                                                 }
                                                 Err(e) => log::warn!("failed to download {id} media: {e}"),
                                             }
@@ -1161,17 +1217,13 @@ impl Service {
                                             store.set_delivery_state(&chat, id.as_str(), status)
                                         {
                                             if let Ok(updated) = store.message(&chat, id.as_str()) {
-                                                let _ = events.send(ServiceEvent::Message {
-                                                    message: Box::new(updated),
-                                                });
+                                                let _ = events.send(ServiceEvent::hint(&updated, false));
                                             }
                                         } else if let Ok(updated) =
                                             store.set_delivery_state_by_id(id.as_str(), status)
                                         {
                                             for message in updated {
-                                                let _ = events.send(ServiceEvent::Message {
-                                                    message: Box::new(message),
-                                                });
+                                                let _ = events.send(ServiceEvent::hint(&message, false));
                                             }
                                         }
                                     }
@@ -1192,9 +1244,7 @@ impl Service {
                                         if let Ok(true) = store.set_delivery_state(&chat, &ack.id, "sent")
                                         {
                                             if let Ok(updated) = store.message(&chat, &ack.id) {
-                                                let _ = events.send(ServiceEvent::Message {
-                                                    message: Box::new(updated),
-                                                });
+                                                let _ = events.send(ServiceEvent::hint(&updated, false));
                                             }
                                             done = true;
                                         }
@@ -1204,9 +1254,7 @@ impl Service {
                                             store.set_delivery_state_by_id(&ack.id, "sent")
                                         {
                                             for message in updated {
-                                                let _ = events.send(ServiceEvent::Message {
-                                                    message: Box::new(message),
-                                                });
+                                                let _ = events.send(ServiceEvent::hint(&message, false));
                                             }
                                         }
                                     }
@@ -1376,6 +1424,18 @@ impl Service {
                                 if names_learned > 0 {
                                     let _ = events.send(ServiceEvent::NamesUpdated { count: names_learned });
                                 }
+                                // A request the UI is still waiting on has now been
+                                // answered, whether or not it brought new rows: an
+                                // answer with nothing older is an answer, and without
+                                // it the UI waits out its timeout and blames the phone.
+                                let answered = sync.peer_data_request_session_id().and_then(|session| {
+                                    older_waits.lock().unwrap().resolve(session)
+                                });
+                                if let Some(chat) = answered {
+                                    if !chats.contains(&chat) {
+                                        chats.push(chat);
+                                    }
+                                }
                                 // Retention is left to the next live write, so
                                 // what was just loaded can be seen first.
                                 if !chats.is_empty() {
@@ -1447,7 +1507,7 @@ impl Service {
                                 };
                                 store.set_view_once(&chat, &id, from_me).logged();
                                 if store.insert_message(&message).is_ok() {
-                                    let _ = events.send(ServiceEvent::Message { message: Box::new(message) });
+                                    let _ = events.send(ServiceEvent::hint(&message, true));
                                 }
                             }
                             // Settings, admins, members or the name changed: what we
@@ -1516,6 +1576,7 @@ impl Service {
                 resolving: AtomicBool::new(false),
                 group_cache,
                 groups_cache,
+                older_waits,
             },
             initial_rx,
         ))
@@ -1852,7 +1913,7 @@ impl Service {
             };
         }
         self.store.insert_message(&message)?;
-        let _ = self.events.send(ServiceEvent::Message { message: Box::new(message) });
+        let _ = self.events.send(ServiceEvent::hint(&message, true));
         Ok(())
     }
 
@@ -2167,7 +2228,7 @@ impl Service {
             .clone()
             .ok_or_else(|| anyhow::anyhow!("no media folder configured"))?;
         let updated = fetch_media(&self.client, &self.store, &dir, chat, id).await?;
-        let _ = self.events.send(ServiceEvent::Message { message: Box::new(updated) });
+        let _ = self.events.send(ServiceEvent::hint(&updated, false));
         Ok(())
     }
 
@@ -2209,7 +2270,21 @@ impl Service {
     /// The request goes to our own primary device, and the messages arrive
     /// asynchronously through the normal event stream.
     pub async fn load_older(&self, chat: &str, count: i32) -> Result<()> {
-        fetch_older(&self.client, &self.store, chat, count).await
+        match fetch_older(&self.client, &self.store, chat, count).await? {
+            Some(session) => {
+                self.older_waits
+                    .lock()
+                    .unwrap()
+                    .remember(std::time::Instant::now(), &session, chat);
+                Ok(())
+            }
+            None => {
+                // Nothing is stored to page back from, so no answer will ever
+                // come: end the wait now rather than let it time out.
+                let _ = self.events.send(ServiceEvent::HistoryLoaded { chats: vec![chat.to_string()] });
+                Ok(())
+            }
+        }
     }
 
     /// The key that names a message to the server: groups need its sender.
@@ -2290,7 +2365,7 @@ impl Service {
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         self.store.revoke_message(chat, id)?;
         if let Ok(updated) = self.store.message(chat, id) {
-            let _ = self.events.send(ServiceEvent::Message { message: Box::new(updated) });
+            let _ = self.events.send(ServiceEvent::hint(&updated, false));
         }
         Ok(())
     }
@@ -2364,7 +2439,7 @@ impl Service {
                 self.store.set_forwarded(to_chat, &result.message_id)?;
                 let stored = self.own_message(to_chat, &result.message_id, message.text, "", to_self);
                 self.store.insert_message(&stored)?;
-                let _ = self.events.send(ServiceEvent::Message { message: Box::new(stored) });
+                let _ = self.events.send(ServiceEvent::hint(&stored, true));
             }
         }
         Ok(())
@@ -2421,7 +2496,7 @@ impl Service {
             .save_poll(chat, &id, &self.own_jid(), question, &options, multi, Some(&secret))?;
         let stored = self.own_message(chat, &id, question.to_string(), "poll", to_self);
         self.store.insert_message(&stored)?;
-        let _ = self.events.send(ServiceEvent::Message { message: Box::new(stored) });
+        let _ = self.events.send(ServiceEvent::hint(&stored, true));
         Ok(())
     }
 
@@ -2469,7 +2544,7 @@ impl Service {
         self.store.save_event(chat, &id, &self.own_jid(), &event, Some(&secret))?;
         let stored = self.own_message(chat, &id, event.name, "event", to_self);
         self.store.insert_message(&stored)?;
-        let _ = self.events.send(ServiceEvent::Message { message: Box::new(stored) });
+        let _ = self.events.send(ServiceEvent::hint(&stored, true));
         Ok(())
     }
 
@@ -2935,7 +3010,7 @@ impl Service {
             ..Default::default()
         };
         self.store.insert_message(&stored)?;
-        let _ = self.events.send(ServiceEvent::Message { message: Box::new(stored) });
+        let _ = self.events.send(ServiceEvent::hint(&stored, true));
         Ok(())
     }
 
@@ -3100,7 +3175,7 @@ impl Service {
             stored.quote = Quote { id: Some(id), text: Some(text), sender: Some(sender), ..Default::default() };
         }
         self.store.insert_message(&stored)?;
-        let _ = self.events.send(ServiceEvent::Message { message: Box::new(stored) });
+        let _ = self.events.send(ServiceEvent::hint(&stored, true));
         Ok(warning)
     }
 
@@ -3200,7 +3275,7 @@ impl Service {
         let mut stored = self.own_message(chat, &result.message_id, "[sticker]".into(), "sticker", to_self);
         stored.media.path = media_path;
         self.store.insert_message(&stored)?;
-        let _ = self.events.send(ServiceEvent::Message { message: Box::new(stored) });
+        let _ = self.events.send(ServiceEvent::hint(&stored, true));
         Ok(())
     }
 
@@ -4467,6 +4542,34 @@ mod tests {
     }
 
     #[test]
+    fn an_older_request_is_completed_once_by_its_session() {
+        // Regression guard: "load older" used to end only on its UI timeout when
+        // the phone answered with nothing older, and reported a failure that
+        // never happened. The answer is matched by request session instead.
+        let now = std::time::Instant::now();
+        let mut waits = OlderWaits::default();
+        waits.remember(now, "3EB0AAA", "chat@s");
+        waits.remember(now, "3EB0BBB", "other@s");
+        assert_eq!(waits.resolve("3EB0AAA").as_deref(), Some("chat@s"));
+        // A second answer for the same request completes nothing.
+        assert_eq!(waits.resolve("3EB0AAA"), None);
+        // An answer to a request nobody waits on (a quote's recall) is ignored.
+        assert_eq!(waits.resolve("3EB0CCC"), None);
+        assert_eq!(waits.resolve("3EB0BBB").as_deref(), Some("other@s"));
+    }
+
+    #[test]
+    fn unanswered_older_requests_are_forgotten() {
+        let now = std::time::Instant::now();
+        let mut waits = OlderWaits::default();
+        waits.remember(now, "3EB0AAA", "chat@s");
+        // A phone that never answers must not leave requests behind forever.
+        waits.remember(now + OLDER_WAIT + Duration::from_secs(1), "3EB0BBB", "other@s");
+        assert_eq!(waits.resolve("3EB0AAA"), None);
+        assert_eq!(waits.resolve("3EB0BBB").as_deref(), Some("other@s"));
+    }
+
+    #[test]
     fn events_serialize_for_the_ui() {
         // Regression guard: these are emitted with `app.emit`, which fails
         // silently for a shape serde cannot represent.
@@ -4506,6 +4609,30 @@ mod tests {
         for key in ["\"header\"", "\"media\"", "\"locator\"", "\"media_ref\""] {
             assert!(!json.contains(key), "unexpected {key}: {json}");
         }
+
+        // Burst hints must serialize with no payload beyond routing fields.
+        let hint = ServiceEvent::hint(
+            &StoredMessage {
+                header: MessageHeader {
+                    chat: "a@s".into(),
+                    id: "1".into(),
+                    sender: "b@s".into(),
+                    timestamp: 0,
+                    from_me: false,
+                },
+                text: "hi".into(),
+                ..Default::default()
+            },
+            true,
+        );
+        let json = serde_json::to_string(&hint).expect("hint event must serialize");
+        assert!(json.contains("\"kind\":\"messageHint\""), "missing tag: {json}");
+        for key in ["\"chat\":\"a@s\"", "\"id\":\"1\"", "\"sender\":\"b@s\"", "\"fresh\":true"] {
+            assert!(json.contains(key), "missing {key}: {json}");
+        }
+        assert!(!json.contains("\"text\""), "hint must not carry a payload: {json}");
+        let full_len = serde_json::to_string(&message).unwrap().len();
+        eprintln!("event bytes: full={full_len} hint={} ratio={:.1}x", json.len(), full_len as f64 / json.len() as f64);
     }
 
     #[test]
