@@ -1476,7 +1476,8 @@
       .then((jid) => {
         me = jid;
         if (jid) loadAvatar(jid);
-        // The backend just recorded the JID on the account; pick it up.
+        // The backend just recorded the JID, and named the account if it was
+        // still on the default label; pick both up.
         return loadAccounts();
       })
       .catch(() => {});
