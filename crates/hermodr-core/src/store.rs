@@ -1708,6 +1708,34 @@ impl MessageStore {
         Ok(changed)
     }
 
+    /// Unread incoming messages up to and including `id`, oldest first.
+    ///
+    /// The cutoff is the rowid of `id`, so messages sharing a timestamp are
+    /// split exactly where the boundary message sits.
+    pub fn unread_until(&self, chat: &str, id: &str) -> Result<Vec<(String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, sender FROM messages
+             WHERE chat = ?1 AND read = 0 AND from_me = 0
+               AND rowid <= (SELECT rowid FROM messages WHERE chat = ?1 AND id = ?2)
+             ORDER BY timestamp",
+        )?;
+        let rows = stmt.query_map(params![chat, id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    }
+
+    /// Marks incoming messages up to and including `id` as read.
+    pub fn mark_read_until(&self, chat: &str, id: &str) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "UPDATE messages SET read = 1
+             WHERE chat = ?1 AND read = 0 AND from_me = 0
+               AND rowid <= (SELECT rowid FROM messages WHERE chat = ?1 AND id = ?2)",
+            params![chat, id],
+        )?;
+        Ok(changed)
+    }
+
     /// Applies the retention policy to every chat, returning how many messages
     /// were dropped.
     pub fn enforce_retention(&self) -> Result<usize> {
@@ -2232,6 +2260,23 @@ mod tests {
         assert_eq!(s.mark_read("a@s").unwrap(), 1);
         // Nothing left to change the second time.
         assert_eq!(s.mark_read("a@s").unwrap(), 0);
+    }
+
+    #[test]
+    fn mark_read_until_only_marks_up_to_the_cutoff() {
+        let s = store(Retention::unlimited());
+        s.insert_message(&msg("a@s", "1", 3, "one")).unwrap();
+        s.insert_message(&msg("a@s", "2", 2, "two")).unwrap();
+        s.insert_message(&msg("a@s", "3", 1, "three")).unwrap();
+
+        let up_to_two: Vec<String> =
+            s.unread_until("a@s", "2").unwrap().into_iter().map(|(id, _)| id).collect();
+        assert_eq!(up_to_two, vec!["1".to_string(), "2".to_string()]);
+        assert_eq!(s.mark_read_until("a@s", "2").unwrap(), 2);
+        // The newest message stays unread until its own cutoff.
+        assert_eq!(s.unread_ids("a@s").unwrap().len(), 1);
+        assert_eq!(s.mark_read_until("a@s", "3").unwrap(), 1);
+        assert!(s.unread_ids("a@s").unwrap().is_empty());
     }
 
     #[test]

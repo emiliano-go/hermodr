@@ -3097,8 +3097,25 @@ impl Service {
     pub async fn mark_read(&self, chat: &str, receipts: bool) -> Result<usize> {
         let unread = if receipts { self.store.unread_ids(chat)? } else { Vec::new() };
         let changed = self.store.mark_read(chat)?;
+        self.send_read_receipts(chat, unread).await?;
+        Ok(changed)
+    }
+
+    /// Marks incoming messages up to and including `id` as read.
+    ///
+    /// Used when a chat is opened at its unread divider: only what has actually
+    /// been scrolled past is read, so messages below stay unread.
+    pub async fn mark_read_until(&self, chat: &str, id: &str, receipts: bool) -> Result<usize> {
+        let unread = if receipts { self.store.unread_until(chat, id)? } else { Vec::new() };
+        let changed = self.store.mark_read_until(chat, id)?;
+        self.send_read_receipts(chat, unread).await?;
+        Ok(changed)
+    }
+
+    /// Sends read receipts for the given `(id, sender)` pairs, grouped per author.
+    async fn send_read_receipts(&self, chat: &str, unread: Vec<(String, String)>) -> Result<()> {
         if unread.is_empty() {
-            return Ok(changed);
+            return Ok(());
         }
         let to: Jid = chat.parse()?;
         // A group receipt names the author, one receipt per author; a direct
@@ -3115,7 +3132,7 @@ impl Service {
                 log::warn!("could not send read receipts: {e}");
             }
         }
-        Ok(changed)
+        Ok(())
     }
 
     /// Tells the sender that a voice note was played or view-once media opened.

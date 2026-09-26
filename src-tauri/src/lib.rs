@@ -703,6 +703,21 @@ async fn mark_read(state: State<'_, AppState>, chat: String) -> Result<usize, St
     service.mark_read(&chat, receipts).await.map_err(|e| e.to_string())
 }
 
+/// Marks incoming messages up to and including `id` as read.
+#[tauri::command]
+async fn mark_read_until(
+    state: State<'_, AppState>,
+    chat: String,
+    id: String,
+) -> Result<usize, String> {
+    let service = state.service()?;
+    let receipts = sends_privacy(&state, &service, &chat).1;
+    service
+        .mark_read_until(&chat, &id, receipts)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Sends a played receipt for a voice note or view-once media, unless receipts are off.
 #[tauri::command]
 async fn mark_played(state: State<'_, AppState>, chat: String, id: String, sender: String) -> Result<(), String> {
@@ -1674,6 +1689,7 @@ pub fn run() {
             chats,
             resolve_names,
             mark_read,
+            mark_read_until,
             send_reply,
             send_media,
             send_text,

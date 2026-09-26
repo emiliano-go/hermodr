@@ -34,6 +34,8 @@
     downloading,
     replyingToId,
     highlightedId,
+    firstUnreadId,
+    onjumpunread,
     menuId,
     polls,
     events,
@@ -96,6 +98,9 @@
     downloading: Record<string, true>;
     replyingToId: string | null;
     highlightedId: string | null;
+    /** Oldest unread message id; the divider is drawn above it. */
+    firstUnreadId: string | null;
+    onjumpunread: (id: string) => void;
     menuId: string | null;
     polls: Poll[];
     events: ChatEvent[];
@@ -240,6 +245,11 @@
     {#if newDay}
       <div class="day"><span>{dayLabel(message.timestamp)}</span></div>
     {/if}
+    {#if firstUnreadId === message.id}
+      <button class="unread-divider" onclick={() => onjumpunread(message.id)}>
+        <span>Unread messages</span>
+      </button>
+    {/if}
     <MessageBubble {message} vm={vmFor(message, i)} {api} />
   {/each}
   {#each uploads as upload (upload.token)}
@@ -294,6 +304,31 @@
     padding: 5px 12px;
     border-radius: var(--radius-sm);
     box-shadow: 0 1px 0.5px rgba(11, 20, 26, 0.13);
+  }
+  .unread-divider {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    margin: 10px 0 6px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--accent-text);
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .unread-divider::before,
+  .unread-divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--accent-soft);
+  }
+  .unread-divider:hover span {
+    text-decoration: underline;
   }
   .load-older {
     align-self: center;

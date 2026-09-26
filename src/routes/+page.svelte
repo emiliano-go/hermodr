@@ -423,6 +423,11 @@
   let scroller: HTMLDivElement | undefined = $state();
   /** True while the user is reading older messages with new ones below. */
   let scrolledUp = $state(false);
+  /** Oldest unread incoming message when the open chat was entered; shows the divider. */
+  let firstUnreadId: string | null = $state(null);
+  /** Last message marked read while scrolling, so marking only happens on change. */
+  let lastMarkedId: string | null = null;
+  let readMarkTimer: ReturnType<typeof setTimeout> | undefined;
   /** Files staged for review before they are sent, shown above the composer. */
   let pending: PendingMedia[] = $state([]);
   let pendingSeq = 0;
@@ -604,7 +609,8 @@
       if (selectedChat !== queued.chat) return;
       await reloadMessages();
       if (queued.follow) scrollToBottom();
-      if (queued.markRead && document.hasFocus()) {
+      // Never mark new messages read while the user is reading history above them.
+      if (queued.markRead && !scrolledUp && document.hasFocus()) {
         await invoke("mark_read", { chat: queued.chat }).catch(() => {});
         queueRefreshChats();
       }
@@ -675,12 +681,21 @@
       mentionCursor = 0;
       messages = loaded;
       await loadMarks();
-      scrollToBottom();
+      // Enter at the unread divider when there is one, as Discord does, rather
+      // than at the newest message. The unread flags are still intact here
+      // because marking is now driven by scrolling, not by opening.
+      const oldestUnread = [...loaded].reverse().find((m) => !m.read && !m.from_me);
+      firstUnreadId = oldestUnread?.id ?? null;
+      lastMarkedId = null;
+      if (oldestUnread) {
+        scrolledUp = true;
+        await tick();
+        positionAtUnread(oldestUnread.id);
+      } else {
+        scrollToBottom();
+      }
       await tick();
       switching = false;
-      // Opening a conversation is what marks it seen.
-      await invoke("mark_read", { chat });
-      await refreshChats();
     } catch (e) {
       switching = false;
       error = String(e);
@@ -1009,6 +1024,17 @@
     }, 1600);
   }
 
+  /** Puts a message near the top of the viewport, for entering at the divider. */
+  function positionAtUnread(id: string) {
+    requestAnimationFrame(() => {
+      if (!scroller) return;
+      const element = scroller.querySelector(`[data-id="${id}"]`) as HTMLElement | null;
+      if (!element) return;
+      const top = element.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+      scroller.scrollTop = Math.max(0, scroller.scrollTop + top - 12);
+    });
+  }
+
   /** Jumps to the next unread mention, oldest to newest, wrapping around. */
   function jumpNextMention() {
     if (mentionQueue.length === 0) return;
@@ -1067,6 +1093,8 @@
     // A slow response must not overwrite a newer conversation.
     if (seq !== messagesSeq || selectedChat !== chat) return;
     messages = loaded;
+    // The divider only makes sense while its message is still loaded.
+    if (firstUnreadId && !loaded.some((m) => m.id === firstUnreadId)) firstUnreadId = null;
     if (keepPlace && scroller) {
       await tick();
       scroller.scrollTop = scroller.scrollHeight - fromBottom;
@@ -1427,6 +1455,40 @@
     if (scroller.scrollTop < 80 && loadOnScroll && !olderExhausted && !loadingOlder && messages.length > 0) {
       void loadOlder(true);
     }
+    scheduleReadMarking();
+  }
+
+  /**
+   * Advances the read marker to the oldest message still in view, throttled.
+   *
+   * Marking up to that id rather than the whole chat leaves messages below the
+   * fold unread, which is what makes the divider meaningful.
+   */
+  function scheduleReadMarking() {
+    clearTimeout(readMarkTimer);
+    readMarkTimer = setTimeout(() => {
+      if (!scroller || !selectedChat) return;
+      const chat = selectedChat;
+      const bottom = scroller.getBoundingClientRect().bottom;
+      let candidate: StoredMessage | null = null;
+      for (const message of ordered) {
+        const el = scroller.querySelector(`[data-id="${message.id}"]`) as HTMLElement | null;
+        if (!el) continue;
+        if (el.getBoundingClientRect().top < bottom) candidate = message;
+        else break;
+      }
+      if (!candidate || candidate.id === lastMarkedId) return;
+      lastMarkedId = candidate.id;
+      const firstIdx = firstUnreadId ? ordered.findIndex((m) => m.id === firstUnreadId) : -1;
+      const markedIdx = ordered.findIndex((m) => m.id === candidate.id);
+      invoke<number>("mark_read_until", { chat, id: candidate.id })
+        .then((changed) => {
+          if (changed > 0) queueRefreshChats();
+          // The divider is gone once the first unread has been read.
+          if (firstIdx >= 0 && markedIdx >= firstIdx) firstUnreadId = null;
+        })
+        .catch(() => {});
+    }, 200);
   }
 
   /** The `@…` token immediately before the caret, if the user is typing one. */
@@ -2540,6 +2602,12 @@
           return;
         }
       }
+      // Jump to the unread divider, wherever focus is.
+      if (selectedChat && firstUnreadId && matches(event, keybinds.jumpUnread)) {
+        event.preventDefault();
+        scrollToMessage(firstUnreadId);
+        return;
+      }
       if (!selectedChat || !composerInput) return;
       if (event.ctrlKey || event.metaKey || event.altKey) return;
       const target = event.target as HTMLElement | null;
@@ -2959,6 +3027,8 @@
           {downloading}
           replyingToId={replyingTo?.id ?? null}
           {highlightedId}
+          {firstUnreadId}
+          onjumpunread={(id) => scrollToMessage(id)}
           menuId={menu?.message.id ?? null}
           polls={marks.polls}
           events={marks.events}
