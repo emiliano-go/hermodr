@@ -13,6 +13,7 @@
   import InviteCard, { inviteLink } from "$lib/InviteCard.svelte";
   import Embed from "$lib/Embed.svelte";
   import { displayName as phoneName, isPlaceholder, phoneLabel } from "$lib/phone";
+  import { backgroundPress } from "$lib/press";
   import { polyfillCountryFlagEmojis } from "country-flag-emoji-polyfill";
   import flagFont from "country-flag-emoji-polyfill/dist/TwemojiCountryFlags.woff2?url";
 
@@ -2072,6 +2073,16 @@
     void previewId;
     cropping = false;
   });
+  /**
+   * The scrim, the sheet's own padding and the video's letterbox close the preview; the image, the
+   * player's controls, the crop button, the caption field, the name and "Done" never do. While the
+   * cropper is open the sheet's gaps would throw the crop away, so only the scrim counts.
+   */
+  const previewDismiss = backgroundPress(
+    (target) =>
+      target instanceof Element &&
+      target.matches(cropping ? ".sheet-backdrop" : ".sheet-backdrop, .preview-sheet, .preview-video"),
+  );
   /** Swaps a staged image for its cropped or resized version. */
   async function replacePending(id: number, file: File) {
     const item = pending.find((p) => p.id === id);
@@ -4430,9 +4441,8 @@
   <div
     class="sheet-backdrop"
     role="presentation"
-    onclick={(e) => {
-      if (e.target === e.currentTarget) previewId = null;
-    }}>
+    onpointerdown={previewDismiss.down}
+    onclick={(e) => previewDismiss.click(e) && (previewId = null)}>
     <div
       class="sheet preview-sheet"
       role="dialog"
