@@ -45,6 +45,10 @@ pub struct UiSettings {
     /// Whether messages are kept on disk. Off keeps them in memory for this run only.
     #[serde(default = "default_true")]
     pub keep_history: bool,
+    /// Skip the initial-sync loading screen and show the chat UI immediately.
+    /// Off holds the loading screen until the initial backlog is applied.
+    #[serde(default)]
+    pub skip_loading_screen: bool,
 }
 
 fn default_true() -> bool {
@@ -62,6 +66,7 @@ impl Default for UiSettings {
             send_typing: true,
             send_receipts: true,
             keep_history: true,
+            skip_loading_screen: false,
         }
     }
 }
@@ -1176,6 +1181,21 @@ async fn send_text(
         .map_err(|e| e.to_string())
 }
 
+/// Replaces the text of one of our own messages.
+#[tauri::command]
+async fn edit_message(
+    state: State<'_, AppState>,
+    chat: String,
+    id: String,
+    text: String,
+) -> Result<(), String> {
+    state
+        .service()?
+        .edit_message(&chat, &id, text)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Group members for mention autocomplete.
 #[tauri::command]
 async fn participants(
@@ -1657,6 +1677,7 @@ pub fn run() {
             send_reply,
             send_media,
             send_text,
+            edit_message,
             open_path,
             read_file,
             participants,

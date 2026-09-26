@@ -9,6 +9,7 @@
     send_typing: boolean;
     send_receipts: boolean;
     keep_history: boolean;
+    skip_loading_screen: boolean;
   };
   export type Account = { id: string; label: string; jid: string | null };
   export type Section =
@@ -17,6 +18,8 @@
     | "whatsapp"
     | "privacy"
     | "media"
+    | "startup"
+    | "keybinds"
     | "appearance"
     | "about";
   type Profile = {
@@ -36,6 +39,18 @@
   import Icon from "$lib/Icon.svelte";
   import Customization from "$lib/Customization.svelte";
   import Panel from "$lib/Panel.svelte";
+  import {
+    ACTIONS,
+    keybinds,
+    bindingFromEvent,
+    setBinding,
+    resetBinding,
+    resetBindings,
+    isDefault,
+    label as keyLabel,
+    conflicting,
+    type Action,
+  } from "$lib/keybinds.svelte";
 
   let {
     settings,
@@ -82,6 +97,27 @@
   let pictureBusy = $state(false);
   /** Bumped per upload: the new picture reuses the old file name. */
   let pictureVersion = $state(0);
+  /** The keybind action waiting for the user to press a combination. */
+  let capturing: Action | null = $state(null);
+  const keyConflicts = $derived(conflicting());
+
+  // While capturing, the next non-modifier key becomes the binding.
+  $effect(() => {
+    if (!capturing) return;
+    const action = capturing;
+    const onKey = (event: KeyboardEvent) => {
+      const binding = bindingFromEvent(event);
+      if (!binding) return;
+      // A bare printable key would fire while typing; require a modifier for those.
+      if (binding.key.length === 1 && !binding.ctrl && !binding.alt && !binding.meta) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setBinding(action, binding);
+      capturing = null;
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  });
 
   /** Uploads a new picture, or removes it when `file` is null. */
   async function setPicture(file: File | null) {
@@ -116,6 +152,8 @@
     ...(me ? [{ id: "whatsapp" as Section, label: "WhatsApp privacy", group: "User settings" }] : []),
     { id: "privacy", label: "Storage & history", group: "App settings" },
     { id: "media", label: "Media", group: "App settings" },
+    { id: "startup", label: "Startup", group: "App settings" },
+    { id: "keybinds", label: "Keybinds", group: "App settings" },
     { id: "appearance", label: "Customization", group: "App settings" },
     { id: "about", label: "About", group: "Hermóðr" },
   ]);
@@ -545,6 +583,56 @@
             </div>
             <button class="button danger" onclick={onflush}>Clear media</button>
           </div>
+        {:else if section === "startup"}
+          <h2>Startup</h2>
+          <label class="setting">
+            <div>
+              <span class="setting-title">Skip the loading screen</span>
+              <span class="setting-desc">
+                On shows the chat UI immediately while messages sync in the background.
+                Off waits until the initial catch-up is applied.
+              </span>
+            </div>
+            <input class="switch" type="checkbox" bind:checked={draft.skip_loading_screen} />
+          </label>
+        {:else if section === "keybinds"}
+          <h2>Keybinds</h2>
+          <p class="lede">Composer shortcuts. Click a shortcut, then press the keys you want.</p>
+          {#each ACTIONS as action (action.id)}
+            <div class="setting">
+              <div>
+                <span class="setting-title">{action.label}</span>
+                <span class="setting-desc">
+                  {action.description}
+                  {#if keyConflicts.has(action.id)}
+                    <strong class="conflict">Conflicts with another shortcut</strong>
+                  {/if}
+                </span>
+              </div>
+              <div class="keybind">
+                <button
+                  class="button"
+                  class:capturing={capturing === action.id}
+                  onclick={() => (capturing = capturing === action.id ? null : action.id)}>
+                  {capturing === action.id ? "Press keys…" : keyLabel(keybinds[action.id])}
+                </button>
+                {#if !isDefault(action.id)}
+                  <button
+                    class="ghost"
+                    title="Reset to default"
+                    aria-label="Reset {action.label} to default"
+                    onclick={() => resetBinding(action.id)}>Reset</button>
+                {/if}
+              </div>
+            </div>
+          {/each}
+          <div class="setting">
+            <div>
+              <span class="setting-title">Reset all keybinds</span>
+              <span class="setting-desc">Restores every shortcut to its default.</span>
+            </div>
+            <button class="button danger" onclick={resetBindings}>Reset all</button>
+          </div>
         {:else if section === "appearance"}
           <h2>Customization</h2>
           <p class="lede">Themes and CSS extensions apply instantly and are saved on this device.</p>
@@ -797,5 +885,19 @@
   }
   .link-button:hover {
     text-decoration: underline;
+  }
+  .keybind {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .keybind .capturing {
+    border-color: var(--accent);
+    color: var(--accent-text);
+  }
+  .conflict {
+    display: block;
+    color: var(--danger);
+    font-weight: 600;
   }
 </style>
