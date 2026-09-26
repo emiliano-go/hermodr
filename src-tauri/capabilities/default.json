@@ -16,6 +16,7 @@
     "allow-messages",
     "allow-chats",
     "allow-send-text",
+    "allow-edit-message",
     "allow-get-settings",
     "allow-set-settings",
     "allow-qr-svg",

@@ -45,6 +45,10 @@ pub struct UiSettings {
     /// Whether messages are kept on disk. Off keeps them in memory for this run only.
     #[serde(default = "default_true")]
     pub keep_history: bool,
+    /// Skip the initial-sync loading screen and show the chat UI immediately.
+    /// Off holds the loading screen until the initial backlog is applied.
+    #[serde(default)]
+    pub skip_loading_screen: bool,
 }
 
 fn default_true() -> bool {
@@ -62,6 +66,7 @@ impl Default for UiSettings {
             send_typing: true,
             send_receipts: true,
             keep_history: true,
+            skip_loading_screen: false,
         }
     }
 }
@@ -87,6 +92,11 @@ struct AppState {
     accounts: Mutex<AccountsFile>,
 }
 
+/// The label an account starts with, replaced by the profile name on its first
+/// connect. Still holding it is how we tell an untouched account from one the
+/// user named themselves, so it must stay in step with the three writes below.
+const DEFAULT_ACCOUNT_LABEL: &str = "WhatsApp";
+
 /// One signed-in account.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Account {
@@ -102,6 +112,32 @@ pub struct Account {
 struct AccountsFile {
     accounts: Vec<Account>,
     active: Option<String>,
+}
+
+impl AccountsFile {
+    /// Names an account after its own profile name, once the app knows one.
+    ///
+    /// Only an account still carrying the default label is written, so this
+    /// runs at most once per account and a name the user chose always wins. An
+    /// unknown profile name leaves the label alone. Returns whether it wrote.
+    fn seed_label(&mut self, id: &str, push_name: &str) -> bool {
+        let push_name = push_name.trim();
+        if push_name.is_empty() {
+            return false;
+        }
+        let Some(account) = self.accounts.iter_mut().find(|a| a.id == id) else {
+            return false;
+        };
+        let untouched = {
+            let label = account.label.trim();
+            label.is_empty() || label == DEFAULT_ACCOUNT_LABEL
+        };
+        if !untouched {
+            return false;
+        }
+        account.label = push_name.to_string();
+        true
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -166,7 +202,7 @@ fn load_accounts(app: &AppHandle) -> AccountsFile {
     if data_dir(app).join("session.db").exists() {
         file.accounts.push(Account {
             id: "default".into(),
-            label: "WhatsApp".into(),
+            label: DEFAULT_ACCOUNT_LABEL.into(),
             jid: None,
         });
         file.active = Some("default".into());
@@ -392,7 +428,7 @@ fn is_stale_session(name: &str, current: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_stale_session;
+    use super::{is_stale_session, Account, AccountsFile, DEFAULT_ACCOUNT_LABEL};
 
     #[test]
     fn stale_sessions_spare_the_active_wal() {
@@ -405,6 +441,83 @@ mod tests {
         assert!(!is_stale_session("session-2.db-wal", "session-2.db"));
         assert!(!is_stale_session("session.dbx", "session-2.db"));
         assert!(!is_stale_session("messages.db", "session.db"));
+    }
+
+    fn label_of<'a>(file: &'a AccountsFile, id: &str) -> &'a str {
+        &file
+            .accounts
+            .iter()
+            .find(|a| a.id == id)
+            .expect("account")
+            .label
+    }
+
+    #[test]
+    fn an_untouched_account_takes_its_profile_name_once() {
+        let mut file = AccountsFile {
+            accounts: vec![
+                Account {
+                    id: "default".into(),
+                    label: DEFAULT_ACCOUNT_LABEL.into(),
+                    jid: None,
+                },
+                Account {
+                    id: "acct-1".into(),
+                    label: "Work phone".into(),
+                    jid: None,
+                },
+            ],
+            active: Some("default".into()),
+        };
+        assert!(file.seed_label("default", "Ada Lovelace"));
+        assert_eq!(label_of(&file, "default"), "Ada Lovelace");
+        // Seeding again is a no-op: the label is the account's own now.
+        assert!(!file.seed_label("default", "Ada Byron"));
+        assert_eq!(label_of(&file, "default"), "Ada Lovelace");
+    }
+
+    #[test]
+    fn a_name_the_user_chose_beats_the_profile_name() {
+        let mut file = AccountsFile {
+            accounts: vec![Account {
+                id: "acct-1".into(),
+                label: "Work phone".into(),
+                jid: None,
+            }],
+            active: Some("acct-1".into()),
+        };
+        assert!(!file.seed_label("acct-1", "Grace Hopper"));
+        assert_eq!(label_of(&file, "acct-1"), "Work phone");
+    }
+
+    #[test]
+    fn an_unknown_profile_name_leaves_the_label_alone() {
+        let mut file = AccountsFile {
+            accounts: vec![Account {
+                id: "default".into(),
+                label: DEFAULT_ACCOUNT_LABEL.into(),
+                jid: None,
+            }],
+            active: Some("default".into()),
+        };
+        assert!(!file.seed_label("default", ""));
+        assert!(!file.seed_label("default", "   "));
+        assert_eq!(label_of(&file, "default"), DEFAULT_ACCOUNT_LABEL);
+        assert!(!file.seed_label("nope", "Ada Lovelace"));
+    }
+
+    #[test]
+    fn an_empty_label_is_seeded_like_the_default_one() {
+        let mut file = AccountsFile {
+            accounts: vec![Account {
+                id: "default".into(),
+                label: String::new(),
+                jid: None,
+            }],
+            active: Some("default".into()),
+        };
+        assert!(file.seed_label("default", "  Ada Lovelace  "));
+        assert_eq!(label_of(&file, "default"), "Ada Lovelace");
     }
 }
 
@@ -446,7 +559,7 @@ async fn connect(app: AppHandle, state: State<'_, AppState>) -> Result<(), Strin
                 let mut file = state.accounts.lock().unwrap();
                 file.accounts.push(Account {
                     id: "default".into(),
-                    label: "WhatsApp".into(),
+                    label: DEFAULT_ACCOUNT_LABEL.into(),
                     jid: None,
                 });
                 file.active = Some("default".into());
@@ -480,7 +593,7 @@ async fn add_account(
         let mut file = state.accounts.lock().unwrap();
         file.accounts.push(Account {
             id: id.clone(),
-            label: label.unwrap_or_else(|| "WhatsApp".into()),
+            label: label.unwrap_or_else(|| DEFAULT_ACCOUNT_LABEL.into()),
             jid: None,
         });
         file.active = Some(id.clone());
@@ -1068,6 +1181,21 @@ async fn send_text(
         .map_err(|e| e.to_string())
 }
 
+/// Replaces the text of one of our own messages.
+#[tauri::command]
+async fn edit_message(
+    state: State<'_, AppState>,
+    chat: String,
+    id: String,
+    text: String,
+) -> Result<(), String> {
+    state
+        .service()?
+        .edit_message(&chat, &id, text)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Group members for mention autocomplete.
 #[tauri::command]
 async fn participants(
@@ -1193,20 +1321,34 @@ async fn load_older(
 }
 
 /// The signed-in account's own JID, once connected. Also recorded on the
-/// account, so the switcher can show every account's picture.
+/// account, so the switcher can show every account's picture, and used to name
+/// an account that never got a name of its own.
 #[tauri::command]
 fn own_jid(app: AppHandle, state: State<'_, AppState>) -> Option<String> {
-    let jid = state.service().ok()?.own_jid();
+    let service = state.service().ok()?;
+    let jid = service.own_jid();
     if jid.is_empty() {
         return None;
     }
-    let active = active_account(&state);
+    // Both facts are read before the lock: each is a cached lookup on the
+    // client, and there is no reason to hold the accounts lock across one.
+    let push_name = service.push_name();
+    let Some(id) = active_account(&state) else {
+        return Some(jid);
+    };
     let mut file = state.accounts.lock().unwrap();
-    if let Some(account) = file.accounts.iter_mut().find(|a| Some(&a.id) == active.as_ref()) {
+    let mut changed = false;
+    if let Some(account) = file.accounts.iter_mut().find(|a| a.id == id) {
         if account.jid.as_deref() != Some(jid.as_str()) {
             account.jid = Some(jid.clone());
-            save_accounts(&app, &file);
+            changed = true;
         }
+    }
+    if file.seed_label(&id, &push_name) {
+        changed = true;
+    }
+    if changed {
+        save_accounts(&app, &file);
     }
     Some(jid)
 }
@@ -1535,6 +1677,7 @@ pub fn run() {
             send_reply,
             send_media,
             send_text,
+            edit_message,
             open_path,
             read_file,
             participants,

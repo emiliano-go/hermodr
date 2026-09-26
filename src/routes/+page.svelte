@@ -13,6 +13,7 @@
   import InviteCard, { inviteLink } from "$lib/InviteCard.svelte";
   import Embed from "$lib/Embed.svelte";
   import { displayName as phoneName, isPlaceholder, phoneLabel } from "$lib/phone";
+  import { backgroundPress } from "$lib/press";
   import { polyfillCountryFlagEmojis } from "country-flag-emoji-polyfill";
   import flagFont from "country-flag-emoji-polyfill/dist/TwemojiCountryFlags.woff2?url";
 
@@ -28,6 +29,7 @@
   import ImageCropper from "$lib/ImageCropper.svelte";
   import MessageMenu, { type MenuItem } from "$lib/MessageMenu.svelte";
   import ChatPicker from "$lib/ChatPicker.svelte";
+  import { keybinds, matches } from "$lib/keybinds.svelte";
   import ExpressionPicker, { type PickerTab } from "$lib/ExpressionPicker.svelte";
   import { loadEmojis, rememberEmoji, searchEmojis, type Emoji } from "$lib/emoji";
   import PollCard, { type Poll } from "$lib/PollCard.svelte";
@@ -136,6 +138,7 @@
     send_typing: boolean;
     send_receipts: boolean;
     keep_history: boolean;
+    skip_loading_screen: boolean;
   };
   type ConnectionState = { started: boolean; connected: boolean; qr: string | null };
 
@@ -158,7 +161,8 @@
     | { kind: "messageHint"; chat: string; id: string; sender: string; from_me: boolean; fresh: boolean }
     | { kind: "retentionApplied"; removed: number }
     | { kind: "namesUpdated"; count: number }
-    | { kind: "syncing"; pending: number }
+    | { kind: "syncing"; pending: number; applied: number }
+    | { kind: "initialSyncComplete"; messages: number; chats: number }
     | { kind: "synced" }
     | { kind: "historyLoaded"; chats: string[] }
     | { kind: "avatarChanged"; jid: string }
@@ -306,26 +310,61 @@
   let messagesSeq = 0;
   /** Voice note to play next, set when the previous one ends on its own. */
   let autoplayId = $state<string | null>(null);
-  /** Offline-backlog progress: how many were announced and how many arrived. */
+  /** Offline-backlog progress: how many the server announced and how many stored. */
   let syncPending = $state(0);
-  let syncSeen = $state(0);
+  let syncApplied = $state(0);  
+  /** Backlog applied, waiting for the first chat/message paint to land. */
+  let finalizing = $state(false);
+  /** The loading screen may be left. Survives reconnects for this launch. */
+  let gateDone = $state(false);
+  /** The gate hit its cap and revealed; sync keeps going in the background. */
+  let syncTimedOut = $state(false);
+  let gateTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Set once an explicit connect starts, so a reload without one still reveals. */
+  let connectRequested = false;
+  /** Caps how long the loading screen can hold, so a stuck sync never hangs the app. */
+  function startGateTimeout() {
+    clearTimeout(gateTimer);
+    gateTimer = setTimeout(() => {
+      if (!gateDone) {
+        syncTimedOut = true;
+        gateDone = true;
+      }
+    }, 60_000);
+  }
+  const syncPercent = $derived(
+    syncPending > 0 ? Math.min(100, Math.round((syncApplied / syncPending) * 100)) : 0,
+  );
   /**
    * Burst protocol: arrivals come as `messageHint` (routing only, ~90 B vs
-   * ~500 B full payload, 5.6x smaller in the serialization test). While
-   * `syncPending > 0` or `historyActive`, hints only set dirty flags; `synced`
-   * / `historyLoaded` flush once (1 `chats` + 1 `messages` invoke). A 500-msg
-   * batch inserts + both queries in ~53 ms (store regression test). Live
-   * messages outside a burst still refresh immediately via the 200/100 ms
-   * coalescing queues.
+   * ~500 B full payload, 5.6x smaller in the serialization test). While the
+   * loading gate is closed, a drain is running, or a history answer is in
+   * flight, hints only set the dirty flags below; `initialSyncComplete`,
+   * `synced` or `historyLoaded` flush once (1 `chats` + 1 `messages` invoke).
+   * A 500-msg batch inserts + both queries in ~53 ms (store regression test).
+   * Live messages outside a burst still refresh immediately through the
+   * 200/100 ms coalescing queues.
    */
   let chatsDirty = false;
   let messagesDirty = false;
   let dirtyMarkRead = false;
   /** Set while a "load older" answer is in flight; its `historyLoaded` is the flush. */
   let historyActive = false;
-  let syncPercent = $derived(
-    syncPending > 0 ? Math.min(100, Math.round((syncSeen / syncPending) * 100)) : 0,
-  );
+
+  /**
+   * Marks what a change touched when fetching right away would be wasteful or
+   * invisible: the gate is closed, a drain is running, or a history answer is
+   * in flight. Returns false when the caller should refresh immediately.
+   */
+  function deferRefresh(chat: string | null, markRead = false) {
+    if (uiUnlocked && syncPending === 0 && !historyActive) return false;
+    chatsDirty = true;
+    if (chat && chat === selectedChat) {
+      messagesDirty = true;
+      dirtyMarkRead ||= markRead;
+    }
+    return true;
+  }
   let draft = $state("");
   /** Per-chat composer text, so switching chats does not lose what was typed. */
   let drafts: Record<string, string> = $state({});
@@ -439,6 +478,14 @@
       .slice(0, 8);
   });
   let replyingTo: StoredMessage | null = $state(null);
+  /** Our own message being edited in the composer, if any. */
+  let editing: { chat: string; id: string; original: string } | null = $state(null);
+  /** Texts we sent this session, newest first, recalled with the history keybind. */
+  let sentHistory: string[] = $state([]);
+  /** Position while recalling `sentHistory`; -1 means not browsing. */
+  let historyIndex = $state(-1);
+  /** The draft to restore when arrowing forward past the newest sent message. */
+  let historyDraft = "";
   let settings: UiSettings = $state({
     retention: { max_age_hours: 24, max_messages_per_chat: 500 },
     accept_full_history: true,
@@ -448,7 +495,10 @@
     send_typing: true,
     send_receipts: true,
     keep_history: true,
+    skip_loading_screen: false,
   });
+  /** The chat UI may be shown and refreshed: the gate opened, or the user opted out of it. */
+  const uiUnlocked = $derived(gateDone || settings.skip_loading_screen);
   let showSettings = $state(false);
   let showGroupInfo = $state(false);
   let groupInfo: GroupInfo | null = $state(null);
@@ -558,6 +608,8 @@
   }
   /** A stable hue per chat, so an avatar keeps its colour across sessions. */
   function hue(jid: string) {
+    // A device suffix would give one person two colours across typing and messages.
+    jid = jid.replace(/:\d+(?=@)/, "");
     let h = 0;
     for (const c of jid) h = (h * 31 + c.charCodeAt(0)) % 360;
     return h;
@@ -745,6 +797,10 @@
       stopTyping();
       switching = true;
       chatGroup = null;
+      // A staged reply or edit belongs to the chat it was started in.
+      replyingTo = null;
+      editing = null;
+      resetHistory();
     }
     selectedChat = chat;
     // One-to-one typing only arrives for contacts we are subscribed to.
@@ -925,11 +981,21 @@
     drafts = {};
     pending = [];
     replyingTo = null;
+    editing = null;
+    sentHistory = [];
+    resetHistory();
     participants = [];
     chosenMentions = [];
     mentionQueue = [];
     groupInfo = null;
     showGroupInfo = false;
+    // A switch starts a fresh catch-up, so the loading gate applies again.
+    clearTimeout(gateTimer);
+    gateDone = false;
+    finalizing = false;
+    syncTimedOut = false;
+    syncPending = 0;
+    syncApplied = 0;
   }
 
   /** Starts the account picked on the launch chooser. */
@@ -1430,24 +1496,39 @@
   type ChatPrivacy = { send_typing: boolean | null; send_receipts: boolean | null };
   let chatPrivacy: ChatPrivacy = $state({ send_typing: null, send_receipts: null });
   const chatSendsTyping = $derived(chatPrivacy.send_typing ?? settings.send_typing);
-  const chatHidden = $derived(!chatSendsTyping && !(chatPrivacy.send_receipts ?? settings.send_receipts));
+  const chatSendsReceipts = $derived(chatPrivacy.send_receipts ?? settings.send_receipts);
+  const typingHidden = $derived(!chatSendsTyping);
+  const receiptsHidden = $derived(!chatSendsReceipts);
 
-  async function toggleChatPrivacy() {
+  /** Sets one of the two per-chat privacy overrides, dropping it when it matches the default. */
+  async function setChatPrivacy(patch: Partial<ChatPrivacy>) {
     const chat = selectedChat;
     if (!chat) return;
-    const send = chatHidden;
-    // An override equal to the default is dropped, so the chat keeps following it.
     const next: ChatPrivacy = {
-      send_typing: send === settings.send_typing ? null : send,
-      send_receipts: send === settings.send_receipts ? null : send,
+      send_typing: patch.send_typing ?? chatPrivacy.send_typing,
+      send_receipts: patch.send_receipts ?? chatPrivacy.send_receipts,
     };
+    if (next.send_typing === settings.send_typing) next.send_typing = null;
+    if (next.send_receipts === settings.send_receipts) next.send_receipts = null;
     try {
-      await invoke("set_chat_privacy", { chat, typing: next.send_typing, receipts: next.send_receipts });
+      await invoke("set_chat_privacy", {
+        chat,
+        typing: next.send_typing,
+        receipts: next.send_receipts,
+      });
       if (selectedChat === chat) chatPrivacy = next;
-      if (!send) stopTyping(chat);
+      if (!(next.send_typing ?? settings.send_typing)) stopTyping(chat);
     } catch (e) {
       error = String(e);
     }
+  }
+
+  function toggleChatTyping() {
+    void setChatPrivacy({ send_typing: typingHidden });
+  }
+
+  function toggleChatReceipts() {
+    void setChatPrivacy({ send_receipts: receiptsHidden });
   }
 
   function reportTyping() {
@@ -1509,7 +1590,8 @@
       .then((jid) => {
         me = jid;
         if (jid) loadAvatar(jid);
-        // The backend just recorded the JID on the account; pick it up.
+        // The backend just recorded the JID, and named the account if it was
+        // still on the default label; pick both up.
         return loadAccounts();
       })
       .catch(() => {});
@@ -1593,6 +1675,8 @@
   function onComposerInput(event: Event) {
     draft = (event.currentTarget as HTMLTextAreaElement).value;
     if (selectedChat) drafts[selectedChat] = draft;
+    // Typing ends a history recall, so the next Up starts from the newest again.
+    historyIndex = -1;
     if (draft.trim()) reportTyping();
     else stopTyping();
     // A complete `:shortcode:` turns into its emoji the moment it is closed.
@@ -1635,6 +1719,51 @@
     input.setSelectionRange(position, position);
   }
 
+  /** Loads our last editable text message into the composer. */
+  function startEditing() {
+    if (!selectedChat) return;
+    const candidate = [...messages]
+      .reverse()
+      .find((m) => m.from_me && !m.media_kind && m.text.trim() && !m.revoked);
+    if (!candidate) return;
+    editing = { chat: candidate.chat, id: candidate.id, original: candidate.text };
+    replyingTo = null;
+    draft = candidate.text;
+    resetHistory();
+    composerInput?.focus();
+  }
+
+  function cancelEditing() {
+    if (!editing) return;
+    editing = null;
+    draft = "";
+    composerInput?.focus();
+  }
+
+  function resetHistory() {
+    historyIndex = -1;
+    historyDraft = "";
+  }
+
+  /** Recalls older sent messages; returns false to leave the caret alone. */
+  function recallPrev(): boolean {
+    if (sentHistory.length === 0) return false;
+    if (historyIndex === -1) {
+      if (draft !== "" || editing) return false;
+      historyDraft = draft;
+    }
+    historyIndex = Math.min(historyIndex + 1, sentHistory.length - 1);
+    draft = sentHistory[historyIndex];
+    return true;
+  }
+
+  function recallNext(): boolean {
+    if (historyIndex === -1) return false;
+    historyIndex -= 1;
+    draft = historyIndex === -1 ? historyDraft : sentHistory[historyIndex];
+    return true;
+  }
+
   function onComposerKey(event: KeyboardEvent) {
     if (emojiToken && emojiMatches.length > 0) {
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -1675,6 +1804,28 @@
         mentionQuery = null;
         return;
       }
+    }
+    // Configurable composer shortcuts, only once the popups above are out of the way.
+    if (matches(event, keybinds.cancelReply)) {
+      if (editing || replyingTo) {
+        event.preventDefault();
+        if (editing) cancelEditing();
+        else replyingTo = null;
+      }
+      return;
+    }
+    if (matches(event, keybinds.editLast)) {
+      event.preventDefault();
+      startEditing();
+      return;
+    }
+    if (matches(event, keybinds.historyPrev) && recallPrev()) {
+      event.preventDefault();
+      return;
+    }
+    if (matches(event, keybinds.historyNext) && recallNext()) {
+      event.preventDefault();
+      return;
     }
     // Enter sends; Shift+Enter keeps the newline the textarea just added.
     if (event.key === "Enter" && !event.shiftKey) {
@@ -1721,6 +1872,26 @@
 
   async function send() {
     if (!selectedChat) return;
+    // Editing replaces an existing message rather than sending a new one.
+    if (editing) {
+      const current = editing;
+      const text = draft.trim();
+      if (!text) return;
+      draft = "";
+      delete drafts[selectedChat];
+      editing = null;
+      stopTyping();
+      resetHistory();
+      composerInput?.focus();
+      try {
+        await enqueue(() => invoke("edit_message", { chat: current.chat, id: current.id, text }));
+        await reloadMessages();
+        await refreshChats();
+      } catch (e) {
+        error = String(e);
+      }
+      return;
+    }
     // With attachments staged, the typed text goes out as their caption.
     if (pending.length > 0) {
       // Mentions in a caption go out as `@<number>` with their JIDs, as in text.
@@ -1736,6 +1907,7 @@
     if (!draft.trim()) return;
     const chat = selectedChat;
     stopTyping();
+    const typed = draft;
     const { text, jids } = mentionPayload();
     const reply = replyingTo;
     draft = "";
@@ -1743,6 +1915,9 @@
     replyingTo = null;
     chosenMentions = [];
     mentionQuery = null;
+    // Keep the typed text for the history keybind, newest first, without dupes.
+    sentHistory = [typed, ...sentHistory.filter((t) => t !== typed)].slice(0, 100);
+    resetHistory();
     composerInput?.focus();
     try {
       await enqueue(() =>
@@ -1964,6 +2139,16 @@
     void previewId;
     cropping = false;
   });
+  /**
+   * The scrim, the sheet's own padding and the video's letterbox close the preview; the image, the
+   * player's controls, the crop button, the caption field, the name and "Done" never do. While the
+   * cropper is open the sheet's gaps would throw the crop away, so only the scrim counts.
+   */
+  const previewDismiss = backgroundPress(
+    (target) =>
+      target instanceof Element &&
+      target.matches(cropping ? ".sheet-backdrop" : ".sheet-backdrop, .preview-sheet, .preview-video"),
+  );
   /** Swaps a staged image for its cropped or resized version. */
   async function replacePending(id: number, file: File) {
     const item = pending.find((p) => p.id === id);
@@ -2421,6 +2606,7 @@
         label: "Reply",
         icon: "reply",
         action: () => {
+          editing = null;
           replyingTo = m;
           composerInput?.focus();
         },
@@ -2436,6 +2622,7 @@
           icon: "users",
           action: async () => {
             await openChat(bare(m.sender));
+            editing = null;
             replyingTo = m;
             composerInput?.focus();
           },
@@ -2589,13 +2776,20 @@
     started = state.started;
     connected = state.connected;
     await showQr(state.connected ? null : state.qr);
-    if (connected) await refreshChats();
+    if (connected) {
+      // Already connected when the UI loaded without an explicit connect (e.g.
+      // a webview reload): there is no fresh backlog to gate on, so do not hold
+      // the loading screen. A cold start reaches here disconnected, then gates.
+      if (!connectRequested && !gateDone) gateDone = true;
+      await refreshChats();
+    }
   }
 
   /** Connects, reusing a stored session when there is one. */
   async function connect() {
     connecting = true;
     error = null;
+    connectRequested = true;
     try {
       await invoke("connect");
       await syncState();
@@ -2690,8 +2884,13 @@
           case "connected":
             connected = true;
             await showQr(null);
-            await refreshChats();
-            resolveNames();
+            if (settings.skip_loading_screen) {
+              gateDone = true;
+              await refreshChats();
+              resolveNames();
+            } else {
+              startGateTimeout();
+            }
             break;
           case "disconnected":
             connected = false;
@@ -2714,23 +2913,9 @@
             const sender = payload.kind === "message" ? payload.message.sender : payload.sender;
             const fromMe = payload.kind === "message" ? payload.message.from_me : payload.from_me;
             const fresh = payload.kind === "message" ? true : payload.fresh;
-            // A burst lands as hints only; the completion event flushes once.
-            if (syncPending > 0) {
-              syncSeen += 1;
-              chatsDirty = true;
-              if (chat === selectedChat) {
-                messagesDirty = true;
-                dirtyMarkRead ||= !fromMe;
-              }
-              if (!fromMe) setTyping(chat, bare(sender), "paused");
-              break;
-            }
-            if (historyActive) {
-              chatsDirty = true;
-              if (chat === selectedChat) {
-                messagesDirty = true;
-                dirtyMarkRead ||= !fromMe;
-              }
+            // A burst, a closed gate or an in-flight history answer: mark what
+            // changed and let the completion event flush once.
+            if (deferRefresh(chat, !fromMe)) {
               if (!fromMe) setTyping(chat, bare(sender), "paused");
               break;
             }
@@ -2738,12 +2923,14 @@
             if (!fromMe) {
               setTyping(chat, bare(sender), "paused");
             }
-            queueRefreshChats();
-            if (chat === selectedChat) {
-              // Follow the stream when already at the bottom, but never yank
-              // the view down while reading older messages. Status-only
-              // updates never follow or mark.
-              queueReloadMessages(fresh && (fromMe || !scrolledUp), fresh && !fromMe);
+            if (uiUnlocked) {
+              queueRefreshChats();
+              if (chat === selectedChat) {
+                // Follow the stream when already at the bottom, but never yank
+                // the view down while reading older messages. Status-only
+                // updates never follow or mark.
+                queueReloadMessages(fresh && (fromMe || !scrolledUp), fresh && !fromMe);
+              }
             }
             // A group seen for the first time has no name yet; look it up in
             // the background so the list stops showing a raw number.
@@ -2760,39 +2947,51 @@
             break;
           }
           case "retentionApplied":
-            if (payload.removed > 0) {
-              if (syncPending > 0 || historyActive) {
-                chatsDirty = true;
-                messagesDirty = true;
-              } else {
-                queueRefreshChats();
-                queueReloadMessages(false, false);
-              }
+            if (payload.removed > 0 && !deferRefresh(null)) {
+              queueRefreshChats();
+              queueReloadMessages(false, false);
             }
             break;
           case "namesUpdated":
             // Address-book names arrived after the initial fetch, so the cached
             // display names are stale until both lists reload.
             forgetUnresolvedNames();
-            if (syncPending > 0 || historyActive) {
-              chatsDirty = true;
-              messagesDirty = true;
-            } else {
+            if (!deferRefresh(null)) {
               queueRefreshChats();
               queueReloadMessages(false, false);
             }
             break;
           case "syncing":
+            // The core counts what it stored, so the bar cannot run ahead of
+            // the rows. Starting a new drain clears the previous dirty marks.
             syncPending = payload.pending;
-            syncSeen = 0;
+            syncApplied = payload.applied;
             chatsDirty = false;
             messagesDirty = false;
             dirtyMarkRead = false;
             break;
+          case "initialSyncComplete":
+            // The backlog is in: paint it before the loading screen lifts, so
+            // the first thing seen is the account as it now stands.
+            finalizing = true;
+            syncPending = 0;
+            syncApplied = 0;
+            try {
+              await refreshChats();
+              await reloadMessages();
+              await tick();
+            } finally {
+              chatsDirty = false;
+              messagesDirty = false;
+              dirtyMarkRead = false;
+              gateDone = true;
+              finalizing = false;
+            }
+            break;
           case "synced": {
             // The backlog is in; flush once so the burst's queued refreshes land together.
             syncPending = 0;
-            syncSeen = 0;
+            syncApplied = 0;
             if (chatsDirty) {
               chatsDirty = false;
               queueRefreshChats();
@@ -2808,6 +3007,12 @@
           }
           case "historyLoaded":
             historyActive = false;
+            if (!uiUnlocked) {
+              // The gate is still closed; the initial paint will pick this up.
+              chatsDirty = true;
+              if (selectedChat && payload.chats.includes(selectedChat)) messagesDirty = true;
+              break;
+            }
             await refreshChats();
             chatsDirty = false;
             if (selectedChat && payload.chats.includes(selectedChat)) {
@@ -2995,7 +3200,7 @@
 {/if}
 
 <div class="app">
-{#if !connected}
+{#if !connected || !uiUnlocked}
   {@const stage = qrSvg ? 2 : started || connecting ? 1 : 0}
   <!-- An account that paired before signs straight back in; pairing only shows if WhatsApp asks for a code. -->
   {@const linked = !qrSvg ? accountList.find((a) => a.id === activeAccount && a.jid) : undefined}
@@ -3040,14 +3245,24 @@
         {:else}
           <span class="resume-avatar">{initials(linked.label)}</span>
         {/if}
-        <h2>{started || connecting ? "Signing in" : "Welcome back"}</h2>
+        <h2>{started || connecting || connected ? "Signing in" : "Welcome back"}</h2>
         <span class="resume-who">{linked.label} · {phoneName(null, linked.jid!)}</span>
-        {#if started || connecting}
+        {#if started || connecting || connected}
           <div class="resume-progress" role="status">
             <div class="resume-status">
-              <span>{syncPending > 0 ? "Loading messages…" : "Connecting to WhatsApp…"}</span>
+              <span>
+                {#if finalizing}
+                  Finishing up…
+                {:else if syncPending > 0}
+                  Loading messages…
+                {:else if connected}
+                  Loading your messages…
+                {:else}
+                  Connecting to WhatsApp…
+                {/if}
+              </span>
               {#if syncPending > 0}
-                <span class="resume-count">{Math.min(syncSeen, syncPending)} of {syncPending} · {syncPercent}%</span>
+                <span class="resume-count">{Math.min(syncApplied, syncPending)} of {syncPending} · {syncPercent}%</span>
               {/if}
             </div>
             <div
@@ -3059,6 +3274,9 @@
               aria-valuenow={syncPending > 0 ? syncPercent : undefined}>
               <span style:width={syncPending > 0 ? `${syncPercent}%` : null}></span>
             </div>
+            {#if syncTimedOut}
+              <span class="hint">Still syncing in the background…</span>
+            {/if}
           </div>
         {:else}
           <button class="primary" onclick={connect}>Connect</button>
@@ -3479,6 +3697,7 @@
                 (message.mentioned || message.reply_to_sender === "@me")}
               class:first-row={first}
               ondblclick={() => {
+                editing = null;
                 replyingTo = message;
                 composerInput?.focus();
               }}
@@ -3808,17 +4027,31 @@
             </div>
           {/each}
           {#if typing[selectedChat]?.length}
-            {@const typer = typing[selectedChat][0]}
-            <div class="bubble typing-bubble first">
+            {@const typers = typing[selectedChat]}
+            <div class="bubble typing-bubble first" style="--hue: {hue(typers[0].sender)}">
               {#if isGroupChat}
-                <span class="sender-avatar">{@render avatarFor(typer.sender, senderName(typer.sender))}</span>
-                <span class="sender" style="--hue: {hue(typer.sender)}">
-                  {memberOf(typer.sender)?.name && !isPlaceholder(memberOf(typer.sender)!.name)
-                    ? memberOf(typer.sender)!.name
-                    : senderName(typer.sender)}
-                </span>
-              {/if}
-              {#if typer.state === "recording"}
+                {@const shown = typers.slice(0, 3)}
+                {#each shown as typer (typer.sender)}
+                  <div class="typing-row" style="--hue: {hue(typer.sender)}">
+                    <span class="sender-avatar"
+                      >{@render avatarFor(typer.sender, senderName(typer.sender))}</span
+                    >
+                    <span class="sender">
+                      {memberOf(typer.sender)?.name && !isPlaceholder(memberOf(typer.sender)!.name)
+                        ? memberOf(typer.sender)!.name
+                        : senderName(typer.sender)}
+                    </span>
+                    {#if typer.state === "recording"}
+                      <span class="recording"><Icon name="mic" size={15} /> recording audio…</span>
+                    {:else}
+                      <span class="dots" aria-label="typing"><i></i><i></i><i></i></span>
+                    {/if}
+                  </div>
+                {/each}
+                {#if typers.length > shown.length}
+                  <span class="typing-more">and {typers.length - shown.length} more…</span>
+                {/if}
+              {:else if typers[0].state === "recording"}
                 <span class="recording"><Icon name="mic" size={15} /> recording audio…</span>
               {:else}
                 <span class="dots" aria-label="typing"><i></i><i></i><i></i></span>
@@ -3855,6 +4088,21 @@
               title="Cancel reply"
               aria-label="Cancel reply"
               onclick={() => (replyingTo = null)}><Icon name="x" size={16} /></button>
+          </div>
+        {/if}
+
+        {#if editing}
+          <div class="reply-preview editing-preview">
+            <span class="reply-icon"><Icon name="edit" size={16} /></span>
+            <span class="reply-body">
+              <span class="reply-to">Editing message</span>
+              <span class="reply-snippet">{editing.original}</span>
+            </span>
+            <button
+              class="icon"
+              title="Cancel edit"
+              aria-label="Cancel edit"
+              onclick={cancelEditing}><Icon name="x" size={16} /></button>
           </div>
         {/if}
 
@@ -4006,17 +4254,25 @@
             oninput={onComposerInput}
             onkeydown={onComposerKey}
             rows="1"
-            placeholder={pending.length > 0 ? "Add a caption (optional)" : "Type a message"}
+            placeholder={editing ? "Edit message" : pending.length > 0 ? "Add a caption (optional)" : "Type a message"}
           ></textarea>
           <div class="composer-tools">
             <button
               type="button"
               class="icon"
-              class:active={chatHidden}
-              title={chatHidden ? "Typing and read receipts hidden here" : "Hide typing and read receipts here"}
-              aria-label="Hide typing and read receipts here"
-              aria-pressed={chatHidden}
-              onclick={toggleChatPrivacy}><Icon name={chatHidden ? "eyeOff" : "eye"} size={20} /></button>
+              class:active={receiptsHidden}
+              title={receiptsHidden ? "Read receipts hidden here" : "Hide read receipts here"}
+              aria-label="Hide read receipts here"
+              aria-pressed={receiptsHidden}
+              onclick={toggleChatReceipts}><Icon name={receiptsHidden ? "eyeOff" : "eye"} size={20} /></button>
+            <button
+              type="button"
+              class="icon"
+              class:active={typingHidden}
+              title={typingHidden ? "Typing not sent here" : "Stop sending typing here"}
+              aria-label="Stop sending typing here"
+              aria-pressed={typingHidden}
+              onclick={toggleChatTyping}><Icon name="keyboard" size={20} /></button>
             <button
               type="button"
               class="icon tool-text"
@@ -4257,6 +4513,7 @@
     bind:index={onceIndex}
     onclose={closeViewOnce}
     onreply={(id) => {
+      editing = null;
       replyingTo = messages.find((m) => m.id === id) ?? null;
       void closeViewOnce();
       composerInput?.focus();
@@ -4271,6 +4528,7 @@
     onclose={() => (viewerIndex = null)}
     onopen={openMedia}
     onreply={(id) => {
+      editing = null;
       replyingTo = messages.find((m) => m.id === id) ?? null;
       viewerIndex = null;
       composerInput?.focus();
@@ -4323,9 +4581,8 @@
   <div
     class="sheet-backdrop"
     role="presentation"
-    onclick={(e) => {
-      if (e.target === e.currentTarget) previewId = null;
-    }}>
+    onpointerdown={previewDismiss.down}
+    onclick={(e) => previewDismiss.click(e) && (previewId = null)}>
     <div
       class="sheet preview-sheet"
       role="dialog"
@@ -6491,6 +6748,19 @@
   }
   .typing-bubble {
     padding: 8px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .typing-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .typing-more {
+    color: var(--muted);
+    font-size: 12.8px;
+    padding-left: 2px;
   }
   .dots {
     display: flex;
@@ -6501,7 +6771,7 @@
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: var(--muted);
+    background: hsl(var(--hue) 65% 68%);
     animation: blink 1.2s infinite ease-in-out;
   }
   .dots i:nth-child(2) {

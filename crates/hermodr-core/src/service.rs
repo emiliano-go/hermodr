@@ -275,6 +275,47 @@ fn should_vacuum(free_pages: i64, pages: i64, since_last_secs: i64) -> bool {
     free_pages > 1_000 && free_pages * 5 >= pages && since_last_secs >= 7 * 86_400
 }
 
+/// Progress of the initial catch-up, shared between the event handler and the
+/// readiness task so `InitialSyncComplete` fires only once the backlog is in.
+#[derive(Debug, Clone, Copy, Default)]
+struct SyncProgress {
+    /// Messages the server announced for this offline drain.
+    pending: usize,
+    /// Messages stored so far during the drain.
+    applied: usize,
+    /// The drain reported complete (or interrupted by a dropped connection).
+    offline_done: bool,
+    /// Conversations added by the initial history window.
+    history_chats: usize,
+    /// When the last backlog message or history chunk was stored.
+    last_progress: Option<std::time::Instant>,
+    /// Throttles `Syncing` emissions so a large drain is not one IPC per message.
+    last_emit: Option<std::time::Instant>,
+}
+
+/// How long to wait, after the last backlog event, before calling the initial
+/// sync settled. Scales with how much was announced, so a large backlog has time
+/// to finish flushing while a small one does not sit on the loading screen.
+fn adaptive_settle(pending: usize) -> std::time::Duration {
+    let ms = (pending as u64 / 10).clamp(300, 2_000);
+    std::time::Duration::from_millis(ms)
+}
+
+/// Whether the initial catch-up can be called done: the drain has ended (or
+/// there was nothing to sync) and nothing new has landed for the settle window,
+/// or the hard cap elapsed so a stuck sync never holds the UI forever.
+fn sync_ready(p: &SyncProgress, elapsed: std::time::Duration) -> bool {
+    if elapsed >= std::time::Duration::from_secs(60) {
+        return true;
+    }
+    let settle = adaptive_settle(p.pending);
+    let quiescent = p
+        .last_progress
+        .map_or(elapsed >= std::time::Duration::from_secs(2), |t| t.elapsed() >= settle);
+    let no_backlog = p.pending == 0 && elapsed >= std::time::Duration::from_secs(2);
+    (p.offline_done || no_backlog) && quiescent
+}
+
 /// Events the UI reacts to.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -306,8 +347,13 @@ pub enum ServiceEvent {
     /// stale display names and should be refetched.
     NamesUpdated { count: usize },
     /// The offline backlog is draining; `pending` is how many messages the
-    /// server announced at the start of the drain.
-    Syncing { pending: usize },
+    /// server announced at the start of the drain, `applied` how many have been
+    /// stored so far.
+    Syncing { pending: usize, applied: usize },
+    /// The initial catch-up (offline drain and the initial history window) has
+    /// been applied. The UI may leave its loading screen without landing in a UI
+    /// that is still updating underneath it.
+    InitialSyncComplete { messages: usize, chats: usize },
     /// The backlog finished draining.
     Synced,
     /// History sync stored older messages for these chats.
@@ -693,6 +739,11 @@ impl Service {
         let group_cache_for_events = group_cache.clone();
         let groups_cache: Arc<Mutex<Vec<whatsapp_rust::GroupOverview>>> = Arc::default();
         let groups_cache_for_events = groups_cache.clone();
+        // Progress of the initial catch-up; shared with the readiness task that
+        // decides when the UI may leave its loading screen.
+        let sync_progress: Arc<Mutex<SyncProgress>> = Arc::default();
+        // Readiness is announced once per run; a reconnect must not re-gate the UI.
+        let initial_gate_done = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let older_waits: Arc<Mutex<OlderWaits>> = Arc::default();
         let older_waits_for_events = older_waits.clone();
         // Auto-downloads run beside the event handler, so a long backlog of media
@@ -724,6 +775,8 @@ impl Service {
                 let names_resynced = names_resynced.clone();
                 let store = store.clone();
                 let session_path = config.session_path.clone();
+                let sync_progress = sync_progress.clone();
+                let initial_gate_done = initial_gate_done.clone();
                 move |client| {
                     let events = events.clone();
                     let qr_state = qr_state.clone();
@@ -731,12 +784,41 @@ impl Service {
                     let names_resynced = names_resynced.clone();
                     let store = store.clone();
                     let session_path = session_path.clone();
+                    let sync_progress = sync_progress.clone();
+                    let initial_gate_done = initial_gate_done.clone();
                     async move {
                         log::info!("connected");
                         connected_state.store(true, Ordering::SeqCst);
                         // The code is spent once paired.
                         *qr_state.lock().unwrap() = None;
                         let _ = events.send(ServiceEvent::Connected);
+
+                        // Tell the UI once when the initial catch-up is applied,
+                        // so it does not drop its loading screen mid-burst. The
+                        // drain completes first; the settle window then covers
+                        // the initial history window, which has no done event.
+                        if !initial_gate_done.swap(true, Ordering::SeqCst) {
+                            let progress = sync_progress.clone();
+                            let events = events.clone();
+                            tokio::spawn(async move {
+                                let started = std::time::Instant::now();
+                                loop {
+                                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                                    let elapsed = started.elapsed();
+                                    let (ready, messages, chats) = {
+                                        let p = progress.lock().unwrap();
+                                        (sync_ready(&p, elapsed), p.applied, p.history_chats)
+                                    };
+                                    if ready {
+                                        let _ = events.send(ServiceEvent::InitialSyncComplete {
+                                            messages,
+                                            chats,
+                                        });
+                                        break;
+                                    }
+                                }
+                            });
+                        }
 
                         // Saved contact names reach the client as app-state
                         // patches, and an already-paired session has none left
@@ -788,6 +870,7 @@ impl Service {
                     EventKind::ContactRemoved,
                     EventKind::OfflineSyncPreview,
                     EventKind::OfflineSyncCompleted,
+                    EventKind::OfflineSyncInterrupted,
                     EventKind::PinUpdate,
                     // Unlisted kinds never reach the handler: history ("load
                     // older" included), typing and picture changes need these.
@@ -808,6 +891,7 @@ impl Service {
                     let groups_cache = groups_cache_for_events.clone();
                     let older_waits = older_waits_for_events.clone();
                     let downloads = downloads.clone();
+                    let sync_progress = sync_progress.clone();
                     async move {
                         match event.as_ref() {
                             Event::Messages(batch) => {
@@ -1124,6 +1208,29 @@ impl Service {
                                     }
                                     if let Err(e) = store.insert_message(&message) {
                                         log::error!("could not store message {} in {chat}: {e}", message.header.id);
+                                    } else {
+                                        // Count backlog progress so the loading
+                                        // screen's bar tracks stored messages, not
+                                        // raw inbound events.
+                                        let mut p = sync_progress.lock().unwrap();
+                                        if p.pending > 0 && !p.offline_done {
+                                            p.applied = (p.applied + 1).min(p.pending);
+                                            p.last_progress = Some(std::time::Instant::now());
+                                            let emit = p.applied >= p.pending
+                                                || p.last_emit.map_or(true, |t| {
+                                                    t.elapsed()
+                                                        >= std::time::Duration::from_millis(50)
+                                                });
+                                            if emit {
+                                                p.last_emit = Some(std::time::Instant::now());
+                                                let (pending, applied) = (p.pending, p.applied);
+                                                drop(p);
+                                                let _ = events.send(ServiceEvent::Syncing {
+                                                    pending,
+                                                    applied,
+                                                });
+                                            }
+                                        }
                                     }
                                     let fetch = match (auto_download && message.media.locator.is_some(), &client, &media_dir) {
                                         (true, Some(client), Some(dir)) => {
@@ -1281,12 +1388,42 @@ impl Service {
                             Event::OfflineSyncPreview(preview) => {
                                 let pending = preview.messages.max(0) as usize;
                                 log::info!("offline sync: {pending} message(s) pending");
+                                {
+                                    let mut p = sync_progress.lock().unwrap();
+                                    p.pending = pending;
+                                    p.applied = 0;
+                                    p.offline_done = false;
+                                    p.last_emit = None;
+                                    p.last_progress = Some(std::time::Instant::now());
+                                }
                                 if pending > 0 {
-                                    let _ = events.send(ServiceEvent::Syncing { pending });
+                                    let _ = events
+                                        .send(ServiceEvent::Syncing { pending, applied: 0 });
                                 }
                             }
                             Event::OfflineSyncCompleted(_) => {
                                 log::info!("offline sync complete");
+                                {
+                                    let mut p = sync_progress.lock().unwrap();
+                                    p.offline_done = true;
+                                    p.last_progress = Some(std::time::Instant::now());
+                                }
+                                let _ = events.send(ServiceEvent::Synced);
+                            }
+                            // The drain ended without its end marker, so the rest
+                            // redelivers on the next connection. Treat it as an
+                            // end for the readiness gate rather than waiting for a
+                            // completion that will not come this connection.
+                            Event::OfflineSyncInterrupted(interrupted) => {
+                                let delivered = interrupted.delivered.max(0) as usize;
+                                log::warn!(
+                                    "offline sync interrupted after {delivered} message(s); the rest will redeliver"
+                                );
+                                {
+                                    let mut p = sync_progress.lock().unwrap();
+                                    p.offline_done = true;
+                                    p.last_progress = Some(std::time::Instant::now());
+                                }
                                 let _ = events.send(ServiceEvent::Synced);
                             }
                             // Pairing's recent window and "load older" answers
@@ -1424,6 +1561,7 @@ impl Service {
                                 if names_learned > 0 {
                                     let _ = events.send(ServiceEvent::NamesUpdated { count: names_learned });
                                 }
+                                let added_chats = chats.len();
                                 // A request the UI is still waiting on has now been
                                 // answered, whether or not it brought new rows: an
                                 // answer with nothing older is an answer, and without
@@ -1437,7 +1575,17 @@ impl Service {
                                     }
                                 }
                                 // Retention is left to the next live write, so
-                                // what was just loaded can be seen first.
+                                // what was just loaded can be seen first. Record
+                                // the chunk for the readiness gate even when it
+                                // added nothing, so a stream of no-op chunks does
+                                // not look quiescent while history is still coming.
+                                {
+                                    let mut p = sync_progress.lock().unwrap();
+                                    // An answered request is not a conversation the
+                                    // initial window added, so it is not counted.
+                                    p.history_chats += added_chats;
+                                    p.last_progress = Some(std::time::Instant::now());
+                                }
                                 if !chats.is_empty() {
                                     let _ = events.send(ServiceEvent::HistoryLoaded { chats });
                                 }
@@ -1917,7 +2065,30 @@ impl Service {
         Ok(())
     }
 
-    /// Our own JID, used as the sender of messages we send.
+    /// Replaces the text of one of our own messages.
+    pub async fn edit_message(&self, chat: &str, id: &str, text: impl Into<String>) -> Result<()> {
+        let to: Jid = chat.parse()?;
+        let text = text.into();
+        if text.trim().is_empty() {
+            anyhow::bail!("an edit cannot be empty");
+        }
+        let existing = self.store.message(chat, id)?;
+        if !existing.header.from_me {
+            anyhow::bail!("only your own messages can be edited");
+        }
+        self.client
+            .edit_message(to, id, wa::Message::text(text.clone()))
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        self.store.update_message_content(chat, id, &text)?;
+        if let Ok(updated) = self.store.message(chat, id) {
+            // Status-only: the row refetches, without following or marking read.
+            let _ = self.events.send(ServiceEvent::hint(&updated, false));
+        }
+        let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
+        Ok(())
+    }
+
     /// Our own JID without a device suffix, or empty before pairing.
     pub fn own_jid(&self) -> String {
         self.client
@@ -1925,6 +2096,14 @@ impl Service {
             .or_else(|| self.client.lid())
             .map(|j| j.to_non_ad().to_string())
             .unwrap_or_default()
+    }
+
+    /// Our own display name, as peers see it. Empty before it is known.
+    ///
+    /// Read from the cached device snapshot rather than `profile`, which would
+    /// cost three network round trips for the same name.
+    pub fn push_name(&self) -> String {
+        self.client.push_name()
     }
 
     /// Whether a destination is our own account, in either addressing form.
@@ -4542,6 +4721,32 @@ mod tests {
     }
 
     #[test]
+    fn adaptive_settle_scales_and_is_bounded() {
+        assert_eq!(adaptive_settle(0), std::time::Duration::from_millis(300));
+        assert_eq!(adaptive_settle(1_000), std::time::Duration::from_millis(300));
+        assert_eq!(adaptive_settle(5_000), std::time::Duration::from_millis(500));
+        assert_eq!(adaptive_settle(50_000), std::time::Duration::from_millis(2_000));
+        assert_eq!(adaptive_settle(1_000_000), std::time::Duration::from_millis(2_000));
+    }
+
+    #[test]
+    fn readiness_needs_a_finished_drain_and_quiescence() {
+        let secs = std::time::Duration::from_secs;
+        let base = SyncProgress { pending: 100, ..Default::default() };
+        // Still draining: not ready, however long it has been under the cap.
+        assert!(!sync_ready(&base, secs(3)));
+        // Drain done and nothing new for long enough: ready.
+        let done = SyncProgress { offline_done: true, ..base };
+        assert!(sync_ready(&done, secs(3)));
+        // The hard cap always lets the UI go.
+        assert!(sync_ready(&base, secs(61)));
+        // Nothing announced: treated as no backlog after the grace period.
+        let empty = SyncProgress::default();
+        assert!(sync_ready(&empty, secs(3)));
+        assert!(!sync_ready(&empty, secs(1)));
+    }
+
+    #[test]
     fn an_older_request_is_completed_once_by_its_session() {
         // Regression guard: "load older" used to end only on its UI timeout when
         // the phone answered with nothing older, and reported a failure that
@@ -4579,7 +4784,8 @@ mod tests {
             ServiceEvent::Disconnected,
             ServiceEvent::RetentionApplied { removed: 3 },
             ServiceEvent::NamesUpdated { count: 2 },
-            ServiceEvent::Syncing { pending: 5 },
+            ServiceEvent::Syncing { pending: 5, applied: 2 },
+            ServiceEvent::InitialSyncComplete { messages: 42, chats: 7 },
             ServiceEvent::Synced,
         ] {
             let json = serde_json::to_string(&event).expect("event must serialize");
