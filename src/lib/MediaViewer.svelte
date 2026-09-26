@@ -21,6 +21,7 @@
   import { fade } from "svelte/transition";
   import { motion } from "$lib/theme.svelte";
   import { invoke } from "$lib/ipc";
+  import { backgroundPress } from "$lib/press";
   import Icon from "$lib/Icon.svelte";
   import VideoPlayer from "$lib/VideoPlayer.svelte";
 
@@ -47,6 +48,10 @@
   let zoom = $state(1);
   let pan = $state({ x: 0, y: 0 });
   let dragging: { x: number; y: number; moved: boolean } | null = null;
+  /** Everything but the media and the chrome is background: the letterbox, the header, the caption, the strip's gaps. */
+  const dismiss = backgroundPress(
+    (target) => target instanceof Element && !target.closest(".media, .player, .who, button"),
+  );
   let strip: HTMLDivElement | undefined = $state();
   /** Blob URL for a video the asset scheme could not stream (WebKitGTK). */
   let videoFallback = $state<string | null>(null);
@@ -124,7 +129,16 @@
 <svelte:window onkeydown={onKey} />
 
 {#if item}
-  <div class="viewer" role="dialog" aria-modal="true" aria-label="Media viewer" transition:fade={{ duration: motion(140) }}>
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events -->
+  <div
+    class="viewer"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Media viewer"
+    tabindex="-1"
+    transition:fade={{ duration: motion(140) }}
+    onpointerdown={dismiss.down}
+    onclick={(e) => dismiss.click(e) && onclose()}>
     <header>
       <div class="who">
         {#if item.avatar}
