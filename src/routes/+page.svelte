@@ -575,6 +575,8 @@
   }
   /** A stable hue per chat, so an avatar keeps its colour across sessions. */
   function hue(jid: string) {
+    // A device suffix would give one person two colours across typing and messages.
+    jid = jid.replace(/:\d+(?=@)/, "");
     let h = 0;
     for (const c of jid) h = (h * 31 + c.charCodeAt(0)) % 360;
     return h;
@@ -1445,24 +1447,39 @@
   type ChatPrivacy = { send_typing: boolean | null; send_receipts: boolean | null };
   let chatPrivacy: ChatPrivacy = $state({ send_typing: null, send_receipts: null });
   const chatSendsTyping = $derived(chatPrivacy.send_typing ?? settings.send_typing);
-  const chatHidden = $derived(!chatSendsTyping && !(chatPrivacy.send_receipts ?? settings.send_receipts));
+  const chatSendsReceipts = $derived(chatPrivacy.send_receipts ?? settings.send_receipts);
+  const typingHidden = $derived(!chatSendsTyping);
+  const receiptsHidden = $derived(!chatSendsReceipts);
 
-  async function toggleChatPrivacy() {
+  /** Sets one of the two per-chat privacy overrides, dropping it when it matches the default. */
+  async function setChatPrivacy(patch: Partial<ChatPrivacy>) {
     const chat = selectedChat;
     if (!chat) return;
-    const send = chatHidden;
-    // An override equal to the default is dropped, so the chat keeps following it.
     const next: ChatPrivacy = {
-      send_typing: send === settings.send_typing ? null : send,
-      send_receipts: send === settings.send_receipts ? null : send,
+      send_typing: patch.send_typing ?? chatPrivacy.send_typing,
+      send_receipts: patch.send_receipts ?? chatPrivacy.send_receipts,
     };
+    if (next.send_typing === settings.send_typing) next.send_typing = null;
+    if (next.send_receipts === settings.send_receipts) next.send_receipts = null;
     try {
-      await invoke("set_chat_privacy", { chat, typing: next.send_typing, receipts: next.send_receipts });
+      await invoke("set_chat_privacy", {
+        chat,
+        typing: next.send_typing,
+        receipts: next.send_receipts,
+      });
       if (selectedChat === chat) chatPrivacy = next;
-      if (!send) stopTyping(chat);
+      if (!(next.send_typing ?? settings.send_typing)) stopTyping(chat);
     } catch (e) {
       error = String(e);
     }
+  }
+
+  function toggleChatTyping() {
+    void setChatPrivacy({ send_typing: typingHidden });
+  }
+
+  function toggleChatReceipts() {
+    void setChatPrivacy({ send_receipts: receiptsHidden });
   }
 
   function reportTyping() {
@@ -3909,17 +3926,31 @@
             </div>
           {/each}
           {#if typing[selectedChat]?.length}
-            {@const typer = typing[selectedChat][0]}
-            <div class="bubble typing-bubble first">
+            {@const typers = typing[selectedChat]}
+            <div class="bubble typing-bubble first" style="--hue: {hue(typers[0].sender)}">
               {#if isGroupChat}
-                <span class="sender-avatar">{@render avatarFor(typer.sender, senderName(typer.sender))}</span>
-                <span class="sender" style="--hue: {hue(typer.sender)}">
-                  {memberOf(typer.sender)?.name && !isPlaceholder(memberOf(typer.sender)!.name)
-                    ? memberOf(typer.sender)!.name
-                    : senderName(typer.sender)}
-                </span>
-              {/if}
-              {#if typer.state === "recording"}
+                {@const shown = typers.slice(0, 3)}
+                {#each shown as typer (typer.sender)}
+                  <div class="typing-row" style="--hue: {hue(typer.sender)}">
+                    <span class="sender-avatar"
+                      >{@render avatarFor(typer.sender, senderName(typer.sender))}</span
+                    >
+                    <span class="sender">
+                      {memberOf(typer.sender)?.name && !isPlaceholder(memberOf(typer.sender)!.name)
+                        ? memberOf(typer.sender)!.name
+                        : senderName(typer.sender)}
+                    </span>
+                    {#if typer.state === "recording"}
+                      <span class="recording"><Icon name="mic" size={15} /> recording audio…</span>
+                    {:else}
+                      <span class="dots" aria-label="typing"><i></i><i></i><i></i></span>
+                    {/if}
+                  </div>
+                {/each}
+                {#if typers.length > shown.length}
+                  <span class="typing-more">and {typers.length - shown.length} more…</span>
+                {/if}
+              {:else if typers[0].state === "recording"}
                 <span class="recording"><Icon name="mic" size={15} /> recording audio…</span>
               {:else}
                 <span class="dots" aria-label="typing"><i></i><i></i><i></i></span>
@@ -4128,11 +4159,19 @@
             <button
               type="button"
               class="icon"
-              class:active={chatHidden}
-              title={chatHidden ? "Typing and read receipts hidden here" : "Hide typing and read receipts here"}
-              aria-label="Hide typing and read receipts here"
-              aria-pressed={chatHidden}
-              onclick={toggleChatPrivacy}><Icon name={chatHidden ? "eyeOff" : "eye"} size={20} /></button>
+              class:active={receiptsHidden}
+              title={receiptsHidden ? "Read receipts hidden here" : "Hide read receipts here"}
+              aria-label="Hide read receipts here"
+              aria-pressed={receiptsHidden}
+              onclick={toggleChatReceipts}><Icon name={receiptsHidden ? "eyeOff" : "eye"} size={20} /></button>
+            <button
+              type="button"
+              class="icon"
+              class:active={typingHidden}
+              title={typingHidden ? "Typing not sent here" : "Stop sending typing here"}
+              aria-label="Stop sending typing here"
+              aria-pressed={typingHidden}
+              onclick={toggleChatTyping}><Icon name="keyboard" size={20} /></button>
             <button
               type="button"
               class="icon tool-text"
@@ -6608,6 +6647,19 @@
   }
   .typing-bubble {
     padding: 8px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .typing-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .typing-more {
+    color: var(--muted);
+    font-size: 12.8px;
+    padding-left: 2px;
   }
   .dots {
     display: flex;
@@ -6618,7 +6670,7 @@
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: var(--muted);
+    background: hsl(var(--hue) 65% 68%);
     animation: blink 1.2s infinite ease-in-out;
   }
   .dots i:nth-child(2) {
