@@ -92,8 +92,11 @@ async fn main() -> Result<()> {
             ServiceEvent::NamesUpdated { count } => {
                 println!("[check] address book: {count} saved name(s)");
             }
-            ServiceEvent::Syncing { pending } => {
-                println!("[check] syncing {pending} message(s)");
+            ServiceEvent::Syncing { pending, applied } => {
+                println!("[check] syncing {applied}/{pending} message(s)");
+            }
+            ServiceEvent::InitialSyncComplete { messages, chats } => {
+                println!("[check] initial sync complete: {messages} message(s), {chats} chat(s)");
             }
             ServiceEvent::Synced => println!("[check] synced"),
             _ => {}
