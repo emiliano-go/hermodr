@@ -150,6 +150,12 @@ Open log*): connection changes, sync progress, per-batch timings, failed store
 writes, failed UI commands and crashes with a backtrace. `RUST_LOG` overrides
 the levels; past 5 MB the file moves to `postal.log.old`.
 
+Tolerated database and media-cache failures use the `postal_core::storage`
+error target with the calling source location. Missing message rows are normal
+and stay quiet. Malformed protocol messages still skip without stopping the
+event loop. Broadcast sends without subscribers are expected during shutdown;
+Tauri event-emission failures and lagged consumers are logged separately.
+
 ## Media
 
 Right-click an image for **Copy Image**, **Save Image…**, or **Open Image**.

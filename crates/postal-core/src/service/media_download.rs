@@ -10,7 +10,7 @@ pub(super) async fn fetch_media(client: &Client, store: &MessageStore, dir: &Pat
         .map(|bytes| <wa::Message as buffa::Message>::decode(&mut bytes.as_slice()))
         .transpose()
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    let once = store.is_view_once(chat, id).unwrap_or(false);
+    let once = store.is_view_once(chat, id)?;
     // A view-once has no address of its own, or reached this device only as a
     // stub. A reply quoting it carries a complete copy, and that is the only
     // one the platform ever sends, so it is used before the sender's phone is
@@ -143,16 +143,16 @@ pub fn prune_quote_files(dir: Option<&Path>, store: &MessageStore) -> Result<usi
     let Some(dir) = dir else { return Ok(0) };
     let keep = store.quote_media_paths()?;
     let mut removed = 0;
-    for entry in std::fs::read_dir(dir)?.flatten() {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
         let path = entry.path();
         let named = path
             .file_name()
             .and_then(|n| n.to_str())
             .is_some_and(|n| n.starts_with(QUOTE_FILE_PREFIX));
         if named && !path.is_dir() && !keep.contains(&path.to_string_lossy().to_string()) {
-            if std::fs::remove_file(&path).is_ok() {
-                removed += 1;
-            }
+            std::fs::remove_file(&path)?;
+            removed += 1;
         }
     }
     Ok(removed)

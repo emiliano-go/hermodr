@@ -46,7 +46,7 @@ impl WhatsAppService {
             if mention_all {
                 context.group_mentions = vec![wa::GroupMention {
                     group_jid: Some(chat.to_string()),
-                    group_subject: self.store.name_for(chat).ok().flatten(),
+                    group_subject: self.store.name_for(chat).observed().flatten(),
                 }];
             }
             let extended = wa::message::ExtendedTextMessage {
@@ -100,7 +100,7 @@ impl WhatsAppService {
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         self.store.update_message_content(chat, id, &text)?;
-        if let Ok(updated) = self.store.message(chat, id) {
+        if let Some(updated) = self.store.message(chat, id).observed() {
             // Status-only: the row refetches, without following or marking read.
             let _ = self.events.send(ServiceEvent::hint(&updated, false));
         }
@@ -128,7 +128,7 @@ impl WhatsAppService {
     /// messages; `None` when there are none to name.
     fn archive_range(&self, chat: &str) -> Option<whatsapp_rust::SyncActionMessageRange> {
         let remote = chat.parse::<Jid>().ok()?;
-        let messages = self.store.messages_for(chat, 3).ok()?;
+        let messages = self.store.messages_for(chat, 3).observed()?;
         let last = messages.first()?.header.timestamp;
         let mut keys = Vec::with_capacity(messages.len());
         for m in &messages {
@@ -170,7 +170,7 @@ impl WhatsAppService {
     pub(super) fn unarchive_on_send(&self, chat: &str) {
         let Ok(jid) = chat.parse::<Jid>() else { return };
         let bare = jid.to_non_ad().to_string();
-        if !self.store.is_archived(&bare).unwrap_or(false) {
+        if !self.store.is_archived(&bare).observed().unwrap_or(false) {
             return;
         }
         self.store.set_archived(&bare, false).logged();
@@ -328,7 +328,7 @@ impl WhatsAppService {
         self.store.revoke_message(chat, id)?;
         // A revoked reply stops naming any view-once copy it had recovered.
         self.prune_quote_files()?;
-        if let Ok(updated) = self.store.message(chat, id) {
+        if let Some(updated) = self.store.message(chat, id).observed() {
             let _ = self.events.send(ServiceEvent::hint(&updated, false));
         }
         Ok(())
@@ -344,9 +344,9 @@ impl WhatsAppService {
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         // The stored copy is gone, so its media file has no other referent.
-        if let Ok(message) = self.store.message(chat, id) {
+        if let Some(message) = self.store.message(chat, id).observed() {
             if let Some(path) = message.media.path.as_deref() {
-                let _ = std::fs::remove_file(path);
+                remove_cached_file(path);
             }
         }
         self.store.delete_message(chat, id)?;
@@ -408,7 +408,7 @@ impl WhatsAppService {
     /// Marks a view-once message opened and deletes its media.
     pub fn open_view_once(&self, chat: &str, id: &str) -> Result<()> {
         if let Some(path) = self.store.open_view_once(chat, id)? {
-            let _ = std::fs::remove_file(path);
+            remove_cached_file(path);
         }
         let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
         Ok(())
@@ -538,7 +538,7 @@ impl WhatsAppService {
         if mention_all {
             context.group_mentions = vec![wa::GroupMention {
                 group_jid: Some(chat.to_string()),
-                group_subject: self.store.name_for(chat).ok().flatten(),
+                group_subject: self.store.name_for(chat).observed().flatten(),
             }];
         }
 
@@ -568,11 +568,11 @@ impl WhatsAppService {
     /// the recipient to resolve from its own history, which is what it does
     /// with a reply whose quoted content was withheld.
     pub(super) fn quoted_message(&self, chat: &str, id: &str, text: &str) -> Option<wa::Message> {
-        if let Some(bytes) = self.store.media_ref_for(chat, id).ok().flatten() {
+        if let Some(bytes) = self.store.media_ref_for(chat, id).observed().flatten() {
             if let Ok(message) = <wa::Message as buffa::Message>::decode(&mut bytes.as_slice()) {
                 if detect_media(&message).is_some() {
                     // The locator is the bare media; a view-once is quoted in its wrapper.
-                    let once = self.store.is_view_once(chat, id).unwrap_or(false);
+                    let once = self.store.is_view_once(chat, id).observed()?;
                     return Some(if once { wrap_view_once(message) } else { message });
                 }
             }
@@ -580,13 +580,13 @@ impl WhatsAppService {
         // A view-once reaches a linked device as a stub with no content. A reply
         // someone else sent quoting it carries the real one, which is quoted
         // back when stored; otherwise an empty view-once of the same kind.
-        if let Ok(row) = self.store.message(chat, id) {
+        if let Some(row) = self.store.message(chat, id).observed() {
             if row.media.kind.as_deref() == Some("view_once") {
                 use whatsapp_rust::wacore::proto_helpers::MessageExt;
                 let copy = self
                     .store
                     .view_once_copy(chat, id)
-                    .ok()
+                    .observed()
                     .flatten()
                     .and_then(|b| <wa::Message as buffa::Message>::decode(&mut b.as_slice()).ok())
                     .filter(|m| detect_media(m.get_base_message()).is_some());
@@ -604,14 +604,14 @@ impl WhatsAppService {
     /// The quote to store beside a reply this account sent, so it renders the
     /// message it answers rather than a label.
     pub(super) fn local_quote(&self, chat: &str, id: &str, sender: &str, is_me: bool) -> Quote {
-        let row = self.store.message(chat, id).ok();
+        let row = self.store.message(chat, id).observed();
         let kind = row.as_ref().and_then(|m| m.media.kind.clone());
         let text = row
             .as_ref()
             .map(|m| m.text.clone())
             .filter(|t| !t.trim().is_empty())
             .or_else(|| {
-                let once = self.store.is_view_once(chat, id).unwrap_or(false);
+                let once = self.store.is_view_once(chat, id).observed()?;
                 kind.as_deref().map(|k| match (once, k) {
                     (true, _) => "View once message".to_string(),
                     (false, "image") => "Photo".to_string(),
@@ -630,7 +630,7 @@ impl WhatsAppService {
             sender: Some(if is_me { "@me".to_string() } else { sender.to_string() }),
             kind,
             thumb: row.and_then(|m| m.media.thumb),
-            view_once: self.store.is_view_once(chat, id).unwrap_or(false),
+            view_once: self.store.is_view_once(chat, id).observed().unwrap_or(true),
             recoverable: false,
             ..Default::default()
         }

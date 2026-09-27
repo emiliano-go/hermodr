@@ -90,7 +90,7 @@ pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &s
                     if let Some(service) = service_for_events.upgrade() {
                         forget_session(&emitter, &account_id, &service, android);
                     }
-                    let _ = emitter.emit(SERVICE_EVENT, &ServiceEvent::LoggedOut);
+                    emit_service_event(&emitter, &ServiceEvent::LoggedOut);
                     // Holding the service keeps its session database open.
                     break;
                 }
@@ -98,7 +98,7 @@ pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &s
                     if service_for_events.upgrade().is_none() {
                         break;
                     }
-                    let _ = emitter.emit(SERVICE_EVENT, &event);
+                    emit_service_event(&emitter, &event);
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(dropped)) => {
                     // A slow consumer missed some events, and that can include
@@ -107,7 +107,7 @@ pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &s
                     // messages themselves are in the store to be refetched.
                     log::warn!("UI fell behind, dropped {dropped} service event(s)");
                     let Some(service) = service_for_events.upgrade() else { break };
-                    let _ = emitter.emit(SERVICE_EVENT, &resync_event(&service));
+                    emit_service_event(&emitter, &resync_event(&service));
                 }
                 Err(_) => break,
             }
@@ -123,6 +123,12 @@ pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &s
 
     *state.service.lock().unwrap() = Some(service);
     Ok(())
+}
+
+fn emit_service_event(app: &AppHandle, event: &ServiceEvent) {
+    if let Err(error) = app.emit(SERVICE_EVENT, event) {
+        log::error!("could not emit service event to UI: {error}");
+    }
 }
 
 /// Stops a revoked mode's service and points it at a fresh session file.

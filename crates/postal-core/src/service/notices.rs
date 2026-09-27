@@ -90,7 +90,7 @@ impl Inbound {
         let at = call.timestamp.timestamp();
         let known = ["CALL_MISSED_VOICE", "CALL_MISSED_VIDEO"]
             .iter()
-            .any(|k| self.store.has_system_near(&chat, k, at).unwrap_or(false));
+            .any(|k| self.store.has_system_near(&chat, k, at).observed().unwrap_or(false));
         if !known {
             self.store_notice(&chat, format!("call-{}", call.call_id), at, "CALL_MISSED", vec![]);
         }
@@ -99,7 +99,7 @@ impl Inbound {
     /// Stores and announces one system line, unless that change is already drawn.
     fn store_notice(&self, chat: &str, id: String, timestamp: i64, kind: &str, params: Vec<String>) {
         let Self { store, events, .. } = self;
-        if store.message(chat, &id).is_ok() || store.has_system_near(chat, kind, timestamp).unwrap_or(false) {
+        if store.message(chat, &id).observed().is_some() || store.has_system_near(chat, kind, timestamp).observed().unwrap_or(false) {
             return;
         }
         let row = system_row(chat, id, timestamp, kind.to_string(), params);
@@ -117,11 +117,11 @@ impl Inbound {
         let store = &self.store;
         let Some((chat, user)) = forms.into_iter().flatten().find_map(|jid| {
             let chat = jid.to_non_ad().to_string();
-            matches!(store.oldest_message(&chat), Ok(Some(_))).then(|| (chat, jid.to_non_ad().to_string()))
+            matches!(store.oldest_message(&chat).observed(), Some(Some(_))).then(|| (chat, jid.to_non_ad().to_string()))
         }) else {
             return;
         };
-        let last = store.messages_for(&chat, 1).ok().and_then(|m| m.into_iter().next());
+        let last = store.messages_for(&chat, 1).observed().and_then(|m| m.into_iter().next());
         if last.is_some_and(|m| m.system.kind.as_deref() == Some(kind)) {
             return;
         }

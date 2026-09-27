@@ -148,7 +148,7 @@ impl Inbound {
         let mut names_learned = 0;
         for push in &history.pushnames {
             if let (Some(id), Some(name)) = (&push.id, &push.pushname) {
-                if !name.is_empty() && store.set_name(id, name).is_ok() {
+                if !name.is_empty() && store.set_name(id, name).observed().is_some() {
                     names_learned += 1;
                 }
             }
@@ -156,7 +156,7 @@ impl Inbound {
         let pair = |lid: Option<&str>, pn: Option<&str>| {
             let (Some(lid), Some(pn)) = (lid, pn) else { return false };
             let user = |j: &str| j.split(['@', ':']).next().unwrap_or(j).to_string();
-            store.set_lid_pn(&user(lid), &user(pn)).is_ok()
+            store.set_lid_pn(&user(lid), &user(pn)).observed().is_some()
         };
         for mapping in &history.phone_number_to_lid_mappings {
             if pair(mapping.lid_jid.as_deref(), mapping.pn_jid.as_deref()) {
@@ -201,9 +201,9 @@ impl Inbound {
                         notice,
                         web.message_stub_parameters.clone(),
                     );
-                    let seen = store.message(&chat, &stored.header.id).is_ok()
-                        || store.has_system_near(&chat, &notice_kind, stored.header.timestamp).unwrap_or(false);
-                    if !seen && store.insert_message(&stored).is_ok() {
+                    let seen = store.message(&chat, &stored.header.id).observed().is_some()
+                        || store.has_system_near(&chat, &notice_kind, stored.header.timestamp).observed().unwrap_or(false);
+                    if !seen && store.insert_message(&stored).observed().is_some() {
                         added = true;
                     }
                     continue;
@@ -227,13 +227,13 @@ impl Inbound {
                 if let Some(push) =
                     web.push_name.as_deref().filter(|p| !p.is_empty())
                 {
-                    if !from_me && store.set_name(&sender, push).is_ok() {
+                    if !from_me && store.set_name(&sender, push).observed().is_some() {
                         names_learned += 1;
                     }
                 }
                 // A stored row is already complete; rebuilding
                 // it would only rewrite its thumbnails.
-                if store.message(&chat, &id).is_ok() {
+                if store.message(&chat, &id).observed().is_some() {
                     continue;
                 }
                 if let Some(target) = revoke_target(message) {

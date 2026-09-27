@@ -281,9 +281,9 @@ pub(super) async fn stored_message(
                 match client.download(media.downloadable.as_ref()).await {
                     Ok(bytes) => {
                         log::debug!("downloaded {id} {} ({} KB) in {:?}", media.kind, bytes.len() / 1024, started.elapsed());
-                        if std::fs::create_dir_all(dir).is_ok() {
+                        if std::fs::create_dir_all(dir).observed().is_some() {
                             let path = dir.join(format!("{}.{}", id, media.extension()));
-                            if std::fs::write(&path, &bytes).is_ok() {
+                            if std::fs::write(&path, &bytes).observed().is_some() {
                                 media_path = Some(path.to_string_lossy().to_string());
                             }
                         }

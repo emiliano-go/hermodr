@@ -2,6 +2,63 @@ use super::*;
 use std::path::Path;
 
 #[tokio::test]
+async fn storage_failures_are_logged_and_event_processing_continues() {
+    use whatsapp_rust::wacore::{stanza::groups::GroupNotificationAction, types::events::GroupUpdate};
+    thread_local! {
+        static ERRORS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+    struct Capture;
+    impl log::Log for Capture {
+        fn enabled(&self, _: &log::Metadata<'_>) -> bool { true }
+        fn log(&self, record: &log::Record<'_>) {
+            if record.target() == "postal_core::storage" && record.level() == log::Level::Error {
+                ERRORS.with_borrow_mut(|errors| errors.push(record.args().to_string()));
+            }
+        }
+        fn flush(&self) {}
+    }
+    static LOGGER: Capture = Capture;
+    log::set_logger(&LOGGER).unwrap();
+    log::set_max_level(log::LevelFilter::Error);
+    let dir = std::env::temp_dir().join(format!("postal-storage-errors-{}-{}", std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("synthetic.db");
+    let store = MessageStore::open(&path, Retention::unlimited()).unwrap();
+    assert!(store.message("1@g.us", "absent").observed().is_none());
+    assert!(ERRORS.with_borrow(|errors| errors.is_empty()));
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch("CREATE TRIGGER fail_name BEFORE INSERT ON names BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END;").unwrap();
+    let (events, mut received) = broadcast::channel(32);
+    let inbound = Inbound {
+        store: Arc::new(store), events, connected: Arc::default(), client_for_events: Arc::default(),
+        media_dir: None, group_cache: Arc::default(), groups_cache: Arc::default(),
+        older_waits: Arc::default(), downloads: Arc::new(tokio::sync::Semaphore::new(1)),
+        sync_progress: Arc::default(), auto_download_default: false,
+        keep_archived: Arc::default(), keep_view_once: Arc::default(),
+    };
+    let update = |subject: &str| Event::GroupUpdate(GroupUpdate::builder()
+        .group_jid("1@g.us".parse().unwrap())
+        .timestamp("2026-09-27T00:00:00Z".parse().unwrap())
+        .is_lid_addressing_mode(false)
+        .action(Box::new(GroupNotificationAction::Subject {
+            subject: subject.into(), subject_owner: None, subject_owner_pn: None,
+            subject_owner_username: None, subject_time: None,
+        })).build());
+    inbound.handle(&update("rejected")).await;
+    assert!(ERRORS.with_borrow(|errors| errors.iter().any(|error| error.contains("synthetic write failure"))));
+    assert!(inbound.store.name_for("1@g.us").unwrap().is_none());
+    conn.execute_batch("DROP TRIGGER fail_name").unwrap();
+    inbound.handle(&update("accepted")).await;
+    assert_eq!(inbound.store.name_for("1@g.us").unwrap().as_deref(), Some("accepted"));
+    assert!(std::iter::from_fn(|| received.try_recv().ok()).any(|event| matches!(event, ServiceEvent::GroupChanged { .. })));
+    assert!(stored_message(&wa::Message::default(), MessageHeader::default(), None, None, false).await.is_none());
+    drop(inbound);
+    drop(conn);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
 async fn incoming_media_captions_keep_wire_mentions_through_storage() {
     let caption = "Look @12345\nsecond line";
     let context = wa::ContextInfo { mentioned_jid: vec!["12345@lid".into()], ..Default::default() };

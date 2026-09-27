@@ -433,7 +433,7 @@ impl WhatsAppService {
                                 {
                                     Ok(_) => {
                                         backfill_lid_names(&session_path, &store);
-                                        if let Ok(count) = store.saved_name_count() {
+                                        if let Some(count) = store.saved_name_count().observed() {
                                             log::info!("address book: {count} saved name(s)");
                                             if count > 0 {
                                                 let _ =
@@ -523,7 +523,7 @@ impl WhatsAppService {
         // Hand the client to the message handler, which needs it to download
         // media. Without this the slot stays empty and every attachment is
         // recorded with no file.
-        let _ = client_slot.set(client.clone());
+        client_slot.set(client.clone()).map_err(|_| anyhow::anyhow!("event client already initialized"))?;
 
         // System sleep leaves a half-open socket that the library's keepalive
         // may never surface, after which the app neither sends nor receives

@@ -129,7 +129,7 @@ impl Inbound {
                 let mut jid = presence.from.to_non_ad();
                 if jid.is_lid() {
                     if let Some(client) = client_for_events.get() {
-                        if let Ok(Some(entry)) = client.get_lid_pn_entry(&jid).await {
+                        if let Some(Some(entry)) = client.get_lid_pn_entry(&jid).await.observed() {
                             jid = Jid::new(&*entry.phone_number, whatsapp_rust::wacore_binary::Server::Pn);
                         }
                     }
@@ -146,9 +146,9 @@ impl Inbound {
                 let jid = update.jid.to_non_ad().to_string();
                 if let Some(dir) = media_dir.as_deref() {
                     let path = avatar_path(dir, &jid);
-                    let _ = std::fs::remove_file(path.with_extension("none"));
-                    let _ = std::fs::remove_file(path);
-                    let _ = std::fs::remove_file(avatar_full_path(dir, &jid));
+                    remove_cached_file(path.with_extension("none"));
+                    remove_cached_file(path);
+                    remove_cached_file(avatar_full_path(dir, &jid));
                 }
                 let _ = events.send(ServiceEvent::AvatarChanged { jid });
             }
@@ -169,7 +169,7 @@ impl Inbound {
                 )
                 .await;
                 let id = info.id.to_string();
-                if store.message(&chat, &id).is_ok() {
+                if store.message(&chat, &id).observed().is_some() {
                     return;
                 }
                 log::debug!("view-once in {chat}: arrived as a bare stub (no media)");
@@ -191,7 +191,7 @@ impl Inbound {
                     ..Default::default()
                 };
                 store.set_view_once(&chat, &id, from_me).logged();
-                if store.insert_message(&message).is_ok() {
+                if store.insert_message(&message).observed().is_some() {
                     let _ = events.send(ServiceEvent::hint(&message, true));
                 }
             }
@@ -260,8 +260,8 @@ impl Inbound {
                         .as_option()
                         .and_then(|range| range.last_message_timestamp);
                     let changed = match through {
-                        Some(ts) => store.mark_read_through(&jid, ts).unwrap_or(0),
-                        None => store.mark_read(&jid).unwrap_or(0),
+                        Some(ts) => store.mark_read_through(&jid, ts).observed().unwrap_or(0),
+                        None => store.mark_read(&jid).observed().unwrap_or(0),
                     };
                     log::debug!("chat read on another device: {jid} ({changed} message(s))");
                 }
@@ -309,7 +309,7 @@ impl Inbound {
             touched.push(chat.clone());
             // The LID form of a direct chat still holding history folds onto the
             // phone-number form, so a split cannot outlive this message.
-            if raw_chat != chat && raw_chat.ends_with("@lid") && store.chat_exists(&raw_chat).unwrap_or(false)
+            if raw_chat != chat && raw_chat.ends_with("@lid") && store.chat_exists(&raw_chat).observed().unwrap_or(false)
             {
                 store.merge_chats(&raw_chat, &chat).logged();
             }
@@ -339,7 +339,7 @@ impl Inbound {
                 inbound.info.source.sender_alt.as_ref().map(|j| j.to_string())
             {
                 let known =
-                    store.name_for(&alt).ok().flatten().filter(|n| !is_placeholder_name(n));
+                    store.name_for(&alt).observed().flatten().filter(|n| !is_placeholder_name(n));
                 let is_saved = known.is_some();
                 // Fall back to the phone number, never
                 // the unreadable LID.
@@ -356,7 +356,7 @@ impl Inbound {
                     // it must not replace a push name that a
                     // message without one would otherwise erase.
                     let unnamed = |jid: &str| {
-                        store.name_for(jid).ok().flatten().is_none()
+                        store.name_for(jid).observed().flatten().is_none()
                     };
                     if unnamed(&sender) {
                         store.set_name(&sender, &name).logged();
@@ -406,7 +406,7 @@ impl Inbound {
             if let Some(update) = base.poll_update_message.as_option() {
                 use whatsapp_rust::wacore::poll::{compute_option_hash, PollVoteCiphertext};
                 let poll_id = update.poll_creation_message_key.as_option().and_then(|k| k.id.clone());
-                let def = poll_id.as_deref().and_then(|id| store.poll_secret(&chat, id).ok().flatten());
+                let def = poll_id.as_deref().and_then(|id| store.poll_secret(&chat, id).observed().flatten());
                 if let (Some(poll_id), Some(def), Some(vote), Some(client)) = (
                     poll_id,
                     def,
@@ -465,7 +465,7 @@ impl Inbound {
 
             if let Some(response) = base.enc_event_response_message.as_option() {
                 let event_id = response.event_creation_message_key.as_option().and_then(|k| k.id.clone());
-                let def = event_id.as_deref().and_then(|id| store.event_secret(&chat, id).ok().flatten());
+                let def = event_id.as_deref().and_then(|id| store.event_secret(&chat, id).observed().flatten());
                 if let (Some(event_id), Some(def)) = (event_id, def) {
                     let responder = inbound.info.source.sender.to_non_ad().to_string();
                     // Our own events may have been answered under our other address.
@@ -545,9 +545,9 @@ impl Inbound {
             // dropping the notice, so the chat shows
             // that something was removed.
             if let Some(target) = revoke_target(&inbound.message) {
-                if let Ok(true) = store.revoke_message(&chat, &target) {
-                    if let Ok(updated) =
-                        store.message(&chat, &target)
+                if let Some(true) = store.revoke_message(&chat, &target).observed() {
+                    if let Some(updated) =
+                        store.message(&chat, &target).observed()
                     {
                         let _ = events.send(ServiceEvent::hint(&updated, false));
                     }
@@ -556,8 +556,8 @@ impl Inbound {
             }
 
             if let Some((target, text)) = edit_of(&inbound.message) {
-                if let Ok(true) = store.update_message_content(&chat, &target, &text) {
-                    if let Ok(updated) = store.message(&chat, &target) {
+                if let Some(true) = store.update_message_content(&chat, &target, &text).observed() {
+                    if let Some(updated) = store.message(&chat, &target).observed() {
                         let _ = events.send(ServiceEvent::hint(&updated, false));
                     }
                     let _ = events.send(ServiceEvent::Marks { chat: chat.clone() });
@@ -573,7 +573,7 @@ impl Inbound {
             let auto_download = small
                 || store
                     .chat_auto_download(&chat)
-                    .ok()
+                    .observed()
                     .flatten()
                     .unwrap_or(auto_download_default);
             let Some(mut message) =
@@ -634,7 +634,7 @@ impl Inbound {
                 // account is told too, so the phone cannot re-archive it later.
                 if !from_me
                     && !self.keep_archived.load(Ordering::SeqCst)
-                    && store.is_archived(&chat).unwrap_or(false)
+                    && store.is_archived(&chat).observed().unwrap_or(false)
                 {
                     store.set_archived(&chat, false).logged();
                     let _ = events.send(ServiceEvent::ChatStateChanged { chat: chat.clone() });
@@ -679,7 +679,7 @@ impl Inbound {
                             if keep_once {
                                 if let Err(e) = store.keep_view_once(&chat, &id) {
                                     log::warn!("could not keep view-once {id}: {e}");
-                                } else if let Ok(kept) = store.message(&chat, &id) {
+                                } else if let Some(kept) = store.message(&chat, &id).observed() {
                                     // The mark is gone, so the row reloads as
                                     // ordinary media already holding the file.
                                     let _ = events.send(ServiceEvent::hint(&kept, false));

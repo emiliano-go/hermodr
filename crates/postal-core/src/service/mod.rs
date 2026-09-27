@@ -77,16 +77,39 @@ use crate::store::is_placeholder_name;
 
 /// For store writes that must not stop the event loop but must not vanish
 /// either: a failure is logged with the calling line.
-trait Logged {
+trait Logged<T> {
     fn logged(self);
+    fn observed(self) -> Option<T>;
 }
 
-impl<T> Logged for Result<T> {
+impl<T, E: Into<anyhow::Error>> Logged<T> for std::result::Result<T, E> {
     #[track_caller]
     fn logged(self) {
         if let Err(e) = self {
+            let e = e.into();
             let at = std::panic::Location::caller();
-            log::error!("store write failed at {}:{}: {e:#}", at.file(), at.line());
+            log::error!(target: "postal_core::storage", "write failed at {}:{}: {e:#}", at.file(), at.line());
+        }
+    }
+
+    #[track_caller]
+    fn observed(self) -> Option<T> {
+        match self.map_err(Into::into) {
+            Ok(value) => Some(value),
+            Err(e) if matches!(e.downcast_ref::<rusqlite::Error>(), Some(rusqlite::Error::QueryReturnedNoRows)) => None,
+            Err(e) => {
+                let at = std::panic::Location::caller();
+                log::error!(target: "postal_core::storage", "operation failed at {}:{}: {e:#}", at.file(), at.line());
+                None
+            }
+        }
+    }
+}
+
+fn remove_cached_file(path: impl AsRef<Path>) {
+    if let Err(error) = std::fs::remove_file(path) {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            Err::<(), _>(error).logged();
         }
     }
 }
@@ -382,6 +405,7 @@ pub struct WhatsAppService {
     store: Arc<MessageStore>,
     /// Local, per-contact aliases, kept in their own file beside the messages.
     aliases: Arc<AliasStore>,
+    // Broadcast send only fails with no subscribers, expected during shutdown.
     events: broadcast::Sender<ServiceEvent>,
     /// Fires the shutdown signal. `None` once it has been sent.
     shutdown: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,

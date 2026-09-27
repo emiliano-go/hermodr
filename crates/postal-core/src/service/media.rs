@@ -89,13 +89,14 @@ impl WhatsAppService {
     pub fn flush_media(&self) -> Result<usize> {
         let cleared = self.store.clear_media_paths()?;
         if let Some(dir) = &self.media_dir {
-            if let Ok(entries) = std::fs::read_dir(dir) {
-                for entry in entries.flatten() {
+            if dir.exists() {
+                for entry in std::fs::read_dir(dir)? {
+                    let entry = entry?;
                     let path = entry.path();
                     if path.is_dir() {
-                        let _ = std::fs::remove_dir_all(&path);
+                        std::fs::remove_dir_all(&path)?;
                     } else {
-                        let _ = std::fs::remove_file(&path);
+                        std::fs::remove_file(&path)?;
                     }
                 }
             }
@@ -262,10 +263,10 @@ impl WhatsAppService {
         let mut stored_path = None;
         if let Some(dir) = self.media_dir().filter(|_| !view_once) {
             let dir = &dir;
-            if std::fs::create_dir_all(dir).is_ok() {
+            if std::fs::create_dir_all(dir).observed().is_some() {
                 let name = if extension.is_empty() { "bin".to_string() } else { extension.clone() };
                 let dest = dir.join(format!("{}.{}", result.message_id, name));
-                if std::fs::write(&dest, &bytes).is_ok() {
+                if std::fs::write(&dest, &bytes).observed().is_some() {
                     stored_path = Some(dest.to_string_lossy().to_string());
                 }
             }
@@ -404,9 +405,9 @@ impl WhatsAppService {
         }
 
         let media_path = self.media_dir().and_then(|dir| {
-            std::fs::create_dir_all(&dir).ok()?;
+            std::fs::create_dir_all(&dir).observed()?;
             let dest = dir.join(format!("{}.webp", result.message_id));
-            std::fs::write(&dest, &webp).ok()?;
+            std::fs::write(&dest, &webp).observed()?;
             Some(dest.to_string_lossy().into_owned())
         });
         let mut stored = self.own_message(chat, &result.message_id, "[sticker]".into(), "sticker", to_self);

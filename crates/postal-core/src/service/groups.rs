@@ -141,7 +141,7 @@ impl WhatsAppService {
             let name = candidates
                 .into_iter()
                 .flatten()
-                .filter_map(|j| self.store.name_for(&j.to_string()).ok().flatten())
+                .filter_map(|j| self.store.name_for(&j.to_string()).observed().flatten())
                 .find(|n| !is_placeholder_name(n))
                 .or_else(|| username.clone())
                 .or_else(|| number.clone())
@@ -209,7 +209,7 @@ impl WhatsAppService {
         });
         let parent = metadata.parent_group_jid.as_ref().map(|j| j.to_string());
         let parent_name = match &parent {
-            Some(jid) => match self.store.name_for(jid).ok().flatten() {
+            Some(jid) => match self.store.name_for(jid).observed().flatten() {
                 Some(name) => Some(name),
                 None => self.group_overviews().await.into_iter().find(|(id, _)| id == jid).map(|(_, s)| s),
             },
@@ -240,7 +240,7 @@ impl WhatsAppService {
             .or_else(|| {
                 creator
                     .iter()
-                    .filter_map(|j| self.store.name_for(j).ok().flatten())
+                    .filter_map(|j| self.store.name_for(j).observed().flatten())
                     .find(|n| !is_placeholder_name(n))
             })
             .or_else(|| metadata.creator_username.clone())
@@ -381,7 +381,7 @@ impl WhatsAppService {
             .reports
             .into_iter()
             .map(|report| AdminReport {
-                message: self.store.message(chat, &report.message_id).ok(),
+                message: self.store.message(chat, &report.message_id).observed(),
                 reporters: report
                     .reporters
                     .into_iter()

@@ -55,7 +55,7 @@ pub(super) async fn resolve_chat(
     }
     let pn = match client {
         Some(client) => other_form(client, store, &bare).await.map(|(_, pn)| pn),
-        None => store.lid_pn(&bare.user).ok().flatten().map(|(_, pn)| pn),
+        None => store.lid_pn(&bare.user).observed().flatten().map(|(_, pn)| pn),
     };
     match pn {
         Some(pn) => {
@@ -68,12 +68,12 @@ pub(super) async fn resolve_chat(
 
 /// The other address form of a bare user JID, from the session or our own record of it.
 pub(super) async fn other_form(client: &Client, store: &MessageStore, bare: &Jid) -> Option<(String, String)> {
-    if let Ok(Some(entry)) = client.get_lid_pn_entry(bare).await {
+    if let Some(Some(entry)) = client.get_lid_pn_entry(bare).await.observed() {
         let (lid, pn) = (entry.lid.to_string(), entry.phone_number.to_string());
         store.set_lid_pn(&lid, &pn).logged();
         return Some((lid, pn));
     }
-    store.lid_pn(&bare.user).ok().flatten()
+    store.lid_pn(&bare.user).observed().flatten()
 }
 
 /// The user part of a JID, without the device suffix or server.
@@ -96,9 +96,9 @@ pub(super) fn user_part(jid: &str) -> String {
 /// as a clash. A contact the core has not mapped to a twin has just the one.
 pub(super) fn contact_forms(store: &MessageStore, jid: &str) -> Vec<String> {
     let mut forms = vec![jid.to_string()];
-    let twin = match store.lid_pn(&user_part(jid)) {
-        Ok(Some((_, pn))) if jid.ends_with("@lid") => format!("{pn}@s.whatsapp.net"),
-        Ok(Some((lid, _))) => format!("{lid}@lid"),
+    let twin = match store.lid_pn(&user_part(jid)).observed().flatten() {
+        Some((_, pn)) if jid.ends_with("@lid") => format!("{pn}@s.whatsapp.net"),
+        Some((lid, _)) => format!("{lid}@lid"),
         _ => return forms,
     };
     if !forms.contains(&twin) {
@@ -116,22 +116,15 @@ pub(super) fn contact_forms(store: &MessageStore, jid: &str) -> Vec<String> {
 pub(super) fn backfill_lid_names(session_path: &std::path::Path, store: &MessageStore) {
     use std::collections::HashMap;
 
-    let Ok(conn) = rusqlite::Connection::open_with_flags(
-        session_path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    ) else {
-        return;
-    };
-    let mut by_lid: HashMap<String, String> = HashMap::new();
-    if let Ok(mut stmt) = conn.prepare("SELECT lid, phone_number FROM lid_pn_mapping") {
-        if let Ok(rows) = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
-        {
-            for (lid, phone) in rows.flatten() {
-                by_lid.insert(lid, phone);
-            }
-        }
-    }
+    let mappings = (|| -> Result<HashMap<String, String>> {
+        let conn = rusqlite::Connection::open_with_flags(
+            session_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )?;
+        let mut stmt = conn.prepare("SELECT lid, phone_number FROM lid_pn_mapping")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    })();
+    let Some(by_lid) = mappings.observed() else { return };
     if by_lid.is_empty() {
         return;
     }
@@ -144,7 +137,7 @@ pub(super) fn backfill_lid_names(session_path: &std::path::Path, store: &Message
         }
     }
 
-    let Ok(saved) = store.saved_names() else {
+    let Some(saved) = store.saved_names().observed() else {
         return;
     };
     let by_phone: HashMap<&str, &str> = saved
@@ -158,7 +151,7 @@ pub(super) fn backfill_lid_names(session_path: &std::path::Path, store: &Message
         return;
     }
 
-    for address in store.known_addresses().unwrap_or_default() {
+    for address in store.known_addresses().observed().unwrap_or_default() {
         let Some((user, server)) = address.split_once('@') else {
             continue;
         };
@@ -236,7 +229,7 @@ impl WhatsAppService {
                 out.insert(jid.clone(), push_name.clone());
                 continue;
             }
-            let mut name = self.store.name_for(&key).ok().flatten();
+            let mut name = self.store.name_for(&key).observed().flatten();
             let mut number = bare.is_pn().then(|| bare.user.to_string());
             if name.as_deref().is_none_or(numeric) {
                 if let Some((lid, pn)) = other_form(&self.client, &self.store, &bare).await {
@@ -246,7 +239,7 @@ impl WhatsAppService {
                         format!("{lid}@lid")
                     };
                     number = Some(pn);
-                    if let Some(found) = self.store.name_for(&other).ok().flatten() {
+                    if let Some(found) = self.store.name_for(&other).observed().flatten() {
                         if !numeric(&found) {
                             name = Some(found);
                         }
@@ -402,11 +395,11 @@ impl WhatsAppService {
             // number nobody recognises.
             let named = forms
                 .iter()
-                .find_map(|form| self.store.name_for(form).ok().flatten().filter(|n| !is_placeholder_name(n)))
+                .find_map(|form| self.store.name_for(form).observed().flatten().filter(|n| !is_placeholder_name(n)))
                 .or_else(|| forms.iter().find(|f| f.ends_with("@s.whatsapp.net")).cloned())
                 .unwrap_or_else(|| jid.clone());
             let number = user_part(&named);
-            let name = self.store.name_for(&named).ok().flatten().unwrap_or_else(|| number.clone());
+            let name = self.store.name_for(&named).observed().flatten().unwrap_or_else(|| number.clone());
             for form in &forms {
                 seen.insert(form.clone());
             }

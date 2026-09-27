@@ -37,14 +37,14 @@ impl Inbound {
         if let Some(status) = status {
             let chat = receipt.source.chat.to_string();
             for id in receipt.message_ids.iter() {
-                if let Ok(true) =
-                    store.set_delivery_state(&chat, id.as_str(), status)
+                if let Some(true) =
+                    store.set_delivery_state(&chat, id.as_str(), status).observed()
                 {
-                    if let Ok(updated) = store.message(&chat, id.as_str()) {
+                    if let Some(updated) = store.message(&chat, id.as_str()).observed() {
                         let _ = events.send(ServiceEvent::hint(&updated, false));
                     }
-                } else if let Ok(updated) =
-                    store.set_delivery_state_by_id(id.as_str(), status)
+                } else if let Some(updated) =
+                    store.set_delivery_state_by_id(id.as_str(), status).observed()
                 {
                     for message in updated {
                         let _ = events.send(ServiceEvent::hint(&message, false));
@@ -67,17 +67,17 @@ impl Inbound {
             let mut done = false;
             if let Some(chat) = ack.from.as_ref() {
                 let chat = chat.to_string();
-                if let Ok(true) = store.set_delivery_state(&chat, &ack.id, "sent")
+                if let Some(true) = store.set_delivery_state(&chat, &ack.id, "sent").observed()
                 {
-                    if let Ok(updated) = store.message(&chat, &ack.id) {
+                    if let Some(updated) = store.message(&chat, &ack.id).observed() {
                         let _ = events.send(ServiceEvent::hint(&updated, false));
                     }
                     done = true;
                 }
             }
             if !done {
-                if let Ok(updated) =
-                    store.set_delivery_state_by_id(&ack.id, "sent")
+                if let Some(updated) =
+                    store.set_delivery_state_by_id(&ack.id, "sent").observed()
                 {
                     for message in updated {
                         let _ = events.send(ServiceEvent::hint(&message, false));
@@ -147,8 +147,8 @@ impl WhatsAppService {
     ) -> Option<whatsapp_rust::SyncActionMessageRange> {
         let remote = chat.parse::<Jid>().ok()?;
         let boundary = match up_to {
-            Some(id) => self.store.message(chat, id).ok()?,
-            None => self.store.messages_for(chat, 1).ok()?.into_iter().next()?,
+            Some(id) => self.store.message(chat, id).observed()?,
+            None => self.store.messages_for(chat, 1).observed()?.into_iter().next()?,
         };
         let participant = (remote.is_group() && !boundary.header.from_me)
             .then(|| boundary.header.sender.parse::<Jid>().ok().map(|j| j.to_non_ad()))

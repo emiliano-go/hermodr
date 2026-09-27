@@ -83,9 +83,9 @@ impl WhatsAppService {
         sent.map_err(|e| anyhow::anyhow!(e.to_string()))?;
         if let Some(dir) = &self.media_dir {
             let path = avatar_path(dir, &self.own_jid());
-            let _ = std::fs::remove_file(path.with_extension("none"));
-            let _ = std::fs::remove_file(path);
-            let _ = std::fs::remove_file(avatar_full_path(dir, &self.own_jid()));
+            remove_cached_file(path.with_extension("none"));
+            remove_cached_file(path);
+            remove_cached_file(avatar_full_path(dir, &self.own_jid()));
         }
         Ok(())
     }
@@ -155,7 +155,7 @@ impl WhatsAppService {
             std::fs::create_dir_all(parent)?;
         }
         let Some(picture) = picture else {
-            let _ = std::fs::remove_file(&path);
+            remove_cached_file(&path);
             std::fs::write(&none, b"")?;
             return Ok(None);
         };
@@ -169,7 +169,7 @@ impl WhatsAppService {
         .flatten()
         .ok_or_else(|| anyhow::anyhow!("could not download the profile picture"))?;
         std::fs::write(&path, bytes)?;
-        let _ = std::fs::remove_file(&none);
+        remove_cached_file(&none);
         Ok(Some(path.to_string_lossy().into_owned()))
     }
 }
