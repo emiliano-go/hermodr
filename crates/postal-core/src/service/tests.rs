@@ -2,6 +2,64 @@ use super::*;
 use std::path::Path;
 
 #[tokio::test]
+async fn incoming_media_captions_keep_wire_mentions_through_storage() {
+    let caption = "Look @12345\nsecond line";
+    let context = wa::ContextInfo { mentioned_jid: vec!["12345@lid".into()], ..Default::default() };
+    let image = wa::Message {
+        image_message: MessageField::some(wa::message::ImageMessage {
+            caption: Some(caption.into()), context_info: MessageField::some(context.clone()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let video = wa::Message {
+        video_message: MessageField::some(wa::message::VideoMessage {
+            caption: Some(caption.into()), context_info: MessageField::some(context.clone()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let document = wa::Message {
+        document_message: MessageField::some(wa::message::DocumentMessage {
+            caption: Some(caption.into()), context_info: MessageField::some(context),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let wrapped = wa::Message {
+        ephemeral_message: MessageField::some(wa::message::FutureProofMessage {
+            message: MessageField::some(image.clone()), ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let store = MessageStore::open(Path::new(":memory:"), Retention::unlimited()).unwrap();
+    let once = wa::Message {
+        view_once_message: MessageField::some(wa::message::FutureProofMessage {
+            message: MessageField::some(image.clone()), ..Default::default()
+        }), ..Default::default()
+    };
+    for (index, wire) in [image, video, document, wrapped].into_iter().enumerate() {
+        let header = MessageHeader { chat: "group@g.us".into(), id: index.to_string(), sender: "other@lid".into(), timestamp: 1, from_me: false };
+        let mut stored = stored_message(&wire, header, None, None, false).await.unwrap();
+        assert_eq!(stored.text, caption);
+        assert!(stored.media.locator.is_some());
+        stored.local.mentioned = mentions_me(&wire, &["12345@lid".into()]);
+        assert!(stored.local.mentioned);
+        store.insert_message(&stored).unwrap();
+        let saved = store.message("group@g.us", &index.to_string()).unwrap();
+        assert_eq!(saved.text, caption);
+        assert!(saved.local.mentioned);
+    }
+    let empty = wa::Message { image_message: MessageField::some(Default::default()), ..Default::default() };
+    let stored = stored_message(&empty, MessageHeader::default(), None, None, false).await.unwrap();
+    assert_eq!(stored.text, "[image]");
+    let stored = stored_message(&once, MessageHeader::default(), None, None, false).await.unwrap();
+    assert_eq!(stored.text, "[image]");
+    assert_eq!(stored.media.kind.as_deref(), Some("view_once"));
+    assert!(stored.media.thumb.is_none());
+}
+
+#[tokio::test]
 async fn group_changes_invalidate_fetched_metadata_and_overviews() {
     use whatsapp_rust::wacore::{
         stanza::groups::GroupNotificationAction,

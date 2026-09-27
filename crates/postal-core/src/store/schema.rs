@@ -12,6 +12,50 @@ mod tests {
             .unwrap()
     }
 
+    #[test]
+    fn caption_migration_recovers_batches_without_overwriting_message_state() {
+        use buffa::{Message, MessageField};
+        use whatsapp_rust::prelude::wa;
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        conn.pragma_update(None, "user_version", 2).unwrap();
+        let caption = "Look @12345\nsecond line";
+        let locator = wa::Message {
+            image_message: MessageField::some(wa::message::ImageMessage {
+                caption: Some(caption.into()), ..Default::default()
+            }), ..Default::default()
+        }.encode_to_vec();
+        for id in 0..135 {
+            conn.execute(
+                "INSERT INTO messages (chat, id, sender, timestamp, from_me, text, media_kind, media_ref)
+                 VALUES ('chat', ?1, 'them', 1, 0, '[image]', 'image', ?2)",
+                (id.to_string(), &locator),
+            ).unwrap();
+        }
+        conn.execute_batch(
+            "INSERT INTO edited VALUES ('chat', '128');
+             UPDATE messages SET revoked = 1 WHERE id = '129';
+             INSERT INTO view_once VALUES ('chat', '130', 0);
+             UPDATE messages SET text = 'custom' WHERE id = '131';
+             UPDATE messages SET media_ref = X'FF' WHERE id = '132';",
+        ).unwrap();
+        conn.execute_batch("CREATE TRIGGER fail_caption BEFORE UPDATE OF text ON messages
+            WHEN OLD.id = '133' BEGIN SELECT RAISE(ABORT, 'test failure'); END;").unwrap();
+        assert!(migrate(&conn).is_err());
+        assert_eq!(version(&conn), 2);
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM messages WHERE text = ?1", [caption],
+            |r| r.get::<_, i64>(0)).unwrap(), 0);
+        conn.execute_batch("DROP TRIGGER fail_caption").unwrap();
+        migrate(&conn).unwrap();
+        assert_eq!(version(&conn), MIGRATIONS.len() as i64);
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM messages WHERE text = ?1", [caption],
+            |r| r.get::<_, i64>(0)).unwrap(), 130);
+        for (id, expected) in [(128, "[image]"), (129, "[image]"), (130, "[image]"), (131, "custom"), (132, "[image]")] {
+            assert_eq!(conn.query_row("SELECT text FROM messages WHERE id = ?1", [id.to_string()],
+                |r| r.get::<_, String>(0)).unwrap(), expected);
+        }
+    }
+
     fn legacy() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
@@ -30,7 +74,7 @@ mod tests {
     fn fresh_and_legacy_databases_reach_current_version() {
         for (conn, expected) in [(Connection::open_in_memory().unwrap(), 0), (legacy(), 1)] {
             migrate(&conn).unwrap();
-            assert_eq!(version(&conn), 2);
+            assert_eq!(version(&conn), MIGRATIONS.len() as i64);
             conn.prepare(
                 "SELECT media_ref, reply_to_locator, media_duration, status FROM messages",
             )
@@ -68,7 +112,7 @@ mod tests {
         ).unwrap();
         migrate(&conn).unwrap();
         chats::reconcile_addresses(&conn).unwrap();
-        assert_eq!(version(&conn), 2);
+        assert_eq!(version(&conn), MIGRATIONS.len() as i64);
         assert_eq!(
             conn.query_row("SELECT secret FROM polls", [], |r| r.get::<_, Vec<u8>>(0))
                 .unwrap(),
@@ -109,7 +153,7 @@ mod tests {
         )
         .unwrap();
         migrate(&conn).unwrap();
-        assert_eq!(version(&conn), 2);
+        assert_eq!(version(&conn), MIGRATIONS.len() as i64);
         assert_eq!(
             conn.query_row(
                 "SELECT COUNT(*) FROM names WHERE jid = 'later@lid'",
@@ -151,7 +195,7 @@ mod tests {
         );
         conn.execute_batch("DROP TRIGGER fail_cleanup").unwrap();
         migrate(&conn).unwrap();
-        assert_eq!(version(&conn), 2);
+        assert_eq!(version(&conn), MIGRATIONS.len() as i64);
         assert_eq!(
             conn.query_row(
                 "SELECT COUNT(*) FROM messages WHERE chat = 'status@broadcast'",
@@ -191,7 +235,7 @@ mod tests {
 
     #[test]
     fn unsupported_version_is_rejected_without_schema_changes() {
-        for version in [-1, 3] {
+        for version in [-1, MIGRATIONS.len() as i64 + 1] {
             let conn = Connection::open_in_memory().unwrap();
             conn.pragma_update(None, "user_version", version).unwrap();
             assert!(migrate(&conn).is_err());
@@ -208,6 +252,7 @@ mod tests {
 const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
     migrate_v1_schema,
     migrate_v2_legacy_data,
+    migrate_v3_media_captions,
 ];
 
 pub(super) fn migrate(conn: &Connection) -> Result<()> {
@@ -478,5 +523,32 @@ fn migrate_v2_legacy_data(conn: &Connection) -> Result<()> {
          WHERE jid LIKE '%:%@%'",
         [],
     )?;
+    Ok(())
+}
+
+fn migrate_v3_media_captions(conn: &Connection) -> Result<()> {
+    use buffa::Message;
+    use whatsapp_rust::{prelude::wa, wacore::proto_helpers::MessageExt};
+
+    let mut after = i64::MIN;
+    loop {
+        let batch = conn.prepare(
+            "SELECT rowid, media_ref FROM messages m
+             WHERE rowid > ?1 AND media_kind IN ('image', 'video', 'gif', 'document')
+               AND text = '[' || media_kind || ']' AND media_ref IS NOT NULL AND revoked = 0
+               AND NOT EXISTS (SELECT 1 FROM edited e WHERE e.chat = m.chat AND e.id = m.id)
+               AND NOT EXISTS (SELECT 1 FROM view_once v WHERE v.chat = m.chat AND v.id = m.id)
+             ORDER BY rowid LIMIT 128",
+        )?.query_map([after], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        if batch.is_empty() { break; }
+        for (row, locator) in batch {
+            after = row;
+            let Ok(message) = wa::Message::decode(&mut locator.as_slice()) else { continue };
+            if let Some(caption) = message.get_caption().filter(|text| !text.is_empty()) {
+                conn.execute("UPDATE messages SET text = ?1 WHERE rowid = ?2", (caption, row))?;
+            }
+        }
+    }
     Ok(())
 }

@@ -118,6 +118,11 @@ On Wayland, WebKitGTK's DMA-BUF renderer fails with `Gdk Error 71`. The app sets
 
 ## Diagnostics
 
+New links advertise Android with the `ANDROID_TABLET` platform and WhatsApp
+Android version `2.26.32.84`, published on the [official download page](https://www.whatsapp.com/download)
+when checked on 2026-09-27. Existing links keep their original pairing props;
+unlink Postal from the phone and pair again to adopt this identity.
+
 Two binaries exercise the core without the UI:
 
 ```console
@@ -134,6 +139,11 @@ writes, failed UI commands and crashes with a backtrace. `RUST_LOG` overrides
 the levels; past 5 MB the file moves to `postal.log.old`.
 
 ## Media
+
+Right-click an image for **Copy Image**, **Save Image…**, or **Open Image**.
+Save uses the native file picker and preserves the original file. Copy places
+decoded image pixels on the clipboard. Other attachments offer Save and Open.
+Missing files download on demand; deleted and view-once messages cannot be exported.
 
 Downloaded media is written to the folder set in Settings, which defaults to the
 app data directory. The asset protocol is scoped to whatever folder is

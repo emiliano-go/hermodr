@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-message-media-action"
+description = "Enables the message_media_action command without any pre-configured scope."
+commands.allow = ["message_media_action"]
+
+[[permission]]
+identifier = "deny-message-media-action"
+description = "Denies the message_media_action command without any pre-configured scope."
+commands.deny = ["message_media_action"]

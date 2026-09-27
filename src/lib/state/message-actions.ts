@@ -67,6 +67,17 @@ export function menuItems(m: StoredMessage, openChat: (chat: string) => Promise<
     });
   }
   if (!m.revoked) {
+    if (["image", "sticker", "video", "gif", "audio", "document"].includes(m.media_kind ?? "")) {
+      const image = m.media_kind === "image" || m.media_kind === "sticker";
+      const mediaAction = (action: string) => act(() => invoke("message_media_action", {
+        chat: m.chat, id: m.id, action,
+      }));
+      if (image) items.push({ label: "Copy Image", icon: "copy", action: () => mediaAction("copy_image") });
+      items.push(
+        { label: image ? "Save Image…" : "Save Attachment…", icon: "download", action: () => mediaAction("save") },
+        { label: image ? "Open Image" : "Open Attachment", icon: "external", action: () => mediaAction("open") },
+      );
+    }
     items.push(
       { label: "Forward", icon: "forward", action: () => (ui.forwarding = m) },
       {

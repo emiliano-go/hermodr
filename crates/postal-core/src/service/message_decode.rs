@@ -241,6 +241,9 @@ pub(super) async fn stored_message(
     let outer = message;
     let message = outer.get_base_message();
     let mut text = message.text_content().unwrap_or_default().to_string();
+    if text.is_empty() && !outer.is_view_once() {
+        text = message.get_caption().unwrap_or_default().to_string();
+    }
 
     let mut media_kind = None;
     let mut media_once_kind = None;

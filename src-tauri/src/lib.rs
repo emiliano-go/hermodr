@@ -20,6 +20,7 @@ mod settings;
 mod chats;
 mod messages;
 mod media;
+mod media_actions;
 mod groups;
 mod contacts;
 mod polls;
@@ -61,7 +62,9 @@ pub fn run() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
 
-    let builder = tauri::Builder::default();
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init());
     // A second launch hands its arguments to the running instance and exits,
     // so one process at a time owns the WhatsApp session. The dev server is
     // exempt so a dev instance can run beside the installed app.
@@ -130,6 +133,7 @@ pub fn run() {
             messages::send_text,
             messages::edit_message,
             desktop::open_path,
+            media_actions::message_media_action,
             media::read_file,
             groups::participants,
             groups::group_info,

@@ -37,6 +37,18 @@ impl std::io::Read for CountingReader {
 }
 
 impl WhatsAppService {
+    /// Returns an ordinary attachment, downloading its original file if needed.
+    pub async fn media_for_export(&self, chat: &str, id: &str) -> Result<StoredMessage> {
+        let mut message = self.store.message(chat, id)?;
+        ensure_exportable_media(&message)?;
+        if message.media.path.as_ref().is_none_or(|path| !Path::new(path).is_file()) {
+            self.download_media(chat, id).await?;
+            message = self.store.message(chat, id)?;
+            ensure_exportable_media(&message)?;
+        }
+        Ok(message)
+    }
+
     /// Downloads a message's media on demand, when automatic downloads were
     /// off or the earlier attempt failed.
     pub async fn download_media(&self, chat: &str, id: &str) -> Result<()> {
@@ -456,6 +468,35 @@ impl WhatsAppService {
                 self.send_media(chat, "gif.mp4", bytes, None, reply, options).await.map(|_| ())
             }
             _ => anyhow::bail!("only stickers and GIFs are sent from the library"),
+        }
+    }
+}
+
+fn ensure_exportable_media(message: &StoredMessage) -> Result<()> {
+    anyhow::ensure!(!message.local.revoked, "this message was deleted");
+    anyhow::ensure!(matches!(message.media.kind.as_deref(),
+        Some("image" | "video" | "gif" | "audio" | "document" | "sticker")),
+        "this message has no exportable attachment");
+    Ok(())
+}
+
+#[cfg(test)]
+mod export_tests {
+    use super::*;
+
+    #[test]
+    fn only_ordinary_undeleted_attachments_can_be_exported() {
+        let mut message = StoredMessage::default();
+        for kind in [None, Some("view_once"), Some("poll"), Some("event")] {
+            message.media.kind = kind.map(str::to_owned);
+            assert!(ensure_exportable_media(&message).is_err());
+        }
+        for kind in ["image", "video", "gif", "audio", "document", "sticker"] {
+            message.media.kind = Some(kind.into());
+            message.local.revoked = false;
+            assert!(ensure_exportable_media(&message).is_ok());
+            message.local.revoked = true;
+            assert!(ensure_exportable_media(&message).is_err());
         }
     }
 }

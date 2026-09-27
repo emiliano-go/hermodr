@@ -16,6 +16,7 @@ const COMMANDS: &[&str] = &[
     "send_text",
     "edit_message",
     "open_path",
+    "message_media_action",
     "read_file",
     "participants",
     "group_info",

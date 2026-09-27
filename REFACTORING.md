@@ -53,7 +53,28 @@ Keep structural changes separate from issue fixes.
   semaphore. Tests cover three overlapping 1,001-JID requests, empty input,
   failure cleanup, complete result collection and learned LID/phone mappings.
 
-## Follow-up boundaries
+## Current issue work (2026-09-27)
+
+- Pairing: Android / `ANDROID_TABLET`, version `2.26.32.84`, shipped in
+  `54ab4c7`. Existing links require re-pairing. #154 remains open until a live
+  pairing/history check establishes which compatibility flags can be removed.
+- Incoming media captions: shared decoding preserves caption text and wire
+  mention tokens. Schema migration 3 restores lost placeholders from retained
+  protocol references, without overwriting edits, revocations or view-once rows.
+  Tests cover rollback/retry, malformed references and multiple batches.
+- Image menu: Copy Image, Save Image and Open Image use original attachments;
+  other attachments support Save/Open. Native commands resolve message IDs and
+  restrict files to the configured media folder. Deleted/view-once media is
+  excluded in both layers. Frontend routing and native pixel/path tests pass;
+  live clipboard, save-dialog and new-pairing checks remain unverified.
+- Validation: 90 core unit tests, 10 integration tests, 7 shell tests, frontend
+  self-checks, Svelte check (0 errors/warnings) and production build pass.
+- Assigned backlog: 55 open issues were found. Operator approved separate RAM
+  limits and explicit disk retention for #131/#132/#161; preserve existing disk
+  settings during migration. Implementation remains pending. Do not treat the
+  earlier extraction or these media fixes as completion of that storage work.
+
+## Remaining boundaries
 
 Account-generation guards, queued-send lifetime/order, stale chat responses,
 frontend resource teardown, history-navigation convergence, atomic account-file

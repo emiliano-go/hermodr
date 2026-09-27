@@ -64,6 +64,8 @@
     position: fixed;
     z-index: 271;
     min-width: 230px;
+    max-height: calc(100dvh - 16px);
+    overflow-y: auto;
     padding: 6px;
     background: var(--surface);
     border: 1px solid var(--line-strong);
@@ -90,6 +92,7 @@
     }
   }
   .reactions {
+    flex-shrink: 0;
     display: flex;
     gap: 2px;
     padding: 2px 2px 6px;
@@ -114,6 +117,7 @@
     background: var(--accent-soft);
   }
   .item {
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     gap: 12px;
@@ -140,6 +144,7 @@
     color: var(--danger);
   }
   .sep {
+    flex-shrink: 0;
     height: 1px;
     margin: 4px 6px;
     background: var(--line-strong);
