@@ -172,8 +172,9 @@
       <!-- Each stage lights up as the connection actually reaches it. -->
       <div class="intro-progress" aria-label="Connection progress">
         {#each ["Connecting to WhatsApp", "Waiting for your phone", "Linked"] as label, i (label)}
-          <span class="stage" class:done={stage > i} class:current={stage === i + 1 || (stage === 0 && i === 0)}>
-            <span class="stage-dot"></span>{label}
+          <!-- Not `.stage`: the wallpaper layer is drawn behind every `.stage` (+page.svelte). -->
+          <span class="phase" class:done={stage > i} class:current={stage === i + 1 || (stage === 0 && i === 0)}>
+            <span class="phase-dot"></span>{label}
           </span>
         {/each}
       </div>
@@ -476,29 +477,29 @@
     font-size: 12.5px;
     color: var(--faint);
   }
-  .stage {
+  .phase {
     display: flex;
     align-items: center;
     gap: 7px;
   }
-  .stage-dot {
+  .phase-dot {
     width: 8px;
     height: 8px;
     border-radius: 50%;
     background: var(--line-strong);
   }
-  .stage.current {
+  .phase.current {
     color: var(--text);
   }
-  .stage.current .stage-dot {
+  .phase.current .phase-dot {
     background: var(--accent);
     box-shadow: 0 0 0 4px var(--accent-soft);
     animation: blink-dot 1.4s ease-in-out infinite;
   }
-  .stage.done {
+  .phase.done {
     color: var(--muted);
   }
-  .stage.done .stage-dot {
+  .phase.done .phase-dot {
     background: var(--accent);
   }
   @keyframes blink-dot {
