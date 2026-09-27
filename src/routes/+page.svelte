@@ -48,6 +48,7 @@
   import MediaViewer, { type ViewerItem } from "$lib/MediaViewer.svelte";
   import MessageMenu, { type MenuItem } from "$lib/MessageMenu.svelte";
   import ChatPicker from "$lib/ChatPicker.svelte";
+  import ReactionList from "$lib/ReactionList.svelte";
   import { keybinds, matches } from "$lib/keybinds.svelte";
   import CreateDialog from "$lib/CreateDialog.svelte";
   import { plain } from "$lib/format";
@@ -1143,6 +1144,27 @@
     onreact={(emoji) => act(() => invoke("react", { target: target(m), emoji }))}
     onclose={() => (ui.menu = null)} />
   {/key}
+{/if}
+
+{#if ui.reactionsFor}
+  {@const reactors = messages.reactorsFor.get(ui.reactionsFor.id) ?? []}
+  <ReactionList
+    groups={reactors.map((group) => ({
+      emoji: group.emoji,
+      people: group.senders.map((jid) => {
+        const self = members.isMe(jid);
+        return {
+          // Our own reaction is stored under "@me", which is not an address the
+          // contact card could ask about.
+          jid: self ? (session.me ?? jid) : bare(jid),
+          label: self ? "You" : members.senderName(jid),
+          avatar: self ? (session.me ? chats.pictureOf(session.me) : null) : chats.pictureOf(bare(jid)),
+          self,
+        };
+      }),
+    }))}
+    onprofile={openProfile}
+    onclose={() => (ui.reactionsFor = null)} />
 {/if}
 
 {#if ui.creating}

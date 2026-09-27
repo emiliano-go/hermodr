@@ -4,7 +4,7 @@
 // event dispatch) live in the route and state/events.ts.
 import { tick } from "svelte";
 import { invoke } from "$lib/ipc";
-import type { Marks, Reaction, StoredMessage } from "$lib/models";
+import type { Marks, Reaction, ReactionGroup, StoredMessage } from "$lib/models";
 import { ui } from "./ui.svelte";
 import { MessageWindow, DEFAULT_MESSAGE_WINDOW, cursorOf, type MessagePage } from "$lib/message-window";
 
@@ -59,6 +59,27 @@ export class MessagesState {
         list.push({ emoji: r.emoji, count: 1, mine: r.sender === "@me" });
       }
       byMessage.set(r.target, list);
+    }
+    return byMessage;
+  });
+  /**
+   * Who reacted to each message, by emoji: the sender addresses the counts
+   * above fold away, which is what the "Reactions" list reads. Groups keep the
+   * order the emoji first arrived in, and ours ("@me") leads its own group.
+   */
+  reactorsFor = $derived.by(() => {
+    const byMessage = new Map<string, ReactionGroup[]>();
+    for (const r of this.marks.reactions) {
+      const list = byMessage.get(r.target) ?? [];
+      const group = list.find((g) => g.emoji === r.emoji);
+      if (group) group.senders.push(r.sender);
+      else list.push({ emoji: r.emoji, senders: [r.sender] });
+      byMessage.set(r.target, list);
+    }
+    for (const list of byMessage.values()) {
+      for (const group of list) {
+        group.senders.sort((a, b) => Number(b === "@me") - Number(a === "@me"));
+      }
     }
     return byMessage;
   });

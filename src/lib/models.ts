@@ -245,6 +245,9 @@ export type MentionTarget = { jid: string; name: string; self: boolean };
 /** One emoji with its count, and whether one of them is ours. */
 export type Reaction = { emoji: string; count: number; mine: boolean };
 
+/** Who reacted to a message, grouped by the emoji they used. */
+export type ReactionGroup = { emoji: string; senders: string[] };
+
 /** Everything the list precomputes per message so the bubble stays dumb. */
 export type BubbleVm = {
   first: boolean;

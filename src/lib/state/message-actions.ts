@@ -26,17 +26,21 @@ export function menuItems(m: StoredMessage, openChat: (chat: string) => Promise<
   const group = m.chat.endsWith("@g.us");
   const other = group && !m.from_me;
   const text = m.media_kind ? captionOf(m) : m.text;
-  const items: MenuItem[] = [
-    {
-      label: "Reply",
-      icon: "reply",
-      action: () => {
-        composer.editing = null;
-        composer.replyingTo = m;
-        composer.inputEl?.focus();
-      },
+  const items: MenuItem[] = [];
+  // Under the quick-reaction row, and only once somebody has reacted: an entry
+  // leading to an empty list is a dead end.
+  if (messages.reactionsFor.get(m.id)?.length) {
+    items.push({ label: "Reactions", icon: "smile", action: () => (ui.reactionsFor = m) });
+  }
+  items.push({
+    label: "Reply",
+    icon: "reply",
+    action: () => {
+      composer.editing = null;
+      composer.replyingTo = m;
+      composer.inputEl?.focus();
     },
-  ];
+  });
   if (m.from_me) {
     items.push({ label: "Message info", icon: "check", action: () => (ui.infoFor = m) });
   }

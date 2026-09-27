@@ -33,6 +33,8 @@ export class UiState {
   reporting = $state<StoredMessage | null>(null);
   /** Our message whose delivery and reads are shown. */
   infoFor = $state<StoredMessage | null>(null);
+  /** The message whose reactors are listed, opened from its menu. */
+  reactionsFor = $state<StoredMessage | null>(null);
   /** Bumped so the open info reloads on new receipts. */
   infoVersion = $state(0);
 
