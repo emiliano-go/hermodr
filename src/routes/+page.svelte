@@ -578,7 +578,7 @@
   function scheduleReadMarking() {
     clearTimeout(messages.readMarkTimer);
     messages.readMarkTimer = setTimeout(() => {
-      if (!scroller || !chats.selectedChat) return;
+      if (!scroller || !chats.selectedChat || !document.hasFocus()) return;
       const chat = chats.selectedChat;
       const bottom = scroller.getBoundingClientRect().bottom;
       let candidate: StoredMessage | null = null;
