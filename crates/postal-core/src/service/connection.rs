@@ -2,14 +2,19 @@
 
 use super::*;
 
-/// What this device asks for when it links: named as Postal on the phone's
-/// linked devices, and with full history a backfill of everything the phone
-/// has. Only read at pairing; an existing link keeps what it was paired with.
+/// Android tablet identity and history request, applied only when pairing.
 pub(super) fn pairing_props(full_history: bool) -> whatsapp_rust::wacore::store::DevicePropsOverride {
-    use wa::device_props::{HistorySyncConfig, PlatformType};
+    use wa::device_props::{AppVersion, HistorySyncConfig, PlatformType};
     let props = whatsapp_rust::wacore::store::DevicePropsOverride::new()
-        .with_os("Postal")
-        .with_platform_type(PlatformType::UWP);
+        .with_os("Android")
+        .with_platform_type(PlatformType::ANDROID_TABLET)
+        .with_version(AppVersion {
+            primary: Some(2),
+            secondary: Some(26),
+            tertiary: Some(32),
+            quaternary: Some(84),
+            ..Default::default()
+        });
     if !full_history {
         return props;
     }
@@ -33,6 +38,27 @@ pub(super) fn pairing_props(full_history: bool) -> whatsapp_rust::wacore::store:
         support_hatch_history: Some(true),
         ..Default::default()
     })
+}
+
+#[cfg(test)]
+mod pairing_tests {
+    use super::*;
+
+    #[test]
+    fn pairing_uses_android_tablet_identity_in_both_history_modes() {
+        for full_history in [false, true] {
+            let props = pairing_props(full_history);
+            assert_eq!(props.os.as_deref(), Some("Android"));
+            assert_eq!(props.platform_type, Some(wa::device_props::PlatformType::ANDROID_TABLET));
+            let version = props.version.unwrap();
+            assert_eq!((version.primary, version.secondary, version.tertiary, version.quaternary),
+                (Some(2), Some(26), Some(32), Some(84)));
+            assert_eq!(version.quinary, None);
+            assert_eq!(props.require_full_sync, full_history.then_some(true));
+            assert_eq!(props.history_sync_config.as_ref().and_then(|h| h.full_sync_days_limit),
+                full_history.then_some(10_000));
+        }
+    }
 }
 
 /// The retention actually applied: keeping full history means nothing is pruned.
