@@ -21,8 +21,10 @@ Keep structural changes separate from issue fixes.
 
 ## Baseline
 
-- `pnpm check`: one pre-existing unused `@ts-expect-error` in `vite.config.js`;
-  removed with the frontend cleanup.
+- Local `pnpm check` initially found an unused `@ts-expect-error` in
+  `vite.config.js`. Clean GitHub CI exposed missing Node declarations;
+  `@types/node` is now explicit instead of relying on ancestor dependencies
+  or a suppression.
 - Phone and formatting self-checks pass; production build passes.
 - Initial Rust builds exhausted C:; builds rerun with explicit target directories
   on F:. Baseline and extracted code both pass 78 core unit tests,
