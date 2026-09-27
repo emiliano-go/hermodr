@@ -206,7 +206,8 @@ pub fn run() {
             desktop::open_url,
             desktop::qr_svg,
             settings::get_settings,
-            settings::set_settings
+            settings::set_settings,
+            settings::paired_mode
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

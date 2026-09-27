@@ -136,7 +136,7 @@ pub(crate) fn config_for(app: &AppHandle, settings: &UiSettings, account: &str) 
     let base = account_base(app, account);
     let default_media = media_cache_dir(app);
     ServiceConfig {
-        session_path: session_path(&base),
+        session_path: session_path(&base, settings.pair_mode != "external"),
         messages_path: if settings.keep_history {
             base.join("messages.db")
         } else {
@@ -148,6 +148,8 @@ pub(crate) fn config_for(app: &AppHandle, settings: &UiSettings, account: &str) 
         accept_full_history: settings.accept_full_history,
         auto_download_media: settings.auto_download_media,
         keep_archived: settings.keep_archived,
+        android_pair: settings.pair_mode != "external",
+        keep_view_once: settings.keep_view_once,
         // An unset or empty setting falls back to the app data directory.
         media_dir: settings
             .media_dir
@@ -158,36 +160,52 @@ pub(crate) fn config_for(app: &AppHandle, settings: &UiSettings, account: &str) 
     }
 }
 
-/// Names the account's current session file; absent means `session.db`.
+/// Names the account's current session file; absent means the default below.
+/// Each device mode keeps its own link, so switching modes never unlinks.
 pub(crate) const SESSION_POINTER: &str = "session_name";
+pub(crate) const SESSION_POINTER_ANDROID: &str = "session_name_android";
 
-pub(crate) fn session_path(base: &std::path::Path) -> PathBuf {
-    let name = std::fs::read_to_string(base.join(SESSION_POINTER)).unwrap_or_default();
+pub(crate) fn session_path(base: &std::path::Path, android: bool) -> PathBuf {
+    let (pointer, default) = if android {
+        (SESSION_POINTER_ANDROID, "session-android.db")
+    } else {
+        (SESSION_POINTER, "session.db")
+    };
+    let name = std::fs::read_to_string(base.join(pointer)).unwrap_or_default();
     base.join(match name.trim() {
-        "" => "session.db",
+        "" => default,
         name => name,
     })
 }
 
-/// Deletes session files other than `current`; one still held open is retried on a later start.
-pub(crate) fn remove_stale_sessions(base: &std::path::Path, current: &std::path::Path) {
-    let Some(current) = current.file_name().and_then(|n| n.to_str()) else { return };
+/// Both modes' current session files: the stale sweep must spare both, since
+/// each is a live link kept for its own mode.
+pub(crate) fn current_sessions(base: &std::path::Path) -> [PathBuf; 2] {
+    [session_path(base, false), session_path(base, true)]
+}
+
+/// Deletes session files other than the two current ones; a file still held open is retried on a later start.
+pub(crate) fn remove_stale_sessions(base: &std::path::Path, current: &[PathBuf]) {
+    let keep: Vec<String> = current
+        .iter()
+        .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_string))
+        .collect();
     let Ok(entries) = std::fs::read_dir(base) else { return };
     for entry in entries.flatten() {
         let name = entry.file_name();
         let Some(name) = name.to_str() else { continue };
-        if is_stale_session(name, current) {
+        if is_stale_session(name, &keep) {
             let _ = std::fs::remove_file(entry.path());
         }
     }
 }
 
 /// True for an old `session*.db` file or its `-wal`/`-shm`/`-journal`; never
-/// for the current database or its own sidecars.
-pub(crate) fn is_stale_session(name: &str, current: &str) -> bool {
+/// for a current database or its own sidecars.
+pub(crate) fn is_stale_session(name: &str, keep: &[String]) -> bool {
     let db = ["-wal", "-shm", "-journal"]
         .iter()
         .find_map(|suffix| name.strip_suffix(suffix))
         .unwrap_or(name);
-    db.starts_with("session") && db.ends_with(".db") && db != current
+    db.starts_with("session") && db.ends_with(".db") && !keep.iter().any(|k| k == db)
 }

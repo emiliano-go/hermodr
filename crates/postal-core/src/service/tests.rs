@@ -79,6 +79,7 @@ async fn group_changes_invalidate_fetched_metadata_and_overviews() {
         sync_progress: Arc::default(),
         auto_download_default: false,
         keep_archived: Arc::default(),
+        keep_view_once: Arc::default(),
     };
     for action in [
         GroupNotificationAction::Subject {

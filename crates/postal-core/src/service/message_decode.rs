@@ -80,10 +80,20 @@ pub(super) fn stored_quote(message: &wa::Message, header: &MessageHeader, client
     // the gate unfalsifiable and the behaviour unmeasurable.
     let locator = if q.view_once { q.locator } else { None };
     // The operator owns this client, so the owner branch of the gate is
-    // the one that applies. A view-once is still only recoverable if the
-    // platform actually put a copy in the reply.
+    // the one that applies. A view-once is recoverable only when the copy in
+    // the reply can actually be fetched: a reply that quoted the bare stub
+    // (one sent from this app, for instance) carries no address.
     let allowed = may_take_quote(q.view_once, mine, true);
-    let recoverable = allowed && (!q.view_once || locator.is_some());
+    let fetchable = locator.as_deref().is_some_and(|bytes| {
+        let mut slice = bytes;
+        <wa::Message as buffa::Message>::decode(&mut slice)
+            .map(|m| {
+                use whatsapp_rust::wacore::proto_helpers::MessageExt;
+                super::media_download::has_direct_path(m.get_base_message())
+            })
+            .unwrap_or(false)
+    });
+    let recoverable = allowed && (!q.view_once || fetchable);
     Some(Quote {
         id: Some(q.id),
         text: Some(q.text),

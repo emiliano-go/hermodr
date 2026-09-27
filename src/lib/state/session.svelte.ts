@@ -58,6 +58,8 @@ export class SessionState {
     keep_history: true,
     skip_loading_screen: false,
     keep_archived: true,
+    pair_mode: "android",
+    keep_view_once: true,
   });
 
   /** Interface scale, persisted under `postal.zoom`; Ctrl +/-/0 adjust it. */

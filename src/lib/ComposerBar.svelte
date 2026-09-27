@@ -23,7 +23,6 @@
     replySnippet,
     editing,
     pending,
-    sendOnce = $bindable(),
     recording = $bindable(),
     mentionMatches,
     mentionIndex = $bindable(),
@@ -47,6 +46,7 @@
     oncancelreply,
     oncanceledit,
     onremove,
+    ontoggleonce,
     onsendvoice,
     onvoiceerror,
     onreceipts,
@@ -61,7 +61,6 @@
     replySnippet: string;
     editing: { original: string } | null;
     pending: PendingMedia[];
-    sendOnce: boolean;
     recording: boolean;
     mentionMatches: {
       jid: string;
@@ -93,6 +92,7 @@
     oncancelreply: () => void;
     oncanceledit: () => void;
     onremove: (id: number) => void;
+    ontoggleonce: (id: number) => void;
     onsendvoice: (note: Recording) => void;
     onvoiceerror: (message: string) => void;
     onreceipts: () => void;
@@ -196,6 +196,16 @@
             <span class="file-icon"><Icon name="file" size={26} /></span>
           {/if}
         </button>
+        {#if item.kind !== "other"}
+          <button
+            type="button"
+            class="once-toggle"
+            class:active={item.once}
+            aria-pressed={item.once}
+            title={item.once ? "Sent as view once — tap for normal" : "Send as view once"}
+            aria-label="View once"
+            onclick={() => ontoggleonce(item.id)}>1</button>
+        {/if}
         <span class="pending-name" title={item.file.name}>{item.file.name}</span>
         {#if item.caption}
           <span class="pending-caption">{item.caption}</span>
@@ -365,16 +375,6 @@
       title="Emoji"
       aria-label="Emoji"
       onclick={() => (pickerTab = pickerTab === "emoji" ? null : "emoji")} />
-    {#if pending.some((p) => p.kind !== "other")}
-      <Button
-        variant="icon"
-        cls="once-toggle"
-        active={sendOnce}
-        pressed={sendOnce}
-        title="View once"
-        aria-label="View once"
-        onclick={() => (sendOnce = !sendOnce)}>1</Button>
-    {/if}
   </div>
   {#if !draft.trim() && pending.length === 0}
     <Button
@@ -527,6 +527,33 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
+  }
+  .once-toggle {
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--bg) 75%, transparent);
+    color: var(--muted);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 0 0 1px var(--line-strong);
+  }
+  .once-toggle:hover {
+    color: var(--text);
+  }
+  .once-toggle.active {
+    background: var(--accent);
+    color: #fff;
+    box-shadow: 0 0 0 1px var(--accent);
   }
   .pending-name {
     font-size: 11px;

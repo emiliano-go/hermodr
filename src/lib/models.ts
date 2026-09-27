@@ -157,6 +157,8 @@ export type UiSettings = {
   keep_history: boolean;
   skip_loading_screen: boolean;
   keep_archived: boolean;
+  pair_mode: "android" | "external";
+  keep_view_once: boolean;
 };
 export type ConnectionState = { started: boolean; connected: boolean; qr: string | null };
 
@@ -167,6 +169,8 @@ export type PendingMedia = {
   url: string;
   kind: "image" | "video" | "other";
   caption: string;
+  /** Whether this attachment goes out as view once. */
+  once: boolean;
 };
 
 export type ServiceEvent =

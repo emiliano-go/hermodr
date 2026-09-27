@@ -105,7 +105,11 @@ impl WhatsAppService {
         let unread = if receipts { self.store.unread_ids(chat)? } else { Vec::new() };
         let changed = self.store.mark_read(chat)?;
         self.send_read_receipts(chat, unread).await?;
-        self.clear_unread_mark(chat).await;
+        if changed > 0 {
+            let range = self.read_range(chat, None);
+            self.sync_chat_read(chat, range).await;
+        }
+        self.clear_unread_mark(chat);
         Ok(changed)
     }
 
@@ -117,19 +121,56 @@ impl WhatsAppService {
         let unread = if receipts { self.store.unread_until(chat, id)? } else { Vec::new() };
         let changed = self.store.mark_read_until(chat, id)?;
         self.send_read_receipts(chat, unread).await?;
-        self.clear_unread_mark(chat).await;
+        if changed > 0 {
+            let range = self.read_range(chat, Some(id));
+            self.sync_chat_read(chat, range).await;
+        }
+        self.clear_unread_mark(chat);
         Ok(changed)
     }
 
-    /// Opening a chat lifts a manual unread mark, here and on the account.
-    async fn clear_unread_mark(&self, chat: &str) {
+    /// Tells the account a chat was read, so the phone's badge clears too. This
+    /// is the syncd read state, not a receipt: it is sent even with receipts off.
+    async fn sync_chat_read(&self, chat: &str, range: Option<whatsapp_rust::SyncActionMessageRange>) {
         let Ok(jid) = chat.parse::<Jid>() else { return };
-        if !self.store.clear_marked_unread(&jid.to_non_ad().to_string()).unwrap_or(false) {
-            return;
+        if let Err(e) = self.client.chat_actions().mark_chat_as_read(&jid, true, range).await {
+            log::warn!("could not sync the read mark for {chat}: {e}");
         }
-        if let Err(e) = self.client.chat_actions().mark_chat_as_read(&jid, true, None).await {
-            log::warn!("could not sync the read mark: {e}");
-        }
+    }
+
+    /// The message range naming where a chat was read to: the boundary message
+    /// itself, or the newest one when the whole chat was read.
+    fn read_range(
+        &self,
+        chat: &str,
+        up_to: Option<&str>,
+    ) -> Option<whatsapp_rust::SyncActionMessageRange> {
+        let remote = chat.parse::<Jid>().ok()?;
+        let boundary = match up_to {
+            Some(id) => self.store.message(chat, id).ok()?,
+            None => self.store.messages_for(chat, 1).ok()?.into_iter().next()?,
+        };
+        let participant = (remote.is_group() && !boundary.header.from_me)
+            .then(|| boundary.header.sender.parse::<Jid>().ok().map(|j| j.to_non_ad()))
+            .flatten();
+        let key = whatsapp_rust::message_key(
+            boundary.header.id.clone(),
+            &remote,
+            boundary.header.from_me,
+            participant.as_ref(),
+        );
+        Some(whatsapp_rust::message_range(
+            boundary.header.timestamp,
+            None,
+            vec![(key, boundary.header.timestamp)],
+        ))
+    }
+
+    /// Opening a chat lifts a manual unread mark locally; the account is told
+    /// by [`sync_chat_read`](Self::sync_chat_read).
+    fn clear_unread_mark(&self, chat: &str) {
+        let Ok(jid) = chat.parse::<Jid>() else { return };
+        self.store.clear_marked_unread(&jid.to_non_ad().to_string()).logged();
     }
 
     /// Sends read receipts for the given `(id, sender)` pairs, grouped per author.

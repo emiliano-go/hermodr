@@ -11,6 +11,8 @@
     keep_history: boolean;
     skip_loading_screen: boolean;
     keep_archived: boolean;
+    pair_mode: "android" | "external";
+    keep_view_once: boolean;
   };
   export type Account = { id: string; label: string; jid: string | null };
   export type Section =
@@ -19,6 +21,7 @@
     | "whatsapp"
     | "privacy"
     | "chats"
+    | "device"
     | "media"
     | "startup"
     | "keybinds"
@@ -147,6 +150,7 @@
     ...(me ? [{ id: "whatsapp" as Section, label: "WhatsApp privacy", group: "User settings" }] : []),
     { id: "privacy", label: "Storage & history", group: "App settings" },
     { id: "chats", label: "Chats", group: "App settings" },
+    { id: "device", label: "Device", group: "App settings" },
     { id: "media", label: "Media", group: "App settings" },
     { id: "startup", label: "Startup", group: "App settings" },
     { id: "keybinds", label: "Keybinds", group: "App settings" },
@@ -165,6 +169,17 @@
   let version = $state("");
   onMount(() => {
     getVersion().then((v) => (version = v)).catch(() => {});
+  });
+
+  /** How the current account was actually linked, from the stored device props. */
+  let pairedMode = $state<"android" | "external" | null>(null);
+  $effect(() => {
+    // Re-read when the section opens and after a save, which may have unlinked.
+    void settings.pair_mode;
+    if (section !== "device") return;
+    invoke<string>("paired_mode")
+      .then((mode) => (pairedMode = mode === "android" ? "android" : "external"))
+      .catch(() => (pairedMode = null));
   });
 
   const activeLabel = $derived(accounts.find((a) => a.id === active)?.label ?? "Not signed in");
@@ -577,6 +592,46 @@
             </div>
             <input class="switch" type="checkbox" bind:checked={draft.keep_archived} />
           </label>
+        {:else if section === "device"}
+          <h2>Device mode</h2>
+          <p class="lede">
+            Postal keeps a separate link for each mode, so switching never unlinks anything from
+            your phone: it just starts the other session. A mode that was never linked shows the QR
+            code once. Leave Android linked and switch back to it whenever you want to fetch
+            one-time photos.
+          </p>
+          <div class="setting">
+            <div>
+              <span class="setting-title">Link as</span>
+              <span class="setting-desc">
+                Android phone is what makes WhatsApp send view-once photos and videos to Postal.
+                External links as an ordinary companion, as before.
+              </span>
+            </div>
+            <select class="field" bind:value={draft.pair_mode}>
+              <option value="android">Android phone</option>
+              <option value="external">External</option>
+            </select>
+          </div>
+          <label class="setting">
+            <div>
+              <span class="setting-title">Keep view-once media</span>
+              <span class="setting-desc">
+                A view-once this device can fetch is downloaded and kept, so you can look at it and
+                save it again. Off keeps it one-time. Only has any effect when linked as an Android
+                phone.
+              </span>
+            </div>
+            <input class="switch" type="checkbox" bind:checked={draft.keep_view_once} />
+          </label>
+          {#if pairedMode}
+            <p class="muted">
+              Currently linked as {pairedMode === "android" ? "an Android phone" : "an external device"}.
+              {#if pairedMode !== draft.pair_mode}
+                Save to switch to the other linked session.
+              {/if}
+            </p>
+          {/if}
         {:else if section === "media"}
           <h2>Media</h2>
           <label class="setting">

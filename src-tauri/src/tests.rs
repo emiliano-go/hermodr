@@ -1,5 +1,9 @@
 use crate::{account_store::{is_stale_session, Account, AccountsFile, DEFAULT_ACCOUNT_LABEL}, migration::move_dir};
 
+fn keep(names: &[&str]) -> Vec<String> {
+    names.iter().map(|n| n.to_string()).collect()
+}
+
 #[test]
 fn webview_policy_keeps_scripts_local_and_scopes_style_relaxation() {
     let config: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
@@ -24,16 +28,24 @@ fn webview_policy_keeps_scripts_local_and_scopes_style_relaxation() {
 }
 
 #[test]
-fn stale_sessions_spare_the_active_wal() {
-    assert!(!is_stale_session("session.db", "session.db"));
-    assert!(!is_stale_session("session.db-wal", "session.db"));
-    assert!(!is_stale_session("session.db-shm", "session.db"));
-    assert!(is_stale_session("session.db-wal", "session-1.db"));
-    assert!(is_stale_session("session-1.db", "session-2.db"));
-    assert!(is_stale_session("session-1.db-shm", "session-2.db"));
-    assert!(!is_stale_session("session-2.db-wal", "session-2.db"));
-    assert!(!is_stale_session("session.dbx", "session-2.db"));
-    assert!(!is_stale_session("messages.db", "session.db"));
+fn stale_sessions_spare_both_linked_modes() {
+    assert!(!is_stale_session("session.db", &keep(&["session.db", "session-android.db"])));
+    assert!(!is_stale_session("session.db-wal", &keep(&["session.db", "session-android.db"])));
+    assert!(!is_stale_session(
+        "session-android.db-shm",
+        &keep(&["session.db", "session-android.db"])
+    ));
+    assert!(!is_stale_session(
+        "session-android.db-wal",
+        &keep(&["session.db", "session-android.db"])
+    ));
+    assert!(is_stale_session("session-1.db", &keep(&["session.db", "session-android.db"])));
+    assert!(is_stale_session("session-1.db-shm", &keep(&["session.db"])));
+    assert!(is_stale_session("session.db-wal", &keep(&["session-1.db"])));
+    assert!(is_stale_session("session-1.db", &keep(&["session-2.db"])));
+    assert!(!is_stale_session("session-2.db-wal", &keep(&["session-2.db"])));
+    assert!(!is_stale_session("session.dbx", &keep(&["session-2.db"])));
+    assert!(!is_stale_session("messages.db", &keep(&["session.db"])));
 }
 
 fn label_of<'a>(file: &'a AccountsFile, id: &str) -> &'a str {

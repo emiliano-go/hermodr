@@ -34,6 +34,8 @@ async fn main() -> Result<()> {
         accept_full_history: false,
         auto_download_media: true,
         keep_archived: true,
+        android_pair: true,
+        keep_view_once: true,
         media_dir: Some(data_dir.join("media")),
     };
 

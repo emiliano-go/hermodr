@@ -28,8 +28,6 @@ export class ComposerState {
   /** Files staged for review before they are sent, shown above the composer. */
   pending = $state<PendingMedia[]>([]);
   pendingSeq = 0;
-  /** Whether staged photos and videos go out as view once. */
-  sendOnce = $state(false);
   recording = $state(false);
   outgoing = $state<Outgoing[]>([]);
 
@@ -526,7 +524,7 @@ export class ComposerState {
       const id = this.pendingSeq++;
       this.pending = [
         ...this.pending,
-        { id, file, url: kind === "video" ? URL.createObjectURL(file) : "", kind, caption: "" },
+        { id, file, url: kind === "video" ? URL.createObjectURL(file) : "", kind, caption: "", once: false },
       ];
       this.host.focusComposer();
       if (kind === "image") {
@@ -549,11 +547,9 @@ export class ComposerState {
     const chat = selectedChat;
     const items = [...this.pending];
     const reply = this.replyingTo;
-    const once = this.sendOnce;
     // The tray empties at once; each file waits in the chat as a bubble instead.
     this.pending = [];
     this.replyingTo = null;
-    this.sendOnce = false;
     const batch: Outgoing[] = items.map((item) => ({
       token: `upload-${item.id}-${Date.now()}`,
       chat,
@@ -583,7 +579,7 @@ export class ComposerState {
             replyToId: reply?.id ?? null,
             replyToSender: reply?.sender ?? null,
             replyToText: reply?.text ?? null,
-            viewOnce: once && item.kind !== "other",
+            viewOnce: item.once,
             mentions: captioned && item.id === firstId ? mentions : [],
             progress: token,
           }),
@@ -638,6 +634,13 @@ export class ComposerState {
     const item = this.pending.find((p) => p.id === id);
     if (item?.url.startsWith("blob:")) URL.revokeObjectURL(item.url);
     this.pending = this.pending.filter((p) => p.id !== id);
+  }
+
+  /** Flips one staged attachment between view-once and ordinary. */
+  toggleOnce(id: number) {
+    this.pending = this.pending.map((p) =>
+      p.id === id && p.kind !== "other" ? { ...p, once: !p.once } : p,
+    );
   }
 
   /** Mirrors resetUi: drafts, tray, replies, edits and history are dropped. */

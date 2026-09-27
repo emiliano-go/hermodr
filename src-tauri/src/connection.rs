@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use postal_core::{WhatsAppService, ServiceEvent};
 use tauri::{AppHandle, Emitter, Manager, State};
-use crate::{AppState, SERVICE_EVENT, account_store::{Account, DEFAULT_ACCOUNT_LABEL, SESSION_POINTER, account_base, active_account, config_for, now_millis, remove_stale_sessions, save_accounts}};
+use crate::{AppState, SERVICE_EVENT, account_store::{Account, DEFAULT_ACCOUNT_LABEL, SESSION_POINTER, SESSION_POINTER_ANDROID, account_base, active_account, config_for, current_sessions, now_millis, remove_stale_sessions, save_accounts}};
 
 /// Snapshot of the connection state, for the UI's initial render.
 ///
@@ -50,15 +50,19 @@ pub(crate) fn connection_state(state: State<'_, AppState>) -> ConnectionState {
 /// Starts the service for an account, replacing any running one.
 pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &str) -> Result<(), String> {
     log::info!("starting account {account}");
-    // Stop whatever is running first, so the old account disconnects.
-    if let Some(existing) = state.service.lock().unwrap().take() {
-        existing.shutdown();
+    // Stop whatever is running first, so the old session disconnects without
+    // being unlinked: both device modes stay linked, only one runs at a time.
+    let existing = state.service.lock().unwrap().take();
+    if let Some(existing) = existing {
+        existing.shutdown_and_disconnect().await;
     }
 
     let settings = state.settings.lock().unwrap().clone();
+    let android = settings.pair_mode != "external";
     let config = config_for(app, &settings, account);
 
-    remove_stale_sessions(&account_base(app, account), &config.session_path);
+    let base = account_base(app, account);
+    remove_stale_sessions(&base, &current_sessions(&base));
 
     let (service, mut events) = WhatsAppService::start(config).await.map_err(|e| {
         log::error!("failed to start account {account}: {e:#}");
@@ -67,21 +71,28 @@ pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &s
     let service = Arc::new(service);
 
     // `events` was registered before the connection attempt, so the pairing code
-    // cannot slip through the gap between starting and subscribing.
+    // cannot slip through the gap between starting and subscribing. The service
+    // is held weakly: once the active slot drops it, a hot swap lets the loop,
+    // and with it the old session files, go.
     let emitter = app.clone();
-    let service_for_events = service.clone();
+    let service_for_events = Arc::downgrade(&service);
     let account_id = account.to_string();
     tauri::async_runtime::spawn(async move {
         loop {
             match events.recv().await {
                 Ok(ServiceEvent::LoggedOut) => {
                     log::warn!("account {account_id} was logged out; its session is dropped");
-                    forget_session(&emitter, &account_id, &service_for_events);
+                    if let Some(service) = service_for_events.upgrade() {
+                        forget_session(&emitter, &account_id, &service, android);
+                    }
                     let _ = emitter.emit(SERVICE_EVENT, &ServiceEvent::LoggedOut);
                     // Holding the service keeps its session database open.
                     break;
                 }
                 Ok(event) => {
+                    if service_for_events.upgrade().is_none() {
+                        break;
+                    }
                     let _ = emitter.emit(SERVICE_EVENT, &event);
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(dropped)) => {
@@ -90,7 +101,8 @@ pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &s
                     // buffer. Re-announce the state so the UI catches up. The
                     // messages themselves are in the store to be refetched.
                     log::warn!("UI fell behind, dropped {dropped} service event(s)");
-                    let _ = emitter.emit(SERVICE_EVENT, &resync_event(&service_for_events));
+                    let Some(service) = service_for_events.upgrade() else { break };
+                    let _ = emitter.emit(SERVICE_EVENT, &resync_event(&service));
                 }
                 Err(_) => break,
             }
@@ -108,11 +120,14 @@ pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &s
     Ok(())
 }
 
-/// Stops a revoked account's service and points it at a fresh session file.
+/// Stops a revoked mode's service and points it at a fresh session file.
+///
+/// The other mode's session is untouched: logging one link out must not cost
+/// the other its pairing.
 ///
 /// The old file cannot be deleted yet: Windows keeps it locked until the
 /// library releases its connection pool.
-pub(crate) fn forget_session(app: &AppHandle, account: &str, service: &Arc<WhatsAppService>) {
+pub(crate) fn forget_session(app: &AppHandle, account: &str, service: &Arc<WhatsAppService>, android: bool) {
     let state = app.state::<AppState>();
     {
         let mut slot = state.service.lock().unwrap();
@@ -126,8 +141,9 @@ pub(crate) fn forget_session(app: &AppHandle, account: &str, service: &Arc<Whats
         entry.jid = None;
         save_accounts(app, &file);
     }
+    let pointer = if android { SESSION_POINTER_ANDROID } else { SESSION_POINTER };
     let _ = std::fs::write(
-        account_base(app, account).join(SESSION_POINTER),
+        account_base(app, account).join(pointer),
         format!("session-{}.db", now_millis()),
     );
 }

@@ -2,19 +2,33 @@
 
 use super::*;
 
-/// Android tablet identity and history request, applied only when pairing.
-pub(super) fn pairing_props(full_history: bool) -> whatsapp_rust::wacore::store::DevicePropsOverride {
+/// What this device asks for when it links. `android` links as an Android
+/// tablet, which is what makes WhatsApp send view-once media here; external
+/// keeps the UWP companion identity, named Postal on the phone's linked
+/// devices. Both are only read at pairing, so switching modes links a new
+/// device; an existing link keeps what it was paired with. With full history,
+/// a backfill of everything the phone has.
+pub(super) fn pairing_props(
+    full_history: bool,
+    android: bool,
+) -> whatsapp_rust::wacore::store::DevicePropsOverride {
     use wa::device_props::{AppVersion, HistorySyncConfig, PlatformType};
-    let props = whatsapp_rust::wacore::store::DevicePropsOverride::new()
-        .with_os("Android")
-        .with_platform_type(PlatformType::ANDROID_TABLET)
-        .with_version(AppVersion {
-            primary: Some(2),
-            secondary: Some(26),
-            tertiary: Some(32),
-            quaternary: Some(84),
-            ..Default::default()
-        });
+    let props = if android {
+        whatsapp_rust::wacore::store::DevicePropsOverride::new()
+            .with_os("Android")
+            .with_platform_type(PlatformType::ANDROID_TABLET)
+            .with_version(AppVersion {
+                primary: Some(2),
+                secondary: Some(26),
+                tertiary: Some(32),
+                quaternary: Some(84),
+                ..Default::default()
+            })
+    } else {
+        whatsapp_rust::wacore::store::DevicePropsOverride::new()
+            .with_os("Postal")
+            .with_platform_type(PlatformType::UWP)
+    };
     if !full_history {
         return props;
     }
@@ -47,7 +61,7 @@ mod pairing_tests {
     #[test]
     fn pairing_uses_android_tablet_identity_in_both_history_modes() {
         for full_history in [false, true] {
-            let props = pairing_props(full_history);
+            let props = pairing_props(full_history, true);
             assert_eq!(props.os.as_deref(), Some("Android"));
             assert_eq!(props.platform_type, Some(wa::device_props::PlatformType::ANDROID_TABLET));
             let version = props.version.unwrap();
@@ -64,7 +78,7 @@ mod pairing_tests {
     fn registration_and_reconnect_use_android_tablet_handshake_metadata() {
         use whatsapp_rust::wacore::store::Device;
         let mut device = Device::new();
-        device.set_device_props(pairing_props(false));
+        device.set_device_props(pairing_props(false, true));
         device.set_client_profile(android_tablet_profile());
         for jid in [None, Some("12345:2@s.whatsapp.net".parse().unwrap())] {
             device.pn = jid;
@@ -79,8 +93,18 @@ mod pairing_tests {
             assert_eq!(payload.device_pairing_data.is_set(), device.pn.is_none());
         }
     }
+
+    #[test]
+    fn pairing_keeps_the_external_identity_when_not_android() {
+        let props = pairing_props(false, false);
+        assert_eq!(props.os.as_deref(), Some("Postal"));
+        assert_eq!(props.platform_type, Some(wa::device_props::PlatformType::UWP));
+        assert_eq!(props.version, None);
+        assert_eq!(props.require_full_sync, None);
+    }
 }
 
+/// The Android handshake profile used on every connect while in Android mode.
 fn android_tablet_profile() -> whatsapp_rust::wacore::client_profile::ClientProfile {
     let mut profile = whatsapp_rust::wacore::client_profile::ClientProfile::android("13");
     profile.device = "Tablet".into();
@@ -284,6 +308,11 @@ impl WhatsAppService {
         // Whether a new message keeps an archived chat archived; shared with the
         // event handler so the setting applies without a reconnect.
         let keep_archived_state = Arc::new(AtomicBool::new(config.keep_archived));
+        // Whether an arriving view-once is kept as ordinary media; shared with
+        // the event handler so the setting applies without a reconnect.
+        let keep_view_once_state = Arc::new(AtomicBool::new(config.keep_view_once));
+        // Single-flight guard for a forced reconnect after a stall or a resume.
+        let reconnecting_state = Arc::new(AtomicBool::new(false));
         // Whether the address book has already been replayed this run.
         let names_resynced = Arc::new(AtomicBool::new(false));
         // The client only exists once the bot is built, but the message handler
@@ -315,12 +344,13 @@ impl WhatsAppService {
             sync_progress: sync_progress.clone(),
             auto_download_default: config.auto_download_media,
             keep_archived: keep_archived_state.clone(),
+            keep_view_once: keep_view_once_state.clone(),
         };
 
         let bot = Bot::builder()
             .with_backend(SqliteStore::new(config.session_path.to_string_lossy().as_ref()).await?)
             .with_history_sync_admission(policy)
-            .with_device_props(pairing_props(config.accept_full_history))
+            .with_device_props(pairing_props(config.accept_full_history, config.android_pair))
             .with_cache_config(cache_config_for(&config.retention))
             .on_qr_code({
                 let events = events.clone();
@@ -481,12 +511,54 @@ impl WhatsAppService {
             .await?;
 
         let client = bot.client();
-        client.set_client_profile(android_tablet_profile()).await;
+        // In-memory only, so it is set on every start. Android metadata is what
+        // makes the server treat this companion as trusted and hand over
+        // view-once media instead of a bare stub; external mode keeps the
+        // default web identity and gets stubs.
+        if config.android_pair {
+            client.set_client_profile(android_tablet_profile()).await;
+        }
 
         // Hand the client to the message handler, which needs it to download
         // media. Without this the slot stays empty and every attachment is
         // recorded with no file.
         let _ = client_slot.set(client.clone());
+
+        // System sleep leaves a half-open socket that the library's keepalive
+        // may never surface, after which the app neither sends nor receives
+        // until restarted. Wall-clock jumps across a suspend, so a large gap
+        // between ticks means the machine woke up; drop the transport so the
+        // run loop reconnects.
+        {
+            let client = client.clone();
+            let reconnecting = reconnecting_state.clone();
+            let shutdown = client.shutdown_signal();
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(Duration::from_secs(30));
+                tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                let mut last = std::time::SystemTime::now();
+                loop {
+                    tokio::select! {
+                        _ = tick.tick() => {
+                            let now = std::time::SystemTime::now();
+                            let gap = now.duration_since(last).unwrap_or_default();
+                            last = now;
+                            if gap > Duration::from_secs(120) && client.is_connected() {
+                                log::warn!(
+                                    "resumed after {:.1} min; forcing reconnect",
+                                    gap.as_secs_f64() / 60.0
+                                );
+                                force_reconnect(&client, &reconnecting);
+                            }
+                        }
+                        _ = whatsapp_rust::wacore::runtime::wait_for_shutdown(&shutdown) => {
+                            log::debug!("resume watchdog stopping");
+                            break;
+                        }
+                    }
+                }
+            });
+        }
 
         // `run()` only returns on logout or shutdown, so it lives in its own task.
         tokio::spawn(async move {
@@ -507,6 +579,8 @@ impl WhatsAppService {
                 qr: qr_state,
                 connected: connected_state,
                 keep_archived: keep_archived_state,
+                keep_view_once: keep_view_once_state,
+                reconnecting: reconnecting_state,
                 subject_backoff: Mutex::default(),
                 nameless: Mutex::default(),
                 user_info_slots: tokio::sync::Semaphore::new(user_info::MAX_REQUESTS),
@@ -542,9 +616,60 @@ impl WhatsAppService {
         self.keep_archived.load(Ordering::SeqCst)
     }
 
+    /// How this account was linked: `"android"` when it paired as an Android
+    /// device, else `"external"`. Props are only read at pairing, so this can
+    /// differ from the current setting until the device is linked again.
+    pub fn paired_mode(&self) -> &'static str {
+        let props = self.client.persistence_manager().get_device_snapshot().device_props.clone();
+        if matches!(
+            props.platform_type,
+            Some(wa::device_props::PlatformType::ANDROID_TABLET)
+                | Some(wa::device_props::PlatformType::ANDROID_PHONE)
+        ) {
+            "android"
+        } else {
+            "external"
+        }
+    }
+
     /// Changes the keep-archived behavior without a reconnect.
     pub fn set_keep_archived(&self, keep: bool) {
         self.keep_archived.store(keep, Ordering::SeqCst);
+    }
+
+    /// Changes whether arriving view-once media is kept, without a reconnect.
+    pub fn set_keep_view_once(&self, keep: bool) {
+        self.keep_view_once.store(keep, Ordering::SeqCst);
+    }
+
+    /// Drops the current transport so the client reconnects. For a stalled or
+    /// post-sleep link; safe to call repeatedly and from anywhere.
+    pub fn force_reconnect(&self) {
+        force_reconnect(&self.client, &self.reconnecting);
+    }
+
+    /// Reacts to an operation error: a dead link is dropped so the client
+    /// reconnects, instead of leaving every later call to time out.
+    pub fn note_error(&self, error: &impl std::fmt::Display) {
+        let text = error.to_string();
+        let dead = text.contains("timed out")
+            || text.contains("not connected")
+            || text.contains("Socket")
+            || text.contains("disconnected");
+        if dead {
+            log::warn!("operation failed on a dead link ({text}); forcing reconnect");
+            self.force_reconnect();
+        }
+    }
+
+    /// Stops the service and closes its connection without unlinking it: the
+    /// phone keeps this device linked, and the session file stays usable for
+    /// the next start. Used to hot-swap between linked sessions.
+    pub async fn shutdown_and_disconnect(&self) {
+        self.client.disconnect().await;
+        if let Some(tx) = self.shutdown.lock().unwrap().take() {
+            let _ = tx.send(());
+        }
     }
 
     /// Stops the background task.
@@ -558,4 +683,18 @@ impl WhatsAppService {
             let _ = tx.send(());
         }
     }
+}
+
+/// Forces one reconnect, single-flight: a stall can be seen by several callers
+/// at once, and a resume watchdog tick lands while a previous drop is settling.
+fn force_reconnect(client: &Arc<Client>, reconnecting: &Arc<AtomicBool>) {
+    if reconnecting.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let client = client.clone();
+    let reconnecting = reconnecting.clone();
+    tokio::spawn(async move {
+        client.reconnect_immediately().await;
+        reconnecting.store(false, Ordering::SeqCst);
+    });
 }

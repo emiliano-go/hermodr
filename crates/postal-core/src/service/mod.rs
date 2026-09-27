@@ -344,6 +344,12 @@ pub struct ServiceConfig {
     /// Whether archived chats stay archived when a new message arrives. Off
     /// moves the chat back to the main list.
     pub keep_archived: bool,
+    /// Whether to link as an Android phone, which makes WhatsApp send
+    /// view-once media to this device. Only read at pairing.
+    pub android_pair: bool,
+    /// Whether an arriving view-once whose media this device can fetch is
+    /// downloaded and kept as an ordinary attachment instead of one-time.
+    pub keep_view_once: bool,
 }
 
 impl ServiceConfig {
@@ -358,6 +364,8 @@ impl ServiceConfig {
             accept_full_history: false,
             auto_download_media: true,
             keep_archived: true,
+            android_pair: true,
+            keep_view_once: true,
             media_dir: Some(data_dir.join("media")),
         }
     }
@@ -384,6 +392,10 @@ pub struct WhatsAppService {
     connected: Arc<AtomicBool>,
     /// Whether archived chats stay archived when new messages arrive.
     keep_archived: Arc<AtomicBool>,
+    /// Whether a fetchable view-once is kept as ordinary media.
+    keep_view_once: Arc<AtomicBool>,
+    /// Single-flight guard for a forced reconnect after a stall or sleep.
+    reconnecting: Arc<AtomicBool>,
     /// Groups whose subject query failed: when to retry, and the wait that set it.
     subject_backoff: Mutex<std::collections::HashMap<String, (std::time::Instant, Duration)>>,
     /// JIDs the server already had no name for this run, so the UI's repeated

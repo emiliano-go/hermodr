@@ -20,6 +20,9 @@ pub(super) struct Inbound {
     /// Whether a new message keeps an archived chat archived. Off moves it back
     /// to the main list and tells the account, as WhatsApp does.
     pub(super) keep_archived: Arc<AtomicBool>,
+    /// Whether a fetchable view-once is downloaded at once and kept as an
+    /// ordinary attachment instead of one-time.
+    pub(super) keep_view_once: Arc<AtomicBool>,
 }
 
 impl Inbound {
@@ -169,6 +172,7 @@ impl Inbound {
                 if store.message(&chat, &id).is_ok() {
                     return;
                 }
+                log::debug!("view-once in {chat}: arrived as a bare stub (no media)");
                 let from_me = info.source.is_from_me;
                 let message = StoredMessage {
                     header: MessageHeader {
@@ -245,7 +249,22 @@ impl Inbound {
             }
             Event::MarkChatAsReadUpdate(update) => {
                 let jid = resolve_chat(client_for_events.get().map(|c| c.as_ref()), store, &update.jid).await;
-                store.set_marked_unread(&jid, !update.action.read.unwrap_or(true)).logged();
+                let read = update.action.read.unwrap_or(true);
+                store.set_marked_unread(&jid, !read).logged();
+                if read {
+                    // Another device read the chat; clear the messages here too,
+                    // or the unread badge stays though nothing is unseen.
+                    let through = update
+                        .action
+                        .message_range
+                        .as_option()
+                        .and_then(|range| range.last_message_timestamp);
+                    let changed = match through {
+                        Some(ts) => store.mark_read_through(&jid, ts).unwrap_or(0),
+                        None => store.mark_read(&jid).unwrap_or(0),
+                    };
+                    log::debug!("chat read on another device: {jid} ({changed} message(s))");
+                }
                 let _ = events.send(ServiceEvent::ChatStateChanged { chat: jid });
             }
             _ => {}
@@ -630,20 +649,43 @@ impl Inbound {
                     }
                 }
             }
-            let fetch = match (auto_download && message.media.locator.is_some(), &client, &media_dir) {
+            // A view-once this device can fetch (an Android-linked companion
+            // gets the cipher) is kept as ordinary media, so it can be viewed
+            // and saved again instead of spent unseen. That overrides the
+            // auto-download setting: its own setting decides.
+            if message.media.kind.as_deref() == Some("view_once") {
+                log::debug!(
+                    "view-once in {chat}: arrived with fetchable media: {}",
+                    message.media.locator.is_some()
+                );
+            }
+            let keep_once = message.media.kind.as_deref() == Some("view_once")
+                && message.media.locator.is_some()
+                && self.keep_view_once.load(Ordering::SeqCst);
+            let fetch = match ((auto_download || keep_once) && message.media.locator.is_some(), &client, &media_dir) {
                 (true, Some(client), Some(dir)) => {
-                    Some((client.clone(), dir.clone(), message.header.id.clone()))
+                    Some((client.clone(), dir.clone(), message.header.id.clone(), keep_once))
                 }
                 _ => None,
             };
             let _ = events.send(ServiceEvent::hint(&message, true));
-            if let Some((client, dir, id)) = fetch {
+            if let Some((client, dir, id, keep_once)) = fetch {
                 let (store, events, downloads, chat) =
                     (store.clone(), events.clone(), downloads.clone(), chat.clone());
                 tokio::spawn(async move {
                     let Ok(_permit) = downloads.acquire().await else { return };
                     match fetch_media(&client, &store, &dir, &chat, &id).await {
                         Ok(updated) => {
+                            if keep_once {
+                                if let Err(e) = store.keep_view_once(&chat, &id) {
+                                    log::warn!("could not keep view-once {id}: {e}");
+                                } else if let Ok(kept) = store.message(&chat, &id) {
+                                    // The mark is gone, so the row reloads as
+                                    // ordinary media already holding the file.
+                                    let _ = events.send(ServiceEvent::hint(&kept, false));
+                                    return;
+                                }
+                            }
                             // Non-fresh: the row refetches coalesced, no follow or lookup.
                             let _ = events.send(ServiceEvent::hint(&updated, false));
                         }

@@ -883,6 +883,12 @@
       onchataction={(command, args) => chats.chatAction(command, args)}
       onmarkread={(chat) => chats.chatAction("mark_read", { chat: chat.chat })}
       archivedChats={chats.archivedChats}
+      keepingOnce={session.settings.keep_view_once}
+      onkeeponce={() =>
+        session.saveSettings({
+          ...session.settings,
+          keep_view_once: !session.settings.keep_view_once,
+        })}
       onresize={startResize} />
 
     <section class="conversation">
@@ -1048,7 +1054,6 @@
           replySnippet={composer.replyingTo ? members.replyPreviewText(composer.replyingTo) : ""}
           editing={composer.editing}
           pending={composer.pending}
-          bind:sendOnce={composer.sendOnce}
           bind:recording={composer.recording}
           mentionMatches={composer.mentionMatches}
           bind:mentionIndex={composer.mentionIndex}
@@ -1080,6 +1085,7 @@
           oncancelreply={() => (composer.replyingTo = null)}
           oncanceledit={() => composer.cancelEditing()}
           onremove={(id) => composer.removePending(id)}
+          ontoggleonce={(id) => composer.toggleOnce(id)}
           onsendvoice={(note) => composer.sendVoice(note)}
           onvoiceerror={(message) => (ui.error = message)}
           onreceipts={() => composer.toggleChatReceipts()}
@@ -1440,7 +1446,11 @@
     accountAvatars={chats.accountAvatars}
     bind:section={ui.settingsSection}
     onclose={() => (ui.showSettings = false)}
-    onsave={(next) => session.saveSettings(next)}
+    onsave={async (next) => {
+      const switched = next.pair_mode !== session.settings.pair_mode;
+      await session.saveSettings(next);
+      if (switched) ui.notify("Switched device mode. Scan the QR code once if this mode is not linked yet.");
+    }}
     onflush={flushMedia}
     onclearhistory={clearHistory}
     onrename={(id, label) => session.renameAccount(id, label)}
@@ -1865,8 +1875,8 @@
     text-align: center;
   }
   /* Active tint comes from Button itself. */
-  /* Active tint comes from Button itself; the ring keeps its dashed/solid states. */
-  :global(.once-toggle) {
+  /* The quick view-once toggle: a small dashed ring that closes when on. */
+  :global(.once-quick) {
     width: 24px;
     height: 24px;
     border: 2px dashed currentColor;
@@ -1875,7 +1885,7 @@
     font-size: 11px;
     font-weight: 800;
   }
-  :global(.once-toggle.on) {
+  :global(.once-quick.on) {
     border-style: solid;
   }
   :global(.tool-text) {

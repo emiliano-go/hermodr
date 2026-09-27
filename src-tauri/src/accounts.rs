@@ -1,5 +1,5 @@
 use tauri::{AppHandle, State};
-use crate::{AppState, account_store::{Account, AccountsView, DEFAULT_ACCOUNT_LABEL, SESSION_POINTER, account_base, active_account, is_stale_session, now_millis, save_accounts}, connection::start_service};
+use crate::{AppState, account_store::{Account, AccountsView, DEFAULT_ACCOUNT_LABEL, SESSION_POINTER, SESSION_POINTER_ANDROID, account_base, active_account, is_stale_session, now_millis, save_accounts}, connection::start_service};
 
 /// The accounts and which one is active.
 #[tauri::command(async)]
@@ -103,7 +103,12 @@ pub(crate) async fn remove_account(app: AppHandle, state: State<'_, AppState>, i
         for entry in std::fs::read_dir(&base).into_iter().flatten().flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
             let db = ["-wal", "-shm", "-journal"].iter().find_map(|s| name.strip_suffix(s)).unwrap_or(&name);
-            if db == SESSION_POINTER || is_stale_session(db, "") || db == "messages.db" || db == "aliases.db" {
+            if db == SESSION_POINTER
+                || db == SESSION_POINTER_ANDROID
+                || is_stale_session(db, &[])
+                || db == "messages.db"
+                || db == "aliases.db"
+            {
                 let _ = std::fs::remove_file(entry.path());
             }
         }

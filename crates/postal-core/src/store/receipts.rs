@@ -135,6 +135,18 @@ impl MessageStore {
         Ok(changed)
     }
 
+    /// Marks incoming messages at or before `timestamp` as read, for a read
+    /// state another device synced with a message range.
+    pub fn mark_read_through(&self, chat: &str, timestamp: i64) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "UPDATE messages SET read = 1
+             WHERE chat = ?1 AND read = 0 AND from_me = 0 AND timestamp <= ?2",
+            params![chat, timestamp],
+        )?;
+        Ok(changed)
+    }
+
     /// Unread incoming messages up to and including `id`, oldest first.
     ///
     /// The cutoff is the rowid of `id`, so messages sharing a timestamp are

@@ -40,7 +40,7 @@
           onmenutoggle={noop} onswitchaccount={noop} onaddaccount={noop} onsettings={noop}
           onpings={noop} onstarred={noop} onsearch={noop} onopenresult={noop} onopenchat={noop}
           ontogglepin={noop} onclearchat={noop} ondeletechat={noop} onchataction={noop}
-          onmarkread={noop} archivedChats={0} onresize={noop}
+          onmarkread={noop} archivedChats={0} keepingOnce={false} onkeeponce={noop} onresize={noop}
         />
         <section class="conversation">
           <ChatHeader
@@ -58,12 +58,12 @@
           <ComposerBar
             draft="" composerInput={undefined} replyingTo={scene === "chat" ? messages[1] : null}
             replyAuthor="Ana" replySnippet={messages[1].text} editing={null} pending={[]}
-            sendOnce={false} recording={false} mentionMatches={[]} mentionIndex={0} onselectmention={noop}
+            recording={false} mentionMatches={[]} mentionIndex={0} onselectmention={noop}
             emojiToken={null} emojiMatches={[]} emojiIndex={0} onselectemoji={noop} pickerTab={null}
             {selectedChat} enqueue={(task) => task()} takereply={() => ({})}
             onpickeremoji={noop} onpickersent={noop} onpickererror={noop} onstage={noop}
             oncreatekind={noop} oninput={noop} onkey={noop} onsend={noop}
-            oncancelreply={noop} oncanceledit={noop} onremove={noop} onsendvoice={noop}
+            oncancelreply={noop} oncanceledit={noop} onremove={noop} ontoggleonce={noop} onsendvoice={noop}
             onvoiceerror={noop} onreceipts={noop} ontyping={noop}
             receiptsHidden={false} typingHidden={false}
           />

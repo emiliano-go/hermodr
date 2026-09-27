@@ -533,6 +533,23 @@ fn mark_read_until_only_marks_up_to_the_cutoff() {
 }
 
 #[test]
+fn mark_read_through_marks_only_messages_at_or_before_the_time() {
+    let s = store(Retention::unlimited());
+    let t = now();
+    let mut old = msg("a@s", "1", 0, "old");
+    old.header.timestamp = t - 100;
+    let mut recent = msg("a@s", "2", 0, "recent");
+    recent.header.timestamp = t;
+    s.insert_message(&old).unwrap();
+    s.insert_message(&recent).unwrap();
+
+    assert_eq!(s.mark_read_through("a@s", t - 50).unwrap(), 1);
+    assert_eq!(s.unread_ids("a@s").unwrap().len(), 1);
+    assert_eq!(s.mark_read_through("a@s", t).unwrap(), 1);
+    assert!(s.unread_ids("a@s").unwrap().is_empty());
+}
+
+#[test]
 fn media_and_reply_fields_round_trip() {
     let s = store(Retention::unlimited());
     let mut m = msg("a@s", "1", 0, "look");

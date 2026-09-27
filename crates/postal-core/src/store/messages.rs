@@ -31,7 +31,8 @@ impl MessageStore {
                  text = CASE WHEN EXISTS (SELECT 1 FROM edited e
                                           WHERE e.chat = messages.chat AND e.id = messages.id)
                         THEN text ELSE excluded.text END,
-                  media_kind = excluded.media_kind,
+                  media_kind = CASE WHEN excluded.media_kind = 'view_once' AND media_path IS NOT NULL
+                                    THEN media_kind ELSE excluded.media_kind END,
                   media_path = COALESCE(media_path, excluded.media_path),
                   reply_to_id = COALESCE(excluded.reply_to_id, reply_to_id),
                   reply_to_text = CASE WHEN excluded.reply_to_text IS NULL OR excluded.reply_to_text = ''

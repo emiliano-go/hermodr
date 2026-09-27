@@ -273,6 +273,13 @@ impl WhatsAppService {
 
         let kind = if gif && kind == "video" { "gif" } else { kind };
         let mut stored = self.own_message(chat, &result.message_id, caption.unwrap_or_default(), kind, to_self);
+        if view_once {
+            // The sender cannot reopen it either, so it is kept as the one-time
+            // form (no file, original kind remembered) rather than a broken
+            // ordinary attachment.
+            stored.media.once_kind = Some(kind.to_string());
+            stored.media.kind = Some("view_once".to_string());
+        }
         stored.media.path = stored_path;
         stored.media.duration = voice_seconds;
         if let Some(reply) = &reply {
