@@ -1036,6 +1036,8 @@
           </button>
         {/if}
 
+        {@render syncStatus()}
+
         <ComposerBar
           bind:draft={composer.draft}
           bind:composerInput
@@ -1103,6 +1105,7 @@
           <p class="placeholder-title">No conversation open</p>
           <p class="hint">Pick a chat on the left, or search for a contact to start one.</p>
         </div>
+        {@render syncStatus()}
       {/if}
     </section>
 
@@ -1396,8 +1399,9 @@
   </div>
 {/if}
 
+{#snippet syncStatus()}
 {#if session.connected && session.uiUnlocked && (session.syncPending > 0 || session.historyPercent !== null) && !ui.pendingJump && !ui.notice}
-  <div class="notice" role="status">
+  <div class="notice sync-status" role="status">
     <Spinner />
     <span>
       {#if session.syncPending > 0}
@@ -1409,6 +1413,7 @@
     </span>
   </div>
 {/if}
+{/snippet}
 
 {#if session.backfill && !ui.notice}
   <div class="notice" role="status">
@@ -1558,7 +1563,7 @@
   :global(html.density-cozy .bubble.first) {
     margin-top: 14px;
   }
-  /* Animations off (setting or OS): nothing moves, whatever its duration. */
+  /* Stop decorative motion; progress spinners honor the OS preference themselves. */
   :global(html.no-motion *),
   :global(html.no-motion *::before),
   :global(html.no-motion *::after) {
@@ -1726,6 +1731,14 @@
     font: inherit;
     cursor: pointer;
     white-space: nowrap;
+  }
+  .notice.sync-status {
+    position: static;
+    align-self: center;
+    flex-shrink: 0;
+    transform: none;
+    max-width: calc(100% - 24px);
+    margin: 8px 12px;
   }
   /* Small dim helper text, shared by the pairing view and the empty-chat hint. */
   :global(.hint) {

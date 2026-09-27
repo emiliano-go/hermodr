@@ -519,8 +519,8 @@ export function motion(ms: number): number {
 
 /**
  * Writes the theme onto the document root, clearing tokens it does not set.
- * At scale 0 `no-motion` also stops the animations whose durations are fixed
- * (spinners, loading bars, shimmer), which `--motion-scale` cannot reach.
+ * At scale 0 `no-motion` stops decorative animations with fixed durations.
+ * Progress spinners independently honor the OS reduced-motion preference.
  */
 export function applyTheme(theme: Theme) {
   const root = document.documentElement;

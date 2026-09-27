@@ -3,16 +3,23 @@
 
 <style>
   .spinner {
+    display: inline-block;
+    flex-shrink: 0;
     width: 14px;
     height: 14px;
     border-radius: 50%;
     border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
     border-top-color: var(--accent);
-    animation: spin 0.8s linear infinite;
+    animation: spin 0.8s linear infinite !important;
   }
   @keyframes spin {
     to {
       transform: rotate(360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner {
+      animation: none !important;
     }
   }
 </style>
