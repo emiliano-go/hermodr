@@ -103,13 +103,8 @@ impl MessageStore {
 
         // Every chat keeps its newest message, whatever its age: a quiet chat
         // must stay in the list with its last preview, not vanish.
-        let not_newest = format!(
-            "(chat, id) NOT IN (
-                 SELECT chat, id FROM (
-                     SELECT chat, id, ROW_NUMBER() OVER (PARTITION BY chat ORDER BY timestamp DESC) AS rank
-                     FROM messages WHERE {scope}
-                 ) WHERE rank = 1)"
-        );
+        let not_newest = "id != (SELECT newest.id FROM messages newest
+             WHERE newest.chat = messages.chat ORDER BY newest.timestamp DESC LIMIT 1)";
         let mut removed = 0;
 
         // A chat with its own window or cap is only bound by that one.

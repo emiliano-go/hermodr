@@ -253,6 +253,7 @@ const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
     migrate_v1_schema,
     migrate_v2_legacy_data,
     migrate_v3_media_captions,
+    migrate_v4_quote_chat_index,
 ];
 
 pub(super) fn migrate(conn: &Connection) -> Result<()> {
@@ -550,5 +551,11 @@ fn migrate_v3_media_captions(conn: &Connection) -> Result<()> {
             }
         }
     }
+    Ok(())
+}
+
+fn migrate_v4_quote_chat_index(conn: &Connection) -> Result<()> {
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_reply_chat ON messages (reply_to_chat)
+        WHERE reply_to_chat IS NOT NULL", [])?;
     Ok(())
 }

@@ -1,6 +1,41 @@
 use super::*;
 
 #[test]
+fn address_reconciliation_uses_indexed_quote_lookup() {
+    let store = store(Retention::unlimited());
+    let conn = store.conn.lock().unwrap();
+    let mut query = conn.prepare("EXPLAIN QUERY PLAN UPDATE messages SET reply_to_chat = ?1
+        WHERE reply_to_chat = ?2").unwrap();
+    let plan = query.query_map(["1@s.whatsapp.net", "1@lid"], |row| row.get::<_, String>(3))
+        .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
+    assert!(plan.iter().any(|step| step.contains("idx_messages_reply_chat")), "{plan:?}");
+}
+
+#[test]
+fn retention_handles_a_large_backlog_across_many_chats() {
+    let store = MessageStore::open(Path::new(":memory:"), Retention {
+        max_age_hours: Some(24), max_messages_per_chat: Some(19_999_999),
+    }).unwrap();
+    {
+        let _batch = store.batch();
+        let conn = store.conn.lock().unwrap();
+        let mut insert = conn.prepare("INSERT INTO messages (chat, id, sender, timestamp, from_me, text)
+            VALUES (?1, ?2, 'them', ?3, 0, 'old message')").unwrap();
+        for chat in 0..1000 {
+            let chat = format!("{chat}@s.whatsapp.net");
+            for id in 0..150 {
+                insert.execute(params![chat, id.to_string(), id]).unwrap();
+            }
+        }
+    }
+    let started = std::time::Instant::now();
+    let removed = store.enforce_retention_for(&["0@s.whatsapp.net".into()]).unwrap();
+    eprintln!("retention: {removed} rows in {:?}", started.elapsed());
+    assert_eq!(removed, 149_000);
+    assert_eq!(store.chats().unwrap().len(), 1000);
+}
+
+#[test]
 fn reopening_reconciles_mappings_learned_after_schema_migration() {
     let path = std::env::temp_dir().join(format!(
         "postal-schema-reopen-{}-{}.db",
@@ -17,7 +52,7 @@ fn reopening_reconciles_mappings_learned_after_schema_migration() {
         let store = MessageStore::open(&path, Retention::unlimited()).unwrap();
         let conn = store.conn.lock().unwrap();
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
-        assert_eq!(version, 3);
+        assert_eq!(version, 4);
         drop(conn);
         let messages = store.messages_for("5989@s.whatsapp.net", 10).unwrap();
         assert_eq!(messages.len(), 1);

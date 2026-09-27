@@ -509,8 +509,13 @@ impl MessageStore {
             conn.execute_batch("VACUUM")?;
             log::info!("message store switched to incremental vacuum in {:?}", started.elapsed());
         }
+        let started = std::time::Instant::now();
         schema::migrate(&conn)?;
+        let schema_elapsed = started.elapsed();
+        let started = std::time::Instant::now();
         chats::reconcile_addresses(&conn)?;
+        log::info!("message store ready: schema {:?}, address reconciliation {:?}",
+            schema_elapsed, started.elapsed());
 
         Ok(Self {
             conn: Mutex::new(conn),
