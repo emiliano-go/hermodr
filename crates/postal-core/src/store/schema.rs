@@ -309,6 +309,7 @@ const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
     migrate_v5_chat_metadata,
     migrate_v6_explicit_limits,
     migrate_v7_media_paths,
+    migrate_v8_page_cursor,
 ];
 
 pub(super) fn migrate(conn: &Connection) -> Result<()> {
@@ -673,5 +674,11 @@ fn migrate_v7_media_paths(conn: &Connection) -> Result<()> {
         "CREATE INDEX IF NOT EXISTS idx_messages_media_path ON messages(media_path) WHERE media_path IS NOT NULL;
          CREATE INDEX IF NOT EXISTS idx_messages_quote_path ON messages(reply_to_path) WHERE reply_to_path IS NOT NULL;",
     )?;
+    Ok(())
+}
+
+fn migrate_v8_page_cursor(conn: &Connection) -> Result<()> {
+    conn.execute_batch("DROP INDEX IF EXISTS idx_messages_chat_time;
+        CREATE INDEX idx_messages_chat_time ON messages(chat, timestamp DESC, id DESC);")?;
     Ok(())
 }

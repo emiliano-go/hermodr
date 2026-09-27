@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use postal_core::Retention;
 use tauri::{AppHandle, Manager};
 use crate::account_store::{AccountsFile, account_base, data_dir, media_cache_dir};
 
@@ -21,7 +20,7 @@ pub(crate) fn migrate_media(app: &AppHandle, accounts: &AccountsFile) {
         if !db.exists() {
             continue;
         }
-        match postal_core::MessageStore::open(&db, Retention::default()) {
+        match postal_core::MessageStore::open(&db) {
             Ok(store) => {
                 if let Err(e) = store.relocate_media(&from, &to) {
                     log::warn!("media migration for {}: {e}", account.id);

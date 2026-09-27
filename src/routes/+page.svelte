@@ -38,6 +38,7 @@
   import { dispatchServiceEvent, queueRefreshChats } from "$lib/state/events";
   import { members } from "$lib/state/members.svelte";
   import { messages } from "$lib/state/messages.svelte";
+  import type { MessagePage } from "$lib/message-window";
   import { once } from "$lib/state/once.svelte";
   import { player } from "$lib/state/player.svelte";
   import { session } from "$lib/state/session.svelte";
@@ -130,7 +131,7 @@
     if (!chat.endsWith("@g.us")) invoke("watch_presence", { jid: chat }).catch(() => {});
     chats.titleOverride = label;
     ui.scrolledUp = false;
-    messages.prepareChat();
+    messages.prepareChat(chat, session.settings.message_window_size);
     composer.chatPrivacy = { send_typing: null, send_receipts: null };
     invoke<{ retention: ChatRetention } & ChatPrivacy>("chat_settings", { chat })
       .then((s) => {
@@ -150,15 +151,16 @@
       // Invalidate any in-flight reload from the previous chat.
       const seq = messages.nextSeq();
       // Mentions are captured before the chat is marked read, since that clears them.
-      const [mentions, loaded] = await Promise.all([
+      const [mentions, page] = await Promise.all([
         invoke<string[]>("unread_mentions", { chat }).catch(() => [] as string[]),
-        invoke<StoredMessage[]>("messages", { chat, limit: messages.messageLimit }),
+        invoke<MessagePage>("message_page", { chat, limit: messages.messageLimit }),
       ]);
       // A quicker click on another chat has already taken over.
       if (chats.selectedChat !== chat || seq !== messages.messagesSeq) return;
       messages.mentionQueue = mentions;
       messages.mentionCursor = 0;
-      messages.messages = loaded;
+      const loaded = page.messages;
+      messages.acceptMessages(loaded);
       await messages.loadMarks(chat);
       // Enter at the unread divider when there is one, as Discord does, rather
       // than at the newest message. The unread flags are still intact here
@@ -266,7 +268,7 @@
     const ok = await chats.deleteChat(chat);
     if (!ok) return;
     if (wasOpen) {
-      messages.messages = [];
+      messages.acceptMessages([]);
       messages.marks = structuredClone({ reactions: [], starred: [], pinned: null, polls: [], events: [], view_once: [], forwarded: [], edited: [] });
       messages.mentionQueue = [];
       messages.mentionCursor = 0;
@@ -393,6 +395,10 @@
   });
 
   function scrollToBottom() {
+    if (!messages.atLatest && chats.selectedChat) {
+      void messages.showLatest(chats.selectedChat).then((loaded) => { if (loaded) scrollToBottom(); });
+      return;
+    }
     // Wait for the new messages to render before measuring.
     requestAnimationFrame(() => {
       if (scroller) scroller.scrollTop = scroller.scrollHeight;
@@ -410,13 +416,13 @@
   $effect(() => {
     if (!chats.selectedChat) return;
     void members.typing[chats.selectedChat]?.length;
-    if (!untrack(() => ui.scrolledUp)) scrollToBottom();
+    if (messages.atLatest && !untrack(() => ui.scrolledUp)) scrollToBottom();
   });
 
   function onScroll() {
     if (!scroller) return;
     const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-    ui.scrolledUp = distance > 120;
+    ui.scrolledUp = !messages.atLatest || distance > 120;
     if (
       scroller.scrollTop < 80 &&
       messages.loadOnScroll &&
@@ -424,7 +430,7 @@
       !messages.loadingOlder &&
       messages.messages.length > 0
     ) {
-      void messages.loadOlder(chats.selectedChat, true);
+      void messages.loadOlder(chats.selectedChat, true, scroller);
     }
     scheduleReadMarking();
   }
@@ -524,21 +530,23 @@
     const { chat, id } = ui.pendingJump;
     ui.seeking = true;
     try {
-      // Ten rounds of 50 reach about 500 messages back before giving up.
+      if (await messages.showStoredMessage(chat, id)) {
+        await tick();
+        scrollToMessage(id);
+        return;
+      }
       for (let round = 0; round < 10 && chats.selectedChat === chat; round++) {
-        const before = messages.messages.length;
-        await invoke("load_older", { chat, count: 50 });
-        // The phone answers as a history sync event; give it a moment to land.
-        await new Promise((r) => setTimeout(r, 2500));
-        messages.messageLimit += 50;
-        await messages.reloadMessages(chat, true, scroller);
+        const before = messages.messages.at(-1)?.id;
+        await messages.recallDay(chat, scroller ?? null);
+        if (chats.selectedChat !== chat) return;
+        await messages.showStoredMessage(chat, id);
         await tick();
         if (scroller?.querySelector(`[data-id="${id}"]`)) {
           ui.pendingJump = null;
           scrollToMessage(id);
           return;
         }
-        if (messages.messages.length === before) break;
+        if (messages.messages.at(-1)?.id === before) break;
       }
       ui.fail("Your phone did not send that message; it may be older than it keeps, or deleted.");
     } catch (e) {
@@ -967,7 +975,10 @@
           autoplayId={messages.autoplayId}
           onceAudioOpenId={ui.onceOpen?.id ?? null}
           loadingOlder={messages.loadingOlder}
-          onloadolder={() => messages.loadOlder(chats.selectedChat)}
+          atLatest={messages.atLatest}
+          onloadolder={() => messages.loadOlder(chats.selectedChat, false, scroller ?? null)}
+          onloadnewer={() => messages.loadNewer(chats.selectedChat, scroller ?? null)}
+          onlatest={async () => { if (await messages.showLatest(chats.selectedChat)) scrollToBottom(); }}
           uploads={composer.outgoing.filter((o) => o.chat === selectedChat)}
           typers={members.typing[selectedChat] ?? []}
           typerLabelOf={(sender) => {
@@ -1449,6 +1460,7 @@
     onclose={() => (ui.showSettings = false)}
     onsave={async (next) => {
       await session.saveSettings(next);
+      messages.resizeWindow(session.settings.message_window_size);
       await once.refresh();
     }}
     onflush={flushMedia}

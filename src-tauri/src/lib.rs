@@ -144,6 +144,7 @@ pub fn run() {
             accounts::remove_account,
             accounts::rename_account,
             messages::messages,
+            messages::message_page,
             chats::chats,
             contacts::resolve_names,
             messages::mark_read,

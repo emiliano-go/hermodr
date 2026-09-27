@@ -22,9 +22,13 @@ Postal takes the other path. Because it implements the protocol itself:
   may supply less. Older messages can also be fetched on demand.
   Sync requests never change disk retention. Legacy full-history settings
   migrate to explicit unlimited global disk retention, preserving their effect.
-- **Message storage is ours.** History lives in a small SQLite database with a
-  configurable retention window (1 day and 500 messages per chat by default,
-  per-chat overrides possible). It can be cleared, or kept in memory only.
+- **Disk history and RAM have separate limits.** SQLite is a durable archive,
+  unlimited on new installations unless explicit disk retention is configured.
+  Existing disk policies survive upgrades. The open conversation keeps a bounded
+  `MessageWindow` (500 messages by default, adjustable from 50 to 2,000).
+  Older/newer pages come from SQLite; only exhausted local history asks the phone.
+  Eviction from RAM never deletes disk rows. Back to latest returns to live messages.
+  History can also be cleared, or kept in memory only.
   Disk retention deletes expired messages strictly, including a quiet chat's
   last message. Chat identity, last activity, names and pins survive separately;
   an empty chat has no retained message preview. Delete chat removes it from the
@@ -41,7 +45,8 @@ is a separate state. Global settings cannot inherit.
 
 ## Measured impact
 
-Against a real account, comparing the old webview approach with this one:
+Historical measurements with bounded disk retention, comparing the old webview
+approach with this one. These are not measurements of unlimited archive mode:
 
 | Metric | Altus (WhatsApp Web in a webview) | Postal |
 | --- | --- | --- |
@@ -52,7 +57,8 @@ Against a real account, comparing the old webview approach with this one:
 
 Memory is the whole app. The protocol core is around 35 MB; the rest is the one
 WebKit webview that renders the UI, the only place a browser engine is used. The
-point is that nothing history-sized accumulates either way.
+message window is now bounded separately. An unlimited SQLite archive can grow
+on disk; these measurements do not establish its maximum size or query latency.
 
 CPU was sampled with `pidstat` in 30-second windows. Altus held 130-220% of one
 core the entire time and its RSS kept climbing toward the full 23 GB history, so
@@ -80,7 +86,7 @@ does the same with messages, one delivery at a time. More in
 ```
 crates/postal-core/    protocol client, storage, retention
   history.rs            which history-sync chunks to accept
-  store.rs              SQLite message store + retention policy
+  store/                SQLite repository and explicit DiskRetentionManager
   service.rs            connection lifecycle, typed event stream
 src-tauri/              Tauri shell: commands and event forwarding
 src/                    Svelte 5 UI (chat list, conversation, pairing)

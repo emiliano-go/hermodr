@@ -25,7 +25,7 @@ async fn storage_failures_are_logged_and_event_processing_continues() {
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("synthetic.db");
-    let store = MessageStore::open(&path, Retention::unlimited()).unwrap();
+    let store = MessageStore::open(&path).unwrap();
     assert!(store.message("1@g.us", "absent").observed().is_none());
     assert!(ERRORS.with_borrow(|errors| errors.is_empty()));
     let conn = rusqlite::Connection::open(&path).unwrap();
@@ -33,6 +33,7 @@ async fn storage_failures_are_logged_and_event_processing_continues() {
     let (events, mut received) = broadcast::channel(32);
     let inbound = Inbound {
         store: Arc::new(store), events, connected: Arc::default(), client_for_events: Arc::default(),
+        disk_retention: Arc::new(DiskRetentionManager::new(DiskRetention::unlimited())),
         media_dir: None, group_cache: Arc::default(), groups_cache: Arc::default(),
         older_waits: Arc::default(), downloads: Arc::new(tokio::sync::Semaphore::new(1)),
         sync_progress: Arc::default(), auto_download_default: false,
@@ -90,7 +91,7 @@ async fn incoming_media_captions_keep_wire_mentions_through_storage() {
         }),
         ..Default::default()
     };
-    let store = MessageStore::open(Path::new(":memory:"), Retention::unlimited()).unwrap();
+    let store = MessageStore::open(Path::new(":memory:")).unwrap();
     let once = wa::Message {
         view_once_message: MessageField::some(wa::message::FutureProofMessage {
             message: MessageField::some(image.clone()), ..Default::default()
@@ -125,7 +126,8 @@ async fn group_changes_invalidate_fetched_metadata_and_overviews() {
     };
     let (events, mut received) = broadcast::channel(32);
     let inbound = Inbound {
-        store: Arc::new(MessageStore::open(Path::new(":memory:"), Retention::unlimited()).unwrap()),
+        store: Arc::new(MessageStore::open(Path::new(":memory:")).unwrap()),
+        disk_retention: Arc::new(DiskRetentionManager::new(DiskRetention::unlimited())),
         events,
         connected: Arc::default(),
         client_for_events: Arc::default(),
@@ -176,7 +178,7 @@ async fn group_changes_invalidate_fetched_metadata_and_overviews() {
 
 #[test]
 fn learned_caller_address_forms_reach_saved_names() {
-    let store = MessageStore::open(Path::new(":memory:"), Retention::unlimited()).unwrap();
+    let store = MessageStore::open(Path::new(":memory:")).unwrap();
     let lid: Jid = "123:4@lid".parse().unwrap();
     let pn: Jid = "59897504482:5@s.whatsapp.net".parse().unwrap();
     remember_lid_pn(&store, &lid, Some(&pn));
@@ -190,7 +192,7 @@ fn learned_caller_address_forms_reach_saved_names() {
 /// so an alias added from either place is found from the other.
 #[test]
 fn an_alias_reaches_a_contact_through_both_of_its_address_forms() {
-    let store = MessageStore::open(Path::new(":memory:"), Retention::default()).unwrap();
+    let store = MessageStore::open(Path::new(":memory:")).unwrap();
     store.set_lid_pn("12345", "59891954564").unwrap();
     assert_eq!(
         contact_forms(&store, "12345@lid"),
@@ -205,7 +207,7 @@ fn an_alias_reaches_a_contact_through_both_of_its_address_forms() {
 /// A contact the core has not mapped has no twin, and still gets an alias.
 #[test]
 fn an_unmapped_contact_has_only_the_form_it_was_given() {
-    let store = MessageStore::open(Path::new(":memory:"), Retention::default()).unwrap();
+    let store = MessageStore::open(Path::new(":memory:")).unwrap();
     assert_eq!(
         contact_forms(&store, "59891954564@s.whatsapp.net"),
         ["59891954564@s.whatsapp.net"]
@@ -367,23 +369,20 @@ fn default_config_targets_its_data_dir() {
     let c = ServiceConfig::under("/tmp/example");
     assert_eq!(c.session_path, Path::new("/tmp/example").join("session.db"));
     assert_eq!(c.messages_path, Path::new("/tmp/example").join("messages.db"));
-    assert_eq!(c.retention, Retention::default());
+    assert_eq!(c.retention, DiskRetention::default());
     assert!(!c.request_full_history);
 }
 
 #[test]
-fn default_retention_is_bounded() {
-    // The whole point of the rewrite: the default must not be unbounded.
-    let r = Retention::default();
-    assert!(r.max_age_hours.value().is_some());
-    assert!(r.max_messages_per_chat.value().is_some());
+fn new_archives_have_no_disk_limit() {
+    assert_eq!(ServiceConfig::under("unused").retention, DiskRetention::unlimited());
 }
 
 #[test]
-fn secret_horizon_tracks_the_message_window() {
+fn secret_horizon_tracks_disk_retention() {
     // Keys must not outlive the messages they belong to, or the session
     // database grows far beyond the history we actually keep.
-    let config = cache_config_for(&Retention {
+    let config = cache_config_for(&DiskRetention {
         max_age_hours: RetentionLimit::Limited(24),
         max_messages_per_chat: RetentionLimit::Unlimited,
     });
@@ -396,7 +395,7 @@ fn secret_horizon_tracks_the_message_window() {
 fn secret_horizon_has_a_floor() {
     // An edit can arrive shortly after its parent, so the horizon must not
     // collapse to zero for a very short retention window.
-    let config = cache_config_for(&Retention {
+    let config = cache_config_for(&DiskRetention {
         max_age_hours: RetentionLimit::Limited(0),
         max_messages_per_chat: RetentionLimit::Unlimited,
     });
@@ -405,7 +404,7 @@ fn secret_horizon_has_a_floor() {
 
 #[test]
 fn unlimited_retention_falls_back_to_the_library_default() {
-    let config = cache_config_for(&Retention::unlimited());
+    let config = cache_config_for(&DiskRetention::unlimited());
     assert_eq!(
         config.msg_secret_retention.text,
         Duration::from_secs(30 * 86_400)
@@ -483,7 +482,7 @@ fn view_once_media_is_nested_in_the_v2_container() {
 /// and its messages are stored under, so archive/pin/mute land on the right row.
 #[tokio::test]
 async fn a_lid_state_change_lands_on_the_phone_number_row() {
-    let store = MessageStore::open(Path::new(":memory:"), Retention::default()).unwrap();
+    let store = MessageStore::open(Path::new(":memory:")).unwrap();
     store.set_lid_pn("12345", "59891954564").unwrap();
 
     let lid: Jid = "12345@lid".parse().unwrap();

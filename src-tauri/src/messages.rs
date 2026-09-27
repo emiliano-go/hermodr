@@ -2,6 +2,14 @@ use postal_core::StoredMessage;
 use tauri::State;
 use crate::{AppState, settings::sends_privacy};
 
+#[tauri::command(async)]
+pub(crate) fn message_page(state: State<'_, AppState>, chat: String, limit: Option<u32>,
+    cursor: Option<postal_core::store::MessageCursor>, direction: Option<postal_core::store::MessagePageDirection>,
+    anchor_id: Option<String>) -> Result<postal_core::store::MessagePage, String> {
+    state.service()?.message_page(&chat, limit.unwrap_or(500), cursor, direction.unwrap_or_default(), anchor_id.as_deref())
+        .map_err(|error| error.to_string())
+}
+
 /// Stored messages for a chat, newest first.
 #[tauri::command(async)]
 pub(crate) fn messages(
@@ -148,8 +156,14 @@ pub(crate) async fn forward_message(
 }
 
 #[tauri::command(async)]
-pub(crate) fn marks(state: State<'_, AppState>, chat: String) -> Result<postal_core::ChatMarks, String> {
-    state.service()?.marks(&chat).map_err(|e| e.to_string())
+pub(crate) fn marks(state: State<'_, AppState>, chat: String, ids: Option<Vec<String>>) -> Result<postal_core::ChatMarks, String> {
+    let service = state.service()?;
+    let ids = match ids {
+        Some(ids) => ids,
+        None => service.messages(&chat, state.settings.lock().unwrap().message_window_size)
+            .map_err(|error| error.to_string())?.into_iter().map(|m| m.header.id).collect(),
+    };
+    service.marks_for(&chat, &ids).map_err(|e| e.to_string())
 }
 
 /// Who got, read and played one of our messages.

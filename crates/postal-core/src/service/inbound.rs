@@ -7,6 +7,7 @@ use whatsapp_rust::wacore::types::events::MessageBatch;
 #[derive(Clone)]
 pub(super) struct Inbound {
     pub(super) store: Arc<MessageStore>,
+    pub(super) disk_retention: Arc<DiskRetentionManager>,
     pub(super) events: broadcast::Sender<ServiceEvent>,
     pub(super) connected: Arc<AtomicBool>,
     pub(super) client_for_events: Arc<std::sync::OnceLock<Arc<Client>>>,
@@ -699,7 +700,7 @@ impl Inbound {
         let pruning = std::time::Instant::now();
         touched.sort_unstable();
         touched.dedup();
-        let removed = match store.enforce_retention_for(&touched) {
+        let removed = match self.disk_retention.enforce_for(store, &touched) {
             Ok(removed) => removed,
             Err(e) => {
                 log::error!("retention failed: {e}");

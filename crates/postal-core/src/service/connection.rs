@@ -118,11 +118,11 @@ fn android_tablet_profile() -> whatsapp_rust::wacore::client_profile::ClientProf
 /// horizon is 30 days for text and 90 for polls, which on an account with
 /// hundreds of thousands of messages grows the session database into the
 /// hundreds of megabytes. Since Postal only keeps messages for
-/// [`Retention::max_age_hours`], keeping keys far beyond that window protects
+/// [`DiskRetention::max_age_hours`], keeping keys far beyond that window protects
 /// add-ons for messages that no longer exist. The horizon is therefore capped
 /// at the message window, with a floor of an hour so edits arriving slightly
 /// after their parent are never lost.
-pub(super) fn cache_config_for(retention: &Retention) -> CacheConfig {
+pub(super) fn cache_config_for(retention: &DiskRetention) -> CacheConfig {
     let horizon = retention
         .max_age_hours
         .value()
@@ -155,7 +155,7 @@ pub(super) fn cache_config_for(retention: &Retention) -> CacheConfig {
 /// decryption for a message we still keep.
 pub(super) fn reclaim_oversized_secrets(
     session_path: &Path,
-    retention: &Retention,
+    retention: &DiskRetention,
     store: &MessageStore,
 ) -> Result<usize> {
     let Some(hours) = retention.max_age_hours.value() else {
@@ -278,10 +278,8 @@ impl WhatsAppService {
             config.retention,
             config.request_full_history,
         );
-        let store = Arc::new(MessageStore::open(
-            &config.messages_path,
-            config.retention,
-        )?);
+        let store = Arc::new(MessageStore::open(&config.messages_path)?);
+        let disk_retention = Arc::new(DiskRetentionManager::new(config.retention));
         let aliases = Arc::new(AliasStore::open(&config.aliases_path)?);
         let (events, initial_rx) = broadcast::channel(256);
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
@@ -326,6 +324,7 @@ impl WhatsAppService {
         let older_waits: Arc<Mutex<OlderWaits>> = Arc::default();
         let inbound = Inbound {
             store: store.clone(),
+            disk_retention: disk_retention.clone(),
             events: events.clone(),
             connected: connected_state.clone(),
             client_for_events: client_slot.clone(),
@@ -567,6 +566,7 @@ impl WhatsAppService {
             Self {
                 client,
                 store,
+                disk_retention,
                 aliases,
                 events,
                 shutdown: Mutex::new(Some(shutdown_tx)),

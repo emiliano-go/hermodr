@@ -85,8 +85,8 @@ impl WhatsAppService {
     }
 
     /// Replaces the retention policy of the running service.
-    pub fn set_retention(&self, retention: Retention) {
-        self.store.set_retention(retention);
+    pub fn set_retention(&self, retention: DiskRetention) {
+        self.disk_retention.set_policy(retention);
     }
 
     /// Pages every chat back through the phone until it has nothing older,
@@ -294,7 +294,7 @@ impl Inbound {
                 chats.push(chat);
             }
         }
-        // Retention is left to the next live write, so
+        // DiskRetention is left to the next live write, so
         // what was just loaded can be seen first. Record
         // the chunk for the readiness gate even when it
         // added nothing, so a stream of no-op chunks does

@@ -14,6 +14,7 @@
     "allow-remove-account",
     "allow-rename-account",
     "allow-messages",
+    "allow-message-page",
     "allow-message-media-action",
     "allow-chats",
     "allow-send-text",

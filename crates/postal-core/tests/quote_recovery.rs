@@ -1,10 +1,10 @@
 //! Recovering the view-once a reply quotes: the locator round-trips, every
 //! reply quoting the same view-once shares one file, and a file no reply names
 //! any more is pruned.
-use postal_core::store::{MessageHeader, MessageStore, Quote, Retention, StoredMessage};
+use postal_core::store::{MessageHeader, MessageStore, Quote, StoredMessage};
 
 fn store() -> MessageStore {
-    MessageStore::open(std::path::Path::new(":memory:"), Retention::unlimited()).unwrap()
+    MessageStore::open(std::path::Path::new(":memory:")).unwrap()
 }
 
 /// A reply quoting `quoted`, carrying the only copy of that view-once.

@@ -10,6 +10,7 @@ const COMMANDS: &[&str] = &[
     "remove_account",
     "rename_account",
     "messages",
+    "message_page",
     "chats",
     "resolve_names",
     "mark_read",

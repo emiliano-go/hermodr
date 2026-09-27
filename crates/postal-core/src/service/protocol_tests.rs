@@ -6,7 +6,8 @@ use whatsapp_rust::wacore::types::events::LazyHistorySync;
 fn inbound() -> (Inbound, broadcast::Receiver<ServiceEvent>) {
     let (events, received) = broadcast::channel(32);
     (Inbound {
-        store: Arc::new(MessageStore::open(Path::new(":memory:"), Retention::unlimited()).unwrap()),
+        store: Arc::new(MessageStore::open(Path::new(":memory:")).unwrap()),
+        disk_retention: Arc::new(DiskRetentionManager::new(DiskRetention::unlimited())),
         events, connected: Arc::default(), client_for_events: Arc::default(), media_dir: None,
         group_cache: Arc::default(), groups_cache: Arc::default(), older_waits: Arc::default(),
         downloads: Arc::new(tokio::sync::Semaphore::new(1)), sync_progress: Arc::default(),

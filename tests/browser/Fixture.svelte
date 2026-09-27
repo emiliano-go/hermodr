@@ -3,6 +3,7 @@
   import ChatMetadata from "./ChatMetadata.svelte";
   import RetentionSettings from "./RetentionSettings.svelte";
   import StorageManager from "$lib/StorageManager.svelte";
+  import MessageWindow from "./MessageWindow.svelte";
   import { fixture } from "./ipc";
   let mounted = $state(true);
   let calls = $state(0);
@@ -23,6 +24,7 @@
 <button onclick={() => { cleanupCalls = fixture.storageCalls; }}>Count cleanup calls</button>
 <output aria-label="Cleanup calls">{cleanupCalls}</output>
 <StorageManager />
+<MessageWindow />
 
 <style>
   :global(:root) { --raised: #233138; --text: #eee; --border: #53616a; --muted: #b5c5cd; }

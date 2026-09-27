@@ -39,6 +39,7 @@ jobs:
           node --experimental-strip-types --test src/lib/state/message-actions.test.ts
           node --experimental-strip-types --test src/lib/notices.test.ts
           node --experimental-strip-types --test src/lib/retention.test.ts
+          node --experimental-strip-types --test src/lib/message-window.test.ts
 
   core:
     name: Core (${{ matrix.os }})

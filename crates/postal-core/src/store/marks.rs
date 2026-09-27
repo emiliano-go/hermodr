@@ -52,17 +52,23 @@ impl MessageStore {
 
     /// Reactions, stars and the pin for one chat.
     pub fn marks(&self, chat: &str) -> Result<ChatMarks> {
+        self.marks_for(chat, None)
+    }
+
+    pub fn marks_for(&self, chat: &str, message_ids: Option<&[String]>) -> Result<ChatMarks> {
+        anyhow::ensure!(message_ids.is_none_or(|ids| ids.len() <= MAX_MESSAGE_PAGE as usize), "too many message IDs");
+        let window = message_ids.map(serde_json::to_string).transpose()?;
         let conn = self.conn.lock().unwrap();
         let chat = &*names::canonical_chat(&conn, chat)?;
         let reactions = conn
-            .prepare("SELECT target, sender, emoji FROM reactions WHERE chat = ?1")?
-            .query_map(params![chat], |r| {
+            .prepare("SELECT target, sender, emoji FROM reactions WHERE chat = ?1 AND (?2 IS NULL OR target IN (SELECT value FROM json_each(?2)))")?
+            .query_map(params![chat, window], |r| {
                 Ok(Reaction { target: r.get(0)?, sender: r.get(1)?, emoji: r.get(2)? })
             })?
             .collect::<rusqlite::Result<_>>()?;
         let starred = conn
-            .prepare("SELECT id FROM stars WHERE chat = ?1")?
-            .query_map(params![chat], |r| r.get(0))?
+            .prepare("SELECT id FROM stars WHERE chat = ?1 AND (?2 IS NULL OR id IN (SELECT value FROM json_each(?2)))")?
+            .query_map(params![chat, window], |r| r.get(0))?
             .collect::<rusqlite::Result<_>>()?;
         let pinned = conn
             .query_row("SELECT id FROM message_pins WHERE chat = ?1", params![chat], |r| r.get(0))
@@ -70,8 +76,8 @@ impl MessageStore {
         let json = |s: String| serde_json::from_str::<Vec<String>>(&s).unwrap_or_default();
 
         let mut polls: Vec<Poll> = conn
-            .prepare("SELECT id, name, options, multi FROM polls WHERE chat = ?1")?
-            .query_map(params![chat], |r| {
+            .prepare("SELECT id, name, options, multi FROM polls WHERE chat = ?1 AND (?2 IS NULL OR id IN (SELECT value FROM json_each(?2)))")?
+            .query_map(params![chat, window], |r| {
                 Ok(Poll {
                     id: r.get(0)?,
                     name: r.get(1)?,
@@ -82,8 +88,8 @@ impl MessageStore {
             })?
             .collect::<rusqlite::Result<_>>()?;
         let votes: Vec<(String, PollVote)> = conn
-            .prepare("SELECT poll, voter, options FROM poll_votes WHERE chat = ?1")?
-            .query_map(params![chat], |r| {
+            .prepare("SELECT poll, voter, options FROM poll_votes WHERE chat = ?1 AND (?2 IS NULL OR poll IN (SELECT value FROM json_each(?2)))")?
+            .query_map(params![chat, window], |r| {
                 Ok((r.get(0)?, PollVote { voter: r.get(1)?, options: json(r.get(2)?) }))
             })?
             .collect::<rusqlite::Result<_>>()?;
@@ -96,9 +102,9 @@ impl MessageStore {
         let mut events: Vec<Event> = conn
             .prepare(
                 "SELECT id, name, description, start_at, end_at, location, link, canceled
-                 FROM events WHERE chat = ?1",
+                 FROM events WHERE chat = ?1 AND (?2 IS NULL OR id IN (SELECT value FROM json_each(?2)))",
             )?
-            .query_map(params![chat], |r| {
+            .query_map(params![chat, window], |r| {
                 Ok(Event {
                     id: r.get(0)?,
                     name: r.get(1)?,
@@ -113,8 +119,8 @@ impl MessageStore {
             })?
             .collect::<rusqlite::Result<_>>()?;
         let responses: Vec<(String, EventResponse)> = conn
-            .prepare("SELECT event, responder, response FROM event_responses WHERE chat = ?1")?
-            .query_map(params![chat], |r| {
+            .prepare("SELECT event, responder, response FROM event_responses WHERE chat = ?1 AND (?2 IS NULL OR event IN (SELECT value FROM json_each(?2)))")?
+            .query_map(params![chat, window], |r| {
                 Ok((r.get(0)?, EventResponse { responder: r.get(1)?, response: r.get(2)? }))
             })?
             .collect::<rusqlite::Result<_>>()?;
@@ -133,16 +139,16 @@ impl MessageStore {
                      OR EXISTS(SELECT 1 FROM messages q
                                 WHERE q.reply_to_id = v.id
                                   AND q.reply_to_locator IS NOT NULL AND q.reply_to_locator != '')
-                 FROM view_once v WHERE chat = ?1",
+                 FROM view_once v WHERE chat = ?1 AND (?2 IS NULL OR id IN (SELECT value FROM json_each(?2)))",
             )?
-            .query_map(params![chat], |r| {
+            .query_map(params![chat, window], |r| {
                 Ok(ViewOnce { id: r.get(0)?, opened: r.get::<_, i32>(1)? != 0, available: r.get::<_, i32>(2)? != 0 })
             })?
             .collect::<rusqlite::Result<_>>()?;
 
         let ids = |table: &str| -> Result<Vec<String>> {
-            conn.prepare(&format!("SELECT id FROM {table} WHERE chat = ?1"))?
-                .query_map(params![chat], |r| r.get(0))?
+            conn.prepare(&format!("SELECT id FROM {table} WHERE chat = ?1 AND (?2 IS NULL OR id IN (SELECT value FROM json_each(?2)))"))?
+                .query_map(params![chat, window], |r| r.get(0))?
                 .collect::<rusqlite::Result<_>>()
                 .map_err(Into::into)
         };

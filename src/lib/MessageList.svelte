@@ -53,6 +53,9 @@
     autoplayId,
     onceAudioOpenId,
     loadingOlder,
+    atLatest = true,
+    onloadnewer = () => {},
+    onlatest = () => {},
     onrecoverquote,
     recovering,
     onloadolder,
@@ -125,6 +128,9 @@
     autoplayId: string | null;
     onceAudioOpenId: string | null;
     loadingOlder: boolean;
+    atLatest?: boolean;
+    onloadnewer?: () => void;
+    onlatest?: () => void;
     onloadolder: () => void;
     uploads: Outgoing[];
     typers: { sender: string; state: string }[];
@@ -267,7 +273,7 @@
   onscroll={onscroll}>
   {#if messages.length > 0}
     <button class="load-older" onclick={onloadolder} disabled={loadingOlder}>
-      {loadingOlder ? "Asking your phone…" : "Load older messages"}
+      {loadingOlder ? "Loading messages…" : "Load older messages"}
     </button>
     <p class="system e2e">
       Messages are end-to-end encrypted. No one outside of this chat, not even WhatsApp, can read or listen to them.
@@ -294,6 +300,10 @@
   {#each uploads as upload (upload.token)}
     <OutgoingItem {upload} />
   {/each}
+  {#if !atLatest}
+    <button class="load-older" onclick={onloadnewer} disabled={loadingOlder}>Load newer messages</button>
+    <button class="load-older" onclick={onlatest}>Back to latest</button>
+  {/if}
   {#if typers.length > 0}
     <TypingIndicator typers={typerItems} {isGroup} avatarOf={avatarOf} />
   {/if}

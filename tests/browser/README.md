@@ -29,3 +29,12 @@ Largest first and Oldest first. Cancel a deletion and confirm cleanup-call count
 stays zero; confirm a deletion and verify updated totals/list. Clean chat media
 and clear the picture cache independently. Toggle cleanup failure and attempt
 another deletion: error must stay visible and file/totals remain unchanged.
+
+Bounded message window checks: open the synthetic archive (350 disk rows, 100
+loaded), page older/newer, and jump to stored 0005 without phone requests. Older
+at that boundary asks the fake phone; "Phone has no older rows" ends the request.
+An incoming row while browsing must leave the current range intact. Back to
+latest resumes the newest range. Delay a page, then either inject an incoming
+row or switch to the empty chat before releasing it: refreshes must not cancel
+paging, and stale responses must not overwrite the other chat. Page failures
+leave existing rows visible. No database or real IPC is used.

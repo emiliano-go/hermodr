@@ -1,6 +1,36 @@
-//! Retention: per-chat overrides, pruning and clearing history.
+//! DiskRetention: per-chat overrides, pruning and clearing history.
 
 use super::*;
+
+/// Explicit limits on persisted messages, independent of the RAM window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiskRetention {
+    #[serde(deserialize_with = "limits::global_age")]
+    pub max_age_hours: RetentionLimit,
+    #[serde(deserialize_with = "limits::global_count")]
+    pub max_messages_per_chat: RetentionLimit,
+}
+
+impl Default for DiskRetention {
+    fn default() -> Self {
+        Self::unlimited()
+    }
+}
+
+impl DiskRetention {
+    pub fn unlimited() -> Self {
+        Self { max_age_hours: RetentionLimit::Unlimited, max_messages_per_chat: RetentionLimit::Unlimited }
+    }
+
+    fn oldest_allowed(&self) -> Option<i64> {
+        self.max_age_hours.value().map(|hours| unix_now() - i64::from(hours) * 3600)
+    }
+}
+
+pub struct DiskRetentionManager {
+    policy: Mutex<DiskRetention>,
+    last_full_prune: std::sync::atomic::AtomicI64,
+}
 
 impl MessageStore {
     pub fn chat_retention(&self, jid: &str) -> Result<ChatRetention> {
@@ -40,38 +70,55 @@ impl MessageStore {
         Ok(())
     }
 
-    /// Applies the retention policy to every chat, returning how many messages
-    /// were dropped.
-    pub fn enforce_retention(&self) -> Result<usize> {
-        self.prune(None)
+}
+
+impl DiskRetentionManager {
+    pub fn new(policy: DiskRetention) -> Self {
+        Self { policy: Mutex::new(policy), last_full_prune: std::sync::atomic::AtomicI64::new(0) }
     }
 
-    /// Retention after a live batch: only the chats it wrote to, which stays
+    /// Applies the retention policy to every chat, returning how many messages
+    /// were dropped.
+    pub fn enforce(&self, store: &MessageStore) -> Result<usize> {
+        let policy = *self.policy.lock().unwrap();
+        self.prune(store, None, policy)
+    }
+
+    /// DiskRetention after a live batch: only the chats it wrote to, which stays
     /// cheap on a large store, plus a pass over everything at most hourly so
     /// quiet chats still age out. Called after writes rather than on a timer
     /// so the bound holds even if the process is interrupted.
-    pub fn enforce_retention_for(&self, chats: &[String]) -> Result<usize> {
+    pub fn enforce_for(&self, store: &MessageStore, chats: &[String]) -> Result<usize> {
+        let policy = *self.policy.lock().unwrap();
         let now = unix_now();
         if now - self.last_full_prune.load(std::sync::atomic::Ordering::Relaxed) >= 3600 {
-            self.last_full_prune.store(now, std::sync::atomic::Ordering::Relaxed);
-            return self.prune(None);
+            let removed = self.prune(store, None, policy)?;
+            let current = self.policy.lock().unwrap();
+            if *current == policy {
+                self.last_full_prune.store(now, std::sync::atomic::Ordering::Relaxed);
+            }
+            return Ok(removed);
         }
-        self.prune(Some(chats))
+        self.prune(store, Some(chats), policy)
     }
 
     /// Replaces the global policy; the next prune uses it.
-    pub fn set_retention(&self, retention: Retention) {
-        *self.retention.lock().unwrap() = retention;
+    pub fn set_policy(&self, retention: DiskRetention) {
+        let mut policy = self.policy.lock().unwrap();
+        if *policy != retention {
+            *policy = retention;
+            self.last_full_prune.store(0, std::sync::atomic::Ordering::Relaxed);
+        }
     }
 
-    fn prune(&self, chats: Option<&[String]>) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
+    fn prune(&self, store: &MessageStore, chats: Option<&[String]>, policy: DiskRetention) -> Result<usize> {
+        let conn = store.conn.lock().unwrap();
         // With no policy anywhere, every delete below matches nothing by
         // construction, yet each still scans: on a large store that holds the
         // store lock for seconds per live message, stalling sends, reads and
         // the UI behind it. So each scan only runs when a policy that could
         // match exists, globally or on some chat.
-        let oldest = self.retention.lock().unwrap().oldest_allowed();
+        let oldest = policy.oldest_allowed();
         let per_chat_age = conn
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM chat_retention WHERE age_mode = 'limited')",
@@ -79,7 +126,7 @@ impl MessageStore {
                 |r| r.get::<_, i32>(0),
             )?
             != 0;
-        let cap = self.retention.lock().unwrap().max_messages_per_chat.value();
+        let cap = policy.max_messages_per_chat.value();
         let per_chat_cap = conn
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM chat_retention WHERE count_mode = 'limited')",
@@ -179,6 +226,9 @@ impl MessageStore {
         Ok(removed)
     }
 
+}
+
+impl MessageStore {
     /// Deletes every stored message and the state attached to them. Names,
     /// chat pins and per-chat settings stay. Returns how many messages went.
     pub fn clear_history(&self) -> Result<usize> {

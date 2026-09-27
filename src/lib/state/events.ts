@@ -78,7 +78,7 @@ function queueReloadMessages(
     if (messagesQueued === queued) messagesQueued = null;
     if (chats.selectedChat !== queued.chat) return;
     await messages.reloadMessages(queued.chat);
-    if (queued.follow) host.scrollToBottom();
+    if (queued.follow && messages.atLatest) host.scrollToBottom();
     if (queued.markRead && !ui.scrolledUp && document.hasFocus()) {
       await invoke("mark_read", { chat: queued.chat }).catch(() => {});
       queueRefreshChats();
@@ -239,15 +239,12 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       await chats.refreshChats();
       chatsDirty = false;
       if (chats.selectedChat && payload.chats.includes(chats.selectedChat)) {
-        if (messages.loadingOlder) messages.messageLimit += 50;
-        messages.loadingOlder = false;
-        clearTimeout(messages.olderTimer);
+        const requestedOlder = messages.loadingOlder && messages.recall !== null;
         // The full reload covers any hints that landed while loading.
         messagesDirty = false;
         dirtyMarkRead = false;
-        const before = messages.messages.length;
-        await messages.reloadMessages(chats.selectedChat, true, host.getScroller());
-        messages.continueRecall(chats.selectedChat, messages.messages.length - before);
+        if (requestedOlder) await messages.finishOlder(chats.selectedChat, host.getScroller());
+        else await messages.reloadMessages(chats.selectedChat, true, host.getScroller());
       } else if (messagesDirty && chats.selectedChat) {
         // Burst hints that landed while older history was loading.
         messagesDirty = false;

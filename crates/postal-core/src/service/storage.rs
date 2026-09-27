@@ -214,7 +214,7 @@ mod tests {
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
         let media = root.join("media");
         std::fs::create_dir_all(media.join("avatars")).unwrap();
-        let store = MessageStore::open(&root.join("synthetic.db"), Retention::unlimited()).unwrap();
+        let store = MessageStore::open(&root.join("synthetic.db")).unwrap();
         let photo = media.join("photo.jpg");
         let video = media.join("video.mp4");
         std::fs::write(&photo, [1; 20]).unwrap();

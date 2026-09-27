@@ -1,0 +1,81 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { MessageWindow } from "./message-window.ts";
+import type { StoredMessage } from "./models.ts";
+import { createServer } from "vite";
+import { fileURLToPath } from "node:url";
+
+test("RAM window pages both ways, deduplicates updates, and never mutates its archive", () => {
+  const archive = Array.from({ length: 300 }, (_, n) => ({ chat: "test@s", id: String(n).padStart(4, "0"), timestamp: 100, text: String(n) }) as StoredMessage);
+  const window = new MessageWindow(100);
+  window.replace(archive.slice(200));
+  window.retain(archive.slice(100, 200), "older");
+  assert.equal(window.loaded.length, 100);
+  assert.equal(window.loaded[0].id, "0199");
+  assert.equal(window.loaded.at(-1)?.id, "0100");
+  window.retain([{ ...archive[150], text: "edited" }], "older");
+  assert.equal(window.loaded.find((m) => m.id === "0150")?.text, "edited");
+  assert.equal(window.loaded.length, 100);
+  window.retain(archive.slice(200), "newer");
+  assert.equal(window.loaded.at(-1)?.id, "0200");
+  window.evict();
+  assert.equal(window.loaded.length, 0);
+  assert.equal(archive.length, 300);
+  assert.equal(archive[150].text, "150");
+  for (const limit of [0, 49, 2_001, Infinity, NaN, 50.5]) assert.throws(() => new MessageWindow(limit));
+});
+
+test("pager defers concurrent refreshes, rejects stale pages, and falls back to phone only at archive end", async () => {
+  const server = await createServer({ configFile: fileURLToPath(new URL("../../tests/browser/vite.config.ts", import.meta.url)), server: { middlewareMode: true } });
+  let pager: { resetAccount(): void } | undefined;
+  try {
+    const { MessagesState } = await server.ssrLoadModule(fileURLToPath(new URL("./state/messages.svelte.ts", import.meta.url)));
+    const { windowFixture: fixture } = await server.ssrLoadModule("/ipc.ts");
+    const messages = new MessagesState();
+    pager = messages;
+    messages.prepareChat("window@s", 100);
+    await messages.reloadMessages("window@s");
+    assert.equal(messages.messages.length, 100);
+    fixture.deferNext = true;
+    const older = messages.loadOlder("window@s");
+    assert.equal(fixture.pending.length, 1);
+    fixture.archive.push({ chat: "window@s", id: "0350", timestamp: 100, text: "new" });
+    await messages.reloadMessages("window@s");
+    fixture.pending.shift()();
+    await older;
+    assert.deepEqual(messages.messages.map((m: StoredMessage) => m.id), Array.from({ length: 100 }, (_, i) => String(299 - i).padStart(4, "0")));
+    assert.equal(messages.loadingOlder, false);
+    assert.equal(fixture.phoneRequests, 0);
+    fixture.deferNext = true;
+    const stale = messages.loadOlder("window@s");
+    messages.prepareChat("other@s", 100);
+    await messages.reloadMessages("other@s");
+    fixture.pending.shift()();
+    await stale;
+    assert.equal(messages.messages.length, 0);
+    messages.prepareChat("window@s", 100);
+    assert.equal(await messages.showStoredMessage("window@s", "0005"), true);
+    assert.equal(fixture.phoneRequests, 0);
+    await messages.loadOlder("window@s");
+    assert.equal(fixture.phoneRequests, 1);
+    await messages.finishOlder("window@s", null);
+    assert.equal(messages.olderExhausted, true);
+    await messages.showLatest("window@s");
+    assert.equal(messages.messages[0].id, "0350");
+    fixture.failure = true;
+    await messages.loadOlder("window@s");
+    assert.equal(messages.messages[0].id, "0350");
+    assert.equal(messages.loadingOlder, false);
+    assert.equal(fixture.archive.length, 351);
+    fixture.failure = false;
+    await messages.loadOlder("window@s");
+    const oldNewest = messages.messages[0].id;
+    fixture.failure = true;
+    assert.equal(await messages.showLatest("window@s"), false);
+    assert.equal(messages.atLatest, false);
+    assert.equal(messages.messages[0].id, oldNewest);
+  } finally {
+    pager?.resetAccount();
+    await server.close();
+  }
+});

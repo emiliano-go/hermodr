@@ -1,19 +1,6 @@
 <script lang="ts" module>
-  import type { Retention } from "$lib/models";
-  export type { Retention } from "$lib/models";
-  export type UiSettings = {
-    retention: Retention;
-    request_full_history: boolean;
-    auto_download_media: boolean;
-    warn_missing_video_preview: boolean;
-    media_dir: string | null;
-    send_typing: boolean;
-    send_receipts: boolean;
-    keep_history: boolean;
-    skip_loading_screen: boolean;
-    keep_archived: boolean;
-    android_instance: boolean;
-  };
+  import type { UiSettings } from "$lib/models";
+  export type { DiskRetention, UiSettings } from "$lib/models";
   export type Account = { id: string; label: string; jid: string | null };
   export type Section =
     | "profile"
@@ -473,9 +460,19 @@
         {:else if section === "privacy"}
           <h2>Privacy & storage</h2>
           <p class="lede">
-            History is kept on this device only, and only within these limits. Leave a field
-            empty for no limit.
+            The RAM window and disk archive have separate limits. Evicting a message from RAM
+            leaves it available on disk. Disk limits below delete stored messages.
           </p>
+          <div class="setting">
+            <div>
+              <span class="setting-title">Messages in RAM</span>
+              <span class="setting-desc">Maximum loaded in the open conversation: 50–2,000. Default: 500. Older pages load from disk before asking your phone.</span>
+            </div>
+            <input class="field number" type="number" min="50" max="2000" step="1" aria-label="Messages in RAM"
+              value={draft.message_window_size} oninput={(e) => {
+                if (e.currentTarget.validity.valid && e.currentTarget.value) draft.message_window_size = Number(e.currentTarget.value);
+              }} />
+          </div>
           <label class="setting">
             <div>
               <span class="setting-title">Keep history on this computer</span>
@@ -489,10 +486,10 @@
           </label>
           <div class="setting">
             <div>
-              <span class="setting-title">Keep messages for</span>
+              <span class="setting-title">Keep messages on disk for</span>
               <span class="setting-desc">
-                Older messages are deleted from this device after each new message, and the space is
-                freed. Default: 1 day. Leave blank for no limit.
+                Older messages are deleted after a live message batch, and the space is freed.
+                New installations have no disk limit. Leave blank for no limit.
               </span>
             </div>
             <span class="unit-field">
@@ -516,10 +513,9 @@
           </div>
           <div class="setting">
             <div>
-              <span class="setting-title">Messages per chat</span>
+              <span class="setting-title">Messages per chat on disk</span>
               <span class="setting-desc">
-                Only the newest are kept in each conversation. Default: 500. Search stays fast up to
-                about 50 000. Leave blank for no limit.
+                Only the newest are kept when a disk cap is set. Leave blank to keep the archive unlimited.
               </span>
             </div>
             <input

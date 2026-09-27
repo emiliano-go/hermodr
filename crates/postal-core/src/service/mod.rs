@@ -32,7 +32,7 @@ use whatsapp_rust::{
 use crate::{
     aliases::AliasStore,
     history::HistoryPolicy,
-    store::{LinkCard, LocalState, Media, MessageHeader, MessageStore, Quote, Retention, StoredMessage},
+    store::{LinkCard, LocalState, Media, MessageHeader, MessageStore, Quote, DiskRetention, DiskRetentionManager, StoredMessage},
 };
 
 mod connection;
@@ -362,7 +362,7 @@ pub struct ServiceConfig {
     /// survive `messages_path` being turned into an in-memory store.
     pub aliases_path: PathBuf,
     /// How much history to keep locally.
-    pub retention: Retention,
+    pub retention: DiskRetention,
     /// Whether to pull the deep history sync during pairing.
     pub request_full_history: bool,
     /// Where downloaded media is written. `None` disables media downloads.
@@ -389,7 +389,7 @@ impl ServiceConfig {
             session_path: data_dir.join("session.db"),
             messages_path: data_dir.join("messages.db"),
             aliases_path: data_dir.join("aliases.db"),
-            retention: Retention::default(),
+            retention: DiskRetention::default(),
             request_full_history: false,
             auto_download_media: true,
             keep_archived: true,
@@ -407,6 +407,7 @@ pub struct WhatsAppService {
     user_info_slots: tokio::sync::Semaphore,
     client: Arc<Client>,
     store: Arc<MessageStore>,
+    disk_retention: Arc<DiskRetentionManager>,
     /// Local, per-contact aliases, kept in their own file beside the messages.
     aliases: Arc<AliasStore>,
     // Broadcast send only fails with no subscribers, expected during shutdown.

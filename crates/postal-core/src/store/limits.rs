@@ -52,11 +52,11 @@ pub(super) fn chat_limit<'de, D: Deserializer<'de>>(d: D) -> Result<RetentionLim
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::{ChatRetention, Retention};
+    use crate::store::{ChatRetention, DiskRetention};
 
     #[test]
     fn legacy_policies_keep_their_meaning_and_serialize_explicitly() {
-        let global: Retention = serde_json::from_str(r#"{"max_age_hours":24,"max_messages_per_chat":null}"#).unwrap();
+        let global: DiskRetention = serde_json::from_str(r#"{"max_age_hours":24,"max_messages_per_chat":null}"#).unwrap();
         assert_eq!(global.max_age_hours, RetentionLimit::Limited(24));
         assert_eq!(global.max_messages_per_chat, RetentionLimit::Unlimited);
         let chat: ChatRetention = serde_json::from_str(r#"{"max_age_hours":null,"max_messages":0,"on_demand":true}"#).unwrap();
@@ -66,8 +66,8 @@ mod tests {
         assert!(encoded.contains(r#""kind":"inherit""#));
         assert!(encoded.contains(r#""kind":"unlimited""#));
         assert_eq!(serde_json::from_str::<ChatRetention>(&encoded).unwrap(), chat);
-        assert!(serde_json::from_str::<Retention>(r#"{"max_age_hours":{"kind":"inherit"},"max_messages_per_chat":null}"#).is_err());
-        let zero: Retention = serde_json::from_str(r#"{"max_age_hours":0,"max_messages_per_chat":0}"#).unwrap();
+        assert!(serde_json::from_str::<DiskRetention>(r#"{"max_age_hours":{"kind":"inherit"},"max_messages_per_chat":null}"#).is_err());
+        let zero: DiskRetention = serde_json::from_str(r#"{"max_age_hours":0,"max_messages_per_chat":0}"#).unwrap();
         assert_eq!(zero.max_age_hours, RetentionLimit::Limited(0));
         assert_eq!(zero.max_messages_per_chat, RetentionLimit::Unlimited);
         assert_ne!(RetentionLimit::Limited(0), RetentionLimit::Unlimited);

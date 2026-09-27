@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use postal_core::{Retention, WhatsAppService};
+use postal_core::{DiskRetention, WhatsAppService};
 use tauri::{AppHandle, Manager, State};
 use crate::AppState;
 
@@ -7,7 +7,8 @@ use crate::AppState;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct UiSettings {
-    pub retention: Retention,
+    pub retention: DiskRetention,
+    pub message_window_size: u32,
     /// Requests deep history during pairing, independently of disk retention.
     #[serde(alias = "accept_full_history")]
     pub request_full_history: bool,
@@ -51,7 +52,8 @@ pub(crate) fn default_true() -> bool {
 impl Default for UiSettings {
     fn default() -> Self {
         Self {
-            retention: Retention::default(),
+            retention: DiskRetention::default(),
+            message_window_size: 500,
             request_full_history: false,
             auto_download_media: true,
             media_dir: None,
@@ -86,7 +88,8 @@ fn parse_settings(json: &str) -> serde_json::Result<UiSettings> {
     let legacy_unlimited = value.get("request_full_history").is_none()
         && value.get("accept_full_history").and_then(|v| v.as_bool()) == Some(true);
     let mut settings: UiSettings = serde_json::from_value(value)?;
-    if legacy_unlimited { settings.retention = Retention::unlimited(); }
+    if legacy_unlimited { settings.retention = DiskRetention::unlimited(); }
+    settings.message_window_size = settings.message_window_size.clamp(50, postal_core::store::MAX_MESSAGE_PAGE);
     Ok(settings)
 }
 
@@ -118,6 +121,9 @@ pub(crate) fn get_settings(state: State<'_, AppState>) -> UiSettings {
 /// wakes or puts the instance to sleep, without touching the main link.
 #[tauri::command]
 pub(crate) async fn set_settings(app: AppHandle, state: State<'_, AppState>, settings: UiSettings) -> Result<(), String> {
+    if !(50..=postal_core::store::MAX_MESSAGE_PAGE).contains(&settings.message_window_size) {
+        return Err("The RAM window must contain 50–2,000 messages".into());
+    }
     let instance_changed = state.settings.lock().unwrap().android_instance != settings.android_instance;
     // Both links share one store, so the instance cannot run without history;
     // and it is only useful once its own link exists, which pairing creates.
@@ -166,15 +172,17 @@ mod tests {
         let legacy = r#"{"accept_full_history":true,"retention":{"max_age_hours":24,"max_messages_per_chat":500}}"#;
         let migrated = parse_settings(legacy).unwrap();
         assert!(migrated.request_full_history);
-        assert_eq!(migrated.retention, Retention::unlimited());
+        assert_eq!(migrated.retention, DiskRetention::unlimited());
         let saved = serde_json::to_string(&migrated).unwrap();
         assert!(!saved.contains("accept_full_history"));
-        assert_eq!(parse_settings(&saved).unwrap().retention, Retention::unlimited());
+        assert_eq!(parse_settings(&saved).unwrap().retention, DiskRetention::unlimited());
         let bounded = parse_settings(&legacy.replace("true", "false")).unwrap();
-        assert_eq!(bounded.retention, Retention::default());
+        assert_eq!(bounded.retention, DiskRetention { max_age_hours: RetentionLimit::Limited(24), max_messages_per_chat: RetentionLimit::Limited(500) });
         let explicit = parse_settings(&legacy.replace("accept_full_history", "request_full_history")).unwrap();
         assert!(explicit.request_full_history);
         assert_eq!(explicit.retention.max_age_hours, RetentionLimit::Limited(24));
         assert!(!parse_settings("{}").unwrap().request_full_history);
+        assert_eq!(parse_settings("{}").unwrap().retention, DiskRetention::unlimited());
+        assert_eq!(bounded.message_window_size, 500);
     }
 }

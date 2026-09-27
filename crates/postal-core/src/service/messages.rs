@@ -405,6 +405,10 @@ impl WhatsAppService {
         self.store.marks(chat)
     }
 
+    pub fn marks_for(&self, chat: &str, ids: &[String]) -> Result<crate::store::ChatMarks> {
+        self.store.marks_for(chat, Some(ids))
+    }
+
     /// Marks a view-once message opened and deletes its media.
     pub fn open_view_once(&self, chat: &str, id: &str) -> Result<()> {
         if let Some(path) = self.store.open_view_once(chat, id)? {
@@ -467,7 +471,7 @@ impl WhatsAppService {
     /// Sets a chat's own retention and applies it at once.
     pub fn set_chat_retention(&self, chat: &str, retention: &crate::store::ChatRetention) -> Result<()> {
         self.store.set_chat_retention(chat, retention)?;
-        self.store.enforce_retention()?;
+        self.disk_retention.enforce(&self.store)?;
         self.prune_quote_files()?;
         Ok(())
     }
@@ -637,6 +641,20 @@ impl WhatsAppService {
     }
 
     /// Stored messages for a chat, newest first.
+    pub fn message_page(&self, chat: &str, limit: u32, cursor: Option<crate::store::MessageCursor>,
+        direction: crate::store::MessagePageDirection, anchor_id: Option<&str>) -> Result<crate::store::MessagePage> {
+        let cursor = if let Some(id) = anchor_id {
+            match self.store.message(chat, id) {
+                Ok(message) => Some(crate::store::MessageCursor { timestamp: message.header.timestamp, id: message.header.id }),
+                Err(error) if error.downcast_ref::<rusqlite::Error>() == Some(&rusqlite::Error::QueryReturnedNoRows) => {
+                    return Ok(crate::store::MessagePage { messages: vec![], has_more: false });
+                }
+                Err(error) => return Err(error),
+            }
+        } else { cursor };
+        self.store.message_page(chat, limit, cursor.as_ref(), direction)
+    }
+
     pub fn messages(&self, chat: &str, limit: u32) -> Result<Vec<StoredMessage>> {
         self.store.messages_for(chat, limit)
     }

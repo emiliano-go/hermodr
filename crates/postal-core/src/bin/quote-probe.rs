@@ -24,10 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
          that file is the account's messages.db, under the app's data directory",
     )?;
     let show_all = args.any(|a| a == "--all");
-    let store = MessageStore::open(
-        std::path::Path::new(&path),
-        postal_core::store::Retention::unlimited(),
-    )?;
+    let store = MessageStore::open(std::path::Path::new(&path))?;
 
     let (mut total, mut mine, mut with_copy, mut fetchable) = (0u32, 0u32, 0u32, 0u32);
     for q in store.view_once_quotes()? {

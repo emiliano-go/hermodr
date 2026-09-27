@@ -143,12 +143,13 @@ export type GroupInfo = {
   can_send: boolean;
 };
 export type RetentionLimit = { kind: "inherit" } | { kind: "unlimited" } | { kind: "limited"; value: number };
-export type Retention = {
+export type DiskRetention = {
   max_age_hours: RetentionLimit;
   max_messages_per_chat: RetentionLimit;
 };
 export type UiSettings = {
-  retention: Retention;
+  retention: DiskRetention;
+  message_window_size: number;
   request_full_history: boolean;
   auto_download_media: boolean;
   warn_missing_video_preview: boolean;

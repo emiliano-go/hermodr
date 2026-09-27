@@ -22,7 +22,7 @@ fn optional_rows_do_not_hide_database_failures() {
         ("message_pins", |s| s.marks("absent").map(|_| ())),
     ];
     for (table, read) in reads {
-        let s = store(Retention::unlimited());
+        let s = store(DiskRetention::unlimited());
         assert!(read(&s).is_ok(), "{table}: absent row is valid");
         s.conn.lock().unwrap().execute_batch(&format!("DROP TABLE {table}")).unwrap();
         assert!(read(&s).is_err(), "{table}: database failure must propagate");
@@ -31,7 +31,7 @@ fn optional_rows_do_not_hide_database_failures() {
 
 #[test]
 fn address_reconciliation_uses_indexed_quote_lookup() {
-    let store = store(Retention::unlimited());
+    let store = store(DiskRetention::unlimited());
     let conn = store.conn.lock().unwrap();
     let mut query = conn.prepare("EXPLAIN QUERY PLAN UPDATE messages SET reply_to_chat = ?1
         WHERE reply_to_chat = ?2").unwrap();
@@ -42,9 +42,9 @@ fn address_reconciliation_uses_indexed_quote_lookup() {
 
 #[test]
 fn retention_handles_a_large_backlog_across_many_chats() {
-    let store = MessageStore::open(Path::new(":memory:"), Retention {
+    let store = store(DiskRetention {
         max_age_hours: RetentionLimit::Limited(24), max_messages_per_chat: RetentionLimit::Limited(19_999_999),
-    }).unwrap();
+    });
     {
         let _batch = store.batch();
         let conn = store.conn.lock().unwrap();
@@ -72,17 +72,17 @@ fn new_mappings_merge_immediately_and_survive_reopen() {
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
     ));
     {
-        let store = MessageStore::open(&path, Retention::unlimited()).unwrap();
+        let store = MessageStore::open(&path).unwrap();
         store.insert_message(&msg("123@lid", "kept", 0, "hello")).unwrap();
         store.set_lid_pn("123", "5989").unwrap();
         assert_eq!(store.messages_for("123@lid", 10).unwrap()[0].header.chat, "5989@s.whatsapp.net");
         assert_eq!(store.messages_for("5989@s.whatsapp.net", 10).unwrap().len(), 1);
     }
     {
-        let store = MessageStore::open(&path, Retention::unlimited()).unwrap();
+        let store = MessageStore::open(&path).unwrap();
         let conn = store.conn.lock().unwrap();
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
         drop(conn);
         let messages = store.messages_for("5989@s.whatsapp.net", 10).unwrap();
         assert_eq!(messages.len(), 1);
@@ -94,7 +94,7 @@ fn new_mappings_merge_immediately_and_survive_reopen() {
 
 #[test]
 fn late_mapping_merges_local_state_and_rolls_back_on_failure() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     let lid = "123@lid";
     let pn = "5989@s.whatsapp.net";
     let mut rich = msg(lid, "same", 0, "caption");
@@ -144,10 +144,26 @@ fn now() -> i64 {
         .as_secs() as i64
 }
 
-fn store(retention: Retention) -> MessageStore {
-    // In-memory keeps tests independent and fast. The real schema is used,
-    // so adding a column never breaks the tests.
-    MessageStore::open(Path::new(":memory:"), retention).unwrap()
+struct RetainedStore {
+    repository: MessageStore,
+    pruning: DiskRetentionManager,
+}
+
+impl std::ops::Deref for RetainedStore {
+    type Target = MessageStore;
+    fn deref(&self) -> &MessageStore { &self.repository }
+}
+
+impl RetainedStore {
+    fn enforce_retention(&self) -> Result<usize> { self.pruning.enforce(self) }
+    fn enforce_retention_for(&self, chats: &[String]) -> Result<usize> { self.pruning.enforce_for(self, chats) }
+}
+
+fn store(retention: DiskRetention) -> RetainedStore {
+    RetainedStore {
+        repository: MessageStore::open(Path::new(":memory:")).unwrap(),
+        pruning: DiskRetentionManager::new(retention),
+    }
 }
 
 fn msg(chat: &str, id: &str, age_hours: i64, text: &str) -> StoredMessage {
@@ -166,13 +182,12 @@ fn msg(chat: &str, id: &str, age_hours: i64, text: &str) -> StoredMessage {
 
 #[test]
 fn scoped_retention_only_touches_the_given_chats() {
-    let s = store(Retention { max_age_hours: RetentionLimit::Unlimited, max_messages_per_chat: RetentionLimit::Limited(1) });
+    let s = store(DiskRetention { max_age_hours: RetentionLimit::Unlimited, max_messages_per_chat: RetentionLimit::Limited(1) });
+    s.enforce_retention_for(&[]).unwrap();
     for chat in ["a@s", "b@s"] {
         s.insert_message(&msg(chat, "old", 2, "x")).unwrap();
         s.insert_message(&msg(chat, "new", 1, "y")).unwrap();
     }
-    // The first call is the hourly full pass; mark it done to test the scoped one.
-    s.last_full_prune.store(unix_now(), std::sync::atomic::Ordering::Relaxed);
     assert_eq!(s.enforce_retention_for(&["a@s".to_string()]).unwrap(), 1);
     assert_eq!(s.messages_for("a@s", 10).unwrap().len(), 1);
     assert_eq!(s.messages_for("b@s", 10).unwrap().len(), 2);
@@ -181,8 +196,20 @@ fn scoped_retention_only_touches_the_given_chats() {
 }
 
 #[test]
+fn repository_and_disk_policy_are_independent() {
+    let repository = MessageStore::open(Path::new(":memory:")).unwrap();
+    let policy = DiskRetentionManager::new(DiskRetention::unlimited());
+    repository.insert_message(&msg("quiet@s", "old", 100, "kept until explicit pruning")).unwrap();
+    assert_eq!(policy.enforce_for(&repository, &[]).unwrap(), 0);
+    policy.set_policy(DiskRetention { max_age_hours: RetentionLimit::Limited(24), max_messages_per_chat: RetentionLimit::Unlimited });
+    assert_eq!(repository.count().unwrap(), 1);
+    assert_eq!(policy.enforce_for(&repository, &[]).unwrap(), 1);
+    assert_eq!(repository.chats().unwrap().len(), 1);
+}
+
+#[test]
 fn no_policy_prunes_nothing_and_keeps_everything() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     s.insert_message(&msg("a@s", "old", 24 * 30, "x")).unwrap();
     s.insert_message(&msg("a@s", "new", 1, "y")).unwrap();
     // Even a month-old message stays: with nothing to enforce, the prune is a
@@ -193,7 +220,7 @@ fn no_policy_prunes_nothing_and_keeps_everything() {
 
 #[test]
 fn search_stays_fast_at_fifty_thousand_messages() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     {
         let _commit = s.batch();
         for i in 0..50_000 {
@@ -208,7 +235,7 @@ fn search_stays_fast_at_fifty_thousand_messages() {
 
 #[test]
 fn clearing_history_keeps_names_and_settings() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     s.insert_message(&msg("a@s", "1", 0, "hi")).unwrap();
     s.set_name("a@s", "Ann").unwrap();
     s.set_chat_auto_download("a@s", false).unwrap();
@@ -220,7 +247,7 @@ fn clearing_history_keeps_names_and_settings() {
 
 #[test]
 fn clear_chat_keeps_an_empty_row_and_delete_hides_it() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     s.insert_message(&msg("a@s", "1", 0, "hi")).unwrap();
     s.insert_message(&msg("b@s", "1", 0, "yo")).unwrap();
     s.set_name("a@s", "Ann").unwrap();
@@ -249,7 +276,7 @@ fn clear_chat_keeps_an_empty_row_and_delete_hides_it() {
 
 #[test]
 fn chat_privacy_overrides_round_trip() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     assert_eq!(s.chat_privacy("a@s").unwrap(), (None, None));
     s.set_chat_privacy("a@s", Some(false), None).unwrap();
     assert_eq!(s.chat_privacy("a@s").unwrap(), (Some(false), None));
@@ -259,7 +286,7 @@ fn chat_privacy_overrides_round_trip() {
 
 #[test]
 fn overlapping_batches_commit_when_the_last_drops() {
-    let s = store(Retention::default());
+    let s = store(DiskRetention::default());
     let autocommit = |s: &MessageStore| s.conn.lock().unwrap().is_autocommit();
     let first = s.batch();
     let second = s.batch();
@@ -273,7 +300,7 @@ fn overlapping_batches_commit_when_the_last_drops() {
 
 #[test]
 fn chat_retention_overrides_the_global_policy() {
-    let s = store(Retention { max_age_hours: RetentionLimit::Limited(24), max_messages_per_chat: RetentionLimit::Limited(1) });
+    let s = store(DiskRetention { max_age_hours: RetentionLimit::Limited(24), max_messages_per_chat: RetentionLimit::Limited(1) });
     for (chat, id, age) in [("a", "1", 1), ("a", "2", 2), ("a", "3", 48), ("b", "1", 1), ("b", "2", 48), ("c", "1", 1), ("c", "2", 3)] {
         s.insert_message(&msg(chat, id, age, "x")).unwrap();
     }
@@ -293,7 +320,7 @@ fn chat_retention_overrides_the_global_policy() {
 
 #[test]
 fn receipts_only_move_forward() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     s.record_receipt("m", "a", "delivered", 10).unwrap();
     s.record_receipt("m", "a", "read", 20).unwrap();
     s.record_receipt("m", "a", "delivered", 30).unwrap();
@@ -307,7 +334,7 @@ fn receipts_only_move_forward() {
 
 #[test]
 fn delete_message_clears_its_related_rows() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     s.insert_message(&msg("a", "1", 0, "hi")).unwrap();
     s.set_forwarded("a", "1").unwrap();
     s.update_message_content("a", "1", "edited").unwrap();
@@ -325,7 +352,7 @@ fn delete_message_clears_its_related_rows() {
 
 #[test]
 fn edits_replace_text_and_mark_the_message() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     s.insert_message(&msg("a", "1", 0, "old")).unwrap();
     assert!(s.update_message_content("a", "1", "new").unwrap());
     assert!(!s.update_message_content("a", "missing", "new").unwrap());
@@ -335,7 +362,7 @@ fn edits_replace_text_and_mark_the_message() {
 
 #[test]
 fn pings_and_message_search() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     let mut ping = msg("g", "1", 1, "hey @123 look");
     ping.local.mentioned = true;
     s.insert_message(&ping).unwrap();
@@ -352,7 +379,7 @@ fn pings_and_message_search() {
 
 #[test]
 fn stores_and_reads_messages() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     s.insert_message(&msg("a@s", "1", 0, "hello")).unwrap();
     let got = s.messages_for("a@s", 10).unwrap();
     assert_eq!(got.len(), 1);
@@ -361,7 +388,7 @@ fn stores_and_reads_messages() {
 
 #[test]
 fn insert_replaces_same_id() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     s.insert_message(&msg("a@s", "1", 0, "first")).unwrap();
     s.insert_message(&msg("a@s", "1", 0, "edited")).unwrap();
     let got = s.messages_for("a@s", 10).unwrap();
@@ -374,7 +401,7 @@ fn burst_of_inbound_messages_lands_once_with_one_chat_summary() {
     // Regression coverage: a burst of inbound messages must be writable in
     // one batch and readable with one chat-list query and one conversation
     // query, instead of a refresh per message.
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     let started = std::time::Instant::now();
     {
         let _commit = s.batch();
@@ -392,7 +419,7 @@ fn burst_of_inbound_messages_lands_once_with_one_chat_summary() {
 
 #[test]
 fn replayed_messages_never_regress_local_state() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     let mut sent = msg("a@s", "1", 0, "hi");
     sent.header.from_me = true;
     sent.local.status =Some("pending".into());
@@ -423,7 +450,7 @@ fn replayed_messages_never_regress_local_state() {
 
 #[test]
 fn audio_duration_survives_a_replay_without_it() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     let mut note = msg("a@s", "1", 0, "[audio]");
     note.media = Media { kind: Some("audio".into()), duration: Some(7), ..Default::default() };
     s.insert_message(&note).unwrap();
@@ -436,7 +463,7 @@ fn audio_duration_survives_a_replay_without_it() {
 
 #[test]
 fn drops_messages_older_than_the_window() {
-    let s = store(Retention {
+    let s = store(DiskRetention {
         max_age_hours: RetentionLimit::Limited(24),
         max_messages_per_chat: RetentionLimit::Unlimited,
     });
@@ -450,7 +477,7 @@ fn drops_messages_older_than_the_window() {
 
 #[test]
 fn caps_messages_per_chat() {
-    let s = store(Retention {
+    let s = store(DiskRetention {
         max_age_hours: RetentionLimit::Unlimited,
         max_messages_per_chat: RetentionLimit::Limited(3),
     });
@@ -467,7 +494,7 @@ fn caps_messages_per_chat() {
 
 #[test]
 fn cap_applies_per_chat() {
-    let s = store(Retention {
+    let s = store(DiskRetention {
         max_age_hours: RetentionLimit::Unlimited,
         max_messages_per_chat: RetentionLimit::Limited(2),
     });
@@ -482,7 +509,7 @@ fn cap_applies_per_chat() {
 
 #[test]
 fn summaries_are_newest_first() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     s.insert_message(&msg("old@s", "1", 10, "older")).unwrap();
     s.insert_message(&msg("new@s", "1", 1, "newer")).unwrap();
     let chats = s.chats().unwrap();
@@ -493,7 +520,7 @@ fn summaries_are_newest_first() {
 
 #[test]
 fn names_resolve_in_reads() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     s.insert_message(&msg("group@g.us", "1", 0, "hi")).unwrap();
     s.set_name("group@g.us", "Team Chat").unwrap();
     s.set_name("them", "Alice").unwrap();
@@ -507,7 +534,7 @@ fn names_resolve_in_reads() {
 
 #[test]
 fn empty_name_does_not_erase_a_known_name() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     s.set_name("a@s", "Alice").unwrap();
     s.set_name("a@s", "   ").unwrap();
     assert_eq!(s.name_for("a@s").unwrap().as_deref(), Some("Alice"));
@@ -515,7 +542,7 @@ fn empty_name_does_not_erase_a_known_name() {
 
 #[test]
 fn push_names_replace_a_saved_number() {
-    let s = store(Retention::default());
+    let s = store(DiskRetention::default());
     s.set_saved_name("1@lid", "59899022028").unwrap();
     s.set_name("1@lid", "Ana").unwrap();
     assert_eq!(s.name_for("1@lid").unwrap().as_deref(), Some("Ana"));
@@ -536,7 +563,7 @@ fn push_names_replace_a_saved_number() {
 fn names_survive_message_pruning() {
     // A name is learned from a message but must outlive it, otherwise the
     // chat list falls back to a raw number once history ages out.
-    let s = store(Retention {
+    let s = store(DiskRetention {
         max_age_hours: RetentionLimit::Limited(1),
         max_messages_per_chat: RetentionLimit::Unlimited,
     });
@@ -550,7 +577,7 @@ fn names_survive_message_pruning() {
 
 #[test]
 fn quiet_chats_keep_metadata_without_expired_message_content() {
-    let s = store(Retention { max_age_hours: RetentionLimit::Limited(24), max_messages_per_chat: RetentionLimit::Unlimited });
+    let s = store(DiskRetention { max_age_hours: RetentionLimit::Limited(24), max_messages_per_chat: RetentionLimit::Unlimited });
     s.insert_message(&msg("quiet@s", "1", 100, "first")).unwrap();
     s.insert_message(&msg("quiet@s", "2", 50, "last word")).unwrap();
     s.insert_message(&msg("busy@s", "1", 50, "old")).unwrap();
@@ -574,7 +601,7 @@ fn quiet_chats_keep_metadata_without_expired_message_content() {
 
 #[test]
 fn unread_counts_only_incoming_unread() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     let mut incoming = msg("a@s", "1", 0, "hi");
     incoming.local.read = false;
     s.insert_message(&incoming).unwrap();
@@ -593,7 +620,7 @@ fn unread_counts_only_incoming_unread() {
 
 #[test]
 fn explicit_zero_count_keeps_no_messages_without_becoming_unlimited_or_inherited() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     for chat in ["empty", "unlimited", "inherited"] {
         s.insert_message(&msg(chat, "one", 1, "kept by default")).unwrap();
     }
@@ -611,7 +638,7 @@ fn explicit_zero_count_keeps_no_messages_without_becoming_unlimited_or_inherited
 
 #[test]
 fn per_chat_age_removes_last_message_and_its_poll_state() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     s.insert_message(&msg("quiet@s", "poll", 48, "Expired question")).unwrap();
     s.save_poll("quiet@s", "poll", "them", "Expired question", &["one".into()], false, Some(&[1; 32])).unwrap();
     s.set_poll_vote("quiet@s", "poll", "them", &["one".into()]).unwrap();
@@ -633,7 +660,7 @@ fn per_chat_age_removes_last_message_and_its_poll_state() {
 
 #[test]
 fn marking_read_is_idempotent() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     s.insert_message(&msg("a@s", "1", 0, "hi")).unwrap();
     assert_eq!(s.mark_read("a@s").unwrap(), 1);
     // Nothing left to change the second time.
@@ -642,7 +669,7 @@ fn marking_read_is_idempotent() {
 
 #[test]
 fn mark_read_until_only_marks_up_to_the_cutoff() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     s.insert_message(&msg("a@s", "1", 3, "one")).unwrap();
     s.insert_message(&msg("a@s", "2", 2, "two")).unwrap();
     s.insert_message(&msg("a@s", "3", 1, "three")).unwrap();
@@ -659,7 +686,7 @@ fn mark_read_until_only_marks_up_to_the_cutoff() {
 
 #[test]
 fn mark_read_through_marks_only_messages_at_or_before_the_time() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     let t = now();
     let mut old = msg("a@s", "1", 0, "old");
     old.header.timestamp = t - 100;
@@ -676,7 +703,7 @@ fn mark_read_through_marks_only_messages_at_or_before_the_time() {
 
 #[test]
 fn media_and_reply_fields_round_trip() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     let mut m = msg("a@s", "1", 0, "look");
     m.media.kind = Some("image".into());
     m.media.path = Some("/tmp/pic.jpg".into());
@@ -697,7 +724,7 @@ fn relocate_media_moves_only_referenced_files() {
     std::fs::write(shared.join("1.jpg"), b"ours").unwrap();
     std::fs::write(shared.join("other.jpg"), b"not ours").unwrap();
 
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     let mut m = msg("a@s", "1", 0, "");
     m.media.path = Some(shared.join("1.jpg").to_string_lossy().into());
     m.media.thumb = Some(shared.join("1.jpg").to_string_lossy().into());
@@ -716,7 +743,7 @@ fn relocate_media_moves_only_referenced_files() {
 
 #[test]
 fn status_advances_but_never_regresses() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     let mut m = msg("a@s", "1", 0, "hi");
     m.header.from_me = true;
     m.local.status = Some("pending".into());
@@ -732,7 +759,7 @@ fn status_advances_but_never_regresses() {
 
 #[test]
 fn status_ignores_incoming_messages() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     s.insert_message(&msg("a@s", "1", 0, "hi")).unwrap();
     assert!(!s.set_delivery_state("a@s", "1", "read").unwrap());
 }
@@ -742,7 +769,7 @@ fn status_by_id_advances_without_the_chat() {
     // Server acks name the message id but only sometimes the chat, and the
     // named JID can differ in form from the stored one. The id alone must
     // still move a pending message to sent.
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     let mut m = msg("a@s.whatsapp.net", "1", 0, "hi");
     m.header.from_me = true;
     m.local.status = Some("pending".into());
@@ -765,7 +792,7 @@ fn status_by_id_advances_without_the_chat() {
 
 #[test]
 fn revoking_keeps_the_row_but_clears_content() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     s.insert_message(&msg("a@s", "1", 0, "oops")).unwrap();
     assert!(s.revoke_message("a@s", "1").unwrap());
 
@@ -778,7 +805,7 @@ fn revoking_keeps_the_row_but_clears_content() {
 
 #[test]
 fn system_rows_round_trip_and_stay_out_of_the_preview() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     s.insert_message(&msg("a@s", "1", 1, "hello")).unwrap();
     let mut notice = msg("a@s", "2", 0, "");
     notice.system = SystemNotice { kind: Some("E2E_IDENTITY_CHANGED".into()), params: vec!["a@s".into()] };
@@ -793,7 +820,7 @@ fn system_rows_round_trip_and_stay_out_of_the_preview() {
 
 #[test]
 fn missed_calls_reach_the_preview_and_notice_only_chats_stay_listed() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     s.insert_message(&msg("a@s", "1", 10, "hello")).unwrap();
     let mut call = msg("a@s", "2", 1, "");
     call.system = SystemNotice { kind: Some("CALL_MISSED_VOICE".into()), params: vec![] };
@@ -817,7 +844,7 @@ fn missed_calls_reach_the_preview_and_notice_only_chats_stay_listed() {
 
 #[test]
 fn unlimited_retention_keeps_everything() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     for i in 0..50 {
         s.insert_message(&msg("a@s", &i.to_string(), i * 100, "x")).unwrap();
     }
@@ -827,7 +854,7 @@ fn unlimited_retention_keeps_everything() {
 
 #[test]
 fn merging_chats_folds_history_state_and_keeps_the_chat_visible() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     s.insert_message(&msg("123@lid", "a", 2, "hi")).unwrap();
     s.insert_message(&msg("123@lid", "b", 1, "there")).unwrap();
     s.insert_message(&msg("5989@s.whatsapp.net", "c", 3, "old")).unwrap();
@@ -848,7 +875,7 @@ fn merging_chats_folds_history_state_and_keeps_the_chat_visible() {
 
 #[test]
 fn pending_view_once_lists_only_unopened_incoming_stubs() {
-    let s = store(Retention::unlimited());
+    let s = store(DiskRetention::unlimited());
     for (id, age_hours) in [("1", 1), ("2", 3)] {
         let mut stub = msg("a@s", id, age_hours, "photo");
         stub.media.kind = Some("view_once".into());

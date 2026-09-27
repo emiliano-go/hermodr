@@ -1,9 +1,6 @@
 //! Message and chat storage.
 //!
-//! Postal keeps its own history rather than relying on the protocol library,
-//! which stores none. That makes retention ours to enforce: the [`Retention`]
-//! policy bounds what is kept, so the store cannot grow without limit the way a
-//! synced WhatsApp Web profile does.
+//! The repository owns persisted rows; disk pruning is a separate policy.
 
 use std::{path::Path, sync::Mutex};
 
@@ -16,9 +13,12 @@ mod schema;
 mod marks;
 mod media;
 mod messages;
+mod paging;
+pub use paging::{MessageCursor, MessagePage, MessagePageDirection, MAX_MESSAGE_PAGE};
 mod names;
 mod receipts;
 mod retention;
+pub use retention::{DiskRetention, DiskRetentionManager};
 mod limits;
 mod storage;
 pub use limits::RetentionLimit;
@@ -35,47 +35,6 @@ pub fn is_placeholder_name(name: &str) -> bool {
 
 /// [`is_placeholder_name`] for the `name` column, as far as GLOB can tell (Latin letters only).
 const PLACEHOLDER_SQL: &str = "(name NOT GLOB '*[^0-9+]*' OR (name GLOB '+*' AND name NOT GLOB '*[A-Za-z]*'))";
-
-/// How much history to keep locally.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Retention {
-    #[serde(deserialize_with = "limits::global_age")]
-    pub max_age_hours: RetentionLimit,
-    #[serde(deserialize_with = "limits::global_count")]
-    pub max_messages_per_chat: RetentionLimit,
-}
-
-impl Default for Retention {
-    fn default() -> Self {
-        // A small window by default: enough for current conversations without
-        // re-creating the multi-gigabyte history the web client pulled in.
-        Self {
-            max_age_hours: RetentionLimit::Limited(24),
-            max_messages_per_chat: RetentionLimit::Limited(500),
-        }
-    }
-}
-
-impl Retention {
-    /// Keep everything, matching the default WhatsApp client behaviour.
-    pub fn unlimited() -> Self {
-        Self {
-            max_age_hours: RetentionLimit::Unlimited,
-            max_messages_per_chat: RetentionLimit::Unlimited,
-        }
-    }
-
-    /// The oldest timestamp still inside the window, if one is set.
-    fn oldest_allowed(&self) -> Option<i64> {
-        self.max_age_hours.value().map(|hours| {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(0);
-            now - i64::from(hours) * 3600
-        })
-    }
-}
 
 /// A stored message, as rows are read and as the UI receives it.
 ///
@@ -448,9 +407,6 @@ pub struct ViewOnce {
 /// SQLite-backed message store.
 pub struct MessageStore {
     conn: Mutex<Connection>,
-    retention: Mutex<Retention>,
-    /// When retention last covered every chat (unix seconds).
-    last_full_prune: std::sync::atomic::AtomicI64,
 }
 
 fn unix_now() -> i64 {
@@ -487,7 +443,7 @@ impl Drop for Batch<'_> {
 
 impl MessageStore {
     /// Opens (or creates) the store at `path`.
-    pub fn open(path: &Path, retention: Retention) -> Result<Self> {
+    pub fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
                 std::fs::create_dir_all(parent)?;
@@ -523,8 +479,6 @@ impl MessageStore {
 
         Ok(Self {
             conn: Mutex::new(conn),
-            retention: Mutex::new(retention),
-            last_full_prune: std::sync::atomic::AtomicI64::new(0),
         })
     }
 
