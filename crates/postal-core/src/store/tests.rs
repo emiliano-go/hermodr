@@ -783,25 +783,36 @@ fn merging_chats_folds_history_state_and_keeps_the_chat_visible() {
 }
 
 #[test]
-fn pending_view_once_only_wakes_for_recent_incoming_stubs() {
+fn pending_view_once_lists_only_unopened_incoming_stubs() {
     let s = store(Retention::unlimited());
-    let mut pending = msg("a@s", "1", 1, "photo");
-    pending.media.kind = Some("view_once".into());
-    s.insert_message(&pending).unwrap();
-    assert!(s.has_pending_view_once(std::time::Duration::from_secs(2 * 3600)).unwrap());
-    // Older than the demand window: likely spent on the phone, so it sleeps on.
-    assert!(!s.has_pending_view_once(std::time::Duration::from_secs(60)).unwrap());
+    for (id, age_hours) in [("1", 1), ("2", 3)] {
+        let mut stub = msg("a@s", id, age_hours, "photo");
+        stub.media.kind = Some("view_once".into());
+        s.insert_message(&stub).unwrap();
+        s.set_view_once("a@s", id, false).unwrap();
+    }
+    // Only the one inside the window counts as demand.
+    let window = std::time::Duration::from_secs(2 * 3600);
+    assert_eq!(s.pending_view_once(window).unwrap(), vec![("a@s".to_string(), "1".to_string())]);
 
-    // A kept copy stops the demand.
-    s.set_once_kind("a@s", "1", "image").unwrap();
-    s.set_media_path("a@s", "1", "/tmp/kept.jpg").unwrap();
-    s.keep_view_once("a@s", "1").unwrap();
-    assert!(!s.has_pending_view_once(std::time::Duration::from_secs(2 * 3600)).unwrap());
+    // Opening it on this device takes it off the list.
+    s.open_view_once("a@s", "1").unwrap();
+    assert!(s.pending_view_once(window).unwrap().is_empty());
 
     // Our own one-time sends are not demand either.
-    let mut own = msg("a@s", "2", 0, "sent");
+    let mut own = msg("a@s", "3", 0, "sent");
     own.header.from_me = true;
-    own.media.kind = Some("view_once".into());
     s.insert_message(&own).unwrap();
-    assert!(!s.has_pending_view_once(std::time::Duration::from_secs(2 * 3600)).unwrap());
+    s.set_view_once("a@s", "3", true).unwrap();
+    assert!(s.pending_view_once(window).unwrap().is_empty());
+
+    // A kept copy is not demand: keeping it drops the mark.
+    let mut kept = msg("a@s", "4", 0, "photo");
+    kept.media.kind = Some("view_once".into());
+    s.insert_message(&kept).unwrap();
+    s.set_view_once("a@s", "4", false).unwrap();
+    s.set_once_kind("a@s", "4", "image").unwrap();
+    s.set_media_path("a@s", "4", "/tmp/kept.jpg").unwrap();
+    s.keep_view_once("a@s", "4").unwrap();
+    assert!(s.pending_view_once(window).unwrap().is_empty());
 }

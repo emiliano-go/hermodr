@@ -131,8 +131,9 @@ New links pair as an ordinary External companion. Settings → Device can add an
 Android companion: a second link that pairs as an `ANDROID_TABLET` running
 WhatsApp Android `2.26.32.84`, published on the [official download page](https://www.whatsapp.com/download)
 when checked on 2026-09-27, to receive the one-time photos, videos and voice
-notes the External link never gets. It shares the message store, connects only
-while such media is waiting, and goes dormant afterwards.
+notes the External link never gets. Pairing is its own short step, and the
+companion can only be enabled once linked. It shares the message store, wakes
+when a one-time message arrives, fetches it, and goes dormant again.
 
 The companion's handshake sets Android metadata (`ANDROID`, device `Tablet`,
 Android `13`) and omits browser `WebInfo`. This is the library's supported

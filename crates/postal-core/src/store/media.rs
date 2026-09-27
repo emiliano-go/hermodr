@@ -143,21 +143,24 @@ impl MessageStore {
         Ok(())
     }
 
-    /// Whether an incoming one-time message newer than `within` still has no
-    /// media file. The Android companion wakes on this and goes dormant when
-    /// it stays false; the window bounds rows the phone already spent.
-    pub fn has_pending_view_once(&self, within: std::time::Duration) -> Result<bool> {
+    /// Incoming one-time messages newer than `within` that still have no media
+    /// file, as `(chat, id)`. The Android companion wakes on these and goes
+    /// dormant again once they are fetched; the window bounds rows the phone
+    /// probably spent already. Sourced from the small view-once mark table, so
+    /// it does not scan the message history.
+    pub fn pending_view_once(&self, within: std::time::Duration) -> Result<Vec<(String, String)>> {
         let since = unix_now() - within.as_secs() as i64;
         let conn = self.conn.lock().unwrap();
-        let pending: i32 = conn.query_row(
-            "SELECT EXISTS(
-                 SELECT 1 FROM messages
-                 WHERE from_me = 0 AND media_kind = 'view_once' AND media_path IS NULL
-                   AND timestamp >= ?1)",
-            params![since],
-            |row| row.get(0),
+        let mut stmt = conn.prepare(
+            "SELECT v.chat, v.id FROM view_once v
+             JOIN messages m ON m.chat = v.chat AND m.id = v.id
+             WHERE v.opened = 0 AND m.from_me = 0 AND m.media_path IS NULL
+               AND m.timestamp >= ?1",
         )?;
-        Ok(pending != 0)
+        let rows = stmt
+            .query_map(params![since], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
     }
 
     /// Turns a view-once whose media was kept into an ordinary attachment: the

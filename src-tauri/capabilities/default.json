@@ -24,6 +24,7 @@
     "allow-connection-state",
     "allow-boolean-props",
     "allow-once-state",
+    "allow-set-pairing",
     "allow-resolve-names",
     "allow-mark-read",
     "allow-mark-read-until",

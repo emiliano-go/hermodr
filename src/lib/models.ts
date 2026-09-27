@@ -160,7 +160,7 @@ export type UiSettings = {
   android_instance: boolean;
 };
 export type ConnectionState = { started: boolean; connected: boolean; qr: string | null };
-export type OnceState = { paired: boolean; running: boolean; connected: boolean; qr: string | null };
+export type OnceState = { paired: boolean; pairing: boolean; running: boolean; connected: boolean; qr: string | null };
 
 /** A file staged in the composer, before it is sent. */
 export type PendingMedia = {

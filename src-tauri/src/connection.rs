@@ -21,6 +21,8 @@ pub struct ConnectionState {
 pub struct OnceState {
     /// Whether a device was ever linked; survives the instance being stopped.
     pub paired: bool,
+    /// Whether a pairing session was asked for and is waiting for the scan.
+    pub pairing: bool,
     pub running: bool,
     pub connected: bool,
     pub qr: Option<String>,
@@ -150,67 +152,129 @@ pub(crate) fn wake_once(app: &AppHandle) {
     app.state::<AppState>().once_wake.notify_one();
 }
 
-/// How recent a one-time message must be to wake the companion. Stubs older
-/// than this were likely spent on the phone, so they stop being demand.
-const ONCE_DEMAND_WINDOW: std::time::Duration = std::time::Duration::from_secs(5 * 60);
-/// How long the companion stays linked after the last one-time message.
-const ONCE_IDLE_GRACE: std::time::Duration = std::time::Duration::from_secs(90);
-/// How often demand is re-checked when nothing pokes the manager.
-const ONCE_TICK: std::time::Duration = std::time::Duration::from_secs(10);
+/// How recent a one-time message must be to wake the companion. Older stubs
+/// were likely spent on the phone, so they stop being demand.
+const ONCE_RECOVERY_WINDOW: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+/// How long the companion stays linked after its last fetch resolves.
+const ONCE_STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(15);
+/// A fetch that makes no progress for this long is given up on, so a message
+/// the companion cannot receive does not keep the session up.
+const ONCE_GIVE_UP: std::time::Duration = std::time::Duration::from_secs(90);
+/// Poll pacing while the companion runs, and while it is dormant.
+const ONCE_RUNNING_TICK: std::time::Duration = std::time::Duration::from_secs(3);
+const ONCE_DORMANT_TICK: std::time::Duration = std::time::Duration::from_secs(60);
+/// An abandoned pairing session stops itself, so the QR screen cannot hold a
+/// link open forever.
+const ONCE_PAIR_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
-/// Runs the Android companion on demand instead of around the clock: it wakes
-/// when a one-time message is waiting for its media and goes dormant again
-/// once none is. While it is unpaired it stays up so its QR can be scanned.
+/// Runs the Android companion on demand instead of around the clock. The main
+/// -link side detects a one-time message and wakes it; it fetches what it can
+/// and goes dormant again. Enabling it needs an existing link, so pairing is
+/// its own short session that ends at the scan.
 pub(crate) fn spawn_once_manager(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let mut last_demand = std::time::Instant::now();
+        // One-time messages the running companion is expected to fetch, and
+        // the ones it already failed on this run.
+        let mut expecting: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+        let mut ignored: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+        let mut last_progress = std::time::Instant::now();
+        let mut pairing_since: Option<std::time::Instant> = None;
+
         loop {
             let state = app.state::<AppState>();
             let enabled = state.settings.lock().unwrap().android_instance;
+            let pairing = state.once_pairing.load(Ordering::SeqCst);
             let account = active_account(&state);
-            let running = state.once_service.lock().unwrap().is_some();
             let paired = account.as_deref().is_some_and(|id| once_paired(&state, id));
+            let running = state.once_service.lock().unwrap().is_some();
 
-            if !enabled || account.is_none() {
+            if account.is_none() || (!enabled && !pairing) {
                 // Off, or nothing to attach to: stop at once, no grace.
                 if running {
                     if let Err(e) = stop_once(&app, &state).await {
                         log::warn!("could not put the Android companion to sleep: {e}");
                     }
                 }
-                last_demand = std::time::Instant::now();
-            } else if !paired {
-                // Unpaired: the QR is the demand, so keep it up.
-                last_demand = std::time::Instant::now();
-                if !running {
+                expecting.clear();
+                if account.is_none() {
+                    ignored.clear();
+                }
+                pairing_since = None;
+                last_progress = std::time::Instant::now();
+            } else if pairing && !paired {
+                // Pairing: stay up only long enough for the QR to be scanned.
+                let started = *pairing_since.get_or_insert_with(std::time::Instant::now);
+                if started.elapsed() >= ONCE_PAIR_TIMEOUT {
+                    log::info!("Android companion pairing timed out; start it again to retry");
+                    state.once_pairing.store(false, Ordering::SeqCst);
+                    pairing_since = None;
+                    if running {
+                        let _ = stop_once(&app, &state).await;
+                    }
+                } else if !running {
                     if let Err(e) = start_once(&app, &state).await {
-                        log::warn!("could not wake the Android companion: {e}");
+                        log::warn!("could not start the Android companion for pairing: {e}");
                     }
                 }
             } else {
-                let demand = state
-                    .service
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .is_some_and(|s| s.has_pending_view_once(ONCE_DEMAND_WINDOW));
-                if demand {
-                    last_demand = std::time::Instant::now();
-                    if !running {
-                        if let Err(e) = start_once(&app, &state).await {
-                            log::warn!("could not wake the Android companion: {e}");
+                if pairing && paired {
+                    // The scan landed: the pairing session is done with.
+                    state.once_pairing.store(false, Ordering::SeqCst);
+                }
+                pairing_since = None;
+                if !enabled || !paired {
+                    // Enabling requires a link; a revoked one stops the session.
+                    if running {
+                        if let Err(e) = stop_once(&app, &state).await {
+                            log::warn!("could not put the Android companion to sleep: {e}");
                         }
                     }
-                } else if running && last_demand.elapsed() >= ONCE_IDLE_GRACE {
-                    if let Err(e) = stop_once(&app, &state).await {
-                        log::warn!("could not put the Android companion to sleep: {e}");
+                } else {
+                    let pending: std::collections::HashSet<(String, String)> = state
+                        .service
+                        .lock()
+                        .unwrap()
+                        .as_ref()
+                        .map(|s| s.pending_view_once(ONCE_RECOVERY_WINDOW))
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter(|id| !ignored.contains(id))
+                        .collect();
+                    if pending != expecting {
+                        last_progress = std::time::Instant::now();
+                        expecting = pending.clone();
+                    }
+                    if !pending.is_empty() {
+                        if !running {
+                            log::info!(
+                                "waking the Android companion for {} one-time message(s)",
+                                pending.len()
+                            );
+                            if let Err(e) = start_once(&app, &state).await {
+                                log::warn!("could not wake the Android companion: {e}");
+                            }
+                        } else if last_progress.elapsed() >= ONCE_GIVE_UP {
+                            log::warn!(
+                                "Android companion could not fetch {} one-time message(s); going dormant",
+                                pending.len()
+                            );
+                            ignored.extend(pending.iter().cloned());
+                            expecting.clear();
+                            let _ = stop_once(&app, &state).await;
+                            last_progress = std::time::Instant::now();
+                        }
+                    } else if running && last_progress.elapsed() >= ONCE_STOP_GRACE {
+                        log::info!("Android companion is done fetching; going dormant");
+                        let _ = stop_once(&app, &state).await;
                     }
                 }
             }
+            let running = state.once_service.lock().unwrap().is_some();
             drop(state);
 
-            tokio::time::timeout(ONCE_TICK, app.state::<AppState>().once_wake.notified())
+            let tick = if running { ONCE_RUNNING_TICK } else { ONCE_DORMANT_TICK };
+            tokio::time::timeout(tick, app.state::<AppState>().once_wake.notified())
                 .await
                 .ok();
         }
@@ -224,7 +288,7 @@ fn emit_service_event(app: &AppHandle, event: &ServiceEvent) {
 }
 
 /// Whether the account already linked the optional Android instance.
-fn once_paired(state: &AppState, account: &str) -> bool {
+pub(crate) fn once_paired(state: &AppState, account: &str) -> bool {
     state
         .accounts
         .lock()
@@ -335,6 +399,7 @@ pub(crate) async fn stop_once(app: &AppHandle, state: &AppState) -> Result<(), S
     }
     *state.once_qr.lock().unwrap() = None;
     state.once_connected.store(false, Ordering::SeqCst);
+    state.once_pairing.store(false, Ordering::SeqCst);
     let _ = app.emit(ONCE_EVENT, &ServiceEvent::Disconnected);
     Ok(())
 }
@@ -348,10 +413,21 @@ pub(crate) fn once_state(state: State<'_, AppState>) -> OnceState {
         .unwrap_or(false);
     OnceState {
         paired,
+        pairing: state.once_pairing.load(Ordering::SeqCst),
         running: state.once_service.lock().unwrap().is_some(),
         connected: state.once_connected.load(Ordering::SeqCst),
         qr: state.once_qr.lock().unwrap().clone(),
     }
+}
+
+/// Starts or cancels the pairing session. Enabling the companion requires an
+/// existing link, so pairing is its own step that runs the instance just long
+/// enough for the QR to be scanned.
+#[tauri::command]
+pub(crate) fn set_pairing(app: AppHandle, state: State<'_, AppState>, pairing: bool) -> Result<(), String> {
+    state.once_pairing.store(pairing, Ordering::SeqCst);
+    wake_once(&app);
+    Ok(())
 }
 
 /// Drops the whole account: the main session and the optional instance, whose

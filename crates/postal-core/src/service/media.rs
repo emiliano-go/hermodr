@@ -114,14 +114,14 @@ impl WhatsAppService {
         self.store.media_paths()
     }
 
-    /// Whether a recent one-time message is still waiting for its media. The
-    /// optional Android instance wakes on this instead of staying linked.
-    pub fn has_pending_view_once(&self, within: std::time::Duration) -> bool {
-        match self.store.has_pending_view_once(within) {
+    /// Incoming one-time messages still waiting for their media. The optional
+    /// Android instance wakes on these instead of staying linked.
+    pub fn pending_view_once(&self, within: std::time::Duration) -> Vec<(String, String)> {
+        match self.store.pending_view_once(within) {
             Ok(pending) => pending,
             Err(error) => {
-                log::error!("could not check for pending view-once media: {error}");
-                false
+                log::error!("could not list pending view-once media: {error}");
+                Vec::new()
             }
         }
     }

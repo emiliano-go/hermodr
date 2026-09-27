@@ -593,51 +593,71 @@
           <h2>Android companion</h2>
           <p class="lede">
             View-once photos, videos and voice notes only reach this device through a second,
-            Android-style link. It connects only while there is one-time media to fetch, then goes
-            dormant again: it never replaces your main link and never unlinks anything from your
-            phone. Turn it on and scan the QR once.
+            Android-style link. It is not a second inbox: it wakes when a one-time message arrives,
+            fetches it into this chat, then goes dormant. It never replaces your main link and
+            never unlinks anything from your phone.
           </p>
-          <label class="setting">
-            <div>
-              <span class="setting-title">Run Android companion</span>
-              <span class="setting-desc">
-                Downloads and keeps one-time media the main link cannot fetch, waking up only when
-                one arrives. Needs "Download and keep history" on, since both links share one
-                message store.
-              </span>
-            </div>
-            <input
-              class="switch"
-              type="checkbox"
-              bind:checked={draft.android_instance}
-              disabled={!draft.keep_history} />
-          </label>
-          {#if settings.android_instance}
+          {#if !once.paired}
+            <p class="lede">
+              Pair the companion once before it can be enabled. The pairing link is only kept open
+              while the QR is on screen.
+            </p>
+            {#if once.pairing}
+              <div class="setting stack">
+                <div>
+                  <span class="setting-title">Waiting for pairing</span>
+                  <span class="setting-desc">
+                    In WhatsApp, open Settings → Linked devices → Link a device, then scan.
+                  </span>
+                </div>
+                {#if once.qrSvg}
+                  <div class="qr">
+                    <div class="qr-code">
+                      {@html once.qrSvg}
+                    </div>
+                  </div>
+                {/if}
+                <button class="button" onclick={() => once.cancelPair()}>Cancel</button>
+              </div>
+            {:else}
+              <button class="button" onclick={() => once.pair()}>Pair Android companion</button>
+            {/if}
+          {:else}
+            <label class="setting">
+              <div>
+                <span class="setting-title">Run Android companion</span>
+                <span class="setting-desc">
+                  Downloads and keeps one-time media the main link cannot fetch, waking up only when
+                  one arrives. Needs "Download and keep history" on, since both links share one
+                  message store.
+                </span>
+              </div>
+              <input
+                class="switch"
+                type="checkbox"
+                bind:checked={draft.android_instance}
+                disabled={!draft.keep_history} />
+            </label>
+            <p class="muted setting-desc">
+              Linked. {settings.android_instance ? "Unchecking stops it without unlinking; the link is kept for next time." : "Checking wakes it only when a one-time message arrives."}
+            </p>
+          {/if}
+          {#if settings.android_instance || once.pairing}
             <div class="setting stack">
               <div>
                 <span class="setting-title">Status</span>
                 <span class="setting-desc">
-                  {once.connected
-                    ? "Linked and fetching in the background."
-                    : once.running
-                      ? once.paired
+                  {once.pairing && !once.paired
+                    ? once.connected
+                      ? "Linked, finishing up…"
+                      : "Waiting for pairing."
+                    : once.connected
+                      ? "Fetching one-time media."
+                      : once.running
                         ? "Waking up…"
-                        : "Waiting for pairing."
-                      : once.paired
-                        ? "Dormant — connects only when one-time media arrives."
-                        : "Stopped."}
+                        : "Dormant — wakes when a one-time message arrives."}
                 </span>
               </div>
-              {#if once.running && !once.paired && once.qrSvg}
-                <div class="qr">
-                  <div class="qr-code">
-                    {@html once.qrSvg}
-                  </div>
-                  <p class="setting-desc">
-                    In WhatsApp, open Settings → Linked devices → Link a device, then scan.
-                  </p>
-                </div>
-              {/if}
             </div>
           {/if}
         {:else if section === "media"}

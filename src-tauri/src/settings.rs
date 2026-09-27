@@ -108,13 +108,15 @@ pub(crate) fn get_settings(state: State<'_, AppState>) -> UiSettings {
 #[tauri::command]
 pub(crate) async fn set_settings(app: AppHandle, state: State<'_, AppState>, settings: UiSettings) -> Result<(), String> {
     let instance_changed = state.settings.lock().unwrap().android_instance != settings.android_instance;
-    // Both links share one store, so the instance cannot run without history.
+    // Both links share one store, so the instance cannot run without history;
+    // and it is only useful once its own link exists, which pairing creates.
     if instance_changed && settings.android_instance {
         if !settings.keep_history {
             return Err("The Android companion needs \"Download and keep history\" turned on".into());
         }
-        if crate::account_store::active_account(&state).is_none() {
-            return Err("no account to attach the Android companion to".into());
+        let account = crate::account_store::active_account(&state);
+        if !account.is_some_and(|id| crate::connection::once_paired(&state, &id)) {
+            return Err("Pair the Android companion before turning it on".into());
         }
     }
     let path = settings_path(&app);
