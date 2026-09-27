@@ -18,6 +18,7 @@ export class MessagesState {
   private chat: string | null = null;
   private refreshPending = false;
   private marksSeq = 0;
+  private accountSeq = 0;
   loadingOlder = $state(false);
   olderTimer: ReturnType<typeof setTimeout> | undefined = undefined;
   /** Set while a "load older" answer is in flight; its `historyLoaded` is the flush. */
@@ -258,21 +259,24 @@ export class MessagesState {
 
   /** `quiet` for background fetches, whose failures only matter once clicked. */
   async downloadMedia(chat: string | null, message: StoredMessage, quiet = false) {
+    const account = this.accountSeq;
     const tries = this.downloadTries[message.id] ?? 0;
     if (!chat || this.downloading[message.id] || tries >= MAX_DOWNLOAD_TRIES) return;
     this.downloading[message.id] = true;
     delete this.downloadErrors[message.id];
     try {
       await invoke("download_media", { chat, id: message.id });
+      if (account !== this.accountSeq) return;
       delete this.downloadTries[message.id];
       await this.reloadMessages(chat);
     } catch (e) {
       // The core already asked the sender to upload it again; what is left is shown on the message.
+      if (account !== this.accountSeq) return;
       this.downloadErrors[message.id] = String(e);
       this.downloadTries[message.id] = tries + 1;
       if (!quiet) ui.fail(e);
     } finally {
-      delete this.downloading[message.id];
+      if (account === this.accountSeq) delete this.downloading[message.id];
     }
   }
 
@@ -434,6 +438,7 @@ export class MessagesState {
 
   /** Mirrors resetUi: the list and the mention queue are dropped. */
   resetAccount() {
+    this.accountSeq++;
     this.chat = null;
     this.refreshPending = false;
     this.marksSeq++;

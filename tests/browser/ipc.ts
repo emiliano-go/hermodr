@@ -5,6 +5,7 @@ export const windowFixture = {
   archive: Array.from({ length: 350 }, (_, n) => ({ chat: "window@s", id: String(n).padStart(4, "0"), timestamp: 100, text: `Message ${n}` }) as StoredMessage),
   phoneRequests: 0, failure: false, deferNext: false, pending: [] as (() => void)[],
 };
+export const mediaFixture = { calls: 0, failure: true, deferNext: false, pending: [] as (() => void)[] };
 export const fixture = { updated: false, failure: false, calls: 0, savedRetention: null as unknown,
   storageFailure: false, storageCalls: 0, cacheBytes: 512,
   media: [
@@ -15,6 +16,22 @@ export const fixture = { updated: false, failure: false, calls: 0, savedRetentio
 };
 
 export async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  if (command === "download_media") {
+    mediaFixture.calls++;
+    const complete = () => {
+      if (mediaFixture.failure) throw new Error("Synthetic sender unavailable");
+      const message = windowFixture.archive.find((m) => m.chat === args?.chat && m.id === args?.id);
+      if (message) message.media_path = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+      return undefined as T;
+    };
+    if (mediaFixture.deferNext) {
+      mediaFixture.deferNext = false;
+      return new Promise<T>((resolve, reject) => mediaFixture.pending.push(() => {
+        try { resolve(complete()); } catch (error) { reject(error); }
+      }));
+    }
+    return complete();
+  }
   if (command === "message_page") {
     if (windowFixture.failure) throw new Error("Synthetic page failure");
     const compare = (a: MessageCursor, b: MessageCursor) => a.timestamp - b.timestamp || (a.id === b.id ? 0 : a.id < b.id ? -1 : 1);

@@ -1,5 +1,9 @@
 use super::*;
 
+#[cfg(test)]
+#[path = "media_download_tests.rs"]
+mod tests;
+
 /// Downloads a stored message's media from its locator and records the file.
 ///
 /// A failed or corrupt download asks the sender's phone to upload the file
@@ -32,26 +36,41 @@ pub(super) async fn fetch_media(client: &Client, store: &StoreWorker, dir: &Path
         }
         anyhow::bail!("no stored media reference");
     };
-    let Some(mut media) = detect_media(&message) else {
-        anyhow::bail!("message carries no media");
-    };
+    fetch_stored_media(store, dir, chat, id, message,
+        |media| async move { download_bytes(client, &media).await },
+        |message| async move { reupload(client, store, chat, id, &message).await },
+    ).await
+}
+
+async fn fetch_stored_media<D, DF, R, RF>(
+    store: &StoreWorker, dir: &Path, chat: &str, id: &str, mut message: wa::Message,
+    download: D, reupload: R,
+) -> Result<StoredMessage>
+where
+    D: Fn(MediaInfo) -> DF,
+    DF: std::future::Future<Output = Result<Vec<u8>>>,
+    R: FnOnce(wa::Message) -> RF,
+    RF: std::future::Future<Output = Result<String>>,
+{
+    let media = detect_media(&message).ok_or_else(|| anyhow::anyhow!("message carries no media"))?;
+    let kind = media.kind;
+    let extension = media.extension();
     let started = std::time::Instant::now();
-    let data = match download_bytes(client, &media).await {
+    let data = match download(media).await {
         Ok(data) => data,
         Err(first) => {
             log::info!("download of {id} failed ({first:#}); asking the sender to upload it again");
-            let mut message = message;
-            let path = reupload(client, store, chat, id, &message).await.map_err(|e| first.context(e))?;
+            let path = reupload(message.clone()).await.map_err(|e| first.context(e))?;
             set_direct_path(&mut message, &path);
             store.set_media_ref(chat, id, &buffa::Message::encode_to_vec(&message)).await?;
-            media = detect_media(&message).ok_or_else(|| anyhow::anyhow!("message carries no media"))?;
-            download_bytes(client, &media).await?
+            let media = detect_media(&message).ok_or_else(|| anyhow::anyhow!("message carries no media"))?;
+            download(media).await?
         }
     };
-    log::debug!("downloaded {id} {} ({} KB) in {:?}", media.kind, data.len() / 1024, started.elapsed());
-    std::fs::create_dir_all(dir)?;
-    let path = dir.join(format!("{}.{}", id, media.extension()));
-    std::fs::write(&path, &data)?;
+    log::debug!("downloaded {id} {kind} ({} KB) in {:?}", data.len() / 1024, started.elapsed());
+    tokio::fs::create_dir_all(dir).await?;
+    let path = dir.join(format!("{id}.{extension}"));
+    tokio::fs::write(&path, &data).await?;
     store.set_media_path(chat, id, &path.to_string_lossy()).await?;
     store.message(chat, id).await
 }

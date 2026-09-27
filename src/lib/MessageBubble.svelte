@@ -379,7 +379,7 @@ import VideoPlayer from "$lib/VideoPlayer.svelte";
         disabled={vm.downloadGaveUp}
         onclick={() => api.ondownload(message)}>
         {#if vm.downloadGaveUp}
-          This media is no longer available
+          Download failed · retry limit reached
         {:else}
           <Icon name="repeat" size={14} />
           Couldn't download · Retry
