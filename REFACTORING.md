@@ -76,6 +76,26 @@ Keep structural changes separate from issue fixes.
 
 ## Remaining boundaries
 
+- Handshake profile now selects Android/Tablet/Android 13 before the bot starts,
+  for registration and reconnect payloads. WebInfo is omitted. Native Android
+  transport and four-part handshake versions remain outside the library's
+  current support; operator chose supported metadata first.
+- Retention benchmark: 150,000 messages across 1,000 chats, identical 149,000
+  deletions, 10.229 s before and 0.516 s after replacing composite NOT IN with
+  indexed newest-message lookups. Disk-retention behavior is unchanged.
+- Schema migration 4 indexes reply-to chat IDs: address reconciliation no longer
+  scans every message for each merged chat. Startup now reports separate schema
+  and reconciliation times; the reported 22-second startup gap is not yet
+  attributed by runtime phase measurements.
+- #151/#152/#153: restrictive CSP assertions and trust-boundary documentation;
+  preview IP filtering covers reserved ranges and translated IPv4, redirects
+  use the HTTP library with the same resolver, and configured proxies skip
+  preview fetching. Six synthetic network tests cover policy/redirect behavior.
+- Duplicate-chat investigation: history stores raw conversation IDs, while live
+  messages canonicalize them. Learned mappings do not immediately reconcile
+  existing rows; restart does. UI replaces chat snapshots and keys rows by JID,
+  so merging by display name would incorrectly combine different contacts.
+
 Account-generation guards, queued-send lifetime/order, stale chat responses,
 frontend resource teardown, history-navigation convergence, atomic account-file
 saves and media streaming need behavior-specific regression

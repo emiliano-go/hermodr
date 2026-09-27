@@ -2,6 +2,10 @@
 
 use super::*;
 
+#[cfg(test)]
+#[path = "links_tests.rs"]
+mod tests;
+
 /// A link preview fetched from a URL.
 pub(super) struct LinkPreview {
     pub(super) url: String,
@@ -31,16 +35,25 @@ pub(super) fn first_url(text: &str) -> Option<String> {
 /// sites with rich embeds (fxtwitter, fixupx, YouTube…) answer with full cards.
 pub(super) fn fetch_link_preview(url: &str) -> Option<LinkPreview> {
     let config = ureq::Agent::config_builder()
-        .max_redirects(0)
+        .max_redirects(5)
         .timeout_global(Some(Duration::from_secs(10)))
         .user_agent("Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)")
         .build();
     let agent = ureq::Agent::with_parts(
         config,
         ureq::unversioned::transport::DefaultConnector::new(),
-        PublicResolver::default(),
+        PublicResolver(ureq::unversioned::resolver::DefaultResolver::default()),
     );
-    let mut response = fetch_public(&agent, url)?;
+    fetch_preview_with(&agent, url)
+}
+
+fn fetch_preview_with(agent: &ureq::Agent, url: &str) -> Option<LinkPreview> {
+    // A proxy may resolve the target itself, bypassing our address filter.
+    if agent.config().proxy().is_some() {
+        log::debug!("link preview skipped: proxy target addresses cannot be verified");
+        return None;
+    }
+    let mut response = fetch_public(agent, url)?;
     let html = response.body_mut().with_config().limit(3 << 20).read_to_string().ok()?;
     let meta = meta_tags(&html);
     let get = |keys: &[&str]| keys.iter().find_map(|k| meta.get(*k)).filter(|v| !v.trim().is_empty()).cloned();
@@ -49,7 +62,7 @@ pub(super) fn fetch_link_preview(url: &str) -> Option<LinkPreview> {
     let image = get(&["og:image", "og:image:url", "twitter:image", "twitter:image:src"])
         .filter(|src| src.starts_with("http"));
     let thumbnail = image.and_then(|src| {
-        let mut response = fetch_public(&agent, &src)?;
+        let mut response = fetch_public(agent, &src)?;
         let bytes = response.body_mut().with_config().limit(8 << 20).read_to_vec().ok()?;
         link_thumbnail(&bytes)
     });
@@ -71,9 +84,9 @@ pub(super) fn fetch_link_preview(url: &str) -> Option<LinkPreview> {
 /// Resolves like the default resolver but keeps only public addresses, so the
 /// address that was checked is the one connected to (no DNS-rebinding window).
 #[derive(Debug, Default)]
-struct PublicResolver(ureq::unversioned::resolver::DefaultResolver);
+struct PublicResolver<R>(R);
 
-impl ureq::unversioned::resolver::Resolver for PublicResolver {
+impl<R: ureq::unversioned::resolver::Resolver> ureq::unversioned::resolver::Resolver for PublicResolver<R> {
     fn resolve(
         &self,
         uri: &ureq::http::Uri,
@@ -96,26 +109,11 @@ impl ureq::unversioned::resolver::Resolver for PublicResolver {
 /// GETs `url` over http(s), following up to five redirects. The agent's
 /// resolver keeps it on the public internet, redirects included.
 fn fetch_public(agent: &ureq::Agent, url: &str) -> Option<ureq::http::Response<ureq::Body>> {
-    let mut url = url.to_string();
-    for _ in 0..5 {
-        let uri: ureq::http::Uri = url.parse().ok()?;
-        if !matches!(uri.scheme_str(), Some("http" | "https")) {
-            return None;
-        }
-        let response = agent.get(&url).call().ok()?;
-        if !response.status().is_redirection() {
-            return Some(response);
-        }
-        let location = response.headers().get("location")?.to_str().ok()?;
-        url = if location.starts_with("http://") || location.starts_with("https://") {
-            location.to_string()
-        } else if location.starts_with('/') {
-            format!("{}://{}{location}", uri.scheme_str()?, uri.authority()?)
-        } else {
-            return None;
-        };
+    let uri: ureq::http::Uri = url.parse().ok()?;
+    if !matches!(uri.scheme_str(), Some("http" | "https")) {
+        return None;
     }
-    None
+    agent.get(url).call().ok()
 }
 
 /// Whether an address is on the public internet: not loopback, private,
@@ -123,7 +121,7 @@ fn fetch_public(agent: &ureq::Agent, url: &str) -> Option<ureq::http::Response<u
 pub(super) fn is_public_ip(ip: std::net::IpAddr) -> bool {
     use std::net::{IpAddr, Ipv4Addr};
     let public_v4 = |ip: Ipv4Addr| {
-        let [a, b, ..] = ip.octets();
+        let [a, b, c, d] = ip.octets();
         !(ip.is_private()
             || ip.is_loopback()
             || ip.is_link_local()
@@ -131,19 +129,32 @@ pub(super) fn is_public_ip(ip: std::net::IpAddr) -> bool {
             || ip.is_broadcast()
             || ip.is_multicast()
             || ip.is_documentation()
-            || (a == 100 && (b & 0xc0) == 64))
+            || a == 0 || a >= 240
+            || (a == 100 && (b & 0xc0) == 64)
+            || (a == 192 && b == 0 && c == 0 && !matches!(d, 9 | 10))
+            || (a == 192 && b == 88 && c == 99)
+            || (a == 198 && matches!(b, 18 | 19)))
     };
     match ip {
         IpAddr::V4(ip) => public_v4(ip),
         IpAddr::V6(ip) => match ip.to_ipv4_mapped() {
             Some(v4) => public_v4(v4),
             None => {
-                let first = ip.segments()[0];
-                !(ip.is_loopback()
-                    || ip.is_unspecified()
-                    || ip.is_multicast()
-                    || (first & 0xfe00) == 0xfc00
-                    || (first & 0xffc0) == 0xfe80)
+                let [a, b, c, d, e, f, g, h] = ip.segments();
+                if [a, b, c, d, e, f] == [0x64, 0xff9b, 0, 0, 0, 0] {
+                    return public_v4(Ipv4Addr::from((u32::from(g) << 16) | u32::from(h)));
+                }
+                // Public unicast, excluding IANA special-purpose ranges and 6to4.
+                if a & 0xe000 != 0x2000 || a == 0x2002 || (a == 0x3fff && b < 0x1000)
+                    || (a == 0x2001 && b == 0xdb8) {
+                    return false;
+                }
+                if a == 0x2001 && b < 0x200 {
+                    return b == 3 || (b == 4 && c == 0x112)
+                        || matches!(b & 0xfff0, 0x20 | 0x30)
+                        || (b == 1 && [c, d, e, f, g] == [0; 5] && matches!(h, 1..=3));
+                }
+                true
             }
         },
     }

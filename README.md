@@ -123,6 +123,12 @@ Android version `2.26.32.84`, published on the [official download page](https://
 when checked on 2026-09-27. Existing links keep their original pairing props;
 unlink Postal from the phone and pair again to adopt this identity.
 
+Each connection also sets Android handshake metadata (`ANDROID`, device
+`Tablet`, Android `13`) and omits browser `WebInfo`. This is the library's
+supported metadata profile: transport remains the Web companion socket, with
+its separate three-part protocol version. Full native Android transport and a
+four-part handshake version require upstream support.
+
 Two binaries exercise the core without the UI:
 
 ```console
@@ -157,11 +163,19 @@ files.
 ## Security
 
 - The UI runs under a content security policy: scripts only from the app, no
-  remote fonts, images or connections.
+  remote fonts, images or connections. Media uses explicit asset, blob and data
+  sources. Inline styles remain allowed for Svelte and user themes; inline
+  scripts and eval are not allowed. Development additionally allows the local
+  Vite server and its reload websocket.
 - Link previews for messages you send are fetched by the app, from public
-  internet addresses only (checked at connect time, redirects included).
-- CSS extensions are trusted code: they can restyle or hide anything, so only
-  add CSS you trust. They cannot load remote resources.
+  HTTP(S) addresses only (checked after DNS resolution at connect time, including
+  redirects and preview images). Remote sites see your device's request and
+  public IP. Previews are skipped when an HTTP proxy is configured because its
+  target resolution cannot be verified locally; Postal does not bypass it.
+- CSS extensions are trusted local customization: they can restyle or hide
+  anything. Sanitization only prevents closing the surrounding `</style>` tag;
+  it does not make CSS safe or prevent resource loads. The CSP blocks remote
+  loads, while resources allowed by that policy remain accessible to CSS.
 
 ## Testing
 

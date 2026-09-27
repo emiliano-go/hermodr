@@ -1,6 +1,29 @@
 use crate::{account_store::{is_stale_session, Account, AccountsFile, DEFAULT_ACCOUNT_LABEL}, migration::move_dir};
 
 #[test]
+fn webview_policy_keeps_scripts_local_and_scopes_style_relaxation() {
+    let config: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+    let security = &config["app"]["security"];
+    for name in ["csp", "devCsp"] {
+        let policy = &security[name];
+        assert_eq!(policy["script-src"], "'self'");
+        assert_eq!(policy["object-src"], "'none'");
+        assert_eq!(policy["frame-src"], "'none'");
+        for directive in ["default-src", "script-src", "style-src", "img-src", "connect-src", "media-src", "font-src"] {
+            let sources = policy[directive].as_str().unwrap();
+            assert!(!sources.contains('*'), "{name}: {directive}");
+            assert!(!sources.contains("unsafe-eval"));
+            assert!(directive == "style-src" || !sources.contains("unsafe-inline"));
+        }
+        for directive in ["img-src", "media-src"] {
+            let sources = policy[directive].as_str().unwrap();
+            for source in ["asset:", "blob:", "data:"] { assert!(sources.contains(source)); }
+        }
+    }
+    assert_eq!(security["dangerousDisableAssetCspModification"], serde_json::json!(["style-src"]));
+}
+
+#[test]
 fn stale_sessions_spare_the_active_wal() {
     assert!(!is_stale_session("session.db", "session.db"));
     assert!(!is_stale_session("session.db-wal", "session.db"));
