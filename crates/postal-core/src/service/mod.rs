@@ -38,6 +38,8 @@ use crate::{
 mod connection;
 mod contacts;
 mod diagnostics;
+mod storage;
+pub use storage::{StorageReport, StorageCleanup, CleanupResult, StorageOrder};
 mod groups;
 mod history;
 mod inbound;

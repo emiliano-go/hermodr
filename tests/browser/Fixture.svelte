@@ -2,9 +2,11 @@
   import BooleanProps from "$lib/BooleanProps.svelte";
   import ChatMetadata from "./ChatMetadata.svelte";
   import RetentionSettings from "./RetentionSettings.svelte";
+  import StorageManager from "$lib/StorageManager.svelte";
   import { fixture } from "./ipc";
   let mounted = $state(true);
   let calls = $state(0);
+  let cleanupCalls = $state(0);
 </script>
 
 <h1>Synthetic flag diagnostics</h1>
@@ -17,6 +19,10 @@
 {#if mounted}<BooleanProps />{/if}
 <details><summary>Retained chat metadata</summary><ChatMetadata /></details>
 <RetentionSettings />
+<button onclick={() => { fixture.storageFailure = !fixture.storageFailure; }}>Toggle cleanup failure</button>
+<button onclick={() => { cleanupCalls = fixture.storageCalls; }}>Count cleanup calls</button>
+<output aria-label="Cleanup calls">{cleanupCalls}</output>
+<StorageManager />
 
 <style>
   :global(:root) { --raised: #233138; --text: #eee; --border: #53616a; --muted: #b5c5cd; }

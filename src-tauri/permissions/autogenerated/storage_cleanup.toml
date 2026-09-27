@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-storage-cleanup"
+description = "Enables the storage_cleanup command without any pre-configured scope."
+commands.allow = ["storage_cleanup"]
+
+[[permission]]
+identifier = "deny-storage-cleanup"
+description = "Denies the storage_cleanup command without any pre-configured scope."
+commands.deny = ["storage_cleanup"]

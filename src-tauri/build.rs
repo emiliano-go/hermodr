@@ -76,6 +76,8 @@ const COMMANDS: &[&str] = &[
     "load_older",
     "backfill_history",
     "flush_media",
+    "storage_report",
+    "storage_cleanup",
     "clear_history",
     "clear_chat",
     "delete_chat",

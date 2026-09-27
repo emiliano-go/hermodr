@@ -81,7 +81,7 @@ fn reopening_reconciles_mappings_learned_after_schema_migration() {
         let store = MessageStore::open(&path, Retention::unlimited()).unwrap();
         let conn = store.conn.lock().unwrap();
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
         drop(conn);
         let messages = store.messages_for("5989@s.whatsapp.net", 10).unwrap();
         assert_eq!(messages.len(), 1);

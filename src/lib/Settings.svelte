@@ -48,6 +48,7 @@
   import Customization from "$lib/Customization.svelte";
   import Panel from "$lib/Panel.svelte";
   import BooleanProps from "$lib/BooleanProps.svelte";
+  import StorageManager from "$lib/StorageManager.svelte";
   import { limitValue, parseLimit } from "$lib/retention";
   import {
     ACTIONS,
@@ -700,6 +701,7 @@
             </div>
             <button class="button danger" onclick={onflush}>Clear media</button>
           </div>
+          <StorageManager />
         {:else if section === "startup"}
           <h2>Startup</h2>
           <label class="setting">

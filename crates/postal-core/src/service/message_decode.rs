@@ -408,7 +408,7 @@ pub(super) fn thumb_uri(jpeg: &[u8]) -> String {
 
 /// The message cut down to what `download_media` needs: the media entry
 /// without its thumbnail (kept in the row) or the context it quotes.
-fn media_locator(message: &wa::Message) -> Vec<u8> {
+pub(super) fn media_locator(message: &wa::Message) -> Vec<u8> {
     let mut slim = wa::Message {
         image_message: message.image_message.clone(),
         video_message: message.video_message.clone(),

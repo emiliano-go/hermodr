@@ -88,6 +88,8 @@
     "allow-load-older",
     "allow-backfill-history",
     "allow-flush-media",
+    "allow-storage-report",
+    "allow-storage-cleanup",
     "allow-clear-history",
     "allow-clear-chat",
     "allow-delete-chat",

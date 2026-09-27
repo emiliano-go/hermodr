@@ -209,6 +209,8 @@ pub fn run() {
             messages::load_older,
             messages::backfill_history,
             media::flush_media,
+            media::storage_report,
+            media::storage_cleanup,
             chats::clear_history,
             chats::clear_chat,
             chats::delete_chat,

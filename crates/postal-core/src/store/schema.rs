@@ -308,6 +308,7 @@ const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
     migrate_v4_quote_chat_index,
     migrate_v5_chat_metadata,
     migrate_v6_explicit_limits,
+    migrate_v7_media_paths,
 ];
 
 pub(super) fn migrate(conn: &Connection) -> Result<()> {
@@ -663,6 +664,14 @@ fn migrate_v6_explicit_limits(conn: &Connection) -> Result<()> {
                  on_demand
              FROM legacy_chat_retention;
          DROP TABLE legacy_chat_retention;",
+    )?;
+    Ok(())
+}
+
+fn migrate_v7_media_paths(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_messages_media_path ON messages(media_path) WHERE media_path IS NOT NULL;
+         CREATE INDEX IF NOT EXISTS idx_messages_quote_path ON messages(reply_to_path) WHERE reply_to_path IS NOT NULL;",
     )?;
     Ok(())
 }

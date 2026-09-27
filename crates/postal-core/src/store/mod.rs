@@ -20,6 +20,7 @@ mod names;
 mod receipts;
 mod retention;
 mod limits;
+mod storage;
 pub use limits::RetentionLimit;
 #[cfg(test)]
 mod tests;

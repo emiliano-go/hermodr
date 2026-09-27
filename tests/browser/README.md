@@ -23,3 +23,9 @@ Retention checks: open per-chat retention. Default means inherit; Forever and
 No limit save unlimited tags. A one-week age with Default count saves
 limited(168) and inherit. Open global retention, clear both numeric fields and
 save: both limits must be unlimited. Saved payloads appear below the launch buttons.
+
+Storage Manager checks: expand the manager, filter Synthetic A and switch between
+Largest first and Oldest first. Cancel a deletion and confirm cleanup-call count
+stays zero; confirm a deletion and verify updated totals/list. Clean chat media
+and clear the picture cache independently. Toggle cleanup failure and attempt
+another deletion: error must stay visible and file/totals remain unchanged.

@@ -3,6 +3,22 @@ use postal_core::{SendOptions, VoiceNote};
 use tauri::State;
 use crate::AppState;
 
+#[tauri::command(async)]
+pub(crate) fn storage_report(
+    state: State<'_, AppState>, chat: Option<String>,
+    order: Option<postal_core::service::StorageOrder>, offset: Option<usize>,
+) -> Result<postal_core::service::StorageReport, String> {
+    state.service()?.storage_report(chat.as_deref(), order.unwrap_or_default(), offset.unwrap_or(0))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command(async)]
+pub(crate) fn storage_cleanup(
+    state: State<'_, AppState>, action: postal_core::service::StorageCleanup,
+) -> Result<postal_core::service::CleanupResult, String> {
+    state.service()?.cleanup_storage(action).map_err(|error| error.to_string())
+}
+
 /// Sends an attachment as an image or document.
 ///
 /// The file arrives base64-encoded because the webview cannot hand out a real

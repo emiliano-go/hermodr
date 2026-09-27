@@ -262,6 +262,7 @@ impl WhatsAppService {
             message = wrap_view_once(message);
         }
 
+        let locator = (!view_once).then(|| media_locator(&message));
         let result = self.client.send_message(to, message).await?;
         if forwarded {
             self.store.set_forwarded(chat, &result.message_id)?;
@@ -294,6 +295,7 @@ impl WhatsAppService {
             stored.media.kind = Some("view_once".to_string());
         }
         stored.media.path = stored_path;
+        stored.media.locator = locator;
         stored.media.duration = voice_seconds;
         if let Some(reply) = &reply {
             stored.quote = self.reply_quote(&chat_jid, reply)?;
@@ -411,6 +413,7 @@ impl WhatsAppService {
             }),
             ..Default::default()
         };
+        let locator = media_locator(&message);
         let result = self.client.send_message(to, message).await?;
         if forwarded {
             self.store.set_forwarded(chat, &result.message_id)?;
@@ -424,6 +427,7 @@ impl WhatsAppService {
         });
         let mut stored = self.own_message(chat, &result.message_id, "[sticker]".into(), "sticker", to_self);
         stored.media.path = media_path;
+        stored.media.locator = Some(locator);
         if let Some(reply) = &reply {
             stored.quote = self.reply_quote(chat, reply)?;
         }
