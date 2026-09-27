@@ -293,3 +293,23 @@ fn view_once_media_is_nested_in_the_v2_container() {
         );
     }
 }
+
+/// A state change addressed by LID resolves to the phone-number key the chat
+/// and its messages are stored under, so archive/pin/mute land on the right row.
+#[tokio::test]
+async fn a_lid_state_change_lands_on_the_phone_number_row() {
+    let store = MessageStore::open(Path::new(":memory:"), Retention::default()).unwrap();
+    store.set_lid_pn("12345", "59891954564").unwrap();
+
+    let lid: Jid = "12345@lid".parse().unwrap();
+    assert_eq!(
+        resolve_chat(None, &store, &lid).await,
+        "59891954564@s.whatsapp.net"
+    );
+
+    // A number is already canonical, and a group passes through untouched.
+    let pn: Jid = "59891954564@s.whatsapp.net".parse().unwrap();
+    assert_eq!(resolve_chat(None, &store, &pn).await, "59891954564@s.whatsapp.net");
+    let group: Jid = "120363000000000042@g.us".parse().unwrap();
+    assert_eq!(resolve_chat(None, &store, &group).await, "120363000000000042@g.us");
+}

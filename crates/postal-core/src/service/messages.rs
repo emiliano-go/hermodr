@@ -111,7 +111,9 @@ impl Service {
     /// Pins or unpins a chat, mirroring it to the account.
     pub async fn set_pinned(&self, chat: &str, pinned: bool) -> Result<()> {
         let jid: Jid = chat.parse()?;
-        self.store.set_pinned(&jid.to_non_ad().to_string(), pinned)?;
+        let key = resolve_chat(Some(self.client.as_ref()), &self.store, &jid).await;
+        let jid: Jid = key.parse()?;
+        self.store.set_pinned(&key, pinned)?;
         let actions = self.client.chat_actions();
         let result = if pinned {
             actions.pin_chat(&jid).await
@@ -121,15 +123,44 @@ impl Service {
         result.map_err(|e| anyhow::anyhow!(e.to_string()))
     }
 
+    /// The message range WhatsApp Web attaches to an archive action, so the
+    /// receiving devices can resolve conflicts. Built from the chat's newest
+    /// messages; `None` when there are none to name.
+    fn archive_range(&self, chat: &str) -> Option<whatsapp_rust::SyncActionMessageRange> {
+        let remote = chat.parse::<Jid>().ok()?;
+        let messages = self.store.messages_for(chat, 3).ok()?;
+        let last = messages.first()?.header.timestamp;
+        let mut keys = Vec::with_capacity(messages.len());
+        for m in &messages {
+            let participant = (remote.is_group() && !m.header.from_me)
+                .then(|| m.header.sender.parse::<Jid>().ok().map(|j| j.to_non_ad()))
+                .flatten();
+            keys.push((
+                whatsapp_rust::message_key(
+                    m.header.id.clone(),
+                    &remote,
+                    m.header.from_me,
+                    participant.as_ref(),
+                ),
+                m.header.timestamp,
+            ));
+        }
+        Some(whatsapp_rust::message_range(last, None, keys))
+    }
+
     /// Archives or unarchives a chat, mirroring it to the account.
     pub async fn set_archived(&self, chat: &str, archived: bool) -> Result<()> {
         let jid: Jid = chat.parse()?;
-        self.store.set_archived(&jid.to_non_ad().to_string(), archived)?;
+        let key = resolve_chat(Some(self.client.as_ref()), &self.store, &jid).await;
+        let jid: Jid = key.parse()?;
+        log::debug!("set_archived {key}: {archived}");
+        self.store.set_archived(&key, archived)?;
+        let range = self.archive_range(&key);
         let actions = self.client.chat_actions();
         let result = if archived {
-            actions.archive_chat(&jid, None).await
+            actions.archive_chat(&jid, range).await
         } else {
-            actions.unarchive_chat(&jid, None).await
+            actions.unarchive_chat(&jid, range).await
         };
         result.map_err(|e| anyhow::anyhow!(e.to_string()))
     }
@@ -155,7 +186,9 @@ impl Service {
     /// Mutes a chat until `until` (Unix seconds; -1 indefinitely, 0 unmutes).
     pub async fn set_muted(&self, chat: &str, until: i64) -> Result<()> {
         let jid: Jid = chat.parse()?;
-        self.store.set_muted_until(&jid.to_non_ad().to_string(), until)?;
+        let key = resolve_chat(Some(self.client.as_ref()), &self.store, &jid).await;
+        let jid: Jid = key.parse()?;
+        self.store.set_muted_until(&key, until)?;
         let actions = self.client.chat_actions();
         let result = match until {
             0 => actions.unmute_chat(&jid).await,
@@ -168,7 +201,9 @@ impl Service {
     /// Marks a chat unread by hand, or clears that mark, mirroring it to the account.
     pub async fn set_marked_unread(&self, chat: &str, unread: bool) -> Result<()> {
         let jid: Jid = chat.parse()?;
-        self.store.set_marked_unread(&jid.to_non_ad().to_string(), unread)?;
+        let key = resolve_chat(Some(self.client.as_ref()), &self.store, &jid).await;
+        let jid: Jid = key.parse()?;
+        self.store.set_marked_unread(&key, unread)?;
         self.client
             .chat_actions()
             .mark_chat_as_read(&jid, !unread, None)

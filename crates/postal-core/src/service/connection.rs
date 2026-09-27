@@ -362,12 +362,30 @@ impl Service {
                                         log::warn!("contact resync failed: {e}");
                                     }
                                 }
-                                // Pins live in a different collection.
-                                if let Err(e) = client
+                            });
+                        }
+                        // Pins, archive, mute and read marks all live in
+                        // regular_low. Resync it on every connection so the app
+                        // adopts the account's state after a reconnect or a
+                        // conflict, the phone being the authority.
+                        {
+                            let client = client.clone();
+                            tokio::spawn(async move {
+                                match client
                                     .resync_app_state_collection(WAPatchName::RegularLow)
                                     .await
                                 {
-                                    log::warn!("pin resync failed: {e}");
+                                    Ok(report) if report.all_synced() => {
+                                        log::debug!("regular_low resync: all collections synced");
+                                    }
+                                    Ok(report) => {
+                                        let stale: Vec<_> =
+                                            report.unsynced().map(|n| n.as_str()).collect();
+                                        log::warn!(
+                                            "regular_low resync left collections unsynced: {stale:?}"
+                                        );
+                                    }
+                                    Err(e) => log::warn!("regular_low resync failed: {e}"),
                                 }
                             });
                         }

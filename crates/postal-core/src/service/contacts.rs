@@ -16,7 +16,8 @@ pub(super) fn remember_lid_pn(store: &MessageStore, sender: &Jid, alt: Option<&J
 /// The chat key a direct message belongs under: the phone-number form when the
 /// mapping is known, so both address forms share one chat. Groups and already
 /// numbered chats pass through untouched.
-pub(super) fn canonical_chat(
+pub(super) async fn canonical_chat(
+    client: Option<&Client>,
     store: &MessageStore,
     chat: &Jid,
     sender: &Jid,
@@ -37,10 +38,32 @@ pub(super) fn canonical_chat(
             }
         }
     }
-    if let Ok(Some((_, pn))) = store.lid_pn(&bare.user) {
-        return format!("{pn}@s.whatsapp.net");
+    resolve_chat(client, store, chat).await
+}
+
+/// The chat key a state change for `jid` belongs under: the phone-number form
+/// for a mapped LID, so archive, pin, mute and read marks sit on the same row
+/// as the chat's messages. Groups and already numbered chats pass through.
+pub(super) async fn resolve_chat(
+    client: Option<&Client>,
+    store: &MessageStore,
+    jid: &Jid,
+) -> String {
+    let bare = jid.to_non_ad();
+    if !bare.is_lid() {
+        return bare.to_string();
     }
-    bare.to_string()
+    let pn = match client {
+        Some(client) => other_form(client, store, &bare).await.map(|(_, pn)| pn),
+        None => store.lid_pn(&bare.user).ok().flatten().map(|(_, pn)| pn),
+    };
+    match pn {
+        Some(pn) => {
+            let user = pn.split('@').next().unwrap_or(&pn);
+            format!("{user}@s.whatsapp.net")
+        }
+        None => bare.to_string(),
+    }
 }
 
 /// The other address form of a bare user JID, from the session or our own record of it.
@@ -93,20 +116,6 @@ pub(super) fn contact_forms(store: &MessageStore, jid: &str) -> Vec<String> {
 pub(super) fn backfill_lid_names(session_path: &std::path::Path, store: &MessageStore) {
     use std::collections::HashMap;
 
-    let Ok(saved) = store.saved_names() else {
-        return;
-    };
-    let by_phone: HashMap<&str, &str> = saved
-        .iter()
-        .filter_map(|(jid, name)| {
-            jid.strip_suffix("@s.whatsapp.net")
-                .map(|phone| (phone, name.as_str()))
-        })
-        .collect();
-    if by_phone.is_empty() {
-        return;
-    }
-
     let Ok(conn) = rusqlite::Connection::open_with_flags(
         session_path,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
@@ -122,6 +131,31 @@ pub(super) fn backfill_lid_names(session_path: &std::path::Path, store: &Message
                 by_lid.insert(lid, phone);
             }
         }
+    }
+    if by_lid.is_empty() {
+        return;
+    }
+    // Keep the library's mapping in our own store, so a chat key resolves to
+    // its phone-number form even before a message carries both address forms.
+    {
+        let _commit = store.batch();
+        for (lid, phone) in &by_lid {
+            store.set_lid_pn(lid, phone).logged();
+        }
+    }
+
+    let Ok(saved) = store.saved_names() else {
+        return;
+    };
+    let by_phone: HashMap<&str, &str> = saved
+        .iter()
+        .filter_map(|(jid, name)| {
+            jid.strip_suffix("@s.whatsapp.net")
+                .map(|phone| (phone, name.as_str()))
+        })
+        .collect();
+    if by_phone.is_empty() {
+        return;
     }
 
     for address in store.known_addresses().unwrap_or_default() {

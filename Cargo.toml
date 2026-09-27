@@ -14,10 +14,10 @@ repository = "https://github.com/emiliano-go/postal"
 [workspace.dependencies]
 # Pinned to a revision rather than the crates.io release: history-sync admission
 # control (`HistorySyncAdmission`) exists here but not in 0.7.0.
-# Consumed from a local checkout at rev 9eb43b9bc2bc561cc34a672b4295528bf4c2d733,
+# Consumed from a local checkout at rev 6f18f5d3 (the checkout at ../whatsapp-rust),
 # because the repository's own .cargo/config.toml injects nightly-only rustflags
 # that would break a stable build if it were vendored as a git dependency.
-whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "9eb43b9bc2bc561cc34a672b4295528bf4c2d733" }
+whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "6f18f5d3c98a4e72a498eb4966c67a990da4a59d" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
 anyhow = "1"
 log = "0.4"

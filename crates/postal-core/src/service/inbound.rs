@@ -110,11 +110,13 @@ impl Inbound {
                 };
                 let _ = events.send(ServiceEvent::Typing {
                     chat: canonical_chat(
+                        client_for_events.get().map(|c| c.as_ref()),
                         store,
                         &update.source.chat,
                         &update.source.sender,
                         None,
-                    ),
+                    )
+                    .await,
                     sender: update.source.sender.to_non_ad().to_string(),
                     state: state.to_string(),
                 });
@@ -156,11 +158,13 @@ impl Inbound {
             {
                 let info = &stub.info;
                 let chat = canonical_chat(
+                    client_for_events.get().map(|c| c.as_ref()),
                     store,
                     &info.source.chat,
                     &info.source.sender,
                     info.source.sender_alt.as_ref(),
-                );
+                )
+                .await;
                 let id = info.id.to_string();
                 if store.message(&chat, &id).is_ok() {
                     return;
@@ -215,17 +219,22 @@ impl Inbound {
             // list matches the phone.
             Event::PinUpdate(pin) => {
                 let pinned = pin.action.pinned.unwrap_or(false);
-                let jid = pin.jid.to_non_ad().to_string();
+                let jid = resolve_chat(client_for_events.get().map(|c| c.as_ref()), store, &pin.jid).await;
                 store.set_pinned(&jid, pinned).logged();
                 let _ = events.send(ServiceEvent::ChatStateChanged { chat: jid });
             }
             Event::ArchiveUpdate(update) => {
-                let jid = update.jid.to_non_ad().to_string();
-                store.set_archived(&jid, update.action.archived.unwrap_or(false)).logged();
+                let archived = update.action.archived.unwrap_or(false);
+                let jid = resolve_chat(client_for_events.get().map(|c| c.as_ref()), store, &update.jid).await;
+                log::debug!(
+                    "archive update for {jid}: archived={archived} full_sync={}",
+                    update.from_full_sync
+                );
+                store.set_archived(&jid, archived).logged();
                 let _ = events.send(ServiceEvent::ChatStateChanged { chat: jid });
             }
             Event::MuteUpdate(update) => {
-                let jid = update.jid.to_non_ad().to_string();
+                let jid = resolve_chat(client_for_events.get().map(|c| c.as_ref()), store, &update.jid).await;
                 let until = match (update.action.muted.unwrap_or(false), update.action.mute_end_timestamp) {
                     (false, _) => 0,
                     (true, Some(ms)) if ms > 0 => ms / 1000,
@@ -235,7 +244,7 @@ impl Inbound {
                 let _ = events.send(ServiceEvent::ChatStateChanged { chat: jid });
             }
             Event::MarkChatAsReadUpdate(update) => {
-                let jid = update.jid.to_non_ad().to_string();
+                let jid = resolve_chat(client_for_events.get().map(|c| c.as_ref()), store, &update.jid).await;
                 store.set_marked_unread(&jid, !update.action.read.unwrap_or(true)).logged();
                 let _ = events.send(ServiceEvent::ChatStateChanged { chat: jid });
             }
@@ -271,11 +280,13 @@ impl Inbound {
             let sender = inbound.info.source.sender.to_string();
             let raw_chat = inbound.info.source.chat.to_non_ad().to_string();
             let chat = canonical_chat(
+                client.as_deref(),
                 store,
                 &inbound.info.source.chat,
                 &inbound.info.source.sender,
                 inbound.info.source.sender_alt.as_ref(),
-            );
+            )
+            .await;
             touched.push(chat.clone());
             // The LID form of a direct chat still holding history folds onto the
             // phone-number form, so a split cannot outlive this message.
