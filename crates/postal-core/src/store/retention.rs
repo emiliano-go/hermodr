@@ -55,8 +55,37 @@ impl MessageStore {
         self.prune(Some(chats))
     }
 
+    /// Replaces the global policy; the next prune uses it.
+    pub fn set_retention(&self, retention: Retention) {
+        *self.retention.lock().unwrap() = retention;
+    }
+
     fn prune(&self, chats: Option<&[String]>) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
+        // With no policy anywhere, every delete below matches nothing by
+        // construction, yet each still scans: on a large store that holds the
+        // store lock for seconds per live message, stalling sends, reads and
+        // the UI behind it. So each scan only runs when a policy that could
+        // match exists, globally or on some chat.
+        let oldest = self.retention.lock().unwrap().oldest_allowed();
+        let per_chat_age = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM chat_retention WHERE max_age_hours IS NOT NULL AND max_age_hours > 0)",
+                [],
+                |r| r.get::<_, i32>(0),
+            )?
+            != 0;
+        let cap = self.retention.lock().unwrap().max_messages_per_chat.filter(|c| *c > 0);
+        let per_chat_cap = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM chat_retention WHERE max_messages IS NOT NULL AND max_messages > 0)",
+                [],
+                |r| r.get::<_, i32>(0),
+            )?
+            != 0;
+        if oldest.is_none() && !per_chat_age && cap.is_none() && !per_chat_cap {
+            return Ok(0);
+        }
         let json = chats.map(|c| serde_json::to_string(c).unwrap_or_default());
         // Scoped statements filter on the (chat, timestamp) index instead of reading every row.
         let (scope, scope_m) = if json.is_some() {
@@ -84,7 +113,7 @@ impl MessageStore {
         let mut removed = 0;
 
         // A chat with its own window or cap is only bound by that one.
-        if let Some(oldest) = self.retention.oldest_allowed() {
+        if let Some(oldest) = oldest {
             removed += run(
                 &format!(
                     "DELETE FROM messages WHERE {scope} AND timestamp < :oldest AND chat NOT IN
@@ -94,32 +123,38 @@ impl MessageStore {
                 &[(":oldest", &oldest)],
             )?;
         }
-        removed += run(
-            &format!(
-                "DELETE FROM messages WHERE {scope} AND EXISTS (
-                     SELECT 1 FROM chat_retention r WHERE r.jid = messages.chat
-                     AND r.max_age_hours > 0 AND messages.timestamp < :now - r.max_age_hours * 3600)
-                 AND {not_newest}"
-            ),
-            &[(":now", &unix_now())],
-        )?;
+
+        // The per-chat window only matches when some chat has one; the global
+        // oldest above already covers the shared window.
+        if per_chat_age {
+            removed += run(
+                &format!(
+                    "DELETE FROM messages WHERE {scope} AND EXISTS (
+                         SELECT 1 FROM chat_retention r WHERE r.jid = messages.chat
+                         AND r.max_age_hours > 0 AND messages.timestamp < :now - r.max_age_hours * 3600)
+                     AND {not_newest}"
+                ),
+                &[(":now", &unix_now())],
+            )?;
+        }
 
         // Rank within each chat and drop everything past its cap.
-        removed += run(
-            &format!(
-                "DELETE FROM messages WHERE (chat, id) IN (
-                     SELECT chat, id FROM (
-                         SELECT m.chat, m.id,
-                                ROW_NUMBER() OVER (PARTITION BY m.chat ORDER BY m.timestamp DESC) AS rank,
-                                COALESCE(r.max_messages, :cap) AS cap
-                         FROM messages m LEFT JOIN chat_retention r ON r.jid = m.chat
-                         WHERE {scope_m}
-                     ) WHERE cap > 0 AND rank > cap
-                 )"
-            ),
-            &[(":cap", &self.retention.max_messages_per_chat.map(|c| c as i64).unwrap_or(0))],
-        )?;
-
+        if cap.is_some() || per_chat_cap {
+            removed += run(
+                &format!(
+                    "DELETE FROM messages WHERE (chat, id) IN (
+                         SELECT chat, id FROM (
+                             SELECT m.chat, m.id,
+                                    ROW_NUMBER() OVER (PARTITION BY m.chat ORDER BY m.timestamp DESC) AS rank,
+                                    COALESCE(r.max_messages, :cap) AS cap
+                             FROM messages m LEFT JOIN chat_retention r ON r.jid = m.chat
+                             WHERE {scope_m}
+                         ) WHERE cap > 0 AND rank > cap
+                     )"
+                ),
+                &[(":cap", &cap.map(|c| c as i64).unwrap_or(0))],
+            )?;
+        }
         // State attached to messages only goes stale when messages go.
         if removed > 0 {
             conn.execute_batch(

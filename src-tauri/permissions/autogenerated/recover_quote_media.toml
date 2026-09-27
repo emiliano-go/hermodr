@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-recover-quote-media"
+description = "Enables the recover_quote_media command without any pre-configured scope."
+commands.allow = ["recover_quote_media"]
+
+[[permission]]
+identifier = "deny-recover-quote-media"
+description = "Denies the recover_quote_media command without any pre-configured scope."
+commands.deny = ["recover_quote_media"]

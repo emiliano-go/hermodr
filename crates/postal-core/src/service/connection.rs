@@ -3,10 +3,8 @@
 use super::*;
 
 /// What this device asks for when it links: named as Postal on the phone's
-/// linked devices, and with full history a backfill of every chat but only
-/// its recent days, telling the phone older history will be asked for on
-/// demand (a reply to something older fetches that chat's past). Only read at
-/// pairing; an existing link keeps what it was paired with.
+/// linked devices, and with full history a backfill of everything the phone
+/// has. Only read at pairing; an existing link keeps what it was paired with.
 pub(super) fn pairing_props(full_history: bool) -> whatsapp_rust::wacore::store::DevicePropsOverride {
     use wa::device_props::{HistorySyncConfig, PlatformType};
     let props = whatsapp_rust::wacore::store::DevicePropsOverride::new()
@@ -16,8 +14,8 @@ pub(super) fn pairing_props(full_history: bool) -> whatsapp_rust::wacore::store:
         return props;
     }
     props.with_require_full_sync(true).with_history_sync_config(HistorySyncConfig {
-        full_sync_days_limit: Some(2),
-        recent_sync_days_limit: Some(2),
+        // Older than WhatsApp itself, yet small enough that days in seconds fits an i32.
+        full_sync_days_limit: Some(10_000),
         on_demand_ready: Some(true),
         complete_on_demand_ready: Some(true),
         // WhatsApp Web's own claims, which the library's default also makes.
@@ -35,6 +33,11 @@ pub(super) fn pairing_props(full_history: bool) -> whatsapp_rust::wacore::store:
         support_hatch_history: Some(true),
         ..Default::default()
     })
+}
+
+/// The retention actually applied: keeping full history means nothing is pruned.
+pub(super) fn kept_retention(retention: Retention, full_history: bool) -> Retention {
+    if full_history { Retention::unlimited() } else { retention }
 }
 
 /// Builds the cache configuration for a given retention window.
@@ -193,7 +196,8 @@ impl Service {
     /// before the connection attempt began. The pairing code is emitted during
     /// startup, so a receiver created afterwards would miss it; the returned one
     /// is guaranteed to see every event from the beginning.
-    pub async fn start(config: ServiceConfig) -> Result<(Self, broadcast::Receiver<ServiceEvent>)> {
+    pub async fn start(mut config: ServiceConfig) -> Result<(Self, broadcast::Receiver<ServiceEvent>)> {
+        config.retention = kept_retention(config.retention, config.accept_full_history);
         log::info!(
             "starting: session {}, messages {}, aliases {}, media {:?}, retention {:?}, full history {}",
             config.session_path.display(),
@@ -379,14 +383,20 @@ impl Service {
                     EventKind::OfflineSyncCompleted,
                     EventKind::OfflineSyncInterrupted,
                     EventKind::PinUpdate,
+                    EventKind::ArchiveUpdate,
+                    EventKind::MuteUpdate,
+                    EventKind::MarkChatAsReadUpdate,
                     // Unlisted kinds never reach the handler: history ("load
                     // older" included), typing and picture changes need these.
                     EventKind::HistorySync,
                     EventKind::ChatPresence,
                     EventKind::PictureUpdate,
                     EventKind::UndecryptableMessage,
+                    EventKind::IdentityChange,
+                    EventKind::DeviceListUpdate,
                     EventKind::Presence,
                     EventKind::GroupUpdate,
+                    EventKind::MissedCall,
                 ],
                 move |event, _client| {
                     let inbound = inbound.clone();
@@ -451,6 +461,11 @@ impl Service {
     }
 
     /// Stops the background task.
+    /// Unlinks this device from the account on WhatsApp's side.
+    pub async fn logout(&self) {
+        self.client.logout().await;
+    }
+
     pub fn shutdown(&self) {
         if let Some(tx) = self.shutdown.lock().unwrap().take() {
             let _ = tx.send(());

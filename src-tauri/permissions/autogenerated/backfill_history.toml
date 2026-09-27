@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-backfill-history"
+description = "Enables the backfill_history command without any pre-configured scope."
+commands.allow = ["backfill_history"]
+
+[[permission]]
+identifier = "deny-backfill-history"
+description = "Denies the backfill_history command without any pre-configured scope."
+commands.deny = ["backfill_history"]

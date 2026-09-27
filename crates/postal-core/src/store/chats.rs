@@ -67,6 +67,41 @@ impl MessageStore {
         Ok(())
     }
 
+    /// Mirrors a chat's archive state from the account.
+    pub fn set_archived(&self, jid: &str, archived: bool) -> Result<()> {
+        self.set_chat_state(jid, "archived", archived as i64)
+    }
+
+    /// Mirrors a chat's mute end (seconds; -1 indefinitely, 0 unmuted).
+    pub fn set_muted_until(&self, jid: &str, until: i64) -> Result<()> {
+        self.set_chat_state(jid, "muted_until", until)
+    }
+
+    /// Mirrors a chat's manual unread mark from the account.
+    pub fn set_marked_unread(&self, jid: &str, unread: bool) -> Result<()> {
+        self.set_chat_state(jid, "marked_unread", unread as i64)
+    }
+
+    /// Lifts a manual unread mark; true if one was set.
+    pub fn clear_marked_unread(&self, jid: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let changed =
+            conn.execute("UPDATE chat_state SET marked_unread = 0 WHERE jid = ?1 AND marked_unread = 1", params![jid])?;
+        Ok(changed > 0)
+    }
+
+    fn set_chat_state(&self, jid: &str, column: &str, value: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            &format!(
+                "INSERT INTO chat_state (jid, {column}) VALUES (?1, ?2)
+                 ON CONFLICT(jid) DO UPDATE SET {column} = excluded.{column}"
+            ),
+            params![jid, value],
+        )?;
+        Ok(())
+    }
+
     /// The pinned chats.
     pub fn pinned_chats(&self) -> Result<Vec<String>> {
         let conn = self.conn.lock().unwrap();
@@ -86,18 +121,25 @@ impl MessageStore {
             // message would copy the whole table into a temporary sort.
             "SELECT g.chat, g.last_message_at, g.message_count, n.name, g.unread_count,
                     g.mention_count, p.jid IS NOT NULL AS pinned,
-                    m.text, m.from_me, s.name, m.sender, m.media_kind
+                    COALESCE(m.text, ''), COALESCE(m.from_me, 0), s.name, COALESCE(m.sender, ''),
+                    CASE WHEN m.system_kind IS NOT NULL THEN 'missed_call' ELSE m.media_kind END,
+                    COALESCE(cs.archived, 0), COALESCE(cs.muted_until, 0), COALESCE(cs.marked_unread, 0)
              FROM (SELECT chat,
                           MAX(timestamp) AS last_message_at,
                           COUNT(*) AS message_count,
                           SUM(read = 0 AND from_me = 0) AS unread_count,
                           SUM(read = 0 AND from_me = 0 AND mentioned = 1) AS mention_count
                    FROM messages WHERE chat NOT IN (SELECT jid FROM hidden_chats) GROUP BY chat) g
-             JOIN messages m ON m.rowid =
-                  (SELECT rowid FROM messages WHERE chat = g.chat ORDER BY timestamp DESC LIMIT 1)
+             LEFT JOIN messages m ON m.rowid =
+                  (SELECT rowid FROM messages WHERE chat = g.chat
+                     AND (system_kind IS NULL OR system_kind LIKE 'CALL_MISSED%' OR system_kind LIKE 'SILENCED_UNKNOWN_CALLER%')
+                   ORDER BY timestamp DESC LIMIT 1)
              LEFT JOIN names n ON n.jid = g.chat
              LEFT JOIN names s ON s.jid = m.sender
              LEFT JOIN pins p ON p.jid = g.chat
+             LEFT JOIN chat_state cs ON cs.jid = g.chat
+             -- History syncs security-code stubs for people never messaged; only a group may be notices alone.
+             WHERE m.rowid IS NOT NULL OR g.chat LIKE '%@g.us'
              ORDER BY pinned DESC, g.last_message_at DESC",
         )?;
         let mut summaries = stmt
@@ -115,6 +157,9 @@ impl MessageStore {
                     last_sender_name: row.get(9)?,
                     last_sender: row.get(10)?,
                     last_media_kind: row.get(11)?,
+                    archived: row.get::<_, i64>(12)? != 0,
+                    muted_until: row.get(13)?,
+                    marked_unread: row.get::<_, i64>(14)? != 0,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -122,10 +167,12 @@ impl MessageStore {
         // Cleared chats with no messages left: empty rows that keep the chat
         // in the list. Chats with real messages are already above.
         let mut empty = conn.prepare(
-            "SELECT c.jid, n.name, p.jid IS NOT NULL AS pinned
+            "SELECT c.jid, n.name, p.jid IS NOT NULL AS pinned,
+                    COALESCE(cs.archived, 0), COALESCE(cs.muted_until, 0), COALESCE(cs.marked_unread, 0)
              FROM cleared_chats c
              LEFT JOIN names n ON n.jid = c.jid
              LEFT JOIN pins p ON p.jid = c.jid
+             LEFT JOIN chat_state cs ON cs.jid = c.jid
              WHERE c.jid NOT IN (SELECT jid FROM hidden_chats)
                AND NOT EXISTS (SELECT 1 FROM messages WHERE chat = c.jid)",
         )?;
@@ -144,6 +191,9 @@ impl MessageStore {
                     last_sender_name: None,
                     last_sender: String::new(),
                     last_media_kind: None,
+                    archived: row.get::<_, i64>(3)? != 0,
+                    muted_until: row.get(4)?,
+                    marked_unread: row.get::<_, i64>(5)? != 0,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;

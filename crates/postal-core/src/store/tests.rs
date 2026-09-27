@@ -44,6 +44,17 @@ fn scoped_retention_only_touches_the_given_chats() {
 }
 
 #[test]
+fn no_policy_prunes_nothing_and_keeps_everything() {
+    let s = store(Retention::unlimited());
+    s.insert_message(&msg("a@s", "old", 24 * 30, "x")).unwrap();
+    s.insert_message(&msg("a@s", "new", 1, "y")).unwrap();
+    // Even a month-old message stays: with nothing to enforce, the prune is a
+    // no-op rather than a scan, so it never holds the store lock per message.
+    assert_eq!(s.enforce_retention().unwrap(), 0);
+    assert_eq!(s.messages_for("a@s", 10).unwrap().len(), 2);
+}
+
+#[test]
 fn search_stays_fast_at_fifty_thousand_messages() {
     let s = store(Retention::unlimited());
     {
@@ -559,6 +570,45 @@ fn revoking_keeps_the_row_but_clears_content() {
     assert_eq!(got.text, "");
     // Revoking twice changes nothing the second time.
     assert!(!s.revoke_message("a@s", "1").unwrap());
+}
+
+#[test]
+fn system_rows_round_trip_and_stay_out_of_the_preview() {
+    let s = store(Retention::unlimited());
+    s.insert_message(&msg("a@s", "1", 1, "hello")).unwrap();
+    let mut notice = msg("a@s", "2", 0, "");
+    notice.system = SystemNotice { kind: Some("E2E_IDENTITY_CHANGED".into()), params: vec!["a@s".into()] };
+    notice.local.read = true;
+    s.insert_message(&notice).unwrap();
+    let got = s.message("a@s", "2").unwrap();
+    assert_eq!(got.system, notice.system);
+    let chat = &s.chats().unwrap()[0];
+    assert_eq!(chat.last_text, "hello");
+    assert_eq!(chat.unread_count, 1);
+}
+
+#[test]
+fn missed_calls_reach_the_preview_and_notice_only_chats_stay_listed() {
+    let s = store(Retention::unlimited());
+    s.insert_message(&msg("a@s", "1", 10, "hello")).unwrap();
+    let mut call = msg("a@s", "2", 1, "");
+    call.system = SystemNotice { kind: Some("CALL_MISSED_VOICE".into()), params: vec![] };
+    s.insert_message(&call).unwrap();
+    let mut created = msg("g@g.us", "3", 5, "");
+    created.system = SystemNotice { kind: Some("GROUP_CREATE".into()), params: vec![] };
+    s.insert_message(&created).unwrap();
+    let chats = s.chats().unwrap();
+    let a = chats.iter().find(|c| c.chat == "a@s").unwrap();
+    assert_eq!(a.last_media_kind.as_deref(), Some("missed_call"));
+    assert!(chats.iter().any(|c| c.chat == "g@g.us"));
+    let mut stranger = msg("b@s", "4", 1, "");
+    stranger.system = SystemNotice { kind: Some("E2E_IDENTITY_CHANGED".into()), params: vec![] };
+    s.insert_message(&stranger).unwrap();
+    assert!(!s.chats().unwrap().iter().any(|c| c.chat == "b@s"));
+    let at = call.header.timestamp;
+    assert!(s.has_system_near("a@s", "CALL_MISSED_VOICE", at + 3).unwrap());
+    assert!(!s.has_system_near("a@s", "CALL_MISSED_VOICE", at + 30).unwrap());
+    assert!(!s.has_system_near("a@s", "GROUP_CREATE", at).unwrap());
 }
 
 #[test]

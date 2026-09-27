@@ -228,6 +228,48 @@ fn unlimited_retention_falls_back_to_the_library_default() {
 }
 
 #[test]
+fn only_stubs_that_mean_something_become_system_rows() {
+    use wa::web_message_info::StubType;
+    assert_eq!(system_kind(StubType::E2E_IDENTITY_CHANGED).as_deref(), Some("E2E_IDENTITY_CHANGED"));
+    assert_eq!(system_kind(StubType::GROUP_PARTICIPANT_ADD).as_deref(), Some("GROUP_PARTICIPANT_ADD"));
+    for silent in [
+        StubType::GENERIC_NOTIFICATION,
+        StubType::REVOKE,
+        StubType::PAYMENT_CIPHERTEXT,
+        StubType::VERIFIED_HIGH,
+        StubType::NON_VERIFIED_TRANSITION,
+    ] {
+        assert_eq!(system_kind(silent), None, "{silent:?}");
+    }
+}
+
+#[test]
+fn a_reupload_repoints_the_media_and_drops_its_old_url() {
+    let mut message = wa::Message {
+        image_message: MessageField::some(wa::message::ImageMessage {
+            url: Some("https://mmg.whatsapp.net/old".into()),
+            direct_path: Some("/v/old".into()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    set_direct_path(&mut message, "/v/new");
+    let image = message.image_message.as_option().unwrap();
+    assert_eq!(image.direct_path.as_deref(), Some("/v/new"));
+    assert_eq!(image.url, None);
+}
+
+#[test]
+fn a_quoted_view_once_stub_keeps_its_kind_and_carries_no_media() {
+    let quoted = empty_view_once(Some("video"));
+    let inner = quoted.view_once_message_v2.as_option().unwrap().message.as_option().unwrap();
+    let video = inner.video_message.as_option().unwrap();
+    assert_eq!(video.view_once, Some(true));
+    assert_eq!(video.direct_path, None);
+    assert!(empty_view_once(None).view_once_message_v2.as_option().unwrap().message.as_option().unwrap().image_message.is_set());
+}
+
+#[test]
 fn view_once_media_is_nested_in_the_v2_container() {
     for message in [
         wa::Message {

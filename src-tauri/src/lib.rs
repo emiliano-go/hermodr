@@ -59,7 +59,7 @@ impl Default for UiSettings {
     fn default() -> Self {
         Self {
             retention: Retention::default(),
-            accept_full_history: true,
+            accept_full_history: false,
             auto_download_media: true,
             media_dir: None,
             warn_missing_video_preview: true,
@@ -579,19 +579,20 @@ async fn connect(app: AppHandle, state: State<'_, AppState>) -> Result<(), Strin
     }
     let account = match active_account(&state) {
         Some(account) => account,
-        // First run: create the default account.
+        // No account yet: a fresh one, so files a removed account left open cannot be picked up again.
         None => {
+            let id = format!("acct-{}", now_millis());
             {
                 let mut file = state.accounts.lock().unwrap();
                 file.accounts.push(Account {
-                    id: "default".into(),
+                    id: id.clone(),
                     label: DEFAULT_ACCOUNT_LABEL.into(),
                     jid: None,
                 });
-                file.active = Some("default".into());
+                file.active = Some(id.clone());
             }
             save_accounts(&app, &state.accounts.lock().unwrap());
-            "default".to_string()
+            id
         }
     };
     start_service(&app, &state, &account).await
@@ -673,19 +674,38 @@ fn rename_account(
 #[tauri::command]
 async fn remove_account(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
     log::info!("removing account {id}");
+    let was_active = active_account(&state).as_deref() == Some(id.as_str());
     {
         let mut file = state.accounts.lock().unwrap();
         file.accounts.retain(|a| a.id != id);
-        if file.active.as_deref() == Some(id.as_str()) {
+        if was_active {
             file.active = file.accounts.first().map(|a| a.id.clone());
         }
     }
     save_accounts(&app, &state.accounts.lock().unwrap());
-    if let Some(existing) = state.service.lock().unwrap().take() {
+    let running = state.service.lock().unwrap().take();
+    if let Some(existing) = running {
+        // Only the running account can reach WhatsApp to unlink itself.
+        if was_active {
+            for path in existing.media_paths().unwrap_or_default() {
+                let _ = std::fs::remove_file(path);
+            }
+            existing.logout().await;
+        }
         existing.shutdown();
     }
-    if id != "default" {
-        let _ = std::fs::remove_dir_all(account_base(&app, &id));
+    let base = account_base(&app, &id);
+    if id == "default" {
+        // The default account lives in the data root beside the other accounts' folder.
+        for entry in std::fs::read_dir(&base).into_iter().flatten().flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let db = ["-wal", "-shm", "-journal"].iter().find_map(|s| name.strip_suffix(s)).unwrap_or(&name);
+            if db == SESSION_POINTER || is_stale_session(db, "") || db == "messages.db" || db == "aliases.db" {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    } else {
+        let _ = std::fs::remove_dir_all(base);
     }
     if let Some(next) = active_account(&state) {
         start_service(&app, &state, &next).await?;
@@ -1082,9 +1102,22 @@ async fn respond_event(
 
 /// Sends base64 image bytes as a sticker.
 #[tauri::command]
-async fn send_sticker(state: State<'_, AppState>, chat: String, data: String) -> Result<(), String> {
+async fn send_sticker(
+    state: State<'_, AppState>,
+    chat: String,
+    data: String,
+    reply_to_id: Option<String>,
+    reply_to_sender: Option<String>,
+    reply_to_text: Option<String>,
+) -> Result<(), String> {
     let bytes = BASE64.decode(data.as_bytes()).map_err(|e| e.to_string())?;
-    state.service()?.send_sticker(&chat, bytes).await.map_err(|e| e.to_string())
+    let reply = reply_of(reply_to_id, reply_to_sender, reply_to_text);
+    state.service()?.send_sticker(&chat, bytes, reply).await.map_err(|e| e.to_string())
+}
+
+/// The quoted `(id, sender, text)` a send carries, when all three were given.
+fn reply_of(id: Option<String>, sender: Option<String>, text: Option<String>) -> Option<(String, String, String)> {
+    Some((id?, sender?, text.unwrap_or_default()))
 }
 
 /// Saves base64 image bytes as a sticker without sending it; returns its path.
@@ -1113,10 +1146,13 @@ async fn send_from_library(
     chat: String,
     path: String,
     kind: String,
+    reply_to_id: Option<String>,
+    reply_to_sender: Option<String>,
+    reply_to_text: Option<String>,
 ) -> Result<(), String> {
     state
         .service()?
-        .send_from_library(&chat, &path, &kind)
+        .send_from_library(&chat, &path, &kind, reply_of(reply_to_id, reply_to_sender, reply_to_text))
         .await
         .map_err(|e| e.to_string())
 }
@@ -1299,6 +1335,30 @@ async fn set_pinned(state: State<'_, AppState>, chat: String, pinned: bool) -> R
         .map_err(|e| e.to_string())
 }
 
+/// Archives or unarchives a chat on the account.
+#[tauri::command]
+async fn set_archived(state: State<'_, AppState>, chat: String, archived: bool) -> Result<(), String> {
+    state.service()?.set_archived(&chat, archived).await.map_err(|e| e.to_string())
+}
+
+/// Mutes a chat until `until` (Unix seconds; -1 indefinitely, 0 unmutes).
+#[tauri::command]
+async fn set_muted(state: State<'_, AppState>, chat: String, until: i64) -> Result<(), String> {
+    state.service()?.set_muted(&chat, until).await.map_err(|e| e.to_string())
+}
+
+/// Sets or lifts a chat's manual unread mark on the account.
+#[tauri::command]
+async fn set_marked_unread(state: State<'_, AppState>, chat: String, unread: bool) -> Result<(), String> {
+    state.service()?.set_marked_unread(&chat, unread).await.map_err(|e| e.to_string())
+}
+
+/// Leaves a group.
+#[tauri::command]
+async fn leave_group(state: State<'_, AppState>, chat: String) -> Result<(), String> {
+    state.service()?.leave_group(&chat).await.map_err(|e| e.to_string())
+}
+
 /// Deletes downloaded media, keeping the messages.
 #[tauri::command(async)]
 fn flush_media(state: State<'_, AppState>) -> Result<usize, String> {
@@ -1348,6 +1408,20 @@ async fn download_media(
         .map_err(|e| e.to_string())
 }
 
+/// Takes back the view-once a reply quotes, when this account sent it.
+#[tauri::command]
+async fn recover_quote_media(
+    state: State<'_, AppState>,
+    chat: String,
+    id: String,
+) -> Result<(), String> {
+    state
+        .service()?
+        .recover_quote_media(&chat, &id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Sets a chat's auto download override.
 #[tauri::command(async)]
 fn set_chat_auto_download(
@@ -1373,6 +1447,18 @@ async fn load_older(
         .load_older(&chat, count.unwrap_or(50))
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Starts paging every chat's history back from the phone; progress arrives as `backfill` events.
+#[tauri::command]
+fn backfill_history(state: State<'_, AppState>) -> Result<(), String> {
+    let service = state.service()?;
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = service.backfill_history().await {
+            log::warn!("history backfill stopped: {e}");
+        }
+    });
+    Ok(())
 }
 
 /// The signed-in account's own JID, once connected. Also recorded on the
@@ -1607,6 +1693,9 @@ fn set_settings(app: AppHandle, state: State<'_, AppState>, settings: UiSettings
     }
     let json = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
     std::fs::write(path, json).map_err(|e| e.to_string())?;
+    if let Ok(service) = state.service() {
+        service.set_retention(settings.retention, settings.accept_full_history);
+    }
     *state.settings.lock().unwrap() = settings;
     Ok(())
 }
@@ -1821,11 +1910,11 @@ pub fn run() {
             // when Tauri's own drag and drop handler is off.
             #[cfg(target_os = "windows")]
             let builder = builder.disable_drag_drop_handler();
-            let window = builder.build()?;
+            let _window = builder.build()?;
             // Only the dev server gets the inspector; scripts/install-dev.sh
             // installs debug builds, which are not "dev" runs.
             if tauri::is_dev() {
-                // window.open_devtools();
+                // _window.open_devtools();
             }
 
             Ok(())
@@ -1853,6 +1942,10 @@ pub fn run() {
             group_info,
             group_kinds,
             set_pinned,
+            set_archived,
+            set_muted,
+            set_marked_unread,
+            leave_group,
             unread_mentions,
             avatar,
             names,
@@ -1897,6 +1990,7 @@ pub fn run() {
             set_push_name,
             set_privacy,
             load_older,
+            backfill_history,
             flush_media,
             clear_history,
             clear_chat,
@@ -1904,6 +1998,7 @@ pub fn run() {
             frontend_log,
             open_log,
             download_media,
+            recover_quote_media,
             set_chat_auto_download,
             set_chat_privacy,
             contact_aliases,

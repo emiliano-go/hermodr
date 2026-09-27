@@ -83,6 +83,44 @@ impl Service {
             }
         }
     }
+
+    /// Replaces the retention policy of the running service.
+    pub fn set_retention(&self, retention: Retention, full_history: bool) {
+        self.store.set_retention(kept_retention(retention, full_history));
+    }
+
+    /// Pages every chat back through the phone until it has nothing older,
+    /// one request at a time, reporting progress as `Backfill` events.
+    pub async fn backfill_history(&self) -> Result<()> {
+        let chats: Vec<String> = self.store.chats()?.into_iter().map(|c| c.chat).collect();
+        let total = chats.len();
+        for (done, chat) in chats.iter().enumerate() {
+            let _ = self.events.send(ServiceEvent::Backfill { done, total });
+            loop {
+                let before = self.store.oldest_message(chat)?;
+                let mut answers = self.events.subscribe();
+                let Some(session) = fetch_older(&self.client, &self.store, chat, 50).await? else { break };
+                self.older_waits.lock().unwrap().remember(std::time::Instant::now(), &session, chat);
+                // Any HistoryLoaded naming the chat is the answer to this request.
+                let answered = tokio::time::timeout(OLDER_WAIT, async {
+                    loop {
+                        match answers.recv().await {
+                            Ok(ServiceEvent::HistoryLoaded { chats }) if chats.contains(chat) => return true,
+                            Err(broadcast::error::RecvError::Closed) => return false,
+                            _ => {}
+                        }
+                    }
+                })
+                .await
+                .unwrap_or(false);
+                if !answered || self.store.oldest_message(chat)? == before {
+                    break;
+                }
+            }
+        }
+        let _ = self.events.send(ServiceEvent::Backfill { done: total, total });
+        Ok(())
+    }
 }
 
 impl Inbound {
@@ -153,6 +191,23 @@ impl Inbound {
             for entry in &conversation.messages {
                 let Some(web) = entry.message.as_option() else { continue };
                 let Some(key) = web.key.as_option() else { continue };
+                if let Some(notice) = web.message_stub_type.and_then(system_kind) {
+                    let Some(id) = key.id.clone() else { continue };
+                    let notice_kind = notice.clone();
+                    let stored = system_row(
+                        &chat,
+                        id,
+                        web.message_timestamp.unwrap_or(0) as i64,
+                        notice,
+                        web.message_stub_parameters.clone(),
+                    );
+                    let seen = store.message(&chat, &stored.header.id).is_ok()
+                        || store.has_system_near(&chat, &notice_kind, stored.header.timestamp).unwrap_or(false);
+                    if !seen && store.insert_message(&stored).is_ok() {
+                        added = true;
+                    }
+                    continue;
+                }
                 let (Some(id), Some(message)) =
                     (key.id.clone(), web.message.as_option())
                 else {
@@ -209,7 +264,12 @@ impl Inbound {
                 // Old messages must not raise unread counts.
                 stored.local.read = true;
                 match store.insert_message(&stored) {
-                    Ok(()) => added = true,
+                    Ok(()) => {
+                        added = true;
+                        if message.is_view_once() {
+                            store.set_view_once(&chat, &stored.header.id, stored.header.from_me).logged();
+                        }
+                    }
                     Err(e) => log::error!("could not store history message in {chat}: {e}"),
                 }
             }
@@ -247,6 +307,10 @@ impl Inbound {
         }
         if !chats.is_empty() {
             let _ = events.send(ServiceEvent::HistoryLoaded { chats });
+        }
+        // "Load older" answers are on-demand chunks, not the pairing sync.
+        if let Some(percent) = sync.progress().filter(|_| sync.sync_type() != 6) {
+            let _ = events.send(ServiceEvent::HistoryProgress { percent });
         }
     }
 }

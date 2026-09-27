@@ -49,6 +49,30 @@ impl Service {
         Ok(())
     }
 
+    /// Takes the view-once a reply quotes, for one this account sent.
+    ///
+    /// WhatsApp never hands view-once media to a linked device; a reply quoting
+    /// it carries the only copy that arrives. It is written under the quoted
+    /// message's own name, so every reply quoting the same view-once shares one
+    /// file and one download.
+    pub async fn recover_quote_media(&self, chat: &str, id: &str) -> Result<()> {
+        let dir = self
+            .media_dir
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("no media folder configured"))?;
+        let updated = fetch_quote_media(&self.client, &self.store, &dir, chat, id).await?;
+        let _ = self.events.send(ServiceEvent::hint(&updated, false));
+        Ok(())
+    }
+
+    /// Deletes recovered view-once files no stored message points at any more.
+    ///
+    /// Called wherever rows go, since a copy outlives the reply that fetched it
+    /// only as long as some row still names it.
+    pub fn prune_quote_files(&self) -> Result<usize> {
+        prune_quote_files(self.media_dir.as_deref(), &self.store)
+    }
+
     /// Deletes downloaded media and forgets the paths, keeping the messages.
     pub fn flush_media(&self) -> Result<usize> {
         let cleared = self.store.clear_media_paths()?;
@@ -72,6 +96,11 @@ impl Service {
         self.media_dir.clone()
     }
 
+    /// Every downloaded file this account's messages point at.
+    pub fn media_paths(&self) -> Result<Vec<String>> {
+        self.store.media_paths()
+    }
+
     /// Sends a file as an image or document, chosen from its extension.
     ///
     /// Images are sent as images so they render inline; everything else goes as
@@ -88,6 +117,7 @@ impl Service {
         let SendOptions { gif, view_once, voice, forwarded, mentions, progress } = options;
         let to: Jid = chat.parse()?;
         let to_self = self.is_self_jid(&to);
+        let chat_jid = to.to_string();
         let file_name = file_name.to_string();
         let extension = std::path::Path::new(&file_name)
             .extension()
@@ -125,18 +155,10 @@ impl Service {
                 .to_string()
             });
 
-        // An attachment can carry a quote, the same as a text reply.
-        let context = match &reply {
-            Some((id, sender, text)) => {
-                use whatsapp_rust::wacore::proto_helpers::build_quote_context_with_info;
-                let sender: Jid = sender.parse::<Jid>()?.to_non_ad();
-                let quoted = wa::Message::text(text.clone());
-                Some(Box::new(build_quote_context_with_info(
-                    id, &sender, &to, &to, &quoted,
-                )))
-            }
-            None => None,
-        };
+        // An attachment can carry a quote, the same as a text reply. The quoted
+        // message is the message itself where the store has it, so the recipient
+        // renders the view-once it answers rather than a stand-in for it.
+        let context = self.reply_context(&to, reply.as_ref())?;
         let context = if forwarded { Some(forwarded_context(context)) } else { context };
         let context = if mentions.is_empty() {
             context
@@ -240,12 +262,33 @@ impl Service {
         let mut stored = self.own_message(chat, &result.message_id, caption.unwrap_or_default(), kind, to_self);
         stored.media.path = stored_path;
         stored.media.duration = voice_seconds;
-        if let Some((id, sender, text)) = reply {
-            stored.quote = Quote { id: Some(id), text: Some(text), sender: Some(sender), ..Default::default() };
+        if let Some(reply) = &reply {
+            stored.quote = self.reply_quote(&chat_jid, reply)?;
         }
         self.store.insert_message(&stored)?;
         let _ = self.events.send(ServiceEvent::hint(&stored, true));
         Ok(warning)
+    }
+
+    /// The quote context for an attachment answering `(id, sender, text)`. The
+    /// quoted message is the message itself where the store has it, so the
+    /// recipient renders the view-once it answers rather than a stand-in.
+    fn reply_context(&self, to: &Jid, reply: Option<&(String, String, String)>) -> Result<Option<Box<wa::ContextInfo>>> {
+        let Some((id, sender, text)) = reply else { return Ok(None) };
+        use whatsapp_rust::wacore::proto_helpers::build_quote_context_with_info;
+        let sender: Jid = sender.parse::<Jid>()?.to_non_ad();
+        let quoted = self.quoted_message(&to.to_string(), id, text);
+        let mut context = build_quote_context_with_info(id, &sender, to, to, quoted.as_ref().unwrap_or(&wa::Message::text("")));
+        if quoted.is_none() {
+            context.quoted_message = Default::default();
+        }
+        Ok(Some(Box::new(context)))
+    }
+
+    /// The quote stored beside an attachment this account sent as a reply.
+    fn reply_quote(&self, chat: &str, (id, sender, _): &(String, String, String)) -> Result<Quote> {
+        let sender: Jid = sender.parse::<Jid>()?.to_non_ad();
+        Ok(self.local_quote(chat, id, &sender.to_string(), sender.to_string() == self.own_jid()))
     }
 
     /// Uploads media while reporting its progress as [`ServiceEvent::UploadProgress`], about once per percent.
@@ -282,8 +325,8 @@ impl Service {
     }
 
     /// Sends a picture as a sticker (see [`sticker_webp`]).
-    pub async fn send_sticker(&self, chat: &str, bytes: Vec<u8>) -> Result<()> {
-        self.send_sticker_as(chat, bytes, false).await
+    pub async fn send_sticker(&self, chat: &str, bytes: Vec<u8>, reply: Option<(String, String, String)>) -> Result<()> {
+        self.send_sticker_as(chat, bytes, false, reply).await
     }
 
     /// Turns a picture into a sticker in the media folder without sending it.
@@ -300,8 +343,16 @@ impl Service {
         Ok(path.to_string_lossy().into_owned())
     }
 
-    pub(super) async fn send_sticker_as(&self, chat: &str, bytes: Vec<u8>, forwarded: bool) -> Result<()> {
+    pub(super) async fn send_sticker_as(
+        &self,
+        chat: &str,
+        bytes: Vec<u8>,
+        forwarded: bool,
+        reply: Option<(String, String, String)>,
+    ) -> Result<()> {
         let to: Jid = chat.parse()?;
+        let context = self.reply_context(&to, reply.as_ref())?;
+        let context = if forwarded { Some(forwarded_context(context)) } else { context };
         let to_self = self.is_self_jid(&to);
         let webp = sticker_webp(&bytes)
             .ok_or_else(|| anyhow::anyhow!("that file is not an image we can turn into a sticker"))?;
@@ -321,11 +372,7 @@ impl Service {
                 mimetype: Some("image/webp".into()),
                 width: Some(512),
                 height: Some(512),
-                context_info: if forwarded {
-                    MessageField::some(*forwarded_context(None))
-                } else {
-                    MessageField::none()
-                },
+                context_info: context.map(|c| MessageField::some(*c)).unwrap_or_else(MessageField::none),
                 ..Default::default()
             }),
             ..Default::default()
@@ -343,6 +390,9 @@ impl Service {
         });
         let mut stored = self.own_message(chat, &result.message_id, "[sticker]".into(), "sticker", to_self);
         stored.media.path = media_path;
+        if let Some(reply) = &reply {
+            stored.quote = self.reply_quote(chat, reply)?;
+        }
         self.store.insert_message(&stored)?;
         let _ = self.events.send(ServiceEvent::hint(&stored, true));
         Ok(())
@@ -384,7 +434,13 @@ impl Service {
     }
 
     /// Re-sends a sticker or GIF from the media folder.
-    pub async fn send_from_library(&self, chat: &str, path: &str, kind: &str) -> Result<()> {
+    pub async fn send_from_library(
+        &self,
+        chat: &str,
+        path: &str,
+        kind: &str,
+        reply: Option<(String, String, String)>,
+    ) -> Result<()> {
         let dir = self.media_dir().ok_or_else(|| anyhow::anyhow!("no media folder is configured"))?;
         let file = std::fs::canonicalize(path)?;
         if !file.starts_with(std::fs::canonicalize(&dir)?) {
@@ -392,10 +448,10 @@ impl Service {
         }
         let bytes = std::fs::read(&file)?;
         match kind {
-            "sticker" => self.send_sticker(chat, bytes).await,
+            "sticker" => self.send_sticker(chat, bytes, reply).await,
             "gif" => {
                 let options = SendOptions { gif: true, ..Default::default() };
-                self.send_media(chat, "gif.mp4", bytes, None, None, options).await.map(|_| ())
+                self.send_media(chat, "gif.mp4", bytes, None, reply, options).await.map(|_| ())
             }
             _ => anyhow::bail!("only stickers and GIFs are sent from the library"),
         }
@@ -528,27 +584,255 @@ pub(super) fn wrap_view_once(message: wa::Message) -> wa::Message {
     }
 }
 
+/// A view-once of `kind` with no media in it, for quoting one this device never saw.
+pub(super) fn empty_view_once(kind: Option<&str>) -> wa::Message {
+    let inner = match kind {
+        Some("video") | Some("gif") => wa::Message {
+            video_message: MessageField::some(wa::message::VideoMessage { view_once: Some(true), ..Default::default() }),
+            ..Default::default()
+        },
+        Some("audio") => wa::Message {
+            audio_message: MessageField::some(wa::message::AudioMessage {
+                view_once: Some(true),
+                ptt: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        _ => wa::Message {
+            image_message: MessageField::some(wa::message::ImageMessage { view_once: Some(true), ..Default::default() }),
+            ..Default::default()
+        },
+    };
+    wrap_view_once(inner)
+}
+
+/// The stored media kind for the type a view-once stub announces.
+pub(super) fn once_kind_of(media: &whatsapp_rust::wacore::types::wire_enums::EncMediaType) -> String {
+    use whatsapp_rust::wacore::types::wire_enums::EncMediaType as T;
+    match media {
+        T::Video | T::Ptv => "video",
+        T::Gif => "gif",
+        T::Audio | T::Ptt => "audio",
+        _ => "image",
+    }
+    .to_string()
+}
+
 /// Downloads a stored message's media from its locator and records the file.
+///
+/// A failed or corrupt download asks the sender's phone to upload the file
+/// again, once per call, and keeps the new location for later attempts.
 pub(super) async fn fetch_media(client: &Client, store: &MessageStore, dir: &Path, chat: &str, id: &str) -> Result<StoredMessage> {
-    let Some(bytes) = store.media_ref_for(chat, id)? else {
+    let message = store
+        .media_ref_for(chat, id)?
+        .map(|bytes| <wa::Message as buffa::Message>::decode(&mut bytes.as_slice()))
+        .transpose()
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let once = store.is_view_once(chat, id).unwrap_or(false);
+    // A view-once has no address of its own, or reached this device only as a
+    // stub. A reply quoting it carries a complete copy, and that is the only
+    // one the platform ever sends, so it is used before the sender's phone is
+    // troubled with a reupload.
+    if once && message.as_ref().is_none_or(|m| !has_direct_path(m)) {
+        if let Some((copied, data)) = fetch_quoted_copy(client, store, id).await? {
+            log::debug!("recovered {id} {} ({} KB) from the copy inside a reply", copied.kind, data.len() / 1024);
+            std::fs::create_dir_all(dir)?;
+            let path = dir.join(format!("{id}.{}", copied.extension()));
+            std::fs::write(&path, &data)?;
+            store.set_media_path(chat, id, &path.to_string_lossy())?;
+            store.set_once_kind(chat, id, copied.kind)?;
+            return store.message(chat, id);
+        }
+    }
+    let Some(message) = message else {
+        if once {
+            anyhow::bail!("this view-once was never sent to this device; open it on your phone");
+        }
         anyhow::bail!("no stored media reference");
     };
-    let message = <wa::Message as buffa::Message>::decode(&mut bytes.as_slice())
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    let Some(media) = detect_media(&message) else {
+    let Some(mut media) = detect_media(&message) else {
         anyhow::bail!("message carries no media");
     };
     let started = std::time::Instant::now();
-    let data = tokio::time::timeout(Duration::from_secs(120), client.download(media.downloadable.as_ref()))
-        .await
-        .map_err(|_| anyhow::anyhow!("download timed out"))?
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let data = match download_bytes(client, &media).await {
+        Ok(data) => data,
+        Err(first) => {
+            log::info!("download of {id} failed ({first:#}); asking the sender to upload it again");
+            let mut message = message;
+            let path = reupload(client, store, chat, id, &message).await.map_err(|e| first.context(e))?;
+            set_direct_path(&mut message, &path);
+            store.set_media_ref(chat, id, &buffa::Message::encode_to_vec(&message))?;
+            media = detect_media(&message).ok_or_else(|| anyhow::anyhow!("message carries no media"))?;
+            download_bytes(client, &media).await?
+        }
+    };
     log::debug!("downloaded {id} {} ({} KB) in {:?}", media.kind, data.len() / 1024, started.elapsed());
     std::fs::create_dir_all(dir)?;
     let path = dir.join(format!("{}.{}", id, media.extension()));
     std::fs::write(&path, &data)?;
     store.set_media_path(chat, id, &path.to_string_lossy())?;
     store.message(chat, id)
+}
+
+/// Downloads the copy a reply to a view-once carries.
+///
+/// The copy arrives complete, with the address the view-once itself lacks, so
+/// this is the only route to the media that does not need the sender's phone.
+async fn fetch_quoted_copy(client: &Client, store: &MessageStore, id: &str) -> Result<Option<(MediaInfo, Vec<u8>)>> {
+    use whatsapp_rust::wacore::proto_helpers::MessageExt;
+    let Some(source) = store.quote_source_for(id)? else { return Ok(None) };
+    let message = <wa::Message as buffa::Message>::decode(&mut source.locator.as_slice())
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let media = detect_media(message.get_base_message())
+        .ok_or_else(|| anyhow::anyhow!("the copy inside the reply carries no media"))?;
+    let started = std::time::Instant::now();
+    let data = download_bytes(client, &media).await?;
+    log::info!("view-once {id}: took the copy inside reply {} ({} KB) in {:?}", source.id, data.len() / 1024, started.elapsed());
+    Ok(Some((media, data)))
+}
+
+/// Asks the sender's phone to upload a message's media again; the new direct path on success.
+async fn reupload(client: &Client, store: &MessageStore, chat: &str, id: &str, message: &wa::Message) -> Result<String> {
+    let key = media_key(message).ok_or_else(|| anyhow::anyhow!("the message carries no media key"))?;
+    let row = store.message(chat, id)?;
+    let chat_jid: Jid = chat.parse().map_err(|e| anyhow::anyhow!("{e:?}"))?;
+    let sender: Option<Jid> = chat_jid.is_group().then(|| row.header.sender.parse().ok()).flatten();
+    let request = whatsapp_rust::MediaReuploadRequest {
+        msg_id: id,
+        chat_jid: &chat_jid,
+        media_key: &key,
+        is_from_me: row.header.from_me,
+        participant: sender.as_ref(),
+    };
+    match client.media_reupload().request(&request).await? {
+        whatsapp_rust::MediaRetryResult::Success { direct_path } => Ok(direct_path),
+        other => anyhow::bail!("the sender could not upload it again: {other:?}"),
+    }
+}
+
+fn media_key(message: &wa::Message) -> Option<Vec<u8>> {
+    [
+        message.image_message.as_option().and_then(|m| m.media_key.clone()),
+        message.video_message.as_option().and_then(|m| m.media_key.clone()),
+        message.audio_message.as_option().and_then(|m| m.media_key.clone()),
+        message.document_message.as_option().and_then(|m| m.media_key.clone()),
+        message.sticker_message.as_option().and_then(|m| m.media_key.clone()),
+    ]
+    .into_iter()
+    .flatten()
+    .next()
+}
+
+/// Points a message's media at a freshly uploaded copy. The old URL is dropped
+/// so the download builds its address from the new path.
+pub(super) fn set_direct_path(message: &mut wa::Message, path: &str) {
+    macro_rules! repoint {
+        ($($field:ident),*) => {$(
+            if let Some(m) = message.$field.as_option_mut() {
+                m.direct_path = Some(path.to_string());
+                m.url = None;
+            }
+        )*};
+    }
+    repoint!(image_message, video_message, audio_message, document_message, sticker_message);
+}
+
+/// Whether a media message carries somewhere to fetch its bytes from.
+///
+/// A view-once arrives with its media key but no `direct_path`, so there is
+/// nothing on the CDN to download and nothing to ask a reupload about.
+pub(super) fn has_direct_path(message: &wa::Message) -> bool {
+    use whatsapp_rust::wacore::proto_helpers::MessageExt;
+    let base = message.get_base_message();
+    let url = |path: Option<String>| path.is_some_and(|p| !p.is_empty());
+    url(base.image_message.as_option().and_then(|m| m.direct_path.clone()))
+        || url(base.video_message.as_option().and_then(|m| m.direct_path.clone()))
+        || url(base.audio_message.as_option().and_then(|m| m.direct_path.clone()))
+        || url(base.document_message.as_option().and_then(|m| m.direct_path.clone()))
+        || url(base.sticker_message.as_option().and_then(|m| m.direct_path.clone()))
+}
+
+/// What a recovered view-once copy is named after, so those files are told
+/// apart from a message's own media and the prune only looks at these.
+const QUOTE_FILE_PREFIX: &str = "quote-";
+
+/// Deletes recovered view-once files that no stored message points at any more.
+pub fn prune_quote_files(dir: Option<&Path>, store: &MessageStore) -> Result<usize> {
+    let Some(dir) = dir else { return Ok(0) };
+    let keep = store.quote_media_paths()?;
+    let mut removed = 0;
+    for entry in std::fs::read_dir(dir)?.flatten() {
+        let path = entry.path();
+        let named = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with(QUOTE_FILE_PREFIX));
+        if named && !path.is_dir() && !keep.contains(&path.to_string_lossy().to_string()) {
+            if std::fs::remove_file(&path).is_ok() {
+                removed += 1;
+            }
+        }
+    }
+    Ok(removed)
+}
+
+/// Downloads the view-once a reply quotes and records it on every reply quoting
+/// the same message.
+///
+/// There is no reupload fallback: asking a sender's phone to upload the file
+/// again needs a message addressable in the chat it is asked about, and the
+/// quoted view-once is not one.
+pub(super) async fn fetch_quote_media(
+    client: &Client,
+    store: &MessageStore,
+    dir: &Path,
+    chat: &str,
+    id: &str,
+) -> Result<StoredMessage> {
+    let row = store.message(chat, id)?;
+    // The gate again, applied here rather than at store time, and with the same
+    // answer the store recorded: the operator owns this client, so the owner
+    // branch is the one that applies.
+    if !row.quote.recoverable {
+        anyhow::bail!("that view-once was not sent to this account, so there is no copy to take");
+    }
+    let Some(quoted) = row.quote.id.clone().filter(|q| !q.is_empty()) else {
+        anyhow::bail!("the reply quotes nothing");
+    };
+    let Some(bytes) = row.quote.locator else {
+        anyhow::bail!("the reply carries no copy of it");
+    };
+    let message = <wa::Message as buffa::Message>::decode(&mut bytes.as_slice())
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let media = detect_media(message.get_base_message())
+        .ok_or_else(|| anyhow::anyhow!("the quoted message carries no media"))?;
+    if !has_direct_path(message.get_base_message()) {
+        anyhow::bail!("WhatsApp sent this device no place to fetch that view-once from; open it on your phone");
+    }
+    let started = std::time::Instant::now();
+    let data = download_bytes(client, &media).await?;
+    log::debug!(
+        "recovered quoted view-once {quoted} {} ({} KB) in {:?}",
+        media.kind,
+        data.len() / 1024,
+        started.elapsed()
+    );
+    std::fs::create_dir_all(dir)?;
+    // Named after the quoted message, so every reply quoting the same view-once
+    // shares one file and one download.
+    let path = dir.join(format!("{QUOTE_FILE_PREFIX}{quoted}.{}", media.extension()));
+    std::fs::write(&path, &data)?;
+    store.set_quote_media_path(chat, id, &path.to_string_lossy())?;
+    store.message(chat, id)
+}
+
+/// Fetches and decrypts a media submessage.
+async fn download_bytes(client: &Client, media: &MediaInfo) -> Result<Vec<u8>> {
+    tokio::time::timeout(Duration::from_secs(120), client.download(media.downloadable.as_ref()))
+        .await
+        .map_err(|_| anyhow::anyhow!("download timed out"))?
+        .map_err(|e| anyhow::anyhow!(e.to_string()))
 }
 
 /// Where a chat's cached profile picture lives.

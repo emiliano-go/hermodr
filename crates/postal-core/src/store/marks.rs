@@ -121,8 +121,19 @@ impl MessageStore {
         }
 
         let view_once = conn
-            .prepare("SELECT id, opened FROM view_once WHERE chat = ?1")?
-            .query_map(params![chat], |r| Ok(ViewOnce { id: r.get(0)?, opened: r.get::<_, i32>(1)? != 0 }))?
+            .prepare(
+                "SELECT id, opened,
+                        EXISTS(SELECT 1 FROM messages m
+                                WHERE m.chat = v.chat AND m.id = v.id
+                                  AND m.media_path IS NOT NULL AND m.media_path != '')
+                     OR EXISTS(SELECT 1 FROM messages q
+                                WHERE q.reply_to_id = v.id
+                                  AND q.reply_to_locator IS NOT NULL AND q.reply_to_locator != '')
+                 FROM view_once v WHERE chat = ?1",
+            )?
+            .query_map(params![chat], |r| {
+                Ok(ViewOnce { id: r.get(0)?, opened: r.get::<_, i32>(1)? != 0, available: r.get::<_, i32>(2)? != 0 })
+            })?
             .collect::<rusqlite::Result<_>>()?;
 
         let ids = |table: &str| -> Result<Vec<String>> {

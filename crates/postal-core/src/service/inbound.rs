@@ -127,6 +127,8 @@ impl Inbound {
                     last_seen: presence.last_seen.map(|t| t.timestamp()),
                 });
             }
+            Event::IdentityChange(change) => self.on_identity_change(change),
+            Event::DeviceListUpdate(update) => self.on_device_change(update),
             Event::PictureUpdate(update) => {
                 let jid = update.jid.to_non_ad().to_string();
                 if let Some(dir) = media_dir.as_deref() {
@@ -159,7 +161,11 @@ impl Inbound {
                         timestamp: info.timestamp.timestamp(),
                         from_me,
                     },
-                    media: Media { kind: Some("view_once".into()), ..Default::default() },
+                    media: Media {
+                        kind: Some("view_once".into()),
+                        once_kind: info.media_type.as_ref().map(once_kind_of),
+                        ..Default::default()
+                    },
                     local: LocalState { read: from_me, ..Default::default() },
                     ..Default::default()
                 };
@@ -179,8 +185,10 @@ impl Inbound {
                 if let GroupNotificationAction::Subject { subject, .. } = update.action.as_ref() {
                     store.set_name(&chat, subject).logged();
                 }
+                self.on_group_update(update);
                 let _ = events.send(ServiceEvent::GroupChanged { chat });
             }
+            Event::MissedCall(call) => self.on_missed_call(call),
             Event::UndecryptableMessage(stub) => {
                 log::warn!(
                     "could not decrypt message {} in {} from {} ({:?})",
@@ -196,6 +204,27 @@ impl Inbound {
                 let pinned = pin.action.pinned.unwrap_or(false);
                 let jid = pin.jid.to_non_ad().to_string();
                 store.set_pinned(&jid, pinned).logged();
+                let _ = events.send(ServiceEvent::ChatStateChanged { chat: jid });
+            }
+            Event::ArchiveUpdate(update) => {
+                let jid = update.jid.to_non_ad().to_string();
+                store.set_archived(&jid, update.action.archived.unwrap_or(false)).logged();
+                let _ = events.send(ServiceEvent::ChatStateChanged { chat: jid });
+            }
+            Event::MuteUpdate(update) => {
+                let jid = update.jid.to_non_ad().to_string();
+                let until = match (update.action.muted.unwrap_or(false), update.action.mute_end_timestamp) {
+                    (false, _) => 0,
+                    (true, Some(ms)) if ms > 0 => ms / 1000,
+                    (true, _) => -1,
+                };
+                store.set_muted_until(&jid, until).logged();
+                let _ = events.send(ServiceEvent::ChatStateChanged { chat: jid });
+            }
+            Event::MarkChatAsReadUpdate(update) => {
+                let jid = update.jid.to_non_ad().to_string();
+                store.set_marked_unread(&jid, !update.action.read.unwrap_or(true)).logged();
+                let _ = events.send(ServiceEvent::ChatStateChanged { chat: jid });
             }
             _ => {}
         }
@@ -580,6 +609,10 @@ impl Inbound {
         };
         if removed > 0 {
             let _ = events.send(ServiceEvent::RetentionApplied { removed });
+            // A pruned reply can be the last one naming a recovered view-once.
+            if let Err(e) = super::media::prune_quote_files(media_dir.as_deref(), store) {
+                log::error!("pruning recovered view-once files failed: {e}");
+            }
         }
         log::debug!(
             "{} live message(s) in {:?} (retention {:?}, pruned {removed})",

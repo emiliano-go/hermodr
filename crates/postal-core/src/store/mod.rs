@@ -92,6 +92,19 @@ pub struct StoredMessage {
     pub link: LinkCard,
     #[serde(flatten)]
     pub local: LocalState,
+    #[serde(flatten)]
+    pub system: SystemNotice,
+}
+
+/// A system line (group change, security notice, …) instead of a message; empty for messages.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SystemNotice {
+    /// The protocol's stub type name, such as `E2E_IDENTITY_CHANGED`.
+    #[serde(rename = "system_kind")]
+    pub kind: Option<String>,
+    /// The stub's parameters, usually the JIDs it is about.
+    #[serde(rename = "system_params")]
+    pub params: Vec<String>,
 }
 
 /// Where a message lives, who sent it and when.
@@ -127,6 +140,10 @@ pub struct Media {
     /// quote, typically a few hundred bytes. Internal: not handed to the UI.
     #[serde(skip)]
     pub locator: Option<Vec<u8>>,
+    /// What this media was before `kind` was rewritten to `view_once`: the kind
+    /// is what decides which player a recovered photo, video or voice note needs.
+    #[serde(rename = "media_once_kind")]
+    pub once_kind: Option<String>,
 }
 
 /// The message a reply quotes, copied so the quote renders without a lookup.
@@ -148,6 +165,24 @@ pub struct Quote {
     /// The quoted media's thumbnail, when one was available.
     #[serde(rename = "reply_to_thumb")]
     pub thumb: Option<String>,
+    /// The quoted message was view-once. A linked device never gets that media
+    /// any other way, so a reply quoting one is the only copy it will see.
+    #[serde(rename = "reply_to_view_once")]
+    pub view_once: bool,
+    /// Whether this account may take the copy a reply quotes. Not a view-once:
+    /// anyone may, as its media is an ordinary message of its own. A view-once:
+    /// only its author may, since the media is in the reply but was not sent to
+    /// anyone else.
+    #[serde(rename = "reply_to_recoverable")]
+    pub recoverable: bool,
+    /// Where a recovered copy was written. Named after the quoted message, so
+    /// every reply quoting the same view-once shares one file.
+    #[serde(rename = "reply_to_path")]
+    pub path: Option<String>,
+    /// The quoted media submessage, so the copy can be fetched on demand.
+    /// Internal: not handed to the UI.
+    #[serde(skip)]
+    pub locator: Option<Vec<u8>>,
 }
 
 /// A link preview: canonical URL, title, description and thumbnail.
@@ -206,6 +241,12 @@ pub struct ChatSummary {
     pub mention_count: i64,
     /// Whether the chat is pinned, mirrored from the account.
     pub pinned: bool,
+    /// Archived, mirrored from the account.
+    pub archived: bool,
+    /// Muted until this Unix time in seconds; -1 is indefinitely, 0 not muted.
+    pub muted_until: i64,
+    /// Marked unread by hand, mirrored from the account.
+    pub marked_unread: bool,
 }
 
 /// The columns [`message_row`] reads, from `messages m` joined to `names n` on the sender.
@@ -214,7 +255,9 @@ const MESSAGE_COLUMNS: &str = "m.chat, m.id, m.sender, m.timestamp, m.from_me, m
     m.read, m.revoked, m.status, m.reply_to_sender, m.mentioned,
     m.preview_url, m.preview_title, m.preview_desc, m.preview_thumb,
     m.reply_to_kind, m.reply_to_thumb, m.media_thumb, m.media_ref, m.reply_to_chat,
-    m.preview_site, m.preview_color, m.media_duration";
+    m.preview_site, m.preview_color, m.media_duration, m.system_kind, m.system_params,
+    m.reply_to_view_once, m.reply_to_recoverable, m.reply_to_path, m.reply_to_locator,
+  m.media_once_kind";
 
 fn message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
     Ok(StoredMessage {
@@ -231,9 +274,10 @@ fn message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
             kind: row.get(7)?,
             path: row.get(8)?,
             thumb: row.get(22)?,
-            duration: row.get(27)?,
-            locator: row.get(23)?,
-        },
+  duration: row.get(27)?,
+  locator: row.get(23)?,
+  once_kind: row.get(34)?,
+ },
         quote: Quote {
             id: row.get(9)?,
             text: row.get(10)?,
@@ -241,6 +285,10 @@ fn message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
             chat: row.get(24)?,
             kind: row.get(20)?,
             thumb: row.get(21)?,
+            view_once: row.get::<_, i32>(30)? != 0,
+            recoverable: row.get::<_, i32>(31)? != 0,
+            path: row.get(32)?,
+            locator: row.get(33)?,
         },
         link: LinkCard {
             url: row.get(16)?,
@@ -255,6 +303,13 @@ fn message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
             revoked: row.get::<_, i32>(12)? != 0,
             mentioned: row.get::<_, i32>(15)? != 0,
             status: row.get(13)?,
+        },
+        system: SystemNotice {
+            kind: row.get(28)?,
+            params: row
+                .get::<_, Option<String>>(29)?
+                .and_then(|json| serde_json::from_str(&json).ok())
+                .unwrap_or_default(),
         },
     })
 }
@@ -380,12 +435,15 @@ pub struct ChatMarks {
 pub struct ViewOnce {
     pub id: String,
     pub opened: bool,
+    /// Whether this view-once can be shown: the file is already on disk, or a
+    /// reply quotes it carrying a copy.
+    pub available: bool,
 }
 
 /// SQLite-backed message store.
 pub struct MessageStore {
     conn: Mutex<Connection>,
-    retention: Retention,
+    retention: Mutex<Retention>,
     /// When retention last covered every chat (unix seconds).
     last_full_prune: std::sync::atomic::AtomicI64,
 }
@@ -501,12 +559,15 @@ impl MessageStore {
             "reply_to_chat",
             "reply_to_kind",
             "reply_to_thumb",
+            "reply_to_path",
             "preview_url",
             "preview_title",
             "preview_desc",
             "preview_thumb",
             "preview_site",
             "preview_color",
+            "system_kind",
+            "system_params",
         ] {
             if !existing.iter().any(|c| c == column) {
                 conn.execute(&format!("ALTER TABLE messages ADD COLUMN {column} TEXT"), [])?;
@@ -524,8 +585,35 @@ impl MessageStore {
             conn.execute("ALTER TABLE messages ADD COLUMN media_duration INTEGER", [])?;
         }
 
+        // The view-once a reply quotes, and the only copy of it a linked device
+        // is ever sent. `reply_to_locator` is the quoted message as it arrived
+        // (older rows: the bare media submessage), so the copy can be fetched
+        // and quoted again in the same form.
+        for (column, decl) in [
+            ("reply_to_view_once", "INTEGER NOT NULL DEFAULT 0"),
+            ("reply_to_recoverable", "INTEGER NOT NULL DEFAULT 0"),
+            ("reply_to_locator", "BLOB"),
+            // The kind a view-once had before it was marked as one, so a
+            // recovered copy is shown by the player that fits it.
+            ("media_once_kind", "TEXT"),
+        ] {
+            if !existing.iter().any(|c| c == column) {
+                conn.execute(&format!("ALTER TABLE messages ADD COLUMN {column} {decl}"), [])?;
+            }
+        }
+
         // Chat pins, mirrored from the account so they match the phone.
         conn.execute("CREATE TABLE IF NOT EXISTS pins (jid TEXT PRIMARY KEY)", [])?;
+        // Archive, mute and mark-unread, mirrored from the account like pins.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS chat_state (
+                jid TEXT PRIMARY KEY,
+                archived INTEGER NOT NULL DEFAULT 0,
+                muted_until INTEGER NOT NULL DEFAULT 0,
+                marked_unread INTEGER NOT NULL DEFAULT 0
+            )",
+            [],
+        )?;
         // Per-message state that is not part of the message itself.
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS reactions (
@@ -650,7 +738,7 @@ impl MessageStore {
 
         Ok(Self {
             conn: Mutex::new(conn),
-            retention,
+            retention: Mutex::new(retention),
             last_full_prune: std::sync::atomic::AtomicI64::new(0),
         })
     }

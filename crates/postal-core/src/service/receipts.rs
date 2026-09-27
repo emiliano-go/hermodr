@@ -105,6 +105,7 @@ impl Service {
         let unread = if receipts { self.store.unread_ids(chat)? } else { Vec::new() };
         let changed = self.store.mark_read(chat)?;
         self.send_read_receipts(chat, unread).await?;
+        self.clear_unread_mark(chat).await;
         Ok(changed)
     }
 
@@ -116,7 +117,19 @@ impl Service {
         let unread = if receipts { self.store.unread_until(chat, id)? } else { Vec::new() };
         let changed = self.store.mark_read_until(chat, id)?;
         self.send_read_receipts(chat, unread).await?;
+        self.clear_unread_mark(chat).await;
         Ok(changed)
+    }
+
+    /// Opening a chat lifts a manual unread mark, here and on the account.
+    async fn clear_unread_mark(&self, chat: &str) {
+        let Ok(jid) = chat.parse::<Jid>() else { return };
+        if !self.store.clear_marked_unread(&jid.to_non_ad().to_string()).unwrap_or(false) {
+            return;
+        }
+        if let Err(e) = self.client.chat_actions().mark_chat_as_read(&jid, true, None).await {
+            log::warn!("could not sync the read mark: {e}");
+        }
     }
 
     /// Sends read receipts for the given `(id, sender)` pairs, grouped per author.

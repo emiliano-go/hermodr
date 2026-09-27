@@ -18,9 +18,12 @@ impl MessageStore {
                   read, revoked, mentioned, status,
                   preview_url, preview_title, preview_desc, preview_thumb,
                   reply_to_kind, reply_to_thumb, media_thumb, media_ref, reply_to_chat,
-                  preview_site, preview_color, media_duration)
+                  preview_site, preview_color, media_duration, system_kind, system_params,
+                  reply_to_view_once, reply_to_recoverable, reply_to_path, reply_to_locator,
+                  media_once_kind)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                     ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)
+                     ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?29, ?30,
+                     ?31, ?32, ?33, ?34, ?35)
              ON CONFLICT(chat, id) DO UPDATE SET
                  sender = excluded.sender,
                  timestamp = excluded.timestamp,
@@ -28,11 +31,12 @@ impl MessageStore {
                  text = CASE WHEN EXISTS (SELECT 1 FROM edited e
                                           WHERE e.chat = messages.chat AND e.id = messages.id)
                         THEN text ELSE excluded.text END,
-                 media_kind = excluded.media_kind,
-                 media_path = COALESCE(media_path, excluded.media_path),
-                 reply_to_id = excluded.reply_to_id,
-                 reply_to_text = excluded.reply_to_text,
-                 reply_to_sender = excluded.reply_to_sender,
+                  media_kind = excluded.media_kind,
+                  media_path = COALESCE(media_path, excluded.media_path),
+                  reply_to_id = COALESCE(excluded.reply_to_id, reply_to_id),
+                  reply_to_text = CASE WHEN excluded.reply_to_text IS NULL OR excluded.reply_to_text = ''
+                                       THEN reply_to_text ELSE excluded.reply_to_text END,
+                  reply_to_sender = COALESCE(excluded.reply_to_sender, reply_to_sender),
                  read = MAX(read, excluded.read),
                  revoked = excluded.revoked,
                  mentioned = MAX(mentioned, excluded.mentioned),
@@ -43,15 +47,23 @@ impl MessageStore {
                  preview_title = excluded.preview_title,
                  preview_desc = excluded.preview_desc,
                  preview_thumb = excluded.preview_thumb,
-                 reply_to_kind = excluded.reply_to_kind,
-                 reply_to_thumb = excluded.reply_to_thumb,
+                  reply_to_kind = CASE WHEN excluded.reply_to_kind IS NULL OR excluded.reply_to_kind = ''
+                                        THEN reply_to_kind ELSE excluded.reply_to_kind END,
+                  reply_to_thumb = COALESCE(excluded.reply_to_thumb, reply_to_thumb),
                  media_thumb = COALESCE(media_thumb, excluded.media_thumb),
                  media_ref = COALESCE(excluded.media_ref, media_ref),
                  media_duration = COALESCE(excluded.media_duration, media_duration),
-                 reply_to_chat = excluded.reply_to_chat,
+                  reply_to_chat = COALESCE(excluded.reply_to_chat, reply_to_chat),
                  preview_site = excluded.preview_site,
-                 preview_color = excluded.preview_color
-             WHERE revoked = 0",
+                 preview_color = excluded.preview_color,
+                  system_kind = excluded.system_kind,
+                  system_params = excluded.system_params,
+                  reply_to_view_once = MAX(reply_to_view_once, excluded.reply_to_view_once),
+                  reply_to_recoverable = MAX(reply_to_recoverable, excluded.reply_to_recoverable),
+                  reply_to_path = COALESCE(reply_to_path, excluded.reply_to_path),
+                  reply_to_locator = COALESCE(excluded.reply_to_locator, reply_to_locator),
+                  media_once_kind = COALESCE(excluded.media_once_kind, media_once_kind)
+              WHERE revoked = 0",
             params![
                 message.header.chat,
                 message.header.id,
@@ -81,6 +93,13 @@ impl MessageStore {
                 message.link.color,
                 message.media.duration,
                 message.local.status.as_deref().map(status_rank).unwrap_or(-1),
+                message.system.kind,
+                (!message.system.params.is_empty()).then(|| serde_json::to_string(&message.system.params)).transpose()?,
+                message.quote.view_once as i32,
+                message.quote.recoverable as i32,
+                message.quote.path,
+                message.quote.locator,
+                message.media.once_kind,
             ],
         )?;
         self.revive_chat(&conn, &message.header.chat)?;
@@ -166,6 +185,21 @@ impl MessageStore {
         Ok(row)
     }
 
+    /// Whether a system line of `kind` already sits within a few seconds of
+    /// `timestamp`: the live notification and the history stub for one change
+    /// carry different ids but the same server time.
+    // Params are not compared, so two changes of one kind within those seconds collapse into one line.
+    pub fn has_system_near(&self, chat: &str, kind: &str, timestamp: i64) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let found = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM messages
+             WHERE chat = ?1 AND system_kind = ?2 AND ABS(timestamp - ?3) <= 5)",
+            params![chat, kind, timestamp],
+            |r| r.get::<_, bool>(0),
+        )?;
+        Ok(found)
+    }
+
     /// The chat a stored message id belongs to, when it is known locally. A
     /// quoted message in another chat can be located with this.
     pub fn chat_of_message(&self, id: &str) -> Result<Option<String>> {
@@ -239,14 +273,20 @@ impl MessageStore {
     /// Marks a message as deleted by its sender, clearing its content.
     ///
     /// The row is kept so the chat shows that something was removed rather than
-    /// silently losing a message. Returns whether a row was updated.
+    /// silently losing a message. A recovered view-once copy it quoted is
+    /// dropped with the quote, so it stops holding a file open too. Returns
+    /// whether a row was updated.
     pub fn revoke_message(&self, chat: &str, id: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let changed = conn.execute(
-            "UPDATE messages
-             SET revoked = 1, text = '', media_kind = NULL, media_path = NULL,
-                 reply_to_id = NULL, reply_to_text = NULL
-             WHERE chat = ?1 AND id = ?2 AND revoked = 0",
+              "UPDATE messages
+               SET revoked = 1, text = '', media_kind = NULL, media_path = NULL,
+                   media_once_kind = NULL,
+                   reply_to_id = NULL, reply_to_text = NULL, reply_to_sender = NULL,
+                   reply_to_kind = NULL, reply_to_thumb = NULL, reply_to_chat = NULL,
+                   reply_to_view_once = 0, reply_to_recoverable = 0,
+                   reply_to_path = NULL, reply_to_locator = NULL
+              WHERE chat = ?1 AND id = ?2 AND revoked = 0",
             params![chat, id],
         )?;
         Ok(changed > 0)

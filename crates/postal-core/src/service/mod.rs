@@ -43,6 +43,7 @@ mod inbound;
 mod links;
 mod media;
 mod messages;
+mod notices;
 mod polls;
 mod profile;
 mod receipts;
@@ -56,7 +57,12 @@ use inbound::*;
 use links::*;
 use media::*;
 use messages::*;
+use notices::*;
 use polls::*;
+
+/// Deletes recovered view-once files no stored message points at any more. Part
+/// of the service's public surface so a caller holding only a store can run it.
+pub use media::prune_quote_files;
 
 use crate::store::is_placeholder_name;
 
@@ -106,6 +112,8 @@ pub enum ServiceEvent {
     /// Address-book names were learned, so cached chats and messages now hold
     /// stale display names and should be refetched.
     NamesUpdated { count: usize },
+    /// A chat's pin, archive, mute or unread mark changed from another device.
+    ChatStateChanged { chat: String },
     /// The offline backlog is draining; `pending` is how many messages the
     /// server announced at the start of the drain, `applied` how many have been
     /// stored so far.
@@ -122,6 +130,10 @@ pub enum ServiceEvent {
     /// all): without it the UI's "load older" wait only ends on its timeout
     /// and reports a failure that never happened.
     HistoryLoaded { chats: Vec<String> },
+    /// The phone's history sync after pairing is `percent` done.
+    HistoryProgress { percent: u32 },
+    /// A full-history backfill has finished `done` of `total` chats.
+    Backfill { done: usize, total: usize },
     /// A chat's profile picture changed, so its cached avatar is stale.
     AvatarChanged { jid: String },
     /// Someone started or stopped typing; `state` is `typing`, `recording` or

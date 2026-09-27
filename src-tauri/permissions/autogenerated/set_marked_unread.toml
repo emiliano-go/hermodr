@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-marked-unread"
+description = "Enables the set_marked_unread command without any pre-configured scope."
+commands.allow = ["set_marked_unread"]
+
+[[permission]]
+identifier = "deny-set-marked-unread"
+description = "Denies the set_marked_unread command without any pre-configured scope."
+commands.deny = ["set_marked_unread"]
