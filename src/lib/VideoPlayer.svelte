@@ -1,19 +1,43 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
+  import { invoke } from "$lib/ipc";
   import Icon from "$lib/Icon.svelte";
 
   let {
     src,
+    path,
     gif = false,
     autoplay = true,
     onerror,
   }: {
     src: string;
+    /** The file behind `src`, for the blob fallback when the asset scheme cannot stream it. */
+    path?: string;
     /** GIFs loop silently and hide the sound controls. */
     gif?: boolean;
     autoplay?: boolean;
     onerror?: () => void;
   } = $props();
+
+  /** Blob URL for a video the asset scheme could not stream (WebKitGTK). */
+  let fallback = $state<string | null>(null);
+  let triedFallback = false;
+  const source = $derived(fallback ?? src);
+
+  async function onVideoError() {
+    if (path && !triedFallback) {
+      triedFallback = true;
+      try {
+        const data = await invoke<string>("read_file", { path });
+        const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+        fallback = URL.createObjectURL(new Blob([bytes]));
+        return;
+      } catch {
+        // Nothing more to try; fall through to the caller.
+      }
+    }
+    onerror?.();
+  }
 
   const KEY = "postal.player";
   const RATES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
@@ -148,7 +172,10 @@
     else if (/^[0-9]$/.test(e.key)) (seek((Number(e.key) / 10) * duration), handled());
   }
 
-  onDestroy(() => clearTimeout(idleTimer));
+  onDestroy(() => {
+    clearTimeout(idleTimer);
+    if (fallback) URL.revokeObjectURL(fallback);
+  });
 </script>
 
 <svelte:window onkeydown={onKey} />
@@ -165,7 +192,7 @@
   <!-- svelte-ignore a11y_media_has_caption, a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
   <video
     bind:this={video}
-    {src}
+    src={source}
     {autoplay}
     loop={looping}
     bind:paused
@@ -177,7 +204,7 @@
     bind:playbackRate={rate}
     onclick={toggle}
     ondblclick={toggleFullscreen}
-    onerror={() => onerror?.()}></video>
+    onerror={onVideoError}></video>
 
   {#if paused && current === 0}
     <button class="big-play" aria-label="Play" onclick={toggle}><Icon name="play" size={34} filled /></button>

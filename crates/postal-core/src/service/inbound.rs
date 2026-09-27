@@ -678,6 +678,7 @@ impl Inbound {
                                     // The mark is gone, so the row reloads as
                                     // ordinary media already holding the file.
                                     let _ = events.send(ServiceEvent::hint(&kept, false));
+                                    let _ = events.send(ServiceEvent::Marks { chat: chat.clone() });
                                     return;
                                 }
                             }

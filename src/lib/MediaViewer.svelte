@@ -20,7 +20,6 @@
   import { tick } from "svelte";
   import { fade } from "svelte/transition";
   import { motion } from "$lib/theme.svelte";
-  import { invoke } from "$lib/ipc";
   import { backgroundPress } from "$lib/press";
   import Icon from "$lib/Icon.svelte";
   import VideoPlayer from "$lib/VideoPlayer.svelte";
@@ -55,16 +54,12 @@
     (target) => target instanceof Element && !target.closest(".media, .player, .who, button"),
   );
   let strip: HTMLDivElement | undefined = $state();
-  /** Blob URL for a video the asset scheme could not stream (WebKitGTK). */
-  let videoFallback = $state<string | null>(null);
 
   $effect(() => {
     // Every new item starts unzoomed and centred.
     void index;
     zoom = 1;
     pan = { x: 0, y: 0 };
-    if (videoFallback) URL.revokeObjectURL(videoFallback);
-    videoFallback = null;
     tick().then(() =>
       strip?.querySelector(".active")?.scrollIntoView({ inline: "center", block: "nearest" }),
     );
@@ -107,17 +102,6 @@
   function onPointerUp() {
     if (dragging && !dragging.moved) setZoom(zoom > 1 ? 1 : 2.5);
     dragging = null;
-  }
-
-  async function loadVideoFallback() {
-    if (videoFallback || !item) return;
-    try {
-      const data = await invoke<string>("read_file", { path: item.path });
-      const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
-      videoFallback = URL.createObjectURL(new Blob([bytes]));
-    } catch {
-      // Nothing more to try; the external viewer button still works.
-    }
   }
 
   function when(ts: number) {
@@ -180,9 +164,9 @@
       {#key item.id}
         {#if isVideo}
           <VideoPlayer
-            src={videoFallback ?? convertFileSrc(item.path)}
-            gif={item.kind === "gif"}
-            onerror={loadVideoFallback} />
+            src={convertFileSrc(item.path)}
+            path={item.path}
+            gif={item.kind === "gif"} />
         {:else if isAudio}
           <div class="audio"><AudioPlayer path={item.path} play title={item.author} avatar={item.avatar} /></div>
         {:else}

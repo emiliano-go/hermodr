@@ -27,6 +27,7 @@ pub(super) async fn fetch_media(client: &Client, store: &StoreWorker, dir: &Path
             std::fs::write(&path, &data)?;
             store.set_media_path(chat, id, &path.to_string_lossy()).await?;
             store.set_once_kind(chat, id, copied.kind).await?;
+            record_thumb(store, chat, id, copied.kind, &data).await?;
             return store.message(chat, id).await;
         }
     }
@@ -72,7 +73,22 @@ where
     let path = dir.join(format!("{id}.{extension}"));
     tokio::fs::write(&path, &data).await?;
     store.set_media_path(chat, id, &path.to_string_lossy()).await?;
+    record_thumb(store, chat, id, media.kind, &data).await?;
     store.message(chat, id).await
+}
+
+/// Generates and records a preview when the stored row has none.
+///
+/// A view-once arrives without a thumbnail, so a copy the companion keeps has to
+/// make its own; ordinary media already carries the sender's.
+async fn record_thumb(store: &StoreWorker, chat: &str, id: &str, kind: &str, bytes: &[u8]) -> Result<()> {
+    if store.message(chat, id).await?.media.thumb.is_some() {
+        return Ok(());
+    }
+    if let Some(thumb) = media_thumbnail(kind, bytes) {
+        store.set_media_thumb(chat, id, &thumb_uri(&thumb)).await?;
+    }
+    Ok(())
 }
 
 /// Downloads the copy a reply to a view-once carries.

@@ -138,6 +138,17 @@ impl MessageStore {
         Ok(())
     }
 
+    /// Records a preview for downloaded media whose sender sent none.
+    pub fn set_media_thumb(&self, chat: &str, id: &str, thumb: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
+        conn.execute(
+            "UPDATE messages SET media_thumb = ?3 WHERE chat = ?1 AND id = ?2",
+            params![chat, id, thumb],
+        )?;
+        Ok(())
+    }
+
     /// Records what a view-once turned out to be, once a copy of it is taken.
     pub fn set_once_kind(&self, chat: &str, id: &str, kind: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
@@ -396,6 +407,13 @@ impl StoreWorker {
         let id = id.to_owned();
         let path = path.to_owned();
         self.run(move |store| store.set_media_path(&chat, &id, &path)).await
+    }
+
+    pub(crate) async fn set_media_thumb(&self, chat: &str, id: &str, thumb: &str) -> Result<()> {
+        let chat = chat.to_owned();
+        let id = id.to_owned();
+        let thumb = thumb.to_owned();
+        self.run(move |store| store.set_media_thumb(&chat, &id, &thumb)).await
     }
 
     pub(crate) async fn set_once_kind(&self, chat: &str, id: &str, kind: &str) -> Result<()> {

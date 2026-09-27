@@ -170,7 +170,7 @@ import VideoPlayer from "$lib/VideoPlayer.svelte";
       <!-- Copies taken before the kind was recorded are told apart by their file. -->
       {@const onceKind = message.media_once_kind ?? kindOfFile(message.media_path)}
       {#if onceKind === "video" || onceKind === "gif"}
-        <VideoPlayer src={convertFileSrc(message.media_path)} autoplay={false} />
+        <VideoPlayer src={convertFileSrc(message.media_path)} path={message.media_path} autoplay={false} />
       {:else if onceKind === "audio"}
         <AudioPlayer
           path={message.media_path}
@@ -253,6 +253,9 @@ import VideoPlayer from "$lib/VideoPlayer.svelte";
               : api.ondownload(message)}>
         {#if message.media_thumb}
           <img class="media" src={mediaSrc(message.media_thumb)} alt="" />
+        {:else}
+          <!-- No stored thumbnail: draw the file's own first frame. -->
+          <video class="media" src={convertFileSrc(message.media_path!)} preload="metadata" muted playsinline></video>
         {/if}
         {#if filtered}
           <span class="media-overlay once-overlay">
@@ -729,6 +732,9 @@ import VideoPlayer from "$lib/VideoPlayer.svelte";
     display: flex;
     align-items: center;
     justify-content: center;
+    /* The media button zeroes line-height so the image has no baseline gap;
+       the overlay, which can hold two lines, has to restore it. */
+    line-height: 1.3;
     color: var(--text);
     font-size: 14px;
     font-weight: 700;
