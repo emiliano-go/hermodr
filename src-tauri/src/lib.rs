@@ -1311,6 +1311,20 @@ fn clear_history(state: State<'_, AppState>) -> Result<usize, String> {
     state.service()?.clear_history().map_err(|e| e.to_string())
 }
 
+/// Clears one chat on this device only: its messages go, the empty chat stays.
+/// Never touches the phone or the other side.
+#[tauri::command(async)]
+fn clear_chat(state: State<'_, AppState>, chat: String) -> Result<usize, String> {
+    state.service()?.clear_chat(&chat).map_err(|e| e.to_string())
+}
+
+/// Deletes one chat on this device only: its messages go and it leaves the
+/// list until a new message arrives. Never touches the phone or the other side.
+#[tauri::command(async)]
+fn delete_chat(state: State<'_, AppState>, chat: String) -> Result<usize, String> {
+    state.service()?.delete_chat(&chat).map_err(|e| e.to_string())
+}
+
 /// The chat a stored message id belongs to.
 #[tauri::command(async)]
 fn chat_for_message(state: State<'_, AppState>, id: String) -> Result<Option<String>, String> {
@@ -1811,7 +1825,7 @@ pub fn run() {
             // Only the dev server gets the inspector; scripts/install-dev.sh
             // installs debug builds, which are not "dev" runs.
             if tauri::is_dev() {
-                window.open_devtools();
+                // window.open_devtools();
             }
 
             Ok(())
@@ -1885,6 +1899,8 @@ pub fn run() {
             load_older,
             flush_media,
             clear_history,
+            clear_chat,
+            delete_chat,
             frontend_log,
             open_log,
             download_media,

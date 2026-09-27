@@ -83,6 +83,7 @@ impl MessageStore {
                 message.local.status.as_deref().map(status_rank).unwrap_or(-1),
             ],
         )?;
+        self.revive_chat(&conn, &message.header.chat)?;
         Ok(())
     }
 

@@ -158,6 +158,36 @@ export class ChatsState {
     }
   }
 
+  /** Clears one chat on this device only: messages go, the empty chat stays. */
+  async clearChat(chat: string) {
+    try {
+      await invoke("clear_chat", { chat });
+      await this.refreshChats();
+      return true;
+    } catch (e) {
+      ui.fail(e);
+      return false;
+    }
+  }
+
+  /** Deletes one chat on this device only: it leaves the list until a new message arrives. */
+  async deleteChat(chat: string) {
+    try {
+      await invoke("delete_chat", { chat });
+      if (this.selectedChat === chat) {
+        this.selectedChat = null;
+        this.titleOverride = null;
+        this.showGroupInfo = false;
+        this.groupInfo = null;
+      }
+      await this.refreshChats();
+      return true;
+    } catch (e) {
+      ui.fail(e);
+      return false;
+    }
+  }
+
   async loadGroupKinds() {
     try {
       this.groupKinds = await invoke("group_kinds");

@@ -135,6 +135,17 @@ impl Service {
         self.store.clear_history()
     }
 
+    /// Clears one chat locally: its messages go, the empty chat stays.
+    pub fn clear_chat(&self, chat: &str) -> Result<usize> {
+        self.store.clear_chat(chat)
+    }
+
+    /// Deletes one chat locally: its messages go and it leaves the list until
+    /// a new message arrives. Never touches the phone or the other side.
+    pub fn delete_chat(&self, chat: &str) -> Result<usize> {
+        self.store.delete_chat(chat)
+    }
+
     /// The key that names a message to the server: groups need its sender.
     fn message_key(chat: &str, id: &str, sender: &str, from_me: bool) -> wa::MessageKey {
         let participant = (chat.ends_with("@g.us") && !from_me)

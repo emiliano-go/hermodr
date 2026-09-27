@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-clear-chat"
+description = "Enables the clear_chat command without any pre-configured scope."
+commands.allow = ["clear_chat"]
+
+[[permission]]
+identifier = "deny-clear-chat"
+description = "Denies the clear_chat command without any pre-configured scope."
+commands.deny = ["clear_chat"]

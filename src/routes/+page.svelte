@@ -308,6 +308,53 @@
     }
   }
 
+  /** Chat label for a confirm sheet: list name, override or raw JID. */
+  function confirmChatLabel(chat: string) {
+    return (
+      chats.chats.find((c) => c.chat === chat)?.display_name ??
+      (chat === chats.selectedChat ? chats.titleOverride : null) ??
+      members.displayName(null, chat)
+    );
+  }
+
+  /** Clears one chat on this device only; the empty chat stays open. */
+  async function doClearChat(chat: string) {
+    ui.chatConfirm = null;
+    ui.chatSettingsOpen = false;
+    const ok = await chats.clearChat(chat);
+    if (!ok) return;
+    // Drop per-chat transient state that belonged to the removed messages.
+    if (chat === chats.selectedChat) {
+      composer.replyingTo = null;
+      composer.editing = null;
+      messages.firstUnreadId = null;
+      messages.mentionQueue = [];
+      messages.mentionCursor = 0;
+      await messages.reloadMessages(chat);
+      await messages.loadMarks(chat);
+    }
+  }
+
+  /** Deletes one chat on this device only; it leaves the list. */
+  async function doDeleteChat(chat: string) {
+    ui.chatConfirm = null;
+    ui.chatSettingsOpen = false;
+    const wasOpen = chat === chats.selectedChat;
+    const ok = await chats.deleteChat(chat);
+    if (!ok) return;
+    if (wasOpen) {
+      messages.messages = [];
+      messages.marks = structuredClone({ reactions: [], starred: [], pinned: null, polls: [], events: [], view_once: [], forwarded: [], edited: [] });
+      messages.mentionQueue = [];
+      messages.mentionCursor = 0;
+      messages.firstUnreadId = null;
+      composer.replyingTo = null;
+      composer.editing = null;
+      delete composer.drafts[chat];
+      if (composer.draft && chats.selectedChat === null) composer.draft = "";
+    }
+  }
+
   /** Stops showing the video-without-preview warning. */
   async function muteNotice() {
     session.settings.warn_missing_video_preview = false;
@@ -1287,6 +1334,8 @@
       onopenresult={openFromSearch}
       onopenchat={openChat}
       ontogglepin={(chat, e) => chats.togglePin(chat, e)}
+      onclearchat={(chat) => (ui.chatConfirm = { kind: "clear", chat: chat.chat })}
+      ondeletechat={(chat) => (ui.chatConfirm = { kind: "delete", chat: chat.chat })}
       onresize={startResize} />
 
     <section class="conversation">
@@ -1321,7 +1370,9 @@
           onpings={() => openPings(selectedChat)}
           onsettings={() => (ui.chatSettingsOpen = true)}
           onjumpmention={jumpNextMention}
-          onpinnedjump={(id) => scrollToMessage(id)} />
+          onpinnedjump={(id) => scrollToMessage(id)}
+          onclearchat={() => (ui.chatConfirm = { kind: "clear", chat: selectedChat })}
+          ondeletechat={() => (ui.chatConfirm = { kind: "delete", chat: selectedChat })} />
 
         <MessageList
           messages={messages.ordered}
@@ -1584,7 +1635,27 @@
       await messages.reloadMessages(chats.selectedChat);
       await chats.refreshChats();
     }}
+    onclearchat={() => (ui.chatConfirm = { kind: "clear", chat: chats.selectedChat! })}
+    ondeletechat={() => (ui.chatConfirm = { kind: "delete", chat: chats.selectedChat! })}
     onclose={() => (ui.chatSettingsOpen = false)} />
+{/if}
+
+{#if ui.chatConfirm}
+  {@const target = ui.chatConfirm.chat}
+  {@const isClear = ui.chatConfirm.kind === "clear"}
+  <ConfirmDialog
+    label={isClear ? "Clear chat" : "Delete chat"}
+    title={isClear ? `Clear chat with ${confirmChatLabel(target)}?` : `Delete chat with ${confirmChatLabel(target)}?`}
+    hint={isClear
+      ? "Its messages are removed from this computer, but the chat stays in the list. The other side is not affected."
+      : "Its messages are removed and the chat leaves the list until a new message arrives. The other side is not affected."}
+    onclose={() => (ui.chatConfirm = null)}>
+    {#snippet actions()}
+      <button class="danger" onclick={() => (isClear ? doClearChat(target) : doDeleteChat(target))}
+        >{isClear ? "Clear chat" : "Delete chat"}</button>
+      <button onclick={() => (ui.chatConfirm = null)}>Cancel</button>
+    {/snippet}
+  </ConfirmDialog>
 {/if}
 
 {#if ui.infoFor}

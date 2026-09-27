@@ -71,6 +71,35 @@ fn clearing_history_keeps_names_and_settings() {
 }
 
 #[test]
+fn clear_chat_keeps_an_empty_row_and_delete_hides_it() {
+    let s = store(Retention::unlimited());
+    s.insert_message(&msg("a@s", "1", 0, "hi")).unwrap();
+    s.insert_message(&msg("b@s", "1", 0, "yo")).unwrap();
+    s.set_name("a@s", "Ann").unwrap();
+    s.set_name("b@s", "Bob").unwrap();
+
+    assert_eq!(s.clear_chat("a@s").unwrap(), 1);
+    assert!(s.messages_for("a@s", 10).unwrap().is_empty());
+    let chats = s.chats().unwrap();
+    // Cleared chat stays as an empty row; the other chat is untouched.
+    let kept = chats.iter().find(|c| c.chat == "a@s").expect("cleared chat stays");
+    assert_eq!(kept.message_count, 0);
+    assert_eq!(kept.display_name.as_deref(), Some("Ann"));
+    assert_eq!(s.messages_for("b@s", 10).unwrap().len(), 1);
+
+    // A new message retires the kept-empty row back into a normal chat.
+    s.insert_message(&msg("a@s", "2", 0, "back")).unwrap();
+    let kept = s.chats().unwrap().into_iter().find(|c| c.chat == "a@s").unwrap();
+    assert_eq!(kept.message_count, 1);
+
+    assert_eq!(s.delete_chat("b@s").unwrap(), 1);
+    assert!(s.chats().unwrap().iter().all(|c| c.chat != "b@s"));
+    // A new message brings a deleted chat back.
+    s.insert_message(&msg("b@s", "2", 0, "again")).unwrap();
+    assert!(s.chats().unwrap().iter().any(|c| c.chat == "b@s"));
+}
+
+#[test]
 fn chat_privacy_overrides_round_trip() {
     let s = store(Retention::unlimited());
     assert_eq!(s.chat_privacy("a@s").unwrap(), (None, None));

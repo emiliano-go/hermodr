@@ -28,6 +28,8 @@
     picture = null,
     globalAutoDownload,
     onchange,
+    onclearchat,
+    ondeletechat,
     onclose,
   }: {
     chat: string;
@@ -37,6 +39,8 @@
     globalAutoDownload: boolean;
     /** The chat's retention after a save, so the page can follow it. */
     onchange: (retention: ChatRetention) => void;
+    onclearchat: () => void;
+    ondeletechat: () => void;
     onclose: () => void;
   } = $props();
 
@@ -250,6 +254,24 @@
             </label>
           {/if}
         </section>
+
+        <section>
+          <h3><Icon name="trash" size={14} /> Danger zone</h3>
+          <div class="danger-row">
+            <span class="grow">
+              <span class="name">Clear chat</span>
+              <span class="desc">Removes its messages from this computer. The chat stays. The other side is not affected.</span>
+            </span>
+            <button class="choice danger" onclick={onclearchat}>Clear…</button>
+          </div>
+          <div class="danger-row">
+            <span class="grow">
+              <span class="name">Delete chat</span>
+              <span class="desc">Removes its messages and the chat from the list. It comes back with the next message. The other side is not affected.</span>
+            </span>
+            <button class="choice danger" onclick={ondeletechat}>Delete…</button>
+          </div>
+        </section>
       {/if}
       {#if failed}<p class="error">{failed}</p>{/if}
     </div>
@@ -448,6 +470,16 @@
     align-items: center;
     gap: 10px;
     padding-bottom: 12px;
+  }
+  .danger-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-bottom: 12px;
+  }
+  .choice.danger {
+    border-color: color-mix(in srgb, var(--danger) 50%, transparent);
+    color: var(--danger);
   }
   .grow {
     flex: 1;

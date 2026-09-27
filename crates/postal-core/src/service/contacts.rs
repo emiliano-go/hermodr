@@ -275,7 +275,9 @@ impl Service {
         }
 
         let local = self.store.chats()?;
-        let local_jids: HashSet<String> = local.iter().map(|c| c.chat.clone()).collect();
+        let local_counts: std::collections::HashMap<&str, i64> =
+            local.iter().map(|c| (c.chat.as_str(), c.message_count)).collect();
+        let has_local_messages = |jid: &str| local_counts.get(jid).is_some_and(|&n| n > 0);
         // A local alias is the one thing that can find a contact whose name and
         // number say nothing about the query, so it is matched alongside them.
         // Read once up front: an account holds a handful of aliases.
@@ -285,7 +287,7 @@ impl Service {
         let mut seen: HashSet<String> = HashSet::new();
 
         // Local chats first: they have history and are what a search usually
-        // means.
+        // means. A cleared chat stays local but reports no messages.
         for chat in &local {
             let number = user_part(&chat.chat);
             let name = chat.display_name.clone().unwrap_or_else(|| number.clone());
@@ -297,7 +299,7 @@ impl Service {
                     jid: chat.chat.clone(),
                     name,
                     number,
-                    has_messages: true,
+                    has_messages: chat.message_count > 0,
                     aliases: of(&chat.chat),
                 });
             }
@@ -314,7 +316,7 @@ impl Service {
                 jid: jid.clone(),
                 name,
                 number: user_part(&jid),
-                has_messages: local_jids.contains(&jid),
+                has_messages: has_local_messages(&jid),
                 aliases: of(&jid),
             });
         }
@@ -350,7 +352,7 @@ impl Service {
                 jid: named.clone(),
                 name,
                 number,
-                has_messages: forms.iter().any(|form| local_jids.contains(form)),
+                has_messages: forms.iter().any(|form| has_local_messages(form)),
                 aliases: of(&named),
             });
         }
@@ -364,7 +366,7 @@ impl Service {
                     number: String::new(),
                     kind: "group".into(),
                     saved: false,
-                    has_messages: local_jids.contains(&jid),
+                    has_messages: has_local_messages(&jid),
                     aliases: of(&jid),
                 });
             }
