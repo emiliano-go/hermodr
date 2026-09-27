@@ -59,6 +59,32 @@ mod pairing_tests {
                 full_history.then_some(10_000));
         }
     }
+
+    #[test]
+    fn registration_and_reconnect_use_android_tablet_handshake_metadata() {
+        use whatsapp_rust::wacore::store::Device;
+        let mut device = Device::new();
+        device.set_device_props(pairing_props(false));
+        device.set_client_profile(android_tablet_profile());
+        for jid in [None, Some("12345:2@s.whatsapp.net".parse().unwrap())] {
+            device.pn = jid;
+            let payload = device.get_client_payload();
+            let ua = payload.user_agent.as_option().unwrap();
+            assert_eq!(ua.platform, Some(wa::client_payload::user_agent::Platform::ANDROID));
+            assert_eq!(ua.device.as_deref(), Some("Tablet"));
+            assert_eq!(ua.os_version.as_deref(), Some("13"));
+            assert_eq!(ua.os_build_number.as_deref(), Some("13"));
+            assert!(payload.web_info.is_unset());
+            assert_eq!(payload.passive, Some(false));
+            assert_eq!(payload.device_pairing_data.is_set(), device.pn.is_none());
+        }
+    }
+}
+
+fn android_tablet_profile() -> whatsapp_rust::wacore::client_profile::ClientProfile {
+    let mut profile = whatsapp_rust::wacore::client_profile::ClientProfile::android("13");
+    profile.device = "Tablet".into();
+    profile
 }
 
 /// The retention actually applied: keeping full history means nothing is pruned.
@@ -455,6 +481,7 @@ impl WhatsAppService {
             .await?;
 
         let client = bot.client();
+        client.set_client_profile(android_tablet_profile()).await;
 
         // Hand the client to the message handler, which needs it to download
         // media. Without this the slot stays empty and every attachment is
