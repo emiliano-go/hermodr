@@ -127,16 +127,18 @@ local cache; Watch checks it every five seconds while the panel is open.
 "Not received" is distinct from false. Postal currently exposes these flags for
 diagnostics without using them to gate product features.
 
-By default, new links advertise Android with the `ANDROID_TABLET` platform and WhatsApp
-Android version `2.26.32.84`, published on the [official download page](https://www.whatsapp.com/download)
-when checked on 2026-09-27. Existing links keep their original pairing props;
-unlink Postal from the phone and pair again to adopt this identity.
+New links pair as an ordinary External companion. Settings → Device can add an
+Android companion: a second link that pairs as an `ANDROID_TABLET` running
+WhatsApp Android `2.26.32.84`, published on the [official download page](https://www.whatsapp.com/download)
+when checked on 2026-09-27, to receive the one-time photos, videos and voice
+notes the External link never gets. It shares the message store, connects only
+while such media is waiting, and goes dormant afterwards.
 
-Android mode also sets handshake metadata on each connection (`ANDROID`, device
-`Tablet`, Android `13`) and omits browser `WebInfo`. This is the library's
-supported metadata profile: transport remains the Web companion socket, with
-its separate three-part protocol version. Full native Android transport and a
-four-part handshake version require upstream support.
+The companion's handshake sets Android metadata (`ANDROID`, device `Tablet`,
+Android `13`) and omits browser `WebInfo`. This is the library's supported
+profile: transport remains the Web companion socket, with its separate
+three-part protocol version. Full native Android transport and a four-part
+handshake version require upstream support.
 
 Two binaries exercise the core without the UI:
 
@@ -164,8 +166,9 @@ Tauri event-emission failures and lagged consumers are logged separately.
 Right-click an image for **Copy Image**, **Save Image…**, or **Open Image**.
 Save uses the native file picker and preserves the original file. Copy places
 decoded image pixels on the clipboard. Other attachments offer Save and Open.
-Missing files download on demand; deleted and one-time messages cannot be exported.
-Media kept through the view-once retention setting follows ordinary attachment actions.
+Missing files download on demand; deleted and unkept one-time messages cannot be
+exported. One-time media kept by the Android companion follows ordinary
+attachment actions.
 
 Downloaded media is written to the folder set in Settings, which defaults to the
 app data directory. The asset protocol is scoped to whatever folder is
@@ -211,7 +214,8 @@ Working:
 - Text with WhatsApp formatting, mentions, replies and quotes, edits, deletes,
   forwards, reactions, stars and pinned messages and chats
 - Images, video, GIFs, stickers, documents and voice notes: received inline,
-  sent from the composer, played in place; view-once media
+  sent from the composer, played in place; view-once media kept through the
+  optional Android companion
 - Polls and events, including voting and RSVPs
 - Link previews as Discord-style embeds; locations and contacts as cards
 - Delivery and read receipts, message info, typing and presence

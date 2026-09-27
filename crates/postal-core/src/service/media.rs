@@ -114,6 +114,18 @@ impl WhatsAppService {
         self.store.media_paths()
     }
 
+    /// Whether a recent one-time message is still waiting for its media. The
+    /// optional Android instance wakes on this instead of staying linked.
+    pub fn has_pending_view_once(&self, within: std::time::Duration) -> bool {
+        match self.store.has_pending_view_once(within) {
+            Ok(pending) => pending,
+            Err(error) => {
+                log::error!("could not check for pending view-once media: {error}");
+                false
+            }
+        }
+    }
+
     /// Sends a file as an image or document, chosen from its extension.
     ///
     /// Images are sent as images so they render inline; everything else goes as

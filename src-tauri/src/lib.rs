@@ -42,6 +42,9 @@ struct AppState {
     /// Its pairing code while it waits to be linked.
     once_qr: Mutex<Option<String>>,
     once_connected: std::sync::atomic::AtomicBool,
+    /// Pokes the companion manager: a message arrived, settings changed, or an
+    /// account was switched, so it re-checks whether to wake the instance.
+    once_wake: tokio::sync::Notify,
     settings: Mutex<UiSettings>,
     accounts: Mutex<AccountsFile>,
 }
@@ -98,9 +101,11 @@ pub fn run() {
                 once_service: Mutex::new(None),
                 once_qr: Mutex::new(None),
                 once_connected: std::sync::atomic::AtomicBool::new(false),
+                once_wake: tokio::sync::Notify::new(),
                 settings: Mutex::new(load_settings(app.handle())),
                 accounts: Mutex::new(accounts),
             });
+            connection::spawn_once_manager(app.handle());
 
             // Built here rather than from the config so clipboard access can be
             // turned on. WebKitGTK only hands pasted images to the page when

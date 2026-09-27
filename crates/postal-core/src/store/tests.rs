@@ -781,3 +781,27 @@ fn merging_chats_folds_history_state_and_keeps_the_chat_visible() {
     // The merged chat still shows: folding must not hide it.
     assert!(s.chats().unwrap().iter().any(|c| c.chat == "5989@s.whatsapp.net"));
 }
+
+#[test]
+fn pending_view_once_only_wakes_for_recent_incoming_stubs() {
+    let s = store(Retention::unlimited());
+    let mut pending = msg("a@s", "1", 1, "photo");
+    pending.media.kind = Some("view_once".into());
+    s.insert_message(&pending).unwrap();
+    assert!(s.has_pending_view_once(std::time::Duration::from_secs(2 * 3600)).unwrap());
+    // Older than the demand window: likely spent on the phone, so it sleeps on.
+    assert!(!s.has_pending_view_once(std::time::Duration::from_secs(60)).unwrap());
+
+    // A kept copy stops the demand.
+    s.set_once_kind("a@s", "1", "image").unwrap();
+    s.set_media_path("a@s", "1", "/tmp/kept.jpg").unwrap();
+    s.keep_view_once("a@s", "1").unwrap();
+    assert!(!s.has_pending_view_once(std::time::Duration::from_secs(2 * 3600)).unwrap());
+
+    // Our own one-time sends are not demand either.
+    let mut own = msg("a@s", "2", 0, "sent");
+    own.header.from_me = true;
+    own.media.kind = Some("view_once".into());
+    s.insert_message(&own).unwrap();
+    assert!(!s.has_pending_view_once(std::time::Duration::from_secs(2 * 3600)).unwrap());
+}

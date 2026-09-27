@@ -143,6 +143,23 @@ impl MessageStore {
         Ok(())
     }
 
+    /// Whether an incoming one-time message newer than `within` still has no
+    /// media file. The Android companion wakes on this and goes dormant when
+    /// it stays false; the window bounds rows the phone already spent.
+    pub fn has_pending_view_once(&self, within: std::time::Duration) -> Result<bool> {
+        let since = unix_now() - within.as_secs() as i64;
+        let conn = self.conn.lock().unwrap();
+        let pending: i32 = conn.query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM messages
+                 WHERE from_me = 0 AND media_kind = 'view_once' AND media_path IS NULL
+                   AND timestamp >= ?1)",
+            params![since],
+            |row| row.get(0),
+        )?;
+        Ok(pending != 0)
+    }
+
     /// Turns a view-once whose media was kept into an ordinary attachment: the
     /// original kind comes back and the one-time mark is dropped, so it renders
     /// and opens like any other media instead of being deleted unseen.

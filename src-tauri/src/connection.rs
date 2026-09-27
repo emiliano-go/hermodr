@@ -109,6 +109,12 @@ pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &s
                     if service_for_events.upgrade().is_none() {
                         break;
                     }
+                    if matches!(
+                        event,
+                        ServiceEvent::Message { .. } | ServiceEvent::MessageHint { .. }
+                    ) {
+                        emitter.state::<AppState>().once_wake.notify_one();
+                    }
                     emit_service_event(&emitter, &event);
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(dropped)) => {
@@ -134,14 +140,81 @@ pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &s
 
     *state.service.lock().unwrap() = Some(service);
 
-    // Auto-start the optional instance once the main link is up, so the shared
-    // store's setup has already run.
-    if settings.android_instance && once_paired(state, account) {
-        if let Err(e) = start_once(app, state).await {
-            log::warn!("could not start the Android instance: {e}");
-        }
-    }
+    // The manager decides whether the companion is needed for this account.
+    wake_once(app);
     Ok(())
+}
+
+/// Pokes the companion manager to re-check whether the instance should run.
+pub(crate) fn wake_once(app: &AppHandle) {
+    app.state::<AppState>().once_wake.notify_one();
+}
+
+/// How recent a one-time message must be to wake the companion. Stubs older
+/// than this were likely spent on the phone, so they stop being demand.
+const ONCE_DEMAND_WINDOW: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+/// How long the companion stays linked after the last one-time message.
+const ONCE_IDLE_GRACE: std::time::Duration = std::time::Duration::from_secs(90);
+/// How often demand is re-checked when nothing pokes the manager.
+const ONCE_TICK: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Runs the Android companion on demand instead of around the clock: it wakes
+/// when a one-time message is waiting for its media and goes dormant again
+/// once none is. While it is unpaired it stays up so its QR can be scanned.
+pub(crate) fn spawn_once_manager(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut last_demand = std::time::Instant::now();
+        loop {
+            let state = app.state::<AppState>();
+            let enabled = state.settings.lock().unwrap().android_instance;
+            let account = active_account(&state);
+            let running = state.once_service.lock().unwrap().is_some();
+            let paired = account.as_deref().is_some_and(|id| once_paired(&state, id));
+
+            if !enabled || account.is_none() {
+                // Off, or nothing to attach to: stop at once, no grace.
+                if running {
+                    if let Err(e) = stop_once(&app, &state).await {
+                        log::warn!("could not put the Android companion to sleep: {e}");
+                    }
+                }
+                last_demand = std::time::Instant::now();
+            } else if !paired {
+                // Unpaired: the QR is the demand, so keep it up.
+                last_demand = std::time::Instant::now();
+                if !running {
+                    if let Err(e) = start_once(&app, &state).await {
+                        log::warn!("could not wake the Android companion: {e}");
+                    }
+                }
+            } else {
+                let demand = state
+                    .service
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .is_some_and(|s| s.has_pending_view_once(ONCE_DEMAND_WINDOW));
+                if demand {
+                    last_demand = std::time::Instant::now();
+                    if !running {
+                        if let Err(e) = start_once(&app, &state).await {
+                            log::warn!("could not wake the Android companion: {e}");
+                        }
+                    }
+                } else if running && last_demand.elapsed() >= ONCE_IDLE_GRACE {
+                    if let Err(e) = stop_once(&app, &state).await {
+                        log::warn!("could not put the Android companion to sleep: {e}");
+                    }
+                }
+            }
+            drop(state);
+
+            tokio::time::timeout(ONCE_TICK, app.state::<AppState>().once_wake.notified())
+                .await
+                .ok();
+        }
+    });
 }
 
 fn emit_service_event(app: &AppHandle, event: &ServiceEvent) {
@@ -236,6 +309,8 @@ pub(crate) async fn start_once(app: &AppHandle, state: &AppState) -> Result<(), 
                         | ServiceEvent::ChatStateChanged { .. }
                         | ServiceEvent::RetentionApplied { .. } => {
                             emit_service_event(&emitter, &event);
+                            // A kept one-time clears the demand; re-check soon.
+                            emitter.state::<AppState>().once_wake.notify_one();
                         }
                         _ => {}
                     }

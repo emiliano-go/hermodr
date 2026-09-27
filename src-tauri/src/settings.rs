@@ -103,8 +103,8 @@ pub(crate) fn get_settings(state: State<'_, AppState>) -> UiSettings {
 
 /// Updates and saves settings.
 ///
-/// Toggling the Android instance starts or stops it without touching the main
-/// link; nothing is unlinked either way.
+/// Toggling the Android companion only records the wish: the companion manager
+/// wakes or puts the instance to sleep, without touching the main link.
 #[tauri::command]
 pub(crate) async fn set_settings(app: AppHandle, state: State<'_, AppState>, settings: UiSettings) -> Result<(), String> {
     let instance_changed = state.settings.lock().unwrap().android_instance != settings.android_instance;
@@ -130,11 +130,11 @@ pub(crate) async fn set_settings(app: AppHandle, state: State<'_, AppState>, set
     let enabled = settings.android_instance;
     *state.settings.lock().unwrap() = settings;
     if instance_changed {
-        if enabled {
-            crate::connection::start_once(&app, &state).await?;
-        } else {
-            crate::connection::stop_once(&app, &state).await?;
-        }
+        crate::connection::wake_once(&app);
+        log::info!(
+            "Android companion {}",
+            if enabled { "enabled; the manager will wake it when needed" } else { "disabled; the manager will put it to sleep" }
+        );
     }
     Ok(())
 }

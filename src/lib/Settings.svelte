@@ -593,15 +593,17 @@
           <h2>Android companion</h2>
           <p class="lede">
             View-once photos, videos and voice notes only reach this device through a second,
-            Android-style link. It runs in the background alongside your main link, never replaces
-            it, and never unlinks anything from your phone. Turn it on and scan the QR once.
+            Android-style link. It connects only while there is one-time media to fetch, then goes
+            dormant again: it never replaces your main link and never unlinks anything from your
+            phone. Turn it on and scan the QR once.
           </p>
           <label class="setting">
             <div>
               <span class="setting-title">Run Android companion</span>
               <span class="setting-desc">
-                Downloads and keeps one-time media the main link cannot fetch. Needs "Download and
-                keep history" on, since both links share one message store.
+                Downloads and keeps one-time media the main link cannot fetch, waking up only when
+                one arrives. Needs "Download and keep history" on, since both links share one
+                message store.
               </span>
             </div>
             <input
@@ -616,12 +618,14 @@
                 <span class="setting-title">Status</span>
                 <span class="setting-desc">
                   {once.connected
-                    ? "Linked and running in the background."
+                    ? "Linked and fetching in the background."
                     : once.running
                       ? once.paired
-                        ? "Starting…"
+                        ? "Waking up…"
                         : "Waiting for pairing."
-                      : "Stopped."}
+                      : once.paired
+                        ? "Dormant — connects only when one-time media arrives."
+                        : "Stopped."}
                 </span>
               </div>
               {#if once.running && !once.paired && once.qrSvg}
