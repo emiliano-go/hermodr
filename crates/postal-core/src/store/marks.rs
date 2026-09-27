@@ -6,6 +6,7 @@ impl MessageStore {
     /// Records a reaction; an empty emoji removes the sender's reaction.
     pub fn set_reaction(&self, chat: &str, target: &str, sender: &str, emoji: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         if emoji.is_empty() {
             conn.execute(
                 "DELETE FROM reactions WHERE chat = ?1 AND target = ?2 AND sender = ?3",
@@ -23,6 +24,7 @@ impl MessageStore {
 
     pub fn set_starred(&self, chat: &str, id: &str, starred: bool) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         let sql = if starred {
             "INSERT OR IGNORE INTO stars (chat, id) VALUES (?1, ?2)"
         } else {
@@ -36,6 +38,7 @@ impl MessageStore {
     // One pin per chat; WhatsApp allows three, add a rank column if needed.
     pub fn set_message_pin(&self, chat: &str, id: Option<&str>) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         match id {
             Some(id) => conn.execute(
                 "INSERT INTO message_pins (chat, id) VALUES (?1, ?2)
@@ -50,6 +53,7 @@ impl MessageStore {
     /// Reactions, stars and the pin for one chat.
     pub fn marks(&self, chat: &str) -> Result<ChatMarks> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         let reactions = conn
             .prepare("SELECT target, sender, emoji FROM reactions WHERE chat = ?1")?
             .query_map(params![chat], |r| {
@@ -150,6 +154,7 @@ impl MessageStore {
 
     pub fn set_forwarded(&self, chat: &str, id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         conn.execute("INSERT OR IGNORE INTO forwarded (chat, id) VALUES (?1, ?2)", params![chat, id])?;
         Ok(())
     }
@@ -167,6 +172,7 @@ impl MessageStore {
         secret: Option<&[u8]>,
     ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         conn.execute(
             "INSERT OR IGNORE INTO polls (chat, id, creator, name, options, multi, secret)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -177,6 +183,7 @@ impl MessageStore {
 
     pub fn poll_secret(&self, chat: &str, id: &str) -> Result<Option<Secretive>> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         Ok(conn
             .query_row(
                 "SELECT creator, secret, options FROM polls WHERE chat = ?1 AND id = ?2",
@@ -196,6 +203,7 @@ impl MessageStore {
     /// A voter's current choice; an empty list withdraws their vote.
     pub fn set_poll_vote(&self, chat: &str, poll: &str, voter: &str, options: &[String]) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         conn.execute(
             "INSERT INTO poll_votes (chat, poll, voter, options) VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT(chat, poll, voter) DO UPDATE SET options = excluded.options",
@@ -214,6 +222,7 @@ impl MessageStore {
         secret: Option<&[u8]>,
     ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         conn.execute(
             "INSERT INTO events
                  (chat, id, creator, name, description, start_at, end_at, location, link, canceled, secret)
@@ -242,6 +251,7 @@ impl MessageStore {
 
     pub fn event_secret(&self, chat: &str, id: &str) -> Result<Option<Secretive>> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         Ok(conn
             .query_row(
                 "SELECT creator, secret FROM events WHERE chat = ?1 AND id = ?2",
@@ -259,6 +269,7 @@ impl MessageStore {
 
     pub fn set_event_response(&self, chat: &str, event: &str, responder: &str, response: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         conn.execute(
             "INSERT INTO event_responses (chat, event, responder, response) VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT(chat, event, responder) DO UPDATE SET response = excluded.response",

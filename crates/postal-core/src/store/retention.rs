@@ -5,6 +5,7 @@ use super::*;
 impl MessageStore {
     pub fn chat_retention(&self, jid: &str) -> Result<ChatRetention> {
         let conn = self.conn.lock().unwrap();
+        let jid = &*names::canonical_chat(&conn, jid)?;
         Ok(conn
             .query_row(
                 "SELECT age_mode, max_age_hours, count_mode, max_messages, on_demand FROM chat_retention WHERE jid = ?1",
@@ -22,6 +23,7 @@ impl MessageStore {
 
     pub fn set_chat_retention(&self, jid: &str, retention: &ChatRetention) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let jid = &*names::canonical_chat(&conn, jid)?;
         if *retention == ChatRetention::default() {
             conn.execute("DELETE FROM chat_retention WHERE jid = ?1", params![jid])?;
         } else {

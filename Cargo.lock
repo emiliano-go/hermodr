@@ -1141,6 +1141,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "buffa",
+ "flate2",
  "image",
  "log",
  "qrcode",

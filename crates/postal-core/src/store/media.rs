@@ -49,6 +49,7 @@ impl MessageStore {
     /// Where a reply's recovered view-once copy was written.
     pub fn quote_media_path(&self, chat: &str, id: &str) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         let value = conn
             .query_row(
                 "SELECT reply_to_path FROM messages WHERE chat = ?1 AND id = ?2",
@@ -74,6 +75,7 @@ impl MessageStore {
     /// and on every other reply quoting the same message, so they all show it.
     pub fn set_quote_media_path(&self, chat: &str, id: &str, path: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         let quoted: Option<String> = conn
             .query_row(
                 "SELECT reply_to_id FROM messages WHERE chat = ?1 AND id = ?2",
@@ -102,6 +104,7 @@ impl MessageStore {
     /// The stored media reference for a message.
     pub fn media_ref_for(&self, chat: &str, id: &str) -> Result<Option<Vec<u8>>> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         let value = conn
             .query_row(
                 "SELECT media_ref FROM messages WHERE chat = ?1 AND id = ?2",
@@ -116,6 +119,7 @@ impl MessageStore {
     /// Replaces a message's media reference, after the sender uploaded it again.
     pub fn set_media_ref(&self, chat: &str, id: &str, media_ref: &[u8]) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         conn.execute(
             "UPDATE messages SET media_ref = ?3 WHERE chat = ?1 AND id = ?2",
             params![chat, id, media_ref],
@@ -126,6 +130,7 @@ impl MessageStore {
     /// Records where a downloaded file was written.
     pub fn set_media_path(&self, chat: &str, id: &str, path: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         conn.execute(
             "UPDATE messages SET media_path = ?3 WHERE chat = ?1 AND id = ?2",
             params![chat, id, path],
@@ -136,6 +141,7 @@ impl MessageStore {
     /// Records what a view-once turned out to be, once a copy of it is taken.
     pub fn set_once_kind(&self, chat: &str, id: &str, kind: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         conn.execute(
             "UPDATE messages SET media_once_kind = ?3 WHERE chat = ?1 AND id = ?2",
             params![chat, id, kind],
@@ -170,6 +176,7 @@ impl MessageStore {
     /// one-time attachment apart from an ordinary one.
     pub fn keep_view_once(&self, chat: &str, id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         conn.execute(
             "UPDATE messages
              SET media_kind = COALESCE(media_once_kind, media_kind)
@@ -197,6 +204,7 @@ impl MessageStore {
     /// Records a view-once message; `opened` only ever moves from false to true.
     pub fn set_view_once(&self, chat: &str, id: &str, opened: bool) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         conn.execute(
             "INSERT INTO view_once (chat, id, opened) VALUES (?1, ?2, ?3)
              ON CONFLICT(chat, id) DO UPDATE SET opened = MAX(opened, excluded.opened)",
@@ -208,6 +216,7 @@ impl MessageStore {
     /// The copy of a view-once some stored reply in the chat carried in its quote.
     pub fn view_once_copy(&self, chat: &str, quoted: &str) -> Result<Option<Vec<u8>>> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         let found = conn
             .query_row(
                 "SELECT reply_to_locator FROM messages
@@ -264,6 +273,7 @@ impl MessageStore {
     /// Whether a message is marked view-once, whether or not it has been opened.
     pub fn is_view_once(&self, chat: &str, id: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         Ok(conn
             .query_row(
                 "SELECT 1 FROM view_once WHERE chat = ?1 AND id = ?2",
@@ -277,6 +287,7 @@ impl MessageStore {
     pub fn open_view_once(&self, chat: &str, id: &str) -> Result<Option<String>> {
         self.set_view_once(chat, id, true)?;
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         let path: Option<String> = conn
             .query_row(
                 "SELECT media_path FROM messages WHERE chat = ?1 AND id = ?2",

@@ -65,7 +65,7 @@ fn retention_handles_a_large_backlog_across_many_chats() {
 }
 
 #[test]
-fn reopening_reconciles_mappings_learned_after_schema_migration() {
+fn new_mappings_merge_immediately_and_survive_reopen() {
     let path = std::env::temp_dir().join(format!(
         "postal-schema-reopen-{}-{}.db",
         std::process::id(),
@@ -75,7 +75,8 @@ fn reopening_reconciles_mappings_learned_after_schema_migration() {
         let store = MessageStore::open(&path, Retention::unlimited()).unwrap();
         store.insert_message(&msg("123@lid", "kept", 0, "hello")).unwrap();
         store.set_lid_pn("123", "5989").unwrap();
-        assert_eq!(store.messages_for("123@lid", 10).unwrap().len(), 1);
+        assert_eq!(store.messages_for("123@lid", 10).unwrap()[0].header.chat, "5989@s.whatsapp.net");
+        assert_eq!(store.messages_for("5989@s.whatsapp.net", 10).unwrap().len(), 1);
     }
     {
         let store = MessageStore::open(&path, Retention::unlimited()).unwrap();
@@ -86,9 +87,54 @@ fn reopening_reconciles_mappings_learned_after_schema_migration() {
         let messages = store.messages_for("5989@s.whatsapp.net", 10).unwrap();
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].text, "hello");
-        assert!(store.messages_for("123@lid", 10).unwrap().is_empty());
+        assert_eq!(store.messages_for("123@lid", 10).unwrap()[0].header.chat, "5989@s.whatsapp.net");
     }
     std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn late_mapping_merges_local_state_and_rolls_back_on_failure() {
+    let s = store(Retention::unlimited());
+    let lid = "123@lid";
+    let pn = "5989@s.whatsapp.net";
+    let mut rich = msg(lid, "same", 0, "caption");
+    rich.local.read = true;
+    rich.local.status = Some("read".into());
+    rich.media.path = Some("synthetic.jpg".into());
+    s.insert_message(&rich).unwrap();
+    s.insert_message(&msg(pn, "same", 0, "caption")).unwrap();
+    s.set_starred(lid, "same", true).unwrap();
+    s.set_pinned(lid, true).unwrap();
+    s.conn.lock().unwrap().execute_batch(
+        "CREATE TRIGGER fail_merge BEFORE UPDATE OF chat ON messages BEGIN SELECT RAISE(ABORT, 'synthetic merge failure'); END;"
+    ).unwrap();
+    assert!(s.set_lid_pn("123", "5989").is_err());
+    assert!(s.lid_pn("123").unwrap().is_none());
+    assert_eq!(s.chats().unwrap().len(), 2);
+    s.conn.lock().unwrap().execute_batch("DROP TRIGGER fail_merge").unwrap();
+    let batch = s.batch();
+    s.set_lid_pn("123", "5989").unwrap();
+    drop(batch);
+    assert_eq!(s.chats().unwrap().len(), 1);
+    let merged = s.message(pn, "same").unwrap();
+    assert!(merged.local.read);
+    assert_eq!(merged.local.status.as_deref(), Some("read"));
+    assert_eq!(merged.media.path.as_deref(), Some("synthetic.jpg"));
+    assert_eq!(s.marks(pn).unwrap().starred, ["same"]);
+    assert_eq!(s.pinned_chats().unwrap(), [pn]);
+    s.set_lid_pn("123", "5989").unwrap();
+    assert_eq!(s.count().unwrap(), 1);
+    s.insert_message(&msg(lid, "queued-send", 0, "sent after mapping")).unwrap();
+    s.set_media_path(lid, "queued-send", "new.jpg").unwrap();
+    s.set_reaction(lid, "queued-send", "peer@s", "x").unwrap();
+    s.set_archived(lid, true).unwrap();
+    assert_eq!(s.chats().unwrap().len(), 1);
+    assert_eq!(s.message(lid, "queued-send").unwrap().header.chat, pn);
+    assert_eq!(s.message(pn, "queued-send").unwrap().media.path.as_deref(), Some("new.jpg"));
+    assert_eq!(s.marks(pn).unwrap().reactions.len(), 1);
+    assert!(s.is_archived(pn).unwrap());
+    let conn = s.conn.lock().unwrap();
+    assert_eq!(conn.query_row("SELECT COUNT(*) FROM messages WHERE chat = ?1", [lid], |r| r.get::<_, i64>(0)).unwrap(), 0);
 }
 
 fn now() -> i64 {

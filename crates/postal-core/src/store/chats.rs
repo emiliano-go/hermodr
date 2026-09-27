@@ -50,6 +50,7 @@ impl MessageStore {
     /// The per chat auto download override, if one is set.
     pub fn chat_auto_download(&self, jid: &str) -> Result<Option<bool>> {
         let conn = self.conn.lock().unwrap();
+        let jid = &*names::canonical_chat(&conn, jid)?;
         let value = conn
             .query_row(
                 "SELECT auto_download FROM chat_settings WHERE jid = ?1",
@@ -63,6 +64,7 @@ impl MessageStore {
     /// Sets the per chat auto download override.
     pub fn set_chat_auto_download(&self, jid: &str, enabled: bool) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let jid = &*names::canonical_chat(&conn, jid)?;
         conn.execute(
             "INSERT INTO chat_settings (jid, auto_download) VALUES (?1, ?2)
              ON CONFLICT(jid) DO UPDATE SET auto_download = excluded.auto_download",
@@ -74,6 +76,7 @@ impl MessageStore {
     /// The chat's typing and read receipt overrides; `None` follows the global setting.
     pub fn chat_privacy(&self, jid: &str) -> Result<(Option<bool>, Option<bool>)> {
         let conn = self.conn.lock().unwrap();
+        let jid = &*names::canonical_chat(&conn, jid)?;
         let value = conn
             .query_row(
                 "SELECT send_typing, send_receipts FROM chat_privacy WHERE jid = ?1",
@@ -87,6 +90,7 @@ impl MessageStore {
     /// Sets the chat's typing and read receipt overrides; both `None` removes them.
     pub fn set_chat_privacy(&self, jid: &str, typing: Option<bool>, receipts: Option<bool>) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let jid = &*names::canonical_chat(&conn, jid)?;
         if typing.is_none() && receipts.is_none() {
             conn.execute("DELETE FROM chat_privacy WHERE jid = ?1", params![jid])?;
         } else {
@@ -103,6 +107,7 @@ impl MessageStore {
     /// Mirrors a chat's pin state from the account.
     pub fn set_pinned(&self, jid: &str, pinned: bool) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let jid = &*names::canonical_chat(&conn, jid)?;
         if pinned {
             conn.execute("INSERT OR IGNORE INTO pins (jid) VALUES (?1)", params![jid])?;
         } else {
@@ -119,6 +124,7 @@ impl MessageStore {
     /// Whether a chat is archived; false when it has no state row.
     pub fn is_archived(&self, jid: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
+        let jid = &*names::canonical_chat(&conn, jid)?;
         Ok(conn
             .query_row(
                 "SELECT archived FROM chat_state WHERE jid = ?1",
@@ -132,6 +138,7 @@ impl MessageStore {
     /// Whether any table still keeps rows for this chat.
     pub fn chat_exists(&self, jid: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
+        let jid = &*names::canonical_chat(&conn, jid)?;
         chat_rows_exist(&conn, jid)
     }
 
@@ -158,6 +165,7 @@ impl MessageStore {
     /// Lifts a manual unread mark; true if one was set.
     pub fn clear_marked_unread(&self, jid: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
+        let jid = &*names::canonical_chat(&conn, jid)?;
         let changed =
             conn.execute("UPDATE chat_state SET marked_unread = 0 WHERE jid = ?1 AND marked_unread = 1", params![jid])?;
         Ok(changed > 0)
@@ -165,6 +173,7 @@ impl MessageStore {
 
     fn set_chat_state(&self, jid: &str, column: &str, value: i64) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let jid = &*names::canonical_chat(&conn, jid)?;
         conn.execute(
             &format!(
                 "INSERT INTO chat_state (jid, {column}) VALUES (?1, ?2)
@@ -275,6 +284,7 @@ impl MessageStore {
     /// Clears one chat: messages go, the empty chat stays in the list.
     pub fn clear_chat(&self, jid: &str) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
+        let jid = &*names::canonical_chat(&conn, jid)?;
         let removed = self.drop_chat_messages(&conn, jid)?;
         conn.execute("DELETE FROM hidden_chats WHERE jid = ?1", params![jid])?;
         conn.execute("INSERT OR IGNORE INTO cleared_chats (jid) VALUES (?1)", params![jid])?;
@@ -287,6 +297,7 @@ impl MessageStore {
     /// message arrives. Local-only: the phone keeps its copy.
     pub fn delete_chat(&self, jid: &str) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
+        let jid = &*names::canonical_chat(&conn, jid)?;
         let removed = self.drop_chat_messages(&conn, jid)?;
         conn.execute("DELETE FROM cleared_chats WHERE jid = ?1", params![jid])?;
         conn.execute("DELETE FROM pins WHERE jid = ?1", params![jid])?;
@@ -333,6 +344,15 @@ pub(crate) fn chat_rows_exist(conn: &Connection, jid: &str) -> Result<bool> {
 pub(crate) fn fold_chat(conn: &Connection, from: &str, to: &str) -> Result<()> {
     if from == to {
         return Ok(());
+    }
+    let mut duplicates = conn.prepare(&format!(
+        "SELECT {MESSAGE_COLUMNS} FROM messages m LEFT JOIN names n ON n.jid = m.sender
+         WHERE m.chat = ?1 AND EXISTS (SELECT 1 FROM messages t WHERE t.chat = ?2 AND t.id = m.id)"
+    ))?;
+    for row in duplicates.query_map(params![from, to], message_row)? {
+        let mut row = row?;
+        row.header.chat = to.to_string();
+        MessageStore::insert_row(conn, &row)?;
     }
     conn.execute(
         "INSERT INTO chats (jid, last_message_at)

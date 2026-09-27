@@ -165,11 +165,12 @@ impl Inbound {
         }
         let mut chats = Vec::new();
         for conversation in &history.conversations {
-            let chat = conversation.id.clone();
-            if chat == "status@broadcast" {
+            if conversation.id == "status@broadcast" {
                 continue;
             }
             pair(conversation.lid_jid.as_deref(), conversation.pn_jid.as_deref());
+            let Some(jid) = conversation.id.parse::<Jid>().observed() else { continue };
+            let chat = resolve_chat(client.as_deref(), store, &jid).await;
             if !chat.ends_with("@g.us") {
                 let name = conversation
                     .display_name

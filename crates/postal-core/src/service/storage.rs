@@ -145,8 +145,11 @@ pub(super) fn cleanup_storage(store: &MessageStore, directory: &Path, action: St
             let message = store.message(&chat, &id)?;
             (if quoted { message.quote.path } else { message.media.path }).into_iter().collect()
         }
-        StorageCleanup::ChatMedia { chat } => store.media_entries()?.into_iter()
-            .filter(|entry| entry.chat == chat).map(|entry| entry.path).collect(),
+        StorageCleanup::ChatMedia { chat } => {
+            let chat = store.canonical_chat(&chat)?;
+            store.media_entries()?.into_iter().filter(|entry| entry.chat == chat)
+                .map(|entry| entry.path).collect()
+        }
         StorageCleanup::Cache => {
             let owned: HashSet<_> = store.media_entries()?.into_iter()
                 .map(|entry| canonical_file(Path::new(&entry.path))).collect::<Result<Vec<_>>>()?

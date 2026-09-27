@@ -50,6 +50,7 @@ impl MessageStore {
     /// Returns whether anything changed so the caller can skip a refresh.
     pub fn set_delivery_state(&self, chat: &str, id: &str, status: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         let current: Option<Option<String>> = conn
             .query_row(
                 "SELECT status FROM messages WHERE chat = ?1 AND id = ?2 AND from_me = 1",
@@ -114,6 +115,7 @@ impl MessageStore {
     /// Unread incoming messages in `chat` as `(id, sender)`, oldest first.
     pub fn unread_ids(&self, chat: &str) -> Result<Vec<(String, String)>> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         let mut stmt = conn.prepare(
             "SELECT id, sender FROM messages
              WHERE chat = ?1 AND read = 0 AND from_me = 0 ORDER BY timestamp",
@@ -128,6 +130,7 @@ impl MessageStore {
     /// nothing was unread.
     pub fn mark_read(&self, chat: &str) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         let changed = conn.execute(
             "UPDATE messages SET read = 1 WHERE chat = ?1 AND read = 0 AND from_me = 0",
             params![chat],
@@ -139,6 +142,7 @@ impl MessageStore {
     /// state another device synced with a message range.
     pub fn mark_read_through(&self, chat: &str, timestamp: i64) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         let changed = conn.execute(
             "UPDATE messages SET read = 1
              WHERE chat = ?1 AND read = 0 AND from_me = 0 AND timestamp <= ?2",
@@ -153,6 +157,7 @@ impl MessageStore {
     /// split exactly where the boundary message sits.
     pub fn unread_until(&self, chat: &str, id: &str) -> Result<Vec<(String, String)>> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         let mut stmt = conn.prepare(
             "SELECT id, sender FROM messages
              WHERE chat = ?1 AND read = 0 AND from_me = 0
@@ -166,6 +171,7 @@ impl MessageStore {
     /// Marks incoming messages up to and including `id` as read.
     pub fn mark_read_until(&self, chat: &str, id: &str) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         let changed = conn.execute(
             "UPDATE messages SET read = 1
              WHERE chat = ?1 AND read = 0 AND from_me = 0

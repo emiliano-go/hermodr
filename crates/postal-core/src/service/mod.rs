@@ -57,6 +57,8 @@ mod receipts;
 mod user_info;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod protocol_tests;
 
 use connection::*;
 use contacts::*;

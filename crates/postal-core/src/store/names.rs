@@ -2,7 +2,21 @@
 
 use super::*;
 
+pub(super) fn canonical_chat<'a>(conn: &Connection, jid: &'a str) -> Result<std::borrow::Cow<'a, str>> {
+    let Some(user) = jid.strip_suffix("@lid") else { return Ok(jid.into()) };
+    let lid = user.split(':').next().unwrap_or(user);
+    let pn: Option<String> = conn.query_row("SELECT pn FROM lid_pn WHERE lid = ?1", [lid], |r| r.get(0)).optional()?;
+    Ok(match pn {
+        Some(pn) => format!("{pn}@s.whatsapp.net").into(),
+        None => jid.into(),
+    })
+}
+
 impl MessageStore {
+    pub(crate) fn canonical_chat<'a>(&self, jid: &'a str) -> Result<std::borrow::Cow<'a, str>> {
+        canonical_chat(&self.conn.lock().unwrap(), jid)
+    }
+
     /// Records a display name for a JID, from a push name or group query.
     ///
     /// Empty names are ignored: a message with no push name should not erase a
@@ -127,11 +141,16 @@ impl MessageStore {
     ///
     /// Kept here because the session's own mapping is lost when a device re-pairs.
     pub fn set_lid_pn(&self, lid: &str, pn: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
+        let mut conn = self.conn.lock().unwrap();
+        let previous: Option<String> = conn.query_row("SELECT pn FROM lid_pn WHERE lid = ?1", [lid], |r| r.get(0)).optional()?;
+        if previous.as_deref() == Some(pn) { return Ok(()); }
+        let tx = conn.savepoint()?;
+        tx.execute(
             "INSERT INTO lid_pn (lid, pn) VALUES (?1, ?2) ON CONFLICT(lid) DO UPDATE SET pn = excluded.pn",
             params![lid, pn],
         )?;
+        chats::fold_chat(&tx, &format!("{lid}@lid"), &format!("{pn}@s.whatsapp.net"))?;
+        tx.commit()?;
         Ok(())
     }
 

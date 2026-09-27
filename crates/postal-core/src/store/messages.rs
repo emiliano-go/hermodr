@@ -11,6 +11,19 @@ impl MessageStore {
     /// `revoke_message`, `update_message_content`, `set_media_path`).
     pub fn insert_message(&self, message: &StoredMessage) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let chat = names::canonical_chat(&conn, &message.header.chat)?;
+        let mut canonical;
+        let message = if chat != message.header.chat {
+            canonical = message.clone();
+            canonical.header.chat = chat.into_owned();
+            &canonical
+        } else { message };
+        Self::insert_row(&conn, message)?;
+        self.revive_chat(&conn, &message.header.chat)?;
+        Ok(())
+    }
+
+    pub(super) fn insert_row(conn: &Connection, message: &StoredMessage) -> Result<()> {
         conn.execute(
             "INSERT INTO messages
                  (chat, id, sender, timestamp, from_me, text,
@@ -103,13 +116,13 @@ impl MessageStore {
                 message.media.once_kind,
             ],
         )?;
-        self.revive_chat(&conn, &message.header.chat)?;
         Ok(())
     }
 
     /// Messages in a chat, newest first.
     pub fn messages_for(&self, chat: &str, limit: u32) -> Result<Vec<StoredMessage>> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         let mut stmt = conn.prepare(&format!(
             "SELECT {MESSAGE_COLUMNS}
              FROM messages m
@@ -124,6 +137,8 @@ impl MessageStore {
     /// Messages that mention us, in one chat or all of them, newest first.
     pub fn pings(&self, chat: Option<&str>, limit: u32) -> Result<Vec<StoredMessage>> {
         let conn = self.conn.lock().unwrap();
+        let chat = chat.map(|jid| names::canonical_chat(&conn, jid)).transpose()?;
+        let chat = chat.as_deref();
         let mut stmt = conn.prepare(&format!(
             "SELECT {MESSAGE_COLUMNS}
              FROM messages m
@@ -141,6 +156,7 @@ impl MessageStore {
         let escaped = query.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
         let pattern = format!("%{}%", escaped.to_lowercase());
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         let mut stmt = conn.prepare(&format!(
             "SELECT {MESSAGE_COLUMNS}
              FROM messages m
@@ -169,6 +185,7 @@ impl MessageStore {
     /// The oldest stored message in a chat, as (id, from_me, timestamp).
     pub fn oldest_message(&self, chat: &str) -> Result<Option<(String, bool, i64)>> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         let row = conn
             .query_row(
                 "SELECT id, from_me, timestamp FROM messages
@@ -192,6 +209,7 @@ impl MessageStore {
     // Params are not compared, so two changes of one kind within those seconds collapse into one line.
     pub fn has_system_near(&self, chat: &str, kind: &str, timestamp: i64) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         let found = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM messages
              WHERE chat = ?1 AND system_kind = ?2 AND ABS(timestamp - ?3) <= 5)",
@@ -218,6 +236,7 @@ impl MessageStore {
     /// Replaces a message's text (its caption, for media) after its sender edited it.
     pub fn update_message_content(&self, chat: &str, id: &str, text: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         let changed = conn.execute(
             "UPDATE messages SET text = ?3 WHERE chat = ?1 AND id = ?2",
             params![chat, id, text],
@@ -231,6 +250,7 @@ impl MessageStore {
     /// Removes one message, as "delete for me" does.
     pub fn delete_message(&self, chat: &str, id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         conn.execute("DELETE FROM messages WHERE chat = ?1 AND id = ?2", params![chat, id])?;
         conn.execute("DELETE FROM reactions WHERE chat = ?1 AND target = ?2", params![chat, id])?;
         conn.execute("DELETE FROM stars WHERE chat = ?1 AND id = ?2", params![chat, id])?;
@@ -246,6 +266,7 @@ impl MessageStore {
     /// Unread messages in `chat` that mention us, oldest first.
     pub fn unread_mentions(&self, chat: &str) -> Result<Vec<String>> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         let mut stmt = conn.prepare(
             "SELECT id FROM messages
              WHERE chat = ?1 AND read = 0 AND from_me = 0 AND mentioned = 1
@@ -258,6 +279,7 @@ impl MessageStore {
     /// A single stored message.
     pub fn message(&self, chat: &str, id: &str) -> Result<StoredMessage> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         let message = conn.query_row(
             &format!(
                 "SELECT {MESSAGE_COLUMNS}
@@ -279,6 +301,7 @@ impl MessageStore {
     /// whether a row was updated.
     pub fn revoke_message(&self, chat: &str, id: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
         let changed = conn.execute(
               "UPDATE messages
                SET revoked = 1, text = '', media_kind = NULL, media_path = NULL,

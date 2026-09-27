@@ -27,6 +27,9 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 # Received thumbnails are kept in the row as `data:` URIs.
 base64 = "0.22"
 
+[dev-dependencies]
+flate2 = "1"
+
 # Media Foundation decodes the first frame of outgoing videos for their preview.
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = ["Win32_Media_MediaFoundation", "Win32_System_Com", "Win32_UI_Shell"] }
