@@ -33,6 +33,7 @@ async fn main() -> Result<()> {
         retention,
         accept_full_history: false,
         auto_download_media: true,
+        keep_archived: true,
         media_dir: Some(data_dir.join("media")),
     };
 

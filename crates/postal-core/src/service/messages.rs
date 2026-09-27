@@ -802,6 +802,7 @@ fn quote_of(message: &wa::Message, header: &MessageHeader) -> Option<Quoted> {
 /// Returns `None` for messages that carry neither text nor media, so protocol
 /// traffic does not fill the store with empty rows.
 pub(super) async fn incoming_message(
+    chat: &str,
     inbound: &InboundMessage,
     client: Option<&Client>,
     media_dir: Option<&Path>,
@@ -809,7 +810,7 @@ pub(super) async fn incoming_message(
 ) -> Option<StoredMessage> {
     let info = &inbound.info;
     let header = MessageHeader {
-        chat: info.source.chat.to_string(),
+        chat: chat.to_string(),
         id: info.id.to_string(),
         sender: info.source.sender.to_string(),
         timestamp: info.timestamp.timestamp(),

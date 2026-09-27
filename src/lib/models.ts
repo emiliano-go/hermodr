@@ -110,6 +110,7 @@ export type UiSettings = {
   send_receipts: boolean;
   keep_history: boolean;
   skip_loading_screen: boolean;
+  keep_archived: boolean;
 };
 export type ConnectionState = { started: boolean; connected: boolean; qr: string | null };
 

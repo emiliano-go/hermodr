@@ -184,7 +184,7 @@
             gif={item.kind === "gif"}
             onerror={loadVideoFallback} />
         {:else if isAudio}
-          <div class="audio"><AudioPlayer path={item.path} play /></div>
+          <div class="audio"><AudioPlayer path={item.path} play title={item.author} avatar={item.avatar} /></div>
         {:else}
           <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
           <img

@@ -620,3 +620,24 @@ fn unlimited_retention_keeps_everything() {
     assert_eq!(s.enforce_retention().unwrap(), 0);
     assert_eq!(s.count().unwrap(), 50);
 }
+
+#[test]
+fn merging_chats_folds_history_state_and_keeps_the_chat_visible() {
+    let s = store(Retention::unlimited());
+    s.insert_message(&msg("123@lid", "a", 2, "hi")).unwrap();
+    s.insert_message(&msg("123@lid", "b", 1, "there")).unwrap();
+    s.insert_message(&msg("5989@s.whatsapp.net", "c", 3, "old")).unwrap();
+    s.set_archived("123@lid", true).unwrap();
+    s.set_pinned("123@lid", true).unwrap();
+    s.set_name("123@lid", "Ma cherie").unwrap();
+
+    s.merge_chats("123@lid", "5989@s.whatsapp.net").unwrap();
+
+    assert!(!s.chat_exists("123@lid").unwrap());
+    assert_eq!(s.messages_for("5989@s.whatsapp.net", 10).unwrap().len(), 3);
+    assert!(s.is_archived("5989@s.whatsapp.net").unwrap());
+    assert!(s.pinned_chats().unwrap().iter().any(|j| j == "5989@s.whatsapp.net"));
+    assert_eq!(s.name_for("5989@s.whatsapp.net").unwrap().as_deref(), Some("Ma cherie"));
+    // The merged chat still shows: folding must not hide it.
+    assert!(s.chats().unwrap().iter().any(|c| c.chat == "5989@s.whatsapp.net"));
+}

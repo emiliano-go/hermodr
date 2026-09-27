@@ -72,6 +72,35 @@ impl MessageStore {
         self.set_chat_state(jid, "archived", archived as i64)
     }
 
+    /// Whether a chat is archived; false when it has no state row.
+    pub fn is_archived(&self, jid: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT archived FROM chat_state WHERE jid = ?1",
+                params![jid],
+                |r| r.get::<_, i64>(0),
+            )
+            .optional()?
+            .is_some_and(|v| v != 0))
+    }
+
+    /// Whether any table still keeps rows for this chat.
+    pub fn chat_exists(&self, jid: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        chat_rows_exist(&conn, jid)
+    }
+
+    /// Folds one chat's rows onto another, for the LID and phone forms of the
+    /// same direct chat. Called on write and on open so a split self-heals.
+    pub fn merge_chats(&self, from: &str, to: &str) -> Result<()> {
+        if from == to {
+            return Ok(());
+        }
+        let conn = self.conn.lock().unwrap();
+        fold_chat(&conn, from, to)
+    }
+
     /// Mirrors a chat's mute end (seconds; -1 indefinitely, 0 unmuted).
     pub fn set_muted_until(&self, jid: &str, until: i64) -> Result<()> {
         self.set_chat_state(jid, "muted_until", until)
@@ -259,4 +288,117 @@ impl MessageStore {
         conn.execute("DELETE FROM cleared_chats WHERE jid = ?1", params![jid])?;
         Ok(())
     }
+}
+
+/// Whether any table keeps rows for a chat: messages or any of its list state.
+pub(crate) fn chat_rows_exist(conn: &Connection, jid: &str) -> Result<bool> {
+    for (table, column) in [
+        ("messages", "chat"),
+        ("chat_state", "jid"),
+        ("pins", "jid"),
+        ("cleared_chats", "jid"),
+        ("hidden_chats", "jid"),
+    ] {
+        let found: Option<i64> = conn
+            .query_row(
+                &format!("SELECT 1 FROM {table} WHERE {column} = ?1 LIMIT 1"),
+                params![jid],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if found.is_some() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Moves every row from one chat to `to`, keeping whatever state either side
+/// had. A chat that just gained messages is never left hidden or kept-empty.
+pub(crate) fn fold_chat(conn: &Connection, from: &str, to: &str) -> Result<()> {
+    if from == to {
+        return Ok(());
+    }
+    // Per-message state keyed by the chat.
+    for table in [
+        "reactions",
+        "stars",
+        "message_pins",
+        "polls",
+        "poll_votes",
+        "events",
+        "event_responses",
+        "view_once",
+        "forwarded",
+        "edited",
+    ] {
+        conn.execute(
+            &format!("UPDATE OR IGNORE {table} SET chat = ?1 WHERE chat = ?2"),
+            params![to, from],
+        )?;
+        conn.execute(&format!("DELETE FROM {table} WHERE chat = ?1"), params![from])?;
+    }
+    // Messages last, so `to` knows it has history before the state below.
+    conn.execute("UPDATE OR IGNORE messages SET chat = ?1 WHERE chat = ?2", params![to, from])?;
+    conn.execute("DELETE FROM messages WHERE chat = ?1", params![from])?;
+    conn.execute(
+        "UPDATE OR IGNORE messages SET reply_to_chat = ?1 WHERE reply_to_chat = ?2",
+        params![to, from],
+    )?;
+
+    // Archive, mute and unread marks: keep whichever side had them set.
+    conn.execute(
+        "INSERT INTO chat_state (jid, archived, muted_until, marked_unread)
+         SELECT ?1, archived, muted_until, marked_unread FROM chat_state WHERE jid = ?2
+         ON CONFLICT(jid) DO UPDATE SET
+             archived = MAX(chat_state.archived, excluded.archived),
+             muted_until = MAX(chat_state.muted_until, excluded.muted_until),
+             marked_unread = MAX(chat_state.marked_unread, excluded.marked_unread)",
+        params![to, from],
+    )?;
+    conn.execute("DELETE FROM chat_state WHERE jid = ?1", params![from])?;
+
+    if conn
+        .query_row("SELECT 1 FROM pins WHERE jid = ?1", params![from], |r| r.get::<_, i64>(0))
+        .optional()?
+        .is_some()
+    {
+        conn.execute("INSERT OR IGNORE INTO pins (jid) VALUES (?1)", params![to])?;
+    }
+    conn.execute("DELETE FROM pins WHERE jid = ?1", params![from])?;
+
+    for table in ["chat_privacy", "chat_settings", "chat_retention"] {
+        conn.execute(
+            &format!("UPDATE OR IGNORE {table} SET jid = ?1 WHERE jid = ?2"),
+            params![to, from],
+        )?;
+        conn.execute(&format!("DELETE FROM {table} WHERE jid = ?1"), params![from])?;
+    }
+
+    // A cleared or deleted chat keeps its empty row or stays hidden only while
+    // it has no history; the merged chat must not be hidden.
+    let has_messages: Option<i64> = conn
+        .query_row("SELECT 1 FROM messages WHERE chat = ?1 LIMIT 1", params![to], |r| r.get(0))
+        .optional()?;
+    if has_messages.is_none() {
+        conn.execute(
+            "INSERT OR IGNORE INTO cleared_chats (jid) SELECT ?1 FROM cleared_chats WHERE jid = ?2",
+            params![to, from],
+        )?;
+        conn.execute(
+            "INSERT OR IGNORE INTO hidden_chats (jid) SELECT ?1 FROM hidden_chats WHERE jid = ?2",
+            params![to, from],
+        )?;
+    }
+    conn.execute("DELETE FROM cleared_chats WHERE jid = ?1", params![from])?;
+    conn.execute("DELETE FROM hidden_chats WHERE jid = ?1", params![from])?;
+
+    // The phone-number row keeps its name; adopt the other only when it has none.
+    conn.execute(
+        "INSERT OR IGNORE INTO names (jid, name, saved)
+         SELECT ?1, name, saved FROM names WHERE jid = ?2
+           AND NOT EXISTS (SELECT 1 FROM names WHERE jid = ?1)",
+        params![to, from],
+    )?;
+    Ok(())
 }

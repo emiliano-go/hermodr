@@ -1,63 +1,8 @@
-<script lang="ts" module>
-  const BARS = 42;
-  const RATES = [1, 1.5, 2];
-  const RATE_KEY = "postal.voiceRate";
-  /** Decoded shape and length per file, so scrolling back does not decode again. */
-  const shapes = new Map<string, { peaks: number[]; duration: number }>();
-  /** Only one voice note plays at a time, as in WhatsApp. */
-  let playingNow: HTMLAudioElement | null = null;
-
-  const HEARD_KEY = "postal.heardVoice";
-  /** Notes already played here; unplayed ones keep WhatsApp's green. */
-  const heardNotes: Set<string> = (() => {
-    try {
-      return new Set(JSON.parse(localStorage.getItem(HEARD_KEY) ?? "[]"));
-    } catch {
-      return new Set();
-    }
-  })();
-  function rememberHeard(path: string) {
-    heardNotes.add(path);
-    try {
-      localStorage.setItem(HEARD_KEY, JSON.stringify([...heardNotes].slice(-1000)));
-    } catch {
-      // Only this session remembers it then.
-    }
-  }
-
-  function savedRate() {
-    try {
-      const rate = Number(localStorage.getItem(RATE_KEY));
-      return RATES.includes(rate) ? rate : 1;
-    } catch {
-      return 1;
-    }
-  }
-
-  async function shapeOf(bytes: Uint8Array) {
-    const context = new AudioContext();
-    try {
-      const buffer = await context.decodeAudioData(bytes.slice().buffer);
-      const data = buffer.getChannelData(0);
-      const step = Math.max(1, Math.floor(data.length / BARS));
-      const peaks = Array.from({ length: BARS }, (_, i) => {
-        let sum = 0;
-        for (let j = i * step; j < Math.min(data.length, (i + 1) * step); j++) sum += data[j] * data[j];
-        return Math.sqrt(sum / step);
-      });
-      const top = Math.max(...peaks, 1e-6);
-      return { peaks: peaks.map((p) => Math.max(0.08, p / top)), duration: buffer.duration };
-    } finally {
-      void context.close();
-    }
-  }
-</script>
-
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+  import { untrack } from "svelte";
   import { convertFileSrc } from "@tauri-apps/api/core";
-  import { invoke } from "$lib/ipc";
   import Icon from "$lib/Icon.svelte";
+  import { BARS, player, type VoiceTrack } from "$lib/state/player.svelte";
 
   let {
     path,
@@ -67,6 +12,8 @@
     initials = "",
     mine = false,
     play = false,
+    /** Sender name for the sidebar player. */
+    title = "",
     onplayed,
     onended,
     onpaused,
@@ -80,6 +27,7 @@
     mine?: boolean;
     /** Start as soon as this turns true, for the queue behind a voice note. */
     play?: boolean;
+    title?: string;
     /** Called the first time the note plays here, for the played receipt. */
     onplayed?: () => void;
     /** Called when the note reaches its end on its own, to chain to the next. */
@@ -88,126 +36,58 @@
     onpaused?: () => void;
   } = $props();
   // svelte-ignore state_referenced_locally
-  let heard = $state(mine || heardNotes.has(path));
-
-  let audio: HTMLAudioElement | undefined = $state();
-  let src = $state<string | null>(null);
-  let loading = $state(false);
-  let failed = $state(false);
-  let paused = $state(true);
-  let url: string | null = null;
-  let current = $state(0);
-  let rate = $state(savedRate());
-  // svelte-ignore state_referenced_locally
-  let shape = $state(shapes.get(path) ?? null);
+  let heard = $state(mine || player.heard(path));
   let wave: HTMLDivElement | undefined = $state();
   let scrubbing = false;
 
-  // The stored length covers notes that were never decoded here; the decoded
-  // file refines it (and brings the waveform) once it loads.
-  const duration = $derived(shape?.duration ?? storedDuration ?? 0);
+  const active = $derived(player.track?.path === path);
+  const shape = $derived(player.shapes[path] ?? null);
+  const duration = $derived(
+    (active ? player.duration : 0) || shape?.duration || storedDuration || 0,
+  );
+  const current = $derived(active ? player.position : 0);
   const progress = $derived(duration ? Math.min(1, current / duration) : 0);
+  const paused = $derived(!active || player.paused);
+  const loading = $derived(active && player.loading);
+  const failed = $derived(active && player.failed);
+  const rate = $derived(player.rate);
 
-  /** Type the media element expects, from the stored file extension. */
-  function mime(path: string) {
-    const extension = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
-    if (extension === "mp3") return "audio/mpeg";
-    if (extension === "m4a" || extension === "aac" || extension === "mp4") return "audio/mp4";
-    if (extension === "wav") return "audio/wav";
-    return "audio/ogg";
+  function tune(): VoiceTrack {
+    return {
+      path,
+      duration: storedDuration,
+      avatar,
+      initials,
+      title,
+      onplayed: () => {
+        heard = true;
+        onplayed?.();
+      },
+      onended,
+      onpaused,
+    };
   }
 
-  // The bytes come through IPC because WebKitGTK's media pipeline cannot load
-  // the asset scheme; they also give the waveform. Loading is deferred to the
-  // first play so a chat full of voice notes reads nothing until asked.
-  async function ensureLoaded() {
-    if (src) return true;
-    loading = true;
-    try {
-      const data = await invoke<string>("read_file", { path });
-      const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
-      url = URL.createObjectURL(new Blob([bytes], { type: mime(path) }));
-      if (audio) audio.src = url;
-      src = url;
-      if (!shape) {
-        // The waveform can decode while playback starts.
-        shapeOf(bytes)
-          .then((s) => {
-            shape = s;
-            shapes.set(path, s);
-          })
-          .catch(() => {});
-      }
-      return true;
-    } catch {
-      failed = true;
-      return false;
-    } finally {
-      loading = false;
-    }
+  function start() {
+    if (!failed) void player.play(tune());
   }
 
-  onMount(() => () => {
-    if (url) URL.revokeObjectURL(url);
-    if (playingNow === audio) playingNow = null;
-  });
-
-  async function start() {
-    if (!audio || failed) return;
-    if (!src && !(await ensureLoaded())) return;
-    if (playingNow && playingNow !== audio) playingNow.pause();
-    playingNow = audio;
-    audio.playbackRate = rate;
-    try {
-      await audio.play();
-    } catch {
-      failed = true;
-      return;
-    }
-    if (!heard) {
-      heard = true;
-      rememberHeard(path);
-      onplayed?.();
-    }
-  }
-
-  async function toggle() {
-    if (!audio || failed) return;
-    if (!audio.paused) return audio.pause();
-    await start();
+  function toggle() {
+    if (failed) return;
+    if (active && !player.paused) player.pause();
+    else start();
   }
 
   // The parent chains voice notes by flipping `play` on the next one; only that
   // change matters, not the playback state starting depends on.
   $effect(() => {
-    if (play) untrack(() => void start());
+    if (play) untrack(() => start());
   });
-
-  // timeupdate fires a few times a second; follow the playhead every frame instead.
-  $effect(() => {
-    if (paused) return;
-    let frame = requestAnimationFrame(function follow() {
-      if (audio && !scrubbing) current = audio.currentTime;
-      frame = requestAnimationFrame(follow);
-    });
-    return () => cancelAnimationFrame(frame);
-  });
-
-  function cycleRate() {
-    rate = RATES[(RATES.indexOf(rate) + 1) % RATES.length];
-    if (audio) audio.playbackRate = rate;
-    try {
-      localStorage.setItem(RATE_KEY, String(rate));
-    } catch {
-      // The speed lasts this session then.
-    }
-  }
 
   function seekTo(e: PointerEvent) {
-    if (!audio || !wave || !duration) return;
+    if (!wave || !duration) return;
     const rect = wave.getBoundingClientRect();
-    audio.currentTime = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)) * duration;
-    current = audio.currentTime;
+    player.seek(Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)));
   }
 
   function clock(seconds: number) {
@@ -249,7 +129,7 @@
   </div>
 
   {#if !paused || current > 0}
-    <button class="rate" title="Playback speed" onclick={cycleRate}>{rate}×</button>
+    <button class="rate" title="Playback speed" onclick={() => player.cycleRate()}>{rate}×</button>
   {:else}
     <span class="who">
       {#if avatar}
@@ -260,19 +140,6 @@
       <span class="mic"><Icon name="mic" size={11} /></span>
     </span>
   {/if}
-
-  <audio
-    bind:this={audio}
-    src={src ?? undefined}
-    preload="metadata"
-    bind:paused
-    ontimeupdate={() => !scrubbing && (current = audio?.currentTime ?? 0)}
-    onerror={() => src && (failed = true)}
-    onpause={() => onpaused?.()}
-    onended={() => {
-      current = 0;
-      onended?.();
-    }}></audio>
 </div>
 
 <style>

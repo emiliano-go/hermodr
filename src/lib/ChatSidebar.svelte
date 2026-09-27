@@ -4,6 +4,7 @@
   import Avatar from "$lib/Avatar.svelte";
   import Button from "$lib/Button.svelte";
   import Icon, { type IconName } from "$lib/Icon.svelte";
+  import NowPlaying from "$lib/NowPlaying.svelte";
   import type { Section } from "$lib/Settings.svelte";
   import type {
     Account,
@@ -162,14 +163,21 @@
         onclick={() => onfilter("unread")}>Unread</Button>
       <Button variant="chip" selected={chatFilter === "groups"} onclick={() => onfilter("groups")}
         >Groups</Button>
-      {#if archivedChats > 0 || chatFilter === "archived"}
-        <Button
-          variant="chip"
-          selected={chatFilter === "archived"}
-          count={archivedChats > 0 ? archivedChats : undefined}
-          onclick={() => onfilter("archived")}>Archived</Button>
-      {/if}
     </div>
+    {#if archivedChats > 0 || chatFilter === "archived"}
+      <button
+        type="button"
+        class="archived-entry"
+        class:active={chatFilter === "archived"}
+        aria-pressed={chatFilter === "archived"}
+        onclick={() => onfilter(chatFilter === "archived" ? "all" : "archived")}>
+        <Icon name="archive" size={18} />
+        <span class="archived-label">{chatFilter === "archived" ? "Back to chats" : "Archived"}</span>
+        {#if archivedChats > 0}
+          <span class="archived-count">{archivedChats > 99 ? "99+" : archivedChats}</span>
+        {/if}
+      </button>
+    {/if}
   {/if}
   {#if searchQuery.trim()}
     <ul class="results">
@@ -288,6 +296,7 @@
   </ul>
   {/if}
 
+  <NowPlaying />
   <footer class="user-panel">
     {#if accountMenu}
       <div class="account-menu" role="menu">
@@ -546,6 +555,49 @@
     gap: 8px;
     padding: 0 12px 8px;
     flex: none;
+  }
+  .archived-entry {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0 12px 8px;
+    padding: 0 14px;
+    height: 46px;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: var(--raised);
+    color: var(--text);
+    font: inherit;
+    font-size: 14.5px;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+  }
+  .archived-entry:hover {
+    background: var(--raised-2);
+  }
+  .archived-entry.active {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .archived-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .archived-count {
+    flex: none;
+    min-width: 20px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    text-align: center;
   }
   .results .preview {
     color: var(--faint);

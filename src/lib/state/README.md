@@ -8,7 +8,8 @@ Single source of truth for where application state lives. The rule:
   search, pins, avatars, group panel), `messages` (scrollback, marks, recall,
   downloads, autoplay, mention queue), `members` (roster, learned names,
   sender resolution, typing/presence, open group), `composer` (drafts,
-  tray, autocomplete, send pipeline, send privacy).
+  tray, autocomplete, send pipeline, send privacy), `player` (the single
+  voice-note audio engine, waveform cache and heard marks).
 - **The backend event stream maps onto domains in `state/events.ts`.**
   Each `ServiceEvent` kind updates domain state there; view-only callbacks
   (scrolling, reconnecting) arrive via the `EventHost` the route registers.

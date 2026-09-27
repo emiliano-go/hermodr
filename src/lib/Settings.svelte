@@ -10,6 +10,7 @@
     send_receipts: boolean;
     keep_history: boolean;
     skip_loading_screen: boolean;
+    keep_archived: boolean;
   };
   export type Account = { id: string; label: string; jid: string | null };
   export type Section =
@@ -17,6 +18,7 @@
     | "accounts"
     | "whatsapp"
     | "privacy"
+    | "chats"
     | "media"
     | "startup"
     | "keybinds"
@@ -152,6 +154,7 @@
     { id: "accounts", label: "My accounts", group: "User settings" },
     ...(me ? [{ id: "whatsapp" as Section, label: "WhatsApp privacy", group: "User settings" }] : []),
     { id: "privacy", label: "Storage & history", group: "App settings" },
+    { id: "chats", label: "Chats", group: "App settings" },
     { id: "media", label: "Media", group: "App settings" },
     { id: "startup", label: "Startup", group: "App settings" },
     { id: "keybinds", label: "Keybinds", group: "App settings" },
@@ -570,6 +573,18 @@
               <button class="button danger" onclick={() => (clearingHistory = true)}>Clear history</button>
             {/if}
           </div>
+        {:else if section === "chats"}
+          <h2>Chats</h2>
+          <label class="setting">
+            <div>
+              <span class="setting-title">Keep chats archived</span>
+              <span class="setting-desc">
+                On: a new message leaves the chat in the Archived list. Off: the chat moves back to
+                your main list as soon as a message arrives.
+              </span>
+            </div>
+            <input class="switch" type="checkbox" bind:checked={draft.keep_archived} />
+          </label>
         {:else if section === "media"}
           <h2>Media</h2>
           <label class="setting">

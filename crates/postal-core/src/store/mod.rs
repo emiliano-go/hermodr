@@ -736,6 +736,44 @@ impl MessageStore {
             conn.execute("ALTER TABLE messages ADD COLUMN status TEXT", [])?;
         }
 
+        // One direct chat can be stored under both its LID and phone-number
+        // forms, which shows the same contact twice. Fold the LID copy onto the
+        // phone-number one; the write path now keys direct chats by number.
+        let lid_chats: Vec<String> = {
+            let mut found = std::collections::BTreeSet::new();
+            for (table, column) in [
+                ("messages", "chat"),
+                ("chat_state", "jid"),
+                ("pins", "jid"),
+                ("cleared_chats", "jid"),
+                ("hidden_chats", "jid"),
+            ] {
+                let mut stmt = conn.prepare(&format!(
+                    "SELECT DISTINCT {column} FROM {table} WHERE {column} LIKE '%@lid'"
+                ))?;
+                let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+                for row in rows {
+                    found.insert(row?);
+                }
+            }
+            found.into_iter().collect()
+        };
+        if !lid_chats.is_empty() {
+            let tx = conn.unchecked_transaction()?;
+            for lid_chat in &lid_chats {
+                let Some(user) = lid_chat.split('@').next().and_then(|u| u.split(':').next()) else {
+                    continue;
+                };
+                let pn: Option<String> = tx
+                    .query_row("SELECT pn FROM lid_pn WHERE lid = ?1", params![user], |r| r.get(0))
+                    .optional()?;
+                if let Some(pn) = pn {
+                    chats::fold_chat(&tx, lid_chat, &format!("{pn}@s.whatsapp.net"))?;
+                }
+            }
+            tx.commit()?;
+        }
+
         Ok(Self {
             conn: Mutex::new(conn),
             retention: Mutex::new(retention),

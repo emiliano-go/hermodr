@@ -229,6 +229,9 @@ impl Service {
 
         let qr_state = Arc::new(Mutex::new(None));
         let connected_state = Arc::new(AtomicBool::new(false));
+        // Whether a new message keeps an archived chat archived; shared with the
+        // event handler so the setting applies without a reconnect.
+        let keep_archived_state = Arc::new(AtomicBool::new(config.keep_archived));
         // Whether the address book has already been replayed this run.
         let names_resynced = Arc::new(AtomicBool::new(false));
         // The client only exists once the bot is built, but the message handler
@@ -259,6 +262,7 @@ impl Service {
             downloads: Arc::new(tokio::sync::Semaphore::new(4)),
             sync_progress: sync_progress.clone(),
             auto_download_default: config.auto_download_media,
+            keep_archived: keep_archived_state.clone(),
         };
 
         let bot = Bot::builder()
@@ -431,6 +435,7 @@ impl Service {
                 media_dir,
                 qr: qr_state,
                 connected: connected_state,
+                keep_archived: keep_archived_state,
                 subject_backoff: Mutex::default(),
                 nameless: Mutex::default(),
                 resolving: AtomicBool::new(false),
@@ -458,6 +463,16 @@ impl Service {
     /// Whether the account is currently connected.
     pub fn is_connected(&self) -> bool {
         self.connected.load(Ordering::SeqCst)
+    }
+
+    /// Whether archived chats stay archived when a new message arrives.
+    pub fn keep_archived(&self) -> bool {
+        self.keep_archived.load(Ordering::SeqCst)
+    }
+
+    /// Changes the keep-archived behavior without a reconnect.
+    pub fn set_keep_archived(&self, keep: bool) {
+        self.keep_archived.store(keep, Ordering::SeqCst);
     }
 
     /// Stops the background task.

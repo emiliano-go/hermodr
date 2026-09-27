@@ -17,6 +17,9 @@ pub(super) struct Inbound {
     pub(super) downloads: Arc<tokio::sync::Semaphore>,
     pub(super) sync_progress: Arc<Mutex<SyncProgress>>,
     pub(super) auto_download_default: bool,
+    /// Whether a new message keeps an archived chat archived. Off moves it back
+    /// to the main list and tells the account, as WhatsApp does.
+    pub(super) keep_archived: Arc<AtomicBool>,
 }
 
 impl Inbound {
@@ -106,7 +109,12 @@ impl Inbound {
                     _ => "paused",
                 };
                 let _ = events.send(ServiceEvent::Typing {
-                    chat: update.source.chat.to_non_ad().to_string(),
+                    chat: canonical_chat(
+                        store,
+                        &update.source.chat,
+                        &update.source.sender,
+                        None,
+                    ),
                     sender: update.source.sender.to_non_ad().to_string(),
                     state: state.to_string(),
                 });
@@ -147,7 +155,12 @@ impl Inbound {
                     == whatsapp_rust::wacore::types::events::UnavailableType::ViewOnce =>
             {
                 let info = &stub.info;
-                let chat = info.source.chat.to_string();
+                let chat = canonical_chat(
+                    store,
+                    &info.source.chat,
+                    &info.source.sender,
+                    info.source.sender_alt.as_ref(),
+                );
                 let id = info.id.to_string();
                 if store.message(&chat, &id).is_ok() {
                     return;
@@ -249,13 +262,27 @@ impl Inbound {
                     .collect()
             })
             .unwrap_or_default();
+        let mut touched: Vec<String> = Vec::with_capacity(batch.messages.len());
         for inbound in batch.messages.iter() {
             // The envelope carries the sender's display
             // name, which is the only name source
             // available without a contacts query.
             let push_name = inbound.info.push_name.to_string();
-            let chat = inbound.info.source.chat.to_string();
             let sender = inbound.info.source.sender.to_string();
+            let raw_chat = inbound.info.source.chat.to_non_ad().to_string();
+            let chat = canonical_chat(
+                store,
+                &inbound.info.source.chat,
+                &inbound.info.source.sender,
+                inbound.info.source.sender_alt.as_ref(),
+            );
+            touched.push(chat.clone());
+            // The LID form of a direct chat still holding history folds onto the
+            // phone-number form, so a split cannot outlive this message.
+            if raw_chat != chat && raw_chat.ends_with("@lid") && store.chat_exists(&raw_chat).unwrap_or(false)
+            {
+                store.merge_chats(&raw_chat, &chat).logged();
+            }
             let is_group = inbound.info.source.is_group
                 || chat.ends_with("@g.us");
             let from_me = inbound.info.source.is_from_me;
@@ -520,7 +547,7 @@ impl Inbound {
                     .flatten()
                     .unwrap_or(auto_download_default);
             let Some(mut message) =
-                incoming_message(inbound, client.as_deref(), media_dir.as_deref(), false)
+                incoming_message(&chat, inbound, client.as_deref(), media_dir.as_deref(), false)
                     .await
             else {
                 continue;
@@ -551,22 +578,43 @@ impl Inbound {
                 // Count backlog progress so the loading
                 // screen's bar tracks stored messages, not
                 // raw inbound events.
-                let mut p = sync_progress.lock().unwrap();
-                if p.pending > 0 && !p.offline_done {
-                    p.applied = (p.applied + 1).min(p.pending);
-                    p.last_progress = Some(std::time::Instant::now());
-                    let emit = p.applied >= p.pending
-                        || p.last_emit.map_or(true, |t| {
-                            t.elapsed()
-                                >= std::time::Duration::from_millis(50)
-                        });
-                    if emit {
-                        p.last_emit = Some(std::time::Instant::now());
-                        let (pending, applied) = (p.pending, p.applied);
-                        drop(p);
-                        let _ = events.send(ServiceEvent::Syncing {
-                            pending,
-                            applied,
+                {
+                    let mut p = sync_progress.lock().unwrap();
+                    if p.pending > 0 && !p.offline_done {
+                        p.applied = (p.applied + 1).min(p.pending);
+                        p.last_progress = Some(std::time::Instant::now());
+                        let emit = p.applied >= p.pending
+                            || p.last_emit.map_or(true, |t| {
+                                t.elapsed()
+                                    >= std::time::Duration::from_millis(50)
+                            });
+                        if emit {
+                            p.last_emit = Some(std::time::Instant::now());
+                            let (pending, applied) = (p.pending, p.applied);
+                            drop(p);
+                            let _ = events.send(ServiceEvent::Syncing {
+                                pending,
+                                applied,
+                            });
+                        }
+                    }
+                }
+                // A new incoming message moves an archived chat back to the main
+                // list unless the account keeps archived chats archived. The
+                // account is told too, so the phone cannot re-archive it later.
+                if !from_me
+                    && !self.keep_archived.load(Ordering::SeqCst)
+                    && store.is_archived(&chat).unwrap_or(false)
+                {
+                    store.set_archived(&chat, false).logged();
+                    let _ = events.send(ServiceEvent::ChatStateChanged { chat: chat.clone() });
+                    if let (Some(client), Ok(jid)) = (client.clone(), chat.parse::<Jid>()) {
+                        tokio::spawn(async move {
+                            if let Err(e) =
+                                client.chat_actions().unarchive_chat(&jid, None).await
+                            {
+                                log::warn!("could not unarchive {jid}: {e}");
+                            }
                         });
                     }
                 }
@@ -596,8 +644,6 @@ impl Inbound {
         // Bound the store right after writes so the
         // limit holds even if the process stops.
         let pruning = std::time::Instant::now();
-        let mut touched: Vec<String> =
-            batch.messages.iter().map(|m| m.info.source.chat.to_string()).collect();
         touched.sort_unstable();
         touched.dedup();
         let removed = match store.enforce_retention_for(&touched) {

@@ -13,6 +13,36 @@ pub(super) fn remember_lid_pn(store: &MessageStore, sender: &Jid, alt: Option<&J
     store.set_lid_pn(&lid.user, &pn.user).logged();
 }
 
+/// The chat key a direct message belongs under: the phone-number form when the
+/// mapping is known, so both address forms share one chat. Groups and already
+/// numbered chats pass through untouched.
+pub(super) fn canonical_chat(
+    store: &MessageStore,
+    chat: &Jid,
+    sender: &Jid,
+    alt: Option<&Jid>,
+) -> String {
+    let bare = chat.to_non_ad();
+    if chat.is_group() || !bare.is_lid() {
+        return bare.to_string();
+    }
+    // A direct chat's sender is the contact, and the message often carries the
+    // contact's other form.
+    if sender.to_non_ad().to_string() == bare.to_string() {
+        if let Some(other) = alt {
+            let other = other.to_non_ad();
+            if other.is_pn() {
+                store.set_lid_pn(&bare.user, &other.user).logged();
+                return other.to_string();
+            }
+        }
+    }
+    if let Ok(Some((_, pn))) = store.lid_pn(&bare.user) {
+        return format!("{pn}@s.whatsapp.net");
+    }
+    bare.to_string()
+}
+
 /// The other address form of a bare user JID, from the session or our own record of it.
 pub(super) async fn other_form(client: &Client, store: &MessageStore, bare: &Jid) -> Option<(String, String)> {
     if let Ok(Some(entry)) = client.get_lid_pn_entry(bare).await {

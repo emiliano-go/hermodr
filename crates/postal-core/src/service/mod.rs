@@ -334,6 +334,9 @@ pub struct ServiceConfig {
     /// Whether incoming media is downloaded when it arrives. A chat can
     /// override this in the store.
     pub auto_download_media: bool,
+    /// Whether archived chats stay archived when a new message arrives. Off
+    /// moves the chat back to the main list.
+    pub keep_archived: bool,
 }
 
 impl ServiceConfig {
@@ -347,6 +350,7 @@ impl ServiceConfig {
             retention: Retention::default(),
             accept_full_history: false,
             auto_download_media: true,
+            keep_archived: true,
             media_dir: Some(data_dir.join("media")),
         }
     }
@@ -370,6 +374,8 @@ pub struct Service {
     /// a late subscriber would otherwise miss entirely.
     qr: Arc<Mutex<Option<String>>>,
     connected: Arc<AtomicBool>,
+    /// Whether archived chats stay archived when new messages arrive.
+    keep_archived: Arc<AtomicBool>,
     /// Groups whose subject query failed: when to retry, and the wait that set it.
     subject_backoff: Mutex<std::collections::HashMap<String, (std::time::Instant, Duration)>>,
     /// JIDs the server already had no name for this run, so the UI's repeated

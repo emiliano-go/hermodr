@@ -49,6 +49,10 @@ pub struct UiSettings {
     /// Off holds the loading screen until the initial backlog is applied.
     #[serde(default)]
     pub skip_loading_screen: bool,
+    /// Whether archived chats stay archived when a new message arrives. Off
+    /// moves the chat back to the main list.
+    #[serde(default = "default_true")]
+    pub keep_archived: bool,
 }
 
 fn default_true() -> bool {
@@ -67,6 +71,7 @@ impl Default for UiSettings {
             send_receipts: true,
             keep_history: true,
             skip_loading_screen: false,
+            keep_archived: true,
         }
     }
 }
@@ -279,6 +284,7 @@ fn config_for(app: &AppHandle, settings: &UiSettings, account: &str) -> ServiceC
         retention: settings.retention,
         accept_full_history: settings.accept_full_history,
         auto_download_media: settings.auto_download_media,
+        keep_archived: settings.keep_archived,
         // An unset or empty setting falls back to the app data directory.
         media_dir: settings
             .media_dir
@@ -1695,6 +1701,7 @@ fn set_settings(app: AppHandle, state: State<'_, AppState>, settings: UiSettings
     std::fs::write(path, json).map_err(|e| e.to_string())?;
     if let Ok(service) = state.service() {
         service.set_retention(settings.retention, settings.accept_full_history);
+        service.set_keep_archived(settings.keep_archived);
     }
     *state.settings.lock().unwrap() = settings;
     Ok(())

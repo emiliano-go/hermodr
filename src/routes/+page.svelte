@@ -32,6 +32,7 @@
   import { dispatchServiceEvent, queueRefreshChats, refreshResolvedNames } from "$lib/state/events";
   import { members } from "$lib/state/members.svelte";
   import { messages } from "$lib/state/messages.svelte";
+  import { player } from "$lib/state/player.svelte";
   import { session } from "$lib/state/session.svelte";
   import { ui } from "$lib/state/ui.svelte";
   import Settings, { type Section } from "$lib/Settings.svelte";
@@ -376,6 +377,7 @@
     members.resetAccount();
     composer.resetAccount();
     ui.resetAccount();
+    player.stop();
   }
 
   /** Starts the account picked on the launch chooser. */
@@ -1493,7 +1495,10 @@
           }}
           onreact={(m, emoji) => act(() => invoke("react", { target: target(m), emoji }))}
           onmarkplayed={(m) => messages.markPlayed(m)}
-          onnextvoice={(m) => messages.playNextVoice(m)}
+          onnextvoice={(m) => {
+            // A note left playing in another chat has nothing to chain to.
+            if (chats.selectedChat === m.chat) messages.playNextVoice(m);
+          }}
           onpausevoice={() => (messages.autoplayId = null)}
           onreplymenu={(e, m) => {
             const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();

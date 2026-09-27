@@ -59,6 +59,7 @@ export class SessionState {
     send_receipts: true,
     keep_history: true,
     skip_loading_screen: false,
+    keep_archived: true,
   });
 
   /** Interface scale, persisted under `postal.zoom`; Ctrl +/-/0 adjust it. */

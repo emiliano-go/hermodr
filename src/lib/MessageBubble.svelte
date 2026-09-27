@@ -176,7 +176,12 @@ import VideoPlayer from "$lib/VideoPlayer.svelte";
       {#if onceKind === "video" || onceKind === "gif"}
         <VideoPlayer src={convertFileSrc(message.media_path)} autoplay={false} />
       {:else if onceKind === "audio"}
-        <AudioPlayer path={message.media_path} duration={message.media_duration} />
+        <AudioPlayer
+          path={message.media_path}
+          duration={message.media_duration}
+          avatar={vm.voiceAvatar}
+          title={message.from_me ? "You" : vm.senderText}
+          initials={initials(message.from_me ? "You" : vm.senderText)} />
       {:else if onceKind === "sticker"}
         <img class="sticker" src={convertFileSrc(message.media_path)} alt="Sticker" />
       {:else}
@@ -241,6 +246,7 @@ import VideoPlayer from "$lib/VideoPlayer.svelte";
         avatar={vm.voiceAvatar}
         mine={message.from_me}
         play={vm.autoplay}
+        title={message.from_me ? "You" : vm.senderText}
         onplayed={() => api.onmarkplayed(message)}
         onended={() => api.onnextvoice(message)}
         onpaused={() => api.onpausevoice()}
