@@ -348,6 +348,7 @@ impl WhatsAppService {
         };
 
         let bot = Bot::builder()
+            .with_watched_ab_props(super::diagnostics::boolean_props())
             .with_backend(SqliteStore::new(config.session_path.to_string_lossy().as_ref()).await?)
             .with_history_sync_admission(policy)
             .with_device_props(pairing_props(config.accept_full_history, config.android_pair))

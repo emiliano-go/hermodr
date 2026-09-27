@@ -117,6 +117,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             connection::connection_state,
+            connection::boolean_props,
             connection::connect,
             accounts::accounts,
             accounts::add_account,

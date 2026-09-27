@@ -46,6 +46,7 @@
   import Button from "$lib/Button.svelte";
   import Customization from "$lib/Customization.svelte";
   import Panel from "$lib/Panel.svelte";
+  import BooleanProps from "$lib/BooleanProps.svelte";
   import {
     ACTIONS,
     keybinds,
@@ -736,6 +737,7 @@
             </div>
             <button class="button" onclick={() => invoke("open_log").catch(() => {})}>Open log</button>
           </div>
+          <BooleanProps />
         {/if}
 
   {#snippet footer()}

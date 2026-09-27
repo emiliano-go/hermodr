@@ -43,6 +43,11 @@ pub(crate) fn connection_state(state: State<'_, AppState>) -> ConnectionState {
     }
 }
 
+#[tauri::command]
+pub(crate) async fn boolean_props(state: State<'_, AppState>) -> Result<Vec<postal_core::service::BooleanProp>, String> {
+    Ok(state.service()?.boolean_props().await)
+}
+
 /// Connects the account, pairing by QR the first time.
 ///
 /// Returns once the service is running; the QR code and connection state arrive

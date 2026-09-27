@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-boolean-props"
+description = "Enables the boolean_props command without any pre-configured scope."
+commands.allow = ["boolean_props"]
+
+[[permission]]
+identifier = "deny-boolean-props"
+description = "Denies the boolean_props command without any pre-configured scope."
+commands.deny = ["boolean_props"]

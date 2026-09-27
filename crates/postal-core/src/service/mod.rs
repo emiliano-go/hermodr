@@ -37,6 +37,7 @@ use crate::{
 
 mod connection;
 mod contacts;
+mod diagnostics;
 mod groups;
 mod history;
 mod inbound;
@@ -70,6 +71,7 @@ use polls::*;
 /// Deletes recovered view-once files no stored message points at any more. Part
 /// of the service's public surface so a caller holding only a store can run it.
 pub use media_download::prune_quote_files;
+pub use diagnostics::BooleanProp;
 
 use crate::store::is_placeholder_name;
 

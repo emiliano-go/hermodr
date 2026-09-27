@@ -118,6 +118,12 @@ On Wayland, WebKitGTK's DMA-BUF renderer fails with `Gdk Error 71`. The app sets
 
 ## Diagnostics
 
+Settings → About → Server feature flags shows watched boolean A/B properties,
+their registry defaults and their last received server values. Refresh reads the
+local cache; Watch checks it every five seconds while the panel is open.
+"Not received" is distinct from false. Postal currently exposes these flags for
+diagnostics without using them to gate product features.
+
 By default, new links advertise Android with the `ANDROID_TABLET` platform and WhatsApp
 Android version `2.26.32.84`, published on the [official download page](https://www.whatsapp.com/download)
 when checked on 2026-09-27. Existing links keep their original pairing props;

@@ -22,6 +22,7 @@
     "allow-set-settings",
     "allow-qr-svg",
     "allow-connection-state",
+    "allow-boolean-props",
     "allow-paired-mode",
     "allow-resolve-names",
     "allow-mark-read",
