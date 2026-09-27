@@ -5,6 +5,25 @@ fn keep(names: &[&str]) -> Vec<String> {
 }
 
 #[test]
+fn ipc_commands_match_build_and_capabilities() {
+    use std::collections::BTreeSet;
+    let build = include_str!("../build.rs").split("];").next().unwrap();
+    let commands: BTreeSet<_> = build.split('"').skip(1).step_by(2).collect();
+    let source = include_str!("lib.rs");
+    let handlers: BTreeSet<_> = source.split("generate_handler![").nth(1).unwrap()
+        .split(']').next().unwrap().split(',').map(str::trim).filter(|name| !name.is_empty())
+        .map(|name| name.rsplit("::").next().unwrap()).collect();
+    assert!(!commands.is_empty());
+    assert_eq!(commands, handlers);
+    let capabilities: serde_json::Value = serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
+    let permissions = capabilities["permissions"].as_array().unwrap();
+    for command in commands {
+        let permission = format!("allow-{}", command.replace('_', "-"));
+        assert!(permissions.iter().any(|value| value.as_str() == Some(&permission)), "{permission}");
+    }
+}
+
+#[test]
 fn webview_policy_keeps_scripts_local_and_scopes_style_relaxation() {
     let config: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
     let security = &config["app"]["security"];

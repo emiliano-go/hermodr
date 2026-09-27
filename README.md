@@ -118,12 +118,12 @@ On Wayland, WebKitGTK's DMA-BUF renderer fails with `Gdk Error 71`. The app sets
 
 ## Diagnostics
 
-New links advertise Android with the `ANDROID_TABLET` platform and WhatsApp
+By default, new links advertise Android with the `ANDROID_TABLET` platform and WhatsApp
 Android version `2.26.32.84`, published on the [official download page](https://www.whatsapp.com/download)
 when checked on 2026-09-27. Existing links keep their original pairing props;
 unlink Postal from the phone and pair again to adopt this identity.
 
-Each connection also sets Android handshake metadata (`ANDROID`, device
+Android mode also sets handshake metadata on each connection (`ANDROID`, device
 `Tablet`, Android `13`) and omits browser `WebInfo`. This is the library's
 supported metadata profile: transport remains the Web companion socket, with
 its separate three-part protocol version. Full native Android transport and a
@@ -149,7 +149,8 @@ the levels; past 5 MB the file moves to `postal.log.old`.
 Right-click an image for **Copy Image**, **Save Image…**, or **Open Image**.
 Save uses the native file picker and preserves the original file. Copy places
 decoded image pixels on the clipboard. Other attachments offer Save and Open.
-Missing files download on demand; deleted and view-once messages cannot be exported.
+Missing files download on demand; deleted and one-time messages cannot be exported.
+Media kept through the view-once retention setting follows ordinary attachment actions.
 
 Downloaded media is written to the folder set in Settings, which defaults to the
 app data directory. The asset protocol is scoped to whatever folder is

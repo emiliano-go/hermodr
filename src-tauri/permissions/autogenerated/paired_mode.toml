@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-paired-mode"
+description = "Enables the paired_mode command without any pre-configured scope."
+commands.allow = ["paired_mode"]
+
+[[permission]]
+identifier = "deny-paired-mode"
+description = "Denies the paired_mode command without any pre-configured scope."
+commands.deny = ["paired_mode"]

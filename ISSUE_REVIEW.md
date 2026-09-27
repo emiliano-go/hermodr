@@ -5,6 +5,12 @@ does not complete an application feature. “Resolved” below means acceptance
 was checked against current source and test evidence; GitHub comments link
 the relevant commits. Remaining rows stay open.
 
+Closed #52, #151, #152, #153, #184 and #185 using `gh`; 49 assigned issues remain
+open. Concurrent master commit `a1c144b` added dual pairing modes and retained
+media/read-sync behavior after this review. Its changes were preserved; the
+missing `paired_mode` build/capability declarations were fixed and a command
+registration parity test was added.
+
 ## Resolved
 
 | Issues | Evidence |

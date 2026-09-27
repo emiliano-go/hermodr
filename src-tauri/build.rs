@@ -1,5 +1,6 @@
 const COMMANDS: &[&str] = &[
     "connection_state",
+    "paired_mode",
     "connect",
     "accounts",
     "add_account",
