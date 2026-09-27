@@ -23,6 +23,8 @@
     onsettings,
     onjumpmention,
     onpinnedjump,
+    onclearchat,
+    ondeletechat,
   }: {
     selectedChat: string;
     isGroup: boolean;
@@ -41,7 +43,20 @@
     onsettings: () => void;
     onjumpmention: () => void;
     onpinnedjump: (id: string) => void;
+    onclearchat: () => void;
+    ondeletechat: () => void;
   } = $props();
+
+  let optionsOpen = $state(false);
+
+  function toggleOptions(event: MouseEvent) {
+    event.stopPropagation();
+    optionsOpen = !optionsOpen;
+  }
+
+  function closeOptions() {
+    optionsOpen = false;
+  }
 </script>
 
 <header class="chat-header">
@@ -89,6 +104,37 @@
       title="Chat settings"
       aria-label="Chat settings"
       onclick={onsettings} />
+    <div class="options-wrap">
+      <Button
+        variant="icon"
+        iconSize={18}
+        title="Chat options"
+        aria-label="Chat options"
+        aria-expanded={optionsOpen}
+        onclick={toggleOptions}>⋯</Button>
+      {#if optionsOpen}
+        <div class="options-menu" role="menu">
+          <Button
+            variant="menu"
+            icon="edit"
+            iconSize={15}
+            role="menuitem"
+            onclick={() => {
+              closeOptions();
+              onclearchat();
+            }}>Clear chat</Button>
+          <Button
+            variant="menu"
+            icon="trash"
+            iconSize={15}
+            role="menuitem"
+            onclick={() => {
+              closeOptions();
+              ondeletechat();
+            }}>Delete chat</Button>
+        </div>
+      {/if}
+    </div>
   </div>
   {#if mentionTotal > 0}
     <button class="jump-mention" title="Jump to mention" onclick={onjumpmention}>
@@ -97,6 +143,14 @@
     </button>
   {/if}
 </header>
+
+<svelte:window
+  onclick={(e) => {
+    if (optionsOpen && !(e.target as Element).closest?.(".options-wrap")) closeOptions();
+  }}
+  onkeydown={(e) => {
+    if (e.key === "Escape") closeOptions();
+  }} />
 
 {#if pinned}
   <button class="pinned-bar" onclick={() => onpinnedjump(pinned.id)}>
@@ -114,7 +168,7 @@
     height: 59px;
     box-sizing: border-box;
     flex: none;
-    overflow: hidden;
+    overflow: visible;
     padding: 0 12px 0 16px;
     display: flex;
     justify-content: space-between;
@@ -134,6 +188,24 @@
     gap: 2px;
     margin-left: auto;
     flex: none;
+    overflow: visible;
+  }
+  .options-wrap {
+    position: relative;
+  }
+  .options-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 50;
+    min-width: 180px;
+    display: flex;
+    flex-direction: column;
+    padding: 6px;
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
   }
   .heading-avatar {
     flex: none;

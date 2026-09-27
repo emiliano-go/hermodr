@@ -55,6 +55,8 @@
     onopenresult,
     onopenchat,
     ontogglepin,
+    onclearchat,
+    ondeletechat,
     onresize,
   }: {
     searchQuery: string;
@@ -91,8 +93,23 @@
     onopenresult: (result: SearchResult) => void;
     onopenchat: (chat: string, jumpToMention?: boolean) => void;
     ontogglepin: (chat: ChatSummary, event?: MouseEvent) => void;
+    onclearchat: (chat: ChatSummary) => void;
+    ondeletechat: (chat: ChatSummary) => void;
     onresize: (event: MouseEvent) => void;
   } = $props();
+
+  /** Right-click menu on a chat row: pin, clear, delete. */
+  let chatMenu = $state<{ x: number; y: number; chat: ChatSummary } | null>(null);
+
+  function openChatMenu(event: MouseEvent, chat: ChatSummary) {
+    event.preventDefault();
+    event.stopPropagation();
+    chatMenu = { x: event.clientX, y: event.clientY, chat };
+  }
+
+  function closeChatMenu() {
+    chatMenu = null;
+  }
 </script>
 
 <aside class="chats">
@@ -177,6 +194,7 @@
           role="button"
           tabindex="0"
           onclick={() => onopenchat(chat.chat)}
+          oncontextmenu={(e) => openChatMenu(e, chat)}
           onkeydown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
@@ -191,9 +209,12 @@
               >{:else if groupKinds[chat.chat]?.announcements}<span class="kind" title="Community announcements"
                 ><Icon name="volume" size={13} /></span
               >{/if}{chatLabelOf(chat)}</span>
-          <span class="time" class:unread={chat.unread_count > 0}>{formatTime(chat.last_message_at)}</span>
+          <span class="time" class:unread={chat.unread_count > 0}
+            >{chat.last_message_at > 0 ? formatTime(chat.last_message_at) : ""}</span>
           {#if typingLabelOf(chat.chat)}
             <span class="preview typing">{typingLabelOf(chat.chat)}</span>
+          {:else if chat.message_count === 0}
+            <span class="preview empty-chat">No messages yet</span>
           {:else}
             {@const author = previewAuthorOf(chat)}
             {@const icon = mediaIconOf(chat.last_media_kind)}
@@ -299,6 +320,55 @@
   </footer>
   <button type="button" class="resizer" aria-label="Resize chat list" onmousedown={onresize}></button>
 </aside>
+
+{#if chatMenu}
+  {@const menuChat = chatMenu.chat}
+  <div
+    class="chat-menu"
+    role="menu"
+    style="left: {Math.min(chatMenu.x, window.innerWidth - 220)}px; top: {Math.min(chatMenu.y, window.innerHeight - 160)}px">
+    <Button
+      variant="menu"
+      icon="pin"
+      iconSize={15}
+      role="menuitem"
+      onclick={() => {
+        ontogglepin(menuChat);
+        closeChatMenu();
+      }}>{menuChat.pinned ? "Unpin" : "Pin"}</Button>
+    <Button
+      variant="menu"
+      icon="edit"
+      iconSize={15}
+      role="menuitem"
+      onclick={() => {
+        const c = menuChat;
+        closeChatMenu();
+        onclearchat(c);
+      }}>Clear chat</Button>
+    <Button
+      variant="menu"
+      icon="trash"
+      iconSize={15}
+      role="menuitem"
+      onclick={() => {
+        const c = menuChat;
+        closeChatMenu();
+        ondeletechat(c);
+      }}>Delete chat</Button>
+  </div>
+{/if}
+
+<svelte:window
+  onclick={(e) => {
+    if (chatMenu && !(e.target as Element).closest?.(".chat-menu")) closeChatMenu();
+  }}
+  oncontextmenu={(e) => {
+    if (chatMenu && !(e.target as Element).closest?.(".chat-menu")) closeChatMenu();
+  }}
+  onkeydown={(e) => {
+    if (e.key === "Escape") closeChatMenu();
+  }} />
 
 <style>
   .chats {
@@ -680,5 +750,20 @@
   .chats .resizer {
     display: block;
     right: -3px;
+  }
+  .preview.empty-chat {
+    font-style: italic;
+  }
+  .chat-menu {
+    position: fixed;
+    z-index: 100;
+    min-width: 200px;
+    display: flex;
+    flex-direction: column;
+    padding: 6px;
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
   }
 </style>

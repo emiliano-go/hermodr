@@ -584,6 +584,11 @@ impl MessageStore {
              )",
             [],
         )?;
+        // Local-only chat list state. Clearing a chat drops its messages but
+        // keeps an empty row in the list; deleting one hides it until a new
+        // message arrives. Neither touches the phone or the other side.
+        conn.execute("CREATE TABLE IF NOT EXISTS hidden_chats (jid TEXT PRIMARY KEY)", [])?;
+        conn.execute("CREATE TABLE IF NOT EXISTS cleared_chats (jid TEXT PRIMARY KEY)", [])?;
 
         // The media reference is a blob, so it cannot go through the TEXT
         // migration loop above.

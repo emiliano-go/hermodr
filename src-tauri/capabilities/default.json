@@ -80,6 +80,8 @@
     "allow-load-older",
     "allow-flush-media",
     "allow-clear-history",
+    "allow-clear-chat",
+    "allow-delete-chat",
     "allow-frontend-log",
     "allow-group-kinds",
     "allow-open-log",

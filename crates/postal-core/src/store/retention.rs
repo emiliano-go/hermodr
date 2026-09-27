@@ -145,7 +145,8 @@ impl MessageStore {
             "DELETE FROM reactions; DELETE FROM stars; DELETE FROM message_pins;
              DELETE FROM polls; DELETE FROM poll_votes; DELETE FROM events;
              DELETE FROM event_responses; DELETE FROM view_once; DELETE FROM forwarded;
-             DELETE FROM edited; DELETE FROM receipts;",
+             DELETE FROM edited; DELETE FROM receipts; DELETE FROM hidden_chats;
+             DELETE FROM cleared_chats;",
         )?;
         reclaim(&conn, 0)?;
         Ok(removed)

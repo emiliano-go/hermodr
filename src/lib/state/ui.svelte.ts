@@ -58,6 +58,8 @@ export class UiState {
   pendingJump = $state<{ chat: string; id: string } | null>(null);
   /** Walks the chat's past back until the pending jump's message lands. */
   seeking = $state(false);
+  /** Per-chat clear/delete confirmation: local-only, never touches the other side. */
+  chatConfirm = $state<{ kind: "clear" | "delete"; chat: string } | null>(null);
 
   /** True while a newly opened chat's messages load, so the old ones fade out. */
   switching = $state(false);

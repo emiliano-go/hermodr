@@ -76,6 +76,9 @@ impl MessageStore {
     }
 
     /// One summary per chat, most recently active first.
+    ///
+    /// Deleted chats stay hidden until a new message arrives; cleared chats
+    /// stay as empty rows so the conversation keeps its place in the list.
     pub fn chats(&self) -> Result<Vec<ChatSummary>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare_cached(
@@ -89,7 +92,7 @@ impl MessageStore {
                           COUNT(*) AS message_count,
                           SUM(read = 0 AND from_me = 0) AS unread_count,
                           SUM(read = 0 AND from_me = 0 AND mentioned = 1) AS mention_count
-                   FROM messages GROUP BY chat) g
+                   FROM messages WHERE chat NOT IN (SELECT jid FROM hidden_chats) GROUP BY chat) g
              JOIN messages m ON m.rowid =
                   (SELECT rowid FROM messages WHERE chat = g.chat ORDER BY timestamp DESC LIMIT 1)
              LEFT JOIN names n ON n.jid = g.chat
@@ -97,7 +100,7 @@ impl MessageStore {
              LEFT JOIN pins p ON p.jid = g.chat
              ORDER BY pinned DESC, g.last_message_at DESC",
         )?;
-        let summaries = stmt
+        let mut summaries = stmt
             .query_map([], |row| {
                 Ok(ChatSummary {
                     chat: row.get(0)?,
@@ -115,6 +118,95 @@ impl MessageStore {
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(stmt);
+        // Cleared chats with no messages left: empty rows that keep the chat
+        // in the list. Chats with real messages are already above.
+        let mut empty = conn.prepare(
+            "SELECT c.jid, n.name, p.jid IS NOT NULL AS pinned
+             FROM cleared_chats c
+             LEFT JOIN names n ON n.jid = c.jid
+             LEFT JOIN pins p ON p.jid = c.jid
+             WHERE c.jid NOT IN (SELECT jid FROM hidden_chats)
+               AND NOT EXISTS (SELECT 1 FROM messages WHERE chat = c.jid)",
+        )?;
+        let empties = empty
+            .query_map([], |row| {
+                Ok(ChatSummary {
+                    chat: row.get::<_, String>(0)?,
+                    last_message_at: 0,
+                    message_count: 0,
+                    display_name: row.get(1)?,
+                    unread_count: 0,
+                    mention_count: 0,
+                    pinned: row.get::<_, i64>(2)? != 0,
+                    last_text: String::new(),
+                    last_from_me: false,
+                    last_sender_name: None,
+                    last_sender: String::new(),
+                    last_media_kind: None,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        summaries.extend(empties);
+        summaries.sort_by(|a, b| b.pinned.cmp(&a.pinned).then(b.last_message_at.cmp(&a.last_message_at)));
         Ok(summaries)
+    }
+
+    /// Drops every stored row for one chat, keeping names, pins and settings.
+    /// Returns how many messages went. Local-only: the phone keeps its copy.
+    fn drop_chat_messages(&self, conn: &rusqlite::Connection, jid: &str) -> Result<usize> {
+        conn.execute("DELETE FROM receipts WHERE id IN (SELECT id FROM messages WHERE chat = ?1)", params![jid])?;
+        conn.execute("DELETE FROM reactions WHERE chat = ?1", params![jid])?;
+        conn.execute("DELETE FROM stars WHERE chat = ?1", params![jid])?;
+        conn.execute("DELETE FROM message_pins WHERE chat = ?1", params![jid])?;
+        conn.execute("DELETE FROM polls WHERE chat = ?1", params![jid])?;
+        conn.execute("DELETE FROM poll_votes WHERE chat = ?1", params![jid])?;
+        conn.execute("DELETE FROM events WHERE chat = ?1", params![jid])?;
+        conn.execute("DELETE FROM event_responses WHERE chat = ?1", params![jid])?;
+        conn.execute("DELETE FROM view_once WHERE chat = ?1", params![jid])?;
+        conn.execute("DELETE FROM forwarded WHERE chat = ?1", params![jid])?;
+        conn.execute("DELETE FROM edited WHERE chat = ?1", params![jid])?;
+        // Media files left without a referent are removed from disk.
+        let paths: Vec<String> = {
+            let mut stmt = conn.prepare("SELECT media_path FROM messages WHERE chat = ?1 AND media_path IS NOT NULL")?;
+            let paths = stmt
+                .query_map(params![jid], |r| r.get(0))?
+                .collect::<rusqlite::Result<Vec<String>>>()?;
+            paths
+        };
+        let removed = conn.execute("DELETE FROM messages WHERE chat = ?1", params![jid])?;
+        for path in paths {
+            let _ = std::fs::remove_file(path);
+        }
+        Ok(removed)
+    }
+
+    /// Clears one chat: messages go, the empty chat stays in the list.
+    pub fn clear_chat(&self, jid: &str) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let removed = self.drop_chat_messages(&conn, jid)?;
+        conn.execute("DELETE FROM hidden_chats WHERE jid = ?1", params![jid])?;
+        conn.execute("INSERT OR IGNORE INTO cleared_chats (jid) VALUES (?1)", params![jid])?;
+        reclaim(&conn, 0)?;
+        Ok(removed)
+    }
+
+    /// Deletes one chat: messages go and the chat leaves the list until a new
+    /// message arrives. Local-only: the phone keeps its copy.
+    pub fn delete_chat(&self, jid: &str) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let removed = self.drop_chat_messages(&conn, jid)?;
+        conn.execute("DELETE FROM cleared_chats WHERE jid = ?1", params![jid])?;
+        conn.execute("DELETE FROM pins WHERE jid = ?1", params![jid])?;
+        conn.execute("INSERT OR IGNORE INTO hidden_chats (jid) VALUES (?1)", params![jid])?;
+        reclaim(&conn, 0)?;
+        Ok(removed)
+    }
+
+    /// A new message unhides its chat and retires its kept-empty row.
+    pub(crate) fn revive_chat(&self, conn: &rusqlite::Connection, jid: &str) -> Result<()> {
+        conn.execute("DELETE FROM hidden_chats WHERE jid = ?1", params![jid])?;
+        conn.execute("DELETE FROM cleared_chats WHERE jid = ?1", params![jid])?;
+        Ok(())
     }
 }
