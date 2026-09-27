@@ -37,6 +37,7 @@
   import { onMount, untrack } from "svelte";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { invoke } from "$lib/ipc";
+  import { base64Of as toBase64 } from "$lib/files";
   import { getVersion } from "@tauri-apps/api/app";
   import Icon from "$lib/Icon.svelte";
   import Button from "$lib/Button.svelte";
@@ -137,15 +138,6 @@
       pictureBusy = false;
       if (picker) picker.value = "";
     }
-  }
-
-  function toBase64(file: File) {
-    return new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
-      reader.onerror = () => reject(reader.error);
-      reader.readAsDataURL(file);
-    });
   }
 
   // Profile and WhatsApp privacy live on the account, so they wait for pairing.

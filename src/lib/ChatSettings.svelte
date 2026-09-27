@@ -1,12 +1,5 @@
-<script lang="ts" module>
-  export type ChatRetention = {
-    max_age_hours: number | null;
-    max_messages: number | null;
-    on_demand: boolean;
-  };
-</script>
-
 <script lang="ts">
+  import type { ChatRetention } from "$lib/models";
   import { onMount } from "svelte";
   import { fade, scale } from "svelte/transition";
   import {

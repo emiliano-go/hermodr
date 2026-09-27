@@ -17,6 +17,7 @@ import VideoPlayer from "$lib/VideoPlayer.svelte";
   import { mediaSrc } from "$lib/MediaViewer.svelte";
   import {
     CARD_LABELS,
+    isSvg,
     DRAWN_KINDS,
     VIEW_ONCE_LABEL,
     replyIcon,
@@ -31,11 +32,6 @@ import VideoPlayer from "$lib/VideoPlayer.svelte";
     if (/\.(ogg|opus|mp3|m4a|aac|wav)$/i.test(path)) return "audio";
     if (/\.(mp4|mov|m4v|webm|mkv)$/i.test(path)) return "video";
     return "image";
-  }
-
-  /** An SVG file sent as a document, which is drawn in place like a picture. */
-  function isSvg(m: StoredMessage) {
-    return m.media_kind === "document" && /\.svg$/i.test(m.media_path ?? m.text.split("\n")[0].trim());
   }
 
   function hostOf(url: string) {

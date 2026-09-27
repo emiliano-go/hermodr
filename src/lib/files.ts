@@ -1,5 +1,12 @@
-// File helpers for staging attachments. Moved out of +page.svelte so the
-// composer bar can reuse them without importing the page.
+export async function base64Of(blob: Blob): Promise<string> {
+  const buffer = new Uint8Array(await blob.arrayBuffer());
+  let binary = "";
+  for (let i = 0; i < buffer.length; i += 0x8000) {
+    binary += String.fromCharCode(...buffer.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}
+
 /**
  * Builds a small preview image data URL.
  *

@@ -1,11 +1,17 @@
 <script lang="ts">
   import "$lib/legacy";
+  import ThemeLayers from "$lib/ThemeLayers.svelte";
+  import { addAccount, chooseAccount, connect, reconnect, removeAccount, switchTo, syncState } from "$lib/state/accounts";
+  import { onDrop, onPaste } from "$lib/state/attachments";
+  import { openPings, openStarred, searchChat } from "$lib/state/finder";
+  import { act, canDeleteForEveryone, deleteMessage, eventFields, menuItems as messageMenuItems, saveEvent, target } from "$lib/state/message-actions";
   import { onMount, tick, untrack } from "svelte";
   import { invoke } from "$lib/ipc";
   import { listen } from "@tauri-apps/api/event";
   import StarredList from "$lib/StarredList.svelte";
-  import MessageFinder, { type FoundItem } from "$lib/MessageFinder.svelte";
-  import ChatSettings, { type ChatRetention } from "$lib/ChatSettings.svelte";
+  import MessageFinder from "$lib/MessageFinder.svelte";
+  import ChatSettings from "$lib/ChatSettings.svelte";
+  import type { ChatRetention } from "$lib/models";
   import ProfileCard from "$lib/ProfileCard.svelte";
   import ContactInfo from "$lib/ContactInfo.svelte";
   import MessageInfo from "$lib/MessageInfo.svelte";
@@ -29,7 +35,7 @@
   import { bare, captionOf, dayKey, dayLabel, formatTime, isSvg, MEDIA_LABELS } from "$lib/message";
   import { chats } from "$lib/state/chats.svelte";
   import { composer } from "$lib/state/composer.svelte";
-  import { dispatchServiceEvent, queueRefreshChats, refreshResolvedNames } from "$lib/state/events";
+  import { dispatchServiceEvent, queueRefreshChats } from "$lib/state/events";
   import { members } from "$lib/state/members.svelte";
   import { messages } from "$lib/state/messages.svelte";
   import { player } from "$lib/state/player.svelte";
@@ -41,22 +47,12 @@
   import MessageMenu, { type MenuItem } from "$lib/MessageMenu.svelte";
   import ChatPicker from "$lib/ChatPicker.svelte";
   import { keybinds, matches } from "$lib/keybinds.svelte";
-  import type { ChatEvent } from "$lib/models";
   import CreateDialog from "$lib/CreateDialog.svelte";
   import { plain } from "$lib/format";
-  import {
-    activeTheme,
-    appPicture,
-    applyTheme,
-    chatPicture,
-    customization,
-    lensMap,
-    save as saveCustomization,
-  } from "$lib/theme.svelte";
+  import { customization, lensMap } from "$lib/theme.svelte";
 
   import type {
     ChatPrivacy,
-    ConnectionState,
     SearchResult,
     ServiceEvent,
     StoredMessage,
@@ -69,86 +65,9 @@
   }
 
   $effect(() => {
-    applyTheme(activeTheme());
-    saveCustomization();
-  });
-
-  /** The app's background picture, loaded from IndexedDB. */
-  let appPictureUrl = $state<string | null>(null);
-  $effect(() => {
-    void customization.background?.v;
-    if (!customization.background) {
-      appPictureUrl = null;
-      return;
-    }
-    appPicture()
-      .then((url) => (appPictureUrl = url ?? null))
-      .catch(() => {});
-  });
-
-  /** The user's background picture, else the theme's wallpaper, as a CSS background. */
-  const wallpaper = $derived.by(() => {
-    if (!appPictureUrl || !customization.background) return activeTheme().wallpaper ?? null;
-    const dim = `rgba(0, 0, 0, ${customization.background.dim})`;
-    return `linear-gradient(${dim}, ${dim}), url("${appPictureUrl}") center / cover no-repeat, #000`;
-  });
-
-  /** The theme's own layer, then CSS extensions, kept from closing their style element. */
-  const extensionCss = $derived(
-    [
-      {
-        id: `theme-${activeTheme().id}`,
-        // The wallpaper is its own oversized layer behind everything, so a theme can move it
-        // cheaply. A picture also shows through the chat, which is otherwise opaque.
-        css:
-          (wallpaper
-            ? `html, body { background: transparent !important; }
-               .stage { isolation: isolate; }
-               body::before, .stage::before { content: ""; position: fixed; inset: -25%; z-index: -1;
-                 pointer-events: none; background: ${wallpaper}; }
-               .stage::before { position: absolute; }`
-            : "") +
-          // A picture stays still: moving it would re-filter every glass surface on each frame.
-          (appPictureUrl
-            ? `.conversation, .pairing { background: color-mix(in srgb, var(--chat-bg) 55%, transparent) !important; }
-               body::before, .stage::before { animation: none !important; }`
-            : "") +
-          (activeTheme().css ?? ""),
-      },
-      ...customization.extensions.filter((e) => e.enabled),
-    ]
-      .filter((e) => e.css.trim())
-      .map((e) => `<style data-extension="${e.id}">${e.css.replace(/<\/style/gi, "<\\/style")}</style>`)
-      .join(""),
-  );
-
-  $effect(() => {
     session.applyZoom();
   });
 
-  /** The open chat's own background picture, loaded from IndexedDB. */
-  let chatPictureUrl = $state<string | null>(null);
-  $effect(() => {
-    const jid = chats.selectedChat;
-    const meta = jid ? customization.chatBackgrounds?.[jid] : undefined;
-    if (!jid || !meta) {
-      chatPictureUrl = null;
-      return;
-    }
-    let live = true;
-    void meta.v;
-    chatPicture(jid)
-      .then((url) => live && (chatPictureUrl = url ?? null))
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  });
-  const chatPictureCss = $derived.by(() => {
-    if (!chatPictureUrl || !chats.selectedChat) return "";
-    const dim = `rgba(0, 0, 0, ${customization.chatBackgrounds?.[chats.selectedChat]?.dim ?? 0.25})`;
-    return `<style data-chat-picture>.conversation { background: linear-gradient(${dim}, ${dim}), url("${chatPictureUrl}") center / cover no-repeat !important; }</style>`;
-  });
   let composerInput: HTMLTextAreaElement | undefined = $state();
   // The composer module reads the element at event time; synced here.
   $effect(() => {
@@ -369,68 +288,6 @@
     ui.notice = null;
   }
 
-  /** Clears everything tied to the current account before switching. */
-  function resetUi() {
-    chats.resetAccount();
-    session.resetAccount();
-    messages.resetAccount();
-    members.resetAccount();
-    composer.resetAccount();
-    ui.resetAccount();
-    player.stop();
-  }
-
-  /** Starts the account picked on the launch chooser. */
-  async function chooseAccount(id: string) {
-    session.choosingAccount = false;
-    if (id === session.activeAccount) await connect();
-    else await switchTo(id);
-  }
-
-  async function switchTo(id: string) {
-    if (id === session.activeAccount) return;
-    try {
-      resetUi();
-      session.connected = false;
-      await session.showQr(null);
-      await invoke("switch_account", { id });
-      await session.loadAccounts();
-      await syncState();
-    } catch (e) {
-      ui.fail(e);
-    }
-  }
-
-  async function removeAccount(id: string) {
-    try {
-      if (id === session.activeAccount) {
-        ui.showSettings = false;
-        resetUi();
-        session.connected = false;
-        await session.showQr(null);
-      }
-      await invoke("remove_account", { id });
-      await session.loadAccounts();
-      await syncState();
-    } catch (e) {
-      ui.fail(e);
-    }
-  }
-
-  async function addAccount() {
-    try {
-      resetUi();
-      session.connected = false;
-      await session.showQr(null);
-      await invoke("add_account", {});
-      await session.loadAccounts();
-      await syncState();
-    } catch (e) {
-      ui.fail(e);
-    }
-  }
-
-
   /** Opens a search result, even one with no local history. */
   function openFromSearch(result: SearchResult) {
     chats.clearSearch();
@@ -608,112 +465,6 @@
 
 
 
-  /** Media extensions that can be staged from a pasted file path. */
-  const PASTABLE = /\.(jpe?g|png|gif|webp|svg|mp4|mov|m4v|webm|mkv|ogg|opus|mp3|m4a|aac|wav)$/i;
-
-  function mimeForName(name: string) {
-    const extension = name.slice(name.lastIndexOf(".") + 1).toLowerCase();
-    const table: Record<string, string> = {
-      jpg: "image/jpeg",
-      jpeg: "image/jpeg",
-      png: "image/png",
-      gif: "image/gif",
-      webp: "image/webp",
-      svg: "image/svg+xml",
-      mp4: "video/mp4",
-      mov: "video/mp4",
-      m4v: "video/mp4",
-      webm: "video/webm",
-      mkv: "video/x-matroska",
-      ogg: "audio/ogg",
-      opus: "audio/ogg",
-      mp3: "audio/mpeg",
-      m4a: "audio/mp4",
-      aac: "audio/mp4",
-      wav: "audio/wav",
-    };
-    return table[extension] ?? "application/octet-stream";
-  }
-
-  /**
-   * Reads a pasted file, either as clipboard bytes or from a copied file path.
-   *
-   * WebKitGTK does not put clipboard images in the paste event's
-   * `clipboardData`; only the async clipboard API reaches them. Copying a file
-   * in the file manager usually exposes just a `text/uri-list`, so that path is
-   * read back through the shell (restricted to media extensions) instead.
-   */
-  async function clipboardFile(): Promise<File | null> {
-    try {
-      const items = await navigator.clipboard?.read();
-      for (const item of items ?? []) {
-        const media = item.types.find(
-          (t) => t.startsWith("image/") || t.startsWith("video/") || t.startsWith("audio/"),
-        );
-        if (media) {
-          const blob = await item.getType(media);
-          // send_media classifies by file extension, so a pasted item needs a
-          // real one or a photo goes out as a document.
-          const sub = media.split("/")[1]?.split(";")[0] || "bin";
-          const extension = sub === "jpeg" ? "jpg" : sub;
-          return new File([blob], `pasted.${extension}`, { type: media });
-        }
-        if (item.types.includes("text/uri-list")) {
-          const text = await (await item.getType("text/uri-list")).text();
-          const uri = text
-            .split("\n")
-            .map((line) => line.trim())
-            .find((line) => line.length > 0);
-          if (!uri?.startsWith("file://")) continue;
-          // `file:///C:/x` has the pathname `/C:/x` on Windows.
-          const path = decodeURIComponent(new URL(uri).pathname).replace(/^\/([A-Za-z]:)/, "$1");
-          if (!PASTABLE.test(path)) continue;
-          const data = await invoke<string>("read_file", { path });
-          const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
-          return new File([bytes], path.split("/").pop() ?? "pasted", { type: mimeForName(path) });
-        }
-      }
-    } catch {
-      // Nothing readable; the caller falls back to a hint.
-    }
-    return null;
-  }
-
-  /**
-   * Stages pasted image bytes and blocks the default paste otherwise.
-   *
-   * Pasting a *file* (copying it in the file manager) puts a `text/uri-list` on
-   * the clipboard rather than an image. Without `preventDefault` WebKit then
-   * navigates the whole webview to that URI. That navigation is fatal: wry's
-   * page-load handler does `webview.uri().unwrap()`, the URI is absent for such
-   * a load, and the panic aborts the process. So anything file-like is
-   * swallowed; only real image bytes are staged, and plain text stays native.
-   */
-  async function onPaste(event: ClipboardEvent) {
-    const data = event.clipboardData;
-    const item = data
-      ? Array.from(data.items).find(
-          // A file copied in Explorer arrives here as a file item of any type.
-          (i) => i.type.startsWith("image/") || i.type.startsWith("video/") || i.kind === "file",
-        )
-      : undefined;
-    const isUriList = data ? Array.from(data.types).includes("text/uri-list") : false;
-    const isPlainText =
-      !item && !isUriList && !!data && Array.from(data.types).includes("text/plain");
-    if (isPlainText) return;
-    if (item || isUriList || data) event.preventDefault();
-
-    const file = item?.getAsFile() ?? (await clipboardFile());
-    if (file) void composer.stageFile(file);
-    else if (isUriList) ui.fail("Could not read that file. Try the 📎 button.");
-  }
-
-  /** Dropping files stages them; dropping anything else must not navigate. */
-  function onDrop(event: DragEvent) {
-    event.preventDefault();
-    for (const file of Array.from(event.dataTransfer?.files ?? [])) void composer.stageFile(file);
-  }
-
   /**
    * Opens the chat a quoted message lives in and jumps to it. A private reply
    * is a direct message quoting a group message, so the target is often in a
@@ -763,84 +514,6 @@
     else {
       ui.pendingJump = { chat, id };
       void loadAndJump();
-    }
-  }
-
-  async function openStarred() {
-    ui.showStarred = true;
-    ui.starredItems = null;
-    try {
-      const starred = await invoke<StoredMessage[]>("starred_messages");
-      ui.starredItems = starred.map((m) => ({
-        chat: m.chat,
-        id: m.id,
-        where: chats.chatName(m.chat),
-        author: m.from_me ? "You" : members.displayName(m.sender_name, m.sender),
-        text: members.replyPreviewText(m),
-        timestamp: m.timestamp,
-        sender: m.sender,
-        fromMe: m.from_me,
-      }));
-    } catch (e) {
-      ui.showStarred = false;
-      ui.fail(e);
-    }
-  }
-
-  const SEARCH_LIMIT = 500;
-
-  function found(m: StoredMessage, across: boolean): FoundItem {
-    return {
-      chat: m.chat,
-      id: m.id,
-      where: across ? chats.chatName(m.chat) : null,
-      author: m.from_me ? "You" : members.displayName(m.sender_name, m.sender),
-      text: members.replyPreviewText(m),
-      timestamp: m.timestamp,
-      unread: !m.read && !m.from_me,
-    };
-  }
-
-  async function openPings(chat: string | null) {
-    ui.finder = { mode: "pings", chat, items: null };
-    try {
-      const got = await invoke<StoredMessage[]>("pings", { chat });
-      if (ui.finder?.mode === "pings" && ui.finder.chat === chat) {
-        ui.finder.items = got.map((m) => found(m, chat === null));
-      }
-    } catch (e) {
-      ui.finder = null;
-      ui.fail(e);
-    }
-  }
-
-  /**
-   * Searches the open finder's chat. `more` first asks the phone for the
-   * previous 24 hours of the chat, then searches again over everything kept.
-   */
-  async function searchChat(query: string, more = false) {
-    const current = ui.finder;
-    const chat = current?.chat;
-    if (!current || !chat) return;
-    if (more && chat === chats.selectedChat) await messages.recallDay(chat);
-    if (ui.finder !== current) return;
-    const reach = messages.messages.at(-1)?.timestamp ?? null;
-    if (!query.trim()) {
-      Object.assign(current, { items: [], query, reach, more: false });
-      return;
-    }
-    if (!more) current.items = null;
-    try {
-      const got = await invoke<StoredMessage[]>("search_messages", { chat, query, limit: SEARCH_LIMIT });
-      if (ui.finder !== current) return;
-      Object.assign(current, {
-        items: got.map((m) => found(m, false)),
-        query,
-        reach,
-        more: !messages.olderExhausted,
-      });
-    } catch (e) {
-      ui.fail(e);
     }
   }
 
@@ -904,17 +577,6 @@
     scrollToBottom();
   }
 
-  function eventFields(event: ChatEvent) {
-    const { name, description, start, end, location, link } = event;
-    return { name, description, start, end, location, link };
-  }
-
-  async function saveEvent(chat: string, id: string, fields: object) {
-    await composer.enqueue(() => invoke("edit_event", { chat, id, event: fields }));
-    await messages.reloadMessages(chats.selectedChat);
-    await messages.loadMarks(chats.selectedChat);
-  }
-
   /** Pinned bar content for the chat header. */
   const pinnedView = $derived.by(() => {
     const m = messages.pinnedMessage;
@@ -929,6 +591,10 @@
   });
 
 
+  function menuItems(message: StoredMessage): MenuItem[] {
+    return messageMenuItems(message, openChat);
+  }
+
   const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
   // Later readers in a group change no status, so the open info refreshes itself.
   $effect(() => {
@@ -936,118 +602,6 @@
     const timer = setInterval(() => (ui.infoVersion += 1), 3000);
     return () => clearInterval(timer);
   });
-
-  function target(m: StoredMessage) {
-    return { chat: m.chat, id: m.id, sender: m.sender, fromMe: m.from_me };
-  }
-
-  /** Runs a message action, surfacing a failure instead of dropping it. */
-  async function act(run: () => Promise<unknown>) {
-    try {
-      await run();
-    } catch (e) {
-      ui.fail(e);
-    }
-  }
-
-  function menuItems(m: StoredMessage): MenuItem[] {
-    const group = m.chat.endsWith("@g.us");
-    const other = group && !m.from_me;
-    const text = m.media_kind ? captionOf(m) : m.text;
-    const items: MenuItem[] = [
-      {
-        label: "Reply",
-        icon: "reply",
-        action: () => {
-          composer.editing = null;
-          composer.replyingTo = m;
-          composerInput?.focus();
-        },
-      },
-    ];
-    if (m.from_me) {
-      items.push({ label: "Message info", icon: "check", action: () => (ui.infoFor = m) });
-    }
-    if (other) {
-      items.push(
-        {
-          label: "Reply privately",
-          icon: "users",
-          action: async () => {
-            await openChat(bare(m.sender));
-            composer.editing = null;
-            composer.replyingTo = m;
-            composerInput?.focus();
-          },
-        },
-        {
-          label: `Message ${members.senderLabel(m)}`,
-          icon: "message",
-          action: () => openChat(bare(m.sender)),
-        },
-      );
-    }
-    if (text && !m.revoked) {
-      items.push({
-        label: "Copy",
-        icon: "copy",
-        action: () => act(() => navigator.clipboard.writeText(text)),
-      });
-    }
-    if (!m.revoked) {
-      items.push(
-        { label: "Forward", icon: "forward", action: () => (ui.forwarding = m) },
-        {
-          label: messages.marks.pinned === m.id ? "Unpin" : "Pin",
-          icon: "pin",
-          action: () =>
-            act(() =>
-              invoke("pin_message", { target: target(m), pinned: messages.marks.pinned !== m.id }),
-            ),
-        },
-        {
-          label: messages.starred.has(m.id) ? "Unstar" : "Star",
-          icon: "star",
-          action: () =>
-            act(() => invoke("star", { target: target(m), starred: !messages.starred.has(m.id) })),
-        },
-      );
-    }
-    if (other) {
-      items.push({
-        label: "Report to admins",
-        icon: "flag",
-        separated: true,
-        action: () => (ui.reporting = m),
-      });
-    }
-    items.push({
-      label: "Delete",
-      icon: "trash",
-      danger: true,
-      separated: !other,
-      action: () => (ui.deleting = m),
-    });
-    return items;
-  }
-
-  /** Whether we may delete this message for everyone: ours, or ours to moderate. */
-  function canDeleteForEveryone(m: StoredMessage) {
-    if (m.revoked) return false;
-    if (m.from_me) return true;
-    return !!session.me && !!members.memberOf(session.me)?.admin;
-  }
-
-  async function deleteMessage(everyone: boolean) {
-    const m = ui.deleting;
-    ui.deleting = null;
-    if (!m) return;
-    await act(async () => {
-      await invoke("delete_message", { target: target(m), everyone, timestamp: m.timestamp });
-      await messages.reloadMessages(chats.selectedChat);
-      await chats.refreshChats();
-    });
-  }
 
   /** The open chat's downloaded pictures and videos, oldest first, for the viewer. */
   const viewOnceIds = $derived(new Set(messages.marks.view_once.map((v) => v.id)));
@@ -1104,49 +658,6 @@
       ui.fail(e);
     }
   }
-
-  async function syncState() {
-    const state = await invoke<ConnectionState>("connection_state");
-    session.started = state.started;
-    session.connected = state.connected;
-    await session.showQr(state.connected ? null : state.qr);
-    if (session.connected) {
-      // Already connected when the UI loaded without an explicit connect (e.g.
-      // a webview reload): there is no fresh backlog to gate on, so do not hold
-      // the loading screen. A cold start reaches here disconnected, then gates.
-      if (!session.connectRequested && !session.gateDone) session.gateDone = true;
-      await chats.refreshChats();
-      // Aliases need a live service, so they are read on every connect and on
-      // every account switch rather than once at boot.
-      await members.loadAliases();
-    }
-  }
-
-  /** Connects, reusing a stored session when there is one. */
-  async function connect() {
-    session.connecting = true;
-    ui.error = null;
-    session.connectRequested = true;
-    try {
-      await invoke("connect");
-      await syncState();
-      void refreshResolvedNames();
-    } catch (e) {
-      ui.fail(e);
-    } finally {
-      session.connecting = false;
-    }
-  }
-
-  /** Reconnects after the backend logged the account out. */
-  async function reconnect() {
-    session.connected = false;
-    session.started = false;
-    await session.showQr(null);
-    await session.loadAccounts();
-    await connect();
-  }
-
 
   onMount(() => {
     let unlisten: (() => void) | undefined;
@@ -1256,9 +767,9 @@
 
 <svelte:head>
   <title>Postal</title>
-  {@html extensionCss}
-  {@html chatPictureCss}
 </svelte:head>
+
+<ThemeLayers />
 
 <!-- The glass lens: shifts the backdrop by lensMap, strongest at the rim. The map stretches to
      each element; the shift is in pixels, so short pills take a smaller one to avoid smearing. -->

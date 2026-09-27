@@ -3,7 +3,7 @@
   import { motion } from "$lib/theme.svelte";
   import Button from "$lib/Button.svelte";
   import Icon from "$lib/Icon.svelte";
-  import type { ChatEvent } from "$lib/EventCard.svelte";
+  import type { ChatEvent } from "$lib/models";
 
   let {
     kind,

@@ -1,18 +1,5 @@
-<script lang="ts" module>
-  export type StarredItem = {
-    chat: string;
-    id: string;
-    where: string;
-    author: string;
-    text: string;
-    timestamp: number;
-    /** What the star action needs to name the message. */
-    sender: string;
-    fromMe: boolean;
-  };
-</script>
-
 <script lang="ts">
+  import type { StarredItem } from "$lib/models";
   import { fade, scale } from "svelte/transition";
   import { motion } from "$lib/theme.svelte";
   import Icon from "$lib/Icon.svelte";

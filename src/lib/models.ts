@@ -1,7 +1,53 @@
 // Shared data shapes for the chat views. Moved out of +page.svelte so every
 // view, bar and bubble can type its props without importing the page.
-import type { Poll } from "$lib/PollCard.svelte";
-import type { ChatEvent } from "$lib/EventCard.svelte";
+export type Poll = {
+  id: string;
+  name: string;
+  options: string[];
+  multi: boolean;
+  votes: { voter: string; options: string[] }[];
+};
+
+export type ChatEvent = {
+  id: string;
+  name: string;
+  description: string | null;
+  start: number | null;
+  end: number | null;
+  location: string | null;
+  link: string | null;
+  canceled: boolean;
+  responses: { responder: string; response: string }[];
+};
+
+export type FoundItem = {
+  chat: string;
+  id: string;
+  /** The chat's name, shown when results span several chats. */
+  where: string | null;
+  author: string;
+  text: string;
+  timestamp: number;
+  unread: boolean;
+};
+
+export type StarredItem = {
+  chat: string;
+  id: string;
+  where: string;
+  author: string;
+  text: string;
+  timestamp: number;
+  /** What the star action needs to name the message. */
+  sender: string;
+  fromMe: boolean;
+};
+
+export type ChatRetention = {
+  max_age_hours: number | null;
+  max_messages: number | null;
+  on_demand: boolean;
+};
 
 export type StoredMessage = {
   chat: string;
@@ -262,5 +308,3 @@ export type BubbleApi = {
   oncloseonce: () => void;
   oninviteopen: (jid: string) => void;
 };
-
-export type { Poll, ChatEvent };

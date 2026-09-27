@@ -8,6 +8,7 @@
   import { motion } from "$lib/theme.svelte";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { invoke } from "$lib/ipc";
+  import { base64Of as toBase64 } from "$lib/files";
   import Icon from "$lib/Icon.svelte";
   import ImageCropper from "$lib/ImageCropper.svelte";
   import {
@@ -138,15 +139,6 @@
   function sendFromLibrary(path: string, kind: "gif" | "sticker") {
     const reply = takereply();
     send(() => invoke("send_from_library", { chat, path, kind, ...reply }));
-  }
-
-  function toBase64(file: File) {
-    return new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
-      reader.onerror = () => reject(reader.error);
-      reader.readAsDataURL(file);
-    });
   }
 
   async function uploadFile(file: File) {

@@ -1,6 +1,4 @@
-// Session domain: connection, loading gate, accounts, app settings,
-// interface scale and online visibility. Moved out of +page.svelte; the route
-// keeps the effects and multi-domain flows (connect, account switching).
+// Session state; cross-domain connection flows live in accounts.ts.
 import { invoke } from "$lib/ipc";
 import type { Account, ConnectionState, UiSettings } from "$lib/models";
 import { ui } from "./ui.svelte";

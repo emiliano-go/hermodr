@@ -1,0 +1,133 @@
+import { invoke } from "$lib/ipc";
+import { bare, captionOf } from "$lib/message";
+import type { ChatEvent, StoredMessage } from "$lib/models";
+import type { MenuItem } from "$lib/MessageMenu.svelte";
+import { chats } from "./chats.svelte";
+import { composer } from "./composer.svelte";
+import { members } from "./members.svelte";
+import { messages } from "./messages.svelte";
+import { session } from "./session.svelte";
+import { ui } from "./ui.svelte";
+
+export function target(m: StoredMessage) {
+  return { chat: m.chat, id: m.id, sender: m.sender, fromMe: m.from_me };
+}
+
+/** Runs a message action, surfacing a failure instead of dropping it. */
+export async function act(run: () => Promise<unknown>) {
+  try {
+    await run();
+  } catch (e) {
+    ui.fail(e);
+  }
+}
+
+export function menuItems(m: StoredMessage, openChat: (chat: string) => Promise<void>): MenuItem[] {
+  const group = m.chat.endsWith("@g.us");
+  const other = group && !m.from_me;
+  const text = m.media_kind ? captionOf(m) : m.text;
+  const items: MenuItem[] = [
+    {
+      label: "Reply",
+      icon: "reply",
+      action: () => {
+        composer.editing = null;
+        composer.replyingTo = m;
+        composer.inputEl?.focus();
+      },
+    },
+  ];
+  if (m.from_me) {
+    items.push({ label: "Message info", icon: "check", action: () => (ui.infoFor = m) });
+  }
+  if (other) {
+    items.push(
+      {
+        label: "Reply privately",
+        icon: "users",
+        action: async () => {
+          await openChat(bare(m.sender));
+          composer.editing = null;
+          composer.replyingTo = m;
+          composer.inputEl?.focus();
+        },
+      },
+      {
+        label: `Message ${members.senderLabel(m)}`,
+        icon: "message",
+        action: () => openChat(bare(m.sender)),
+      },
+    );
+  }
+  if (text && !m.revoked) {
+    items.push({
+      label: "Copy",
+      icon: "copy",
+      action: () => act(() => navigator.clipboard.writeText(text)),
+    });
+  }
+  if (!m.revoked) {
+    items.push(
+      { label: "Forward", icon: "forward", action: () => (ui.forwarding = m) },
+      {
+        label: messages.marks.pinned === m.id ? "Unpin" : "Pin",
+        icon: "pin",
+        action: () =>
+          act(() =>
+            invoke("pin_message", { target: target(m), pinned: messages.marks.pinned !== m.id }),
+          ),
+      },
+      {
+        label: messages.starred.has(m.id) ? "Unstar" : "Star",
+        icon: "star",
+        action: () =>
+          act(() => invoke("star", { target: target(m), starred: !messages.starred.has(m.id) })),
+      },
+    );
+  }
+  if (other) {
+    items.push({
+      label: "Report to admins",
+      icon: "flag",
+      separated: true,
+      action: () => (ui.reporting = m),
+    });
+  }
+  items.push({
+    label: "Delete",
+    icon: "trash",
+    danger: true,
+    separated: !other,
+    action: () => (ui.deleting = m),
+  });
+  return items;
+}
+
+/** Whether we may delete this message for everyone: ours, or ours to moderate. */
+export function canDeleteForEveryone(m: StoredMessage) {
+  if (m.revoked) return false;
+  if (m.from_me) return true;
+  return !!session.me && !!members.memberOf(session.me)?.admin;
+}
+
+export async function deleteMessage(everyone: boolean) {
+  const m = ui.deleting;
+  ui.deleting = null;
+  if (!m) return;
+  await act(async () => {
+    await invoke("delete_message", { target: target(m), everyone, timestamp: m.timestamp });
+    await messages.reloadMessages(chats.selectedChat);
+    await chats.refreshChats();
+  });
+}
+
+export function eventFields(event: ChatEvent) {
+  const { name, description, start, end, location, link } = event;
+  return { name, description, start, end, location, link };
+}
+
+export async function saveEvent(chat: string, id: string, fields: object) {
+  await composer.enqueue(() => invoke("edit_event", { chat, id, event: fields }));
+  await messages.reloadMessages(chats.selectedChat);
+  await messages.loadMarks(chats.selectedChat);
+}

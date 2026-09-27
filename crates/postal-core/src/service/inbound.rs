@@ -667,7 +667,7 @@ impl Inbound {
         if removed > 0 {
             let _ = events.send(ServiceEvent::RetentionApplied { removed });
             // A pruned reply can be the last one naming a recovered view-once.
-            if let Err(e) = super::media::prune_quote_files(media_dir.as_deref(), store) {
+            if let Err(e) = prune_quote_files(media_dir.as_deref(), store) {
                 log::error!("pruning recovered view-once files failed: {e}");
             }
         }

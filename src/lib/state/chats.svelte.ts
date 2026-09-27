@@ -47,7 +47,6 @@ export class ChatsState {
   avatarWorkers = 0;
 
   /** Coalesces an event burst into at most one chat-list reload per 200 ms. */
-  chatsQueued = false;
 
   visibleChats = $derived(
     this.chats.filter((c) =>
@@ -123,15 +122,6 @@ export class ChatsState {
     } catch (e) {
       ui.fail(e);
     }
-  }
-
-  queueRefreshChats() {
-    if (this.chatsQueued) return;
-    this.chatsQueued = true;
-    setTimeout(() => {
-      this.chatsQueued = false;
-      void this.refreshChats();
-    }, 200);
   }
 
   /** Runs the chat/contact/group search. */

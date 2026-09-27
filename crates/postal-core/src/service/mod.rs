@@ -42,6 +42,10 @@ mod history;
 mod inbound;
 mod links;
 mod media;
+mod media_codec;
+mod media_download;
+mod media_wire;
+mod message_decode;
 mod messages;
 mod notices;
 mod polls;
@@ -55,14 +59,16 @@ use contacts::*;
 use history::*;
 use inbound::*;
 use links::*;
-use media::*;
-use messages::*;
+use media_codec::*;
+use media_download::*;
+use media_wire::*;
+use message_decode::*;
 use notices::*;
 use polls::*;
 
 /// Deletes recovered view-once files no stored message points at any more. Part
 /// of the service's public surface so a caller holding only a store can run it.
-pub use media::prune_quote_files;
+pub use media_download::prune_quote_files;
 
 use crate::store::is_placeholder_name;
 

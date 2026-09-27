@@ -7,7 +7,7 @@ import { tick } from "svelte";
 import { invoke } from "$lib/ipc";
 import { loadEmojis, rememberEmoji, searchEmojis, type Emoji } from "$lib/emoji";
 import type { PickerTab } from "$lib/ExpressionPicker.svelte";
-import { imagePreview, rasterizeSvg } from "$lib/files";
+import { base64Of, imagePreview, rasterizeSvg } from "$lib/files";
 import { keybinds, matches } from "$lib/keybinds.svelte";
 import type { Recording } from "$lib/VoiceRecorder.svelte";
 import type { ChatPrivacy, Outgoing, PendingMedia, StoredMessage } from "$lib/models";
@@ -651,16 +651,6 @@ export class ComposerState {
     this.chosenMentions = [];
     this.resetHistory();
   }
-}
-
-/** Base64 keeps a file a single IPC value; fine for attachments and voice notes. */
-async function base64Of(blob: Blob) {
-  const buffer = new Uint8Array(await blob.arrayBuffer());
-  let binary = "";
-  for (let i = 0; i < buffer.length; i += 0x8000) {
-    binary += String.fromCharCode(...buffer.subarray(i, i + 0x8000));
-  }
-  return btoa(binary);
 }
 
 export const composer = new ComposerState();

@@ -1,14 +1,5 @@
-<script lang="ts" module>
-  export type Poll = {
-    id: string;
-    name: string;
-    options: string[];
-    multi: boolean;
-    votes: { voter: string; options: string[] }[];
-  };
-</script>
-
 <script lang="ts">
+  import type { Poll } from "$lib/models";
   import { convertFileSrc } from "@tauri-apps/api/core";
 
   let {

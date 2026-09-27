@@ -1,18 +1,5 @@
-<script lang="ts" module>
-  export type ChatEvent = {
-    id: string;
-    name: string;
-    description: string | null;
-    start: number | null;
-    end: number | null;
-    location: string | null;
-    link: string | null;
-    canceled: boolean;
-    responses: { responder: string; response: string }[];
-  };
-</script>
-
 <script lang="ts">
+  import type { ChatEvent } from "$lib/models";
   import Icon from "$lib/Icon.svelte";
 
   let {

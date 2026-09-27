@@ -13,16 +13,20 @@ Single source of truth for where application state lives. The rule:
 - **The backend event stream maps onto domains in `state/events.ts`.**
   Each `ServiceEvent` kind updates domain state there; view-only callbacks
   (scrolling, reconnecting) arrive via the `EventHost` the route registers.
-- **The route (`src/routes/+page.svelte`) orchestrates, it does not own.**
-  It composes views, runs cross-domain flows (open/send/switch chats,
-  navigation, account switching), owns effects/wiring, DOM refs, and
+- **Cross-domain workflows use plain functions.** `accounts.ts` coordinates
+  session changes; `finder.ts` owns search and starred lists;
+  `attachments.ts` stages clipboard/drop input; `message-actions.ts` owns
+  menu actions and event edits. These modules may use domain state, but
+  domain classes must not import them.
+- **The route (`src/routes/+page.svelte`) composes views.**
+  It owns chat navigation, DOM effects/wiring, DOM refs, and
   ephemeral view-local state (scroll position, jump highlight). No new
   `$state` in the route except view-local state and element refs.
 - **Dependencies flow one way, never in a cycle:**
   `ui` stands alone; `session` and `messages` use only `ui`;
   `members` uses `session` plus messages state (first-seen push names);
   `chats` uses `ui`, `members` and `session`; `composer` uses all of those;
-  `events` and the route may use everything. Keep it that way.
+  `events`, workflows and the route may use everything. Keep it that way.
 - **Never pass a domain method bare** (e.g. `onclick={chats.togglePin}`):
   `this` is lost. Wrap in an arrow, or export a plain function.
   Element access a domain cannot own (textarea, scroller) arrives via an

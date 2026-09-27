@@ -1,17 +1,5 @@
-<script lang="ts" module>
-  export type FoundItem = {
-    chat: string;
-    id: string;
-    /** The chat's name, shown when results span several chats. */
-    where: string | null;
-    author: string;
-    text: string;
-    timestamp: number;
-    unread: boolean;
-  };
-</script>
-
 <script lang="ts">
+  import type { FoundItem } from "$lib/models";
   import { fade, scale } from "svelte/transition";
   import { motion } from "$lib/theme.svelte";
   import Icon from "$lib/Icon.svelte";
