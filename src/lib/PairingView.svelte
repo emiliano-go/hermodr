@@ -50,6 +50,9 @@
   } = $props();
 
   const stage = $derived(qrSvg ? 2 : started || connecting ? 1 : 0);
+  // Only a completed link has a JID: the account being paired, one abandoned
+  // mid-pairing, or one whose phone unlinked it is not an account yet.
+  const registered = $derived(accounts.filter((a) => a.jid));
 </script>
 
 <div class="pairing">
@@ -75,7 +78,7 @@
       <h2>Choose an account</h2>
       <span class="resume-who">Several WhatsApp accounts are linked on this computer.</span>
       <div class="account-choices">
-        {#each accounts.filter((a) => a.jid) as account (account.id)}
+        {#each registered as account (account.id)}
           <button class="account-choice" onclick={() => onchoose(account.id)}>
             <Avatar
               src={accountAvatars[account.id] ?? null}
@@ -136,9 +139,9 @@
       {:else}
         <Button variant="primary" onclick={onconnect}>Connect</Button>
       {/if}
-      {#if accounts.length > 1}
+      {#if registered.some((a) => a.id !== linked.id)}
         <div class="account-bar">
-          {#each accounts as account (account.id)}
+          {#each registered as account (account.id)}
             {#if account.id !== linked.id}
               <button class="account" title="Switch to {account.label}" onclick={() => onswitch(account.id)}>
                 <Avatar
@@ -174,11 +177,11 @@
           </span>
         {/each}
       </div>
-      {#if accounts.length > 0}
+      {#if registered.length > 0}
         <div class="intro-accounts">
           <span class="intro-label">Accounts on this computer</span>
           <div class="account-bar">
-            {#each accounts as account (account.id)}
+            {#each registered as account (account.id)}
               <button
                 class="account"
                 class:active={account.id === activeAccount}
