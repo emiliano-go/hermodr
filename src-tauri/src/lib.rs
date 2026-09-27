@@ -32,9 +32,16 @@ mod tests;
 
 /// Event name the frontend listens on for service updates.
 const SERVICE_EVENT: &str = "service-event";
+/// Event name for the optional Android instance's own state (QR, connect).
+const ONCE_EVENT: &str = "once-event";
 
 struct AppState {
     service: Mutex<Option<Arc<WhatsAppService>>>,
+    /// The optional Android instance, running beside the main service.
+    once_service: Mutex<Option<Arc<WhatsAppService>>>,
+    /// Its pairing code while it waits to be linked.
+    once_qr: Mutex<Option<String>>,
+    once_connected: std::sync::atomic::AtomicBool,
     settings: Mutex<UiSettings>,
     accounts: Mutex<AccountsFile>,
 }
@@ -88,6 +95,9 @@ pub fn run() {
 
             app.manage(AppState {
                 service: Mutex::new(None),
+                once_service: Mutex::new(None),
+                once_qr: Mutex::new(None),
+                once_connected: std::sync::atomic::AtomicBool::new(false),
                 settings: Mutex::new(load_settings(app.handle())),
                 accounts: Mutex::new(accounts),
             });
@@ -208,7 +218,7 @@ pub fn run() {
             desktop::qr_svg,
             settings::get_settings,
             settings::set_settings,
-            settings::paired_mode
+            connection::once_state
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

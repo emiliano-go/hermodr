@@ -66,7 +66,8 @@ export function bubbleView(m: StoredMessage, index: number, scene: string): Bubb
   return {
     first: index !== 1, showSender: !m.from_me && index !== 1,
     senderText: m.sender_name ?? "", senderHue: hue(m.sender), senderAvatar: null,
-    memberTag: null, visual: false, caption: "", viewOnce: null, inlineMeta: true,
+    memberTag: null, visual: false, caption: "", viewOnce: null,
+    onceKept: false, onceRevealed: false, inlineMeta: true,
     reactions: index === 0 ? [{ emoji: "👍", count: 2, mine: true }] : undefined,
     isStarred: false, isEdited: false, isForwarded: false,
     isReplying: scene === "chat" && index === 1, highlighted: false, forMe: m.mentioned,
@@ -88,7 +89,7 @@ export const bubbleApi: BubbleApi = {
   onopenviewer: noop, onopenmedia: noop, onopenquote: noop, onvote: noop,
   onrespond: noop, oneditrequest: noop, oncancelevent: noop, onreact: noop,
   onmarkplayed: noop, onnextvoice: noop, onpausevoice: noop, onreplymenu: noop,
-  ononce: noop, oncloseonce: noop, oninviteopen: noop,
+  ononce: noop, oncloseonce: noop, onrevealonce: noop, oninviteopen: noop,
 };
 
 export const menuItems: MenuItem[] = [

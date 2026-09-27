@@ -157,10 +157,10 @@ export type UiSettings = {
   keep_history: boolean;
   skip_loading_screen: boolean;
   keep_archived: boolean;
-  pair_mode: "android" | "external";
-  keep_view_once: boolean;
+  android_instance: boolean;
 };
 export type ConnectionState = { started: boolean; connected: boolean; qr: string | null };
+export type OnceState = { paired: boolean; running: boolean; connected: boolean; qr: string | null };
 
 /** A file staged in the composer, before it is sent. */
 export type PendingMedia = {
@@ -254,6 +254,10 @@ export type BubbleVm = {
   visual: boolean;
   caption: string;
   viewOnce: { opened: boolean; available: boolean } | null;
+  /** A kept one-time copy, still behind its dismissable one-time filter. */
+  onceKept: boolean;
+  /** The filter was dismissed for this visit to the chat. */
+  onceRevealed: boolean;
   inlineMeta: boolean;
   reactions: Reaction[] | undefined;
   isStarred: boolean;
@@ -310,5 +314,7 @@ export type BubbleApi = {
   onreplymenu: (e: MouseEvent, m: StoredMessage) => void;
   ononce: (m: StoredMessage) => void;
   oncloseonce: () => void;
+  /** Dismisses the one-time filter on a kept copy; a second click opens it. */
+  onrevealonce: (m: StoredMessage) => void;
   oninviteopen: (jid: string) => void;
 };

@@ -344,9 +344,8 @@ impl WhatsAppService {
             sync_progress: sync_progress.clone(),
             auto_download_default: config.auto_download_media,
             keep_archived: keep_archived_state.clone(),
-            keep_view_once: keep_view_once_state.clone(),
+            keep_view_once: keep_view_once_state,
         };
-
         let bot = Bot::builder()
             .with_watched_ab_props(super::diagnostics::boolean_props())
             .with_backend(SqliteStore::new(config.session_path.to_string_lossy().as_ref()).await?)
@@ -580,7 +579,6 @@ impl WhatsAppService {
                 qr: qr_state,
                 connected: connected_state,
                 keep_archived: keep_archived_state,
-                keep_view_once: keep_view_once_state,
                 reconnecting: reconnecting_state,
                 subject_backoff: Mutex::default(),
                 nameless: Mutex::default(),
@@ -617,30 +615,9 @@ impl WhatsAppService {
         self.keep_archived.load(Ordering::SeqCst)
     }
 
-    /// How this account was linked: `"android"` when it paired as an Android
-    /// device, else `"external"`. Props are only read at pairing, so this can
-    /// differ from the current setting until the device is linked again.
-    pub fn paired_mode(&self) -> &'static str {
-        let props = self.client.persistence_manager().get_device_snapshot().device_props.clone();
-        if matches!(
-            props.platform_type,
-            Some(wa::device_props::PlatformType::ANDROID_TABLET)
-                | Some(wa::device_props::PlatformType::ANDROID_PHONE)
-        ) {
-            "android"
-        } else {
-            "external"
-        }
-    }
-
     /// Changes the keep-archived behavior without a reconnect.
     pub fn set_keep_archived(&self, keep: bool) {
         self.keep_archived.store(keep, Ordering::SeqCst);
-    }
-
-    /// Changes whether arriving view-once media is kept, without a reconnect.
-    pub fn set_keep_view_once(&self, keep: bool) {
-        self.keep_view_once.store(keep, Ordering::SeqCst);
     }
 
     /// Drops the current transport so the client reconnects. For a stalled or

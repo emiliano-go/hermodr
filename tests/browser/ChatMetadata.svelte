@@ -22,8 +22,7 @@
     onmenutoggle: noop, onswitchaccount: noop, onaddaccount: noop, onsettings: noop,
     onpings: noop, onstarred: noop, onsearch: noop, onopenresult: noop,
     onopenchat: (chat) => { selected = chat; }, ontogglepin: noop, onclearchat: noop,
-    ondeletechat: noop, onchataction: noop, onmarkread: noop, archivedChats: 0,
-    keepingOnce: false, onkeeponce: noop, onresize: noop,
+    ondeletechat: noop, onchataction: noop, onmarkread: noop, archivedChats: 0, onresize: noop,
   };
 </script>
 

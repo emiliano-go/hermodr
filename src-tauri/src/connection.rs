@@ -1,7 +1,8 @@
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use postal_core::{WhatsAppService, ServiceEvent};
 use tauri::{AppHandle, Emitter, Manager, State};
-use crate::{AppState, SERVICE_EVENT, account_store::{Account, DEFAULT_ACCOUNT_LABEL, SESSION_POINTER, SESSION_POINTER_ANDROID, account_base, active_account, config_for, current_sessions, now_millis, remove_stale_sessions, save_accounts}};
+use crate::{AppState, ONCE_EVENT, SERVICE_EVENT, account_store::{Account, DEFAULT_ACCOUNT_LABEL, SESSION_POINTER, SESSION_POINTER_ANDROID, account_base, active_account, config_for, current_sessions, now_millis, once_config_for, remove_stale_sessions, save_accounts}};
 
 /// Snapshot of the connection state, for the UI's initial render.
 ///
@@ -11,6 +12,16 @@ use crate::{AppState, SERVICE_EVENT, account_store::{Account, DEFAULT_ACCOUNT_LA
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ConnectionState {
     pub started: bool,
+    pub connected: bool,
+    pub qr: Option<String>,
+}
+
+/// The optional Android instance's state, for the toggle and its pairing sheet.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct OnceState {
+    /// Whether a device was ever linked; survives the instance being stopped.
+    pub paired: bool,
+    pub running: bool,
     pub connected: bool,
     pub qr: Option<String>,
 }
@@ -55,15 +66,15 @@ pub(crate) async fn boolean_props(state: State<'_, AppState>) -> Result<Vec<post
 /// Starts the service for an account, replacing any running one.
 pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &str) -> Result<(), String> {
     log::info!("starting account {account}");
-    // Stop whatever is running first, so the old session disconnects without
-    // being unlinked: both device modes stay linked, only one runs at a time.
+    // The previous account's instance (and its session) goes first: only the
+    // active account's instance may run, and neither link is ever unlinked.
+    let _ = stop_once(app, state).await;
     let existing = state.service.lock().unwrap().take();
     if let Some(existing) = existing {
         existing.shutdown_and_disconnect().await;
     }
 
     let settings = state.settings.lock().unwrap().clone();
-    let android = settings.pair_mode != "external";
     let config = config_for(app, &settings, account);
 
     let base = account_base(app, account);
@@ -77,8 +88,8 @@ pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &s
 
     // `events` was registered before the connection attempt, so the pairing code
     // cannot slip through the gap between starting and subscribing. The service
-    // is held weakly: once the active slot drops it, a hot swap lets the loop,
-    // and with it the old session files, go.
+    // is held weakly: once the active slot drops it, a swap lets the loop, and
+    // with it the old session files, go.
     let emitter = app.clone();
     let service_for_events = Arc::downgrade(&service);
     let account_id = account.to_string();
@@ -88,7 +99,7 @@ pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &s
                 Ok(ServiceEvent::LoggedOut) => {
                     log::warn!("account {account_id} was logged out; its session is dropped");
                     if let Some(service) = service_for_events.upgrade() {
-                        forget_session(&emitter, &account_id, &service, android);
+                        forget_session(&emitter, &account_id, &service);
                     }
                     emit_service_event(&emitter, &ServiceEvent::LoggedOut);
                     // Holding the service keeps its session database open.
@@ -122,6 +133,14 @@ pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &s
     }
 
     *state.service.lock().unwrap() = Some(service);
+
+    // Auto-start the optional instance once the main link is up, so the shared
+    // store's setup has already run.
+    if settings.android_instance && once_paired(state, account) {
+        if let Err(e) = start_once(app, state).await {
+            log::warn!("could not start the Android instance: {e}");
+        }
+    }
     Ok(())
 }
 
@@ -131,14 +150,141 @@ fn emit_service_event(app: &AppHandle, event: &ServiceEvent) {
     }
 }
 
-/// Stops a revoked mode's service and points it at a fresh session file.
+/// Whether the account already linked the optional Android instance.
+fn once_paired(state: &AppState, account: &str) -> bool {
+    state
+        .accounts
+        .lock()
+        .unwrap()
+        .accounts
+        .iter()
+        .find(|a| a.id == account)
+        .is_some_and(|a| a.once_paired)
+}
+
+fn set_once_paired(app: &AppHandle, account: &str, paired: bool) {
+    let state = app.state::<AppState>();
+    let mut file = state.accounts.lock().unwrap();
+    if let Some(entry) = file.accounts.iter_mut().find(|a| a.id == account) {
+        entry.once_paired = paired;
+        save_accounts(app, &file);
+    }
+}
+
+/// Starts the optional Android instance: a second link used only to fetch
+/// one-time media into the shared store. No-op when it is already running.
+pub(crate) async fn start_once(app: &AppHandle, state: &AppState) -> Result<(), String> {
+    if state.once_service.lock().unwrap().is_some() {
+        return Ok(());
+    }
+    let Some(account) = active_account(state) else {
+        return Err("no account yet".to_string());
+    };
+    let settings = state.settings.lock().unwrap().clone();
+    let config = once_config_for(app, &settings, &account)?;
+    remove_stale_sessions(&account_base(app, &account), &current_sessions(&account_base(app, &account)));
+
+    let (service, mut events) = WhatsAppService::start(config).await.map_err(|e| {
+        log::error!("failed to start the Android instance: {e:#}");
+        format!("failed to start the Android instance: {e}")
+    })?;
+    *state.once_qr.lock().unwrap() = service.current_qr();
+    let service = Arc::new(service);
+    *state.once_service.lock().unwrap() = Some(service.clone());
+
+    // Its own event stream drives the pairing sheet and forwards the store
+    // changes the main UI must reload for. Held weakly so a stop drops it.
+    let emitter = app.clone();
+    let service_for_events = Arc::downgrade(&service);
+    let account_id = account.to_string();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            match events.recv().await {
+                Ok(event) => {
+                    if service_for_events.upgrade().is_none() {
+                        break;
+                    }
+                    let state = emitter.state::<AppState>();
+                    match &event {
+                        ServiceEvent::QrCode { code } => {
+                            *state.once_qr.lock().unwrap() = Some(code.clone());
+                        }
+                        ServiceEvent::Connected => {
+                            state.once_connected.store(true, Ordering::SeqCst);
+                            *state.once_qr.lock().unwrap() = None;
+                            set_once_paired(&emitter, &account_id, true);
+                        }
+                        ServiceEvent::Disconnected => {
+                            state.once_connected.store(false, Ordering::SeqCst);
+                        }
+                        ServiceEvent::LoggedOut => {
+                            state.once_connected.store(false, Ordering::SeqCst);
+                            *state.once_qr.lock().unwrap() = None;
+                            set_once_paired(&emitter, &account_id, false);
+                            if let Some(service) = service_for_events.upgrade() {
+                                forget_once_session(&emitter, &account_id, &service);
+                            }
+                            let _ = emitter.emit(ONCE_EVENT, &event);
+                            break;
+                        }
+                        // The shared store changed under the main session; let
+                        // the main UI reload without duplicating the instance's
+                        // connection noise.
+                        ServiceEvent::Message { .. }
+                        | ServiceEvent::MessageHint { .. }
+                        | ServiceEvent::Marks { .. }
+                        | ServiceEvent::ChatStateChanged { .. }
+                        | ServiceEvent::RetentionApplied { .. } => {
+                            emit_service_event(&emitter, &event);
+                        }
+                        _ => {}
+                    }
+                    let _ = emitter.emit(ONCE_EVENT, &event);
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(_) => break,
+            }
+        }
+        let state = emitter.state::<AppState>();
+        state.once_connected.store(false, Ordering::SeqCst);
+    });
+    Ok(())
+}
+
+/// Stops the optional Android instance without unlinking it: the link stays
+/// paired on the phone for the next time the toggle is turned on.
+pub(crate) async fn stop_once(app: &AppHandle, state: &AppState) -> Result<(), String> {
+    let existing = state.once_service.lock().unwrap().take();
+    if let Some(existing) = existing {
+        existing.shutdown_and_disconnect().await;
+    }
+    *state.once_qr.lock().unwrap() = None;
+    state.once_connected.store(false, Ordering::SeqCst);
+    let _ = app.emit(ONCE_EVENT, &ServiceEvent::Disconnected);
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn once_state(state: State<'_, AppState>) -> OnceState {
+    let account = active_account(&state);
+    let paired = account
+        .as_deref()
+        .map(|id| once_paired(&state, id))
+        .unwrap_or(false);
+    OnceState {
+        paired,
+        running: state.once_service.lock().unwrap().is_some(),
+        connected: state.once_connected.load(Ordering::SeqCst),
+        qr: state.once_qr.lock().unwrap().clone(),
+    }
+}
+
+/// Drops the whole account: the main session and the optional instance, whose
+/// session file is rotated so a revoked link is never reused.
 ///
-/// The other mode's session is untouched: logging one link out must not cost
-/// the other its pairing.
-///
-/// The old file cannot be deleted yet: Windows keeps it locked until the
-/// library releases its connection pool.
-pub(crate) fn forget_session(app: &AppHandle, account: &str, service: &Arc<WhatsAppService>, android: bool) {
+/// Neither file can be deleted yet: Windows keeps them locked until the library
+/// releases its connection pools.
+pub(crate) fn forget_session(app: &AppHandle, account: &str, service: &Arc<WhatsAppService>) {
     let state = app.state::<AppState>();
     {
         let mut slot = state.service.lock().unwrap();
@@ -147,14 +293,38 @@ pub(crate) fn forget_session(app: &AppHandle, account: &str, service: &Arc<Whats
         }
     }
     service.shutdown();
+    {
+        let once = state.once_service.lock().unwrap().take();
+        if let Some(once) = once {
+            tauri::async_runtime::spawn(async move { once.shutdown_and_disconnect().await });
+        }
+    }
+    *state.once_qr.lock().unwrap() = None;
+    state.once_connected.store(false, Ordering::SeqCst);
     let mut file = state.accounts.lock().unwrap();
     if let Some(entry) = file.accounts.iter_mut().find(|a| a.id == account) {
         entry.jid = None;
+        entry.once_paired = false;
         save_accounts(app, &file);
     }
-    let pointer = if android { SESSION_POINTER_ANDROID } else { SESSION_POINTER };
+    let base = account_base(app, account);
+    for pointer in [SESSION_POINTER, SESSION_POINTER_ANDROID] {
+        let _ = std::fs::write(base.join(pointer), format!("session-{}.db", now_millis()));
+    }
+}
+
+/// Dropped instance link: rotate only its session file, keeping the main link.
+fn forget_once_session(app: &AppHandle, account: &str, service: &Arc<WhatsAppService>) {
+    let state = app.state::<AppState>();
+    {
+        let mut slot = state.once_service.lock().unwrap();
+        if slot.as_ref().is_some_and(|s| Arc::ptr_eq(s, service)) {
+            *slot = None;
+        }
+    }
+    service.shutdown();
     let _ = std::fs::write(
-        account_base(app, account).join(pointer),
+        account_base(app, account).join(SESSION_POINTER_ANDROID),
         format!("session-{}.db", now_millis()),
     );
 }
@@ -176,6 +346,7 @@ pub(crate) async fn connect(app: AppHandle, state: State<'_, AppState>) -> Resul
                     id: id.clone(),
                     label: DEFAULT_ACCOUNT_LABEL.into(),
                     jid: None,
+                    once_paired: false,
                 });
                 file.active = Some(id.clone());
             }

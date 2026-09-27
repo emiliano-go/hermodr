@@ -16,6 +16,10 @@ pub struct Account {
     /// Learned once the account connects, so its picture shows while inactive.
     #[serde(default)]
     pub jid: Option<String>,
+    /// Whether the optional Android instance has been paired. Kept while it is
+    /// stopped so the toggle can say so without starting it.
+    #[serde(default)]
+    pub once_paired: bool,
 }
 
 /// The account list, persisted next to the app config.
@@ -105,6 +109,8 @@ pub(crate) fn load_accounts(app: &AppHandle) -> AccountsFile {
             id: "default".into(),
             label: DEFAULT_ACCOUNT_LABEL.into(),
             jid: None,
+            once_paired: false,
+
         });
         file.active = Some("default".into());
         save_accounts(app, &file);
@@ -136,7 +142,7 @@ pub(crate) fn config_for(app: &AppHandle, settings: &UiSettings, account: &str) 
     let base = account_base(app, account);
     let default_media = media_cache_dir(app);
     ServiceConfig {
-        session_path: session_path(&base, settings.pair_mode != "external"),
+        session_path: session_path(&base, false),
         messages_path: if settings.keep_history {
             base.join("messages.db")
         } else {
@@ -148,8 +154,10 @@ pub(crate) fn config_for(app: &AppHandle, settings: &UiSettings, account: &str) 
         accept_full_history: settings.accept_full_history,
         auto_download_media: settings.auto_download_media,
         keep_archived: settings.keep_archived,
-        android_pair: settings.pair_mode != "external",
-        keep_view_once: settings.keep_view_once,
+        // The main link is the ordinary companion; view-once media is fetched
+        // by the optional Android instance instead.
+        android_pair: false,
+        keep_view_once: false,
         // An unset or empty setting falls back to the app data directory.
         media_dir: settings
             .media_dir
@@ -158,6 +166,25 @@ pub(crate) fn config_for(app: &AppHandle, settings: &UiSettings, account: &str) 
             .filter(|p| !p.as_os_str().is_empty())
             .or(Some(default_media)),
     }
+}
+
+/// The optional Android instance: a second link that receives view-once media
+/// the External companion never gets, and writes what it keeps into the same
+/// message store so the main UI sees it immediately.
+pub(crate) fn once_config_for(app: &AppHandle, settings: &UiSettings, account: &str) -> Result<ServiceConfig, String> {
+    if !settings.keep_history {
+        return Err("the Android instance needs history kept on this computer".into());
+    }
+    let mut config = config_for(app, settings, account);
+    config.session_path = session_path(&account_base(app, account), true);
+    config.android_pair = true;
+    // The instance is not the user's session: it takes messages from the shared
+    // store but must not download ordinary media twice or ask for old history.
+    config.auto_download_media = false;
+    config.keep_view_once = true;
+    config.accept_full_history = false;
+    config.keep_archived = true;
+    Ok(config)
 }
 
 /// Names the account's current session file; absent means the default below.

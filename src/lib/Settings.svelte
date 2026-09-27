@@ -11,8 +11,7 @@
     keep_history: boolean;
     skip_loading_screen: boolean;
     keep_archived: boolean;
-    pair_mode: "android" | "external";
-    keep_view_once: boolean;
+    android_instance: boolean;
   };
   export type Account = { id: string; label: string; jid: string | null };
   export type Section =
@@ -41,6 +40,7 @@
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { invoke } from "$lib/ipc";
   import { base64Of as toBase64 } from "$lib/files";
+  import { once } from "$lib/state/once.svelte";
   import { getVersion } from "@tauri-apps/api/app";
   import Icon from "$lib/Icon.svelte";
   import Button from "$lib/Button.svelte";
@@ -172,15 +172,11 @@
     getVersion().then((v) => (version = v)).catch(() => {});
   });
 
-  /** How the current account was actually linked, from the stored device props. */
-  let pairedMode = $state<"android" | "external" | null>(null);
   $effect(() => {
-    // Re-read when the section opens and after a save, which may have unlinked.
-    void settings.pair_mode;
+    // Re-read when the section opens and after a save, which may have started it.
+    void settings.android_instance;
     if (section !== "device") return;
-    invoke<string>("paired_mode")
-      .then((mode) => (pairedMode = mode === "android" ? "android" : "external"))
-      .catch(() => (pairedMode = null));
+    void once.refresh();
   });
 
   const activeLabel = $derived(accounts.find((a) => a.id === active)?.label ?? "Not signed in");
@@ -594,44 +590,51 @@
             <input class="switch" type="checkbox" bind:checked={draft.keep_archived} />
           </label>
         {:else if section === "device"}
-          <h2>Device mode</h2>
+          <h2>Android companion</h2>
           <p class="lede">
-            Postal keeps a separate link for each mode, so switching never unlinks anything from
-            your phone: it just starts the other session. A mode that was never linked shows the QR
-            code once. Leave Android linked and switch back to it whenever you want to fetch
-            one-time photos.
+            View-once photos, videos and voice notes only reach this device through a second,
+            Android-style link. It runs in the background alongside your main link, never replaces
+            it, and never unlinks anything from your phone. Turn it on and scan the QR once.
           </p>
-          <div class="setting">
-            <div>
-              <span class="setting-title">Link as</span>
-              <span class="setting-desc">
-                Android phone is what makes WhatsApp send view-once photos and videos to Postal.
-                External links as an ordinary companion, as before.
-              </span>
-            </div>
-            <select class="field" bind:value={draft.pair_mode}>
-              <option value="android">Android phone</option>
-              <option value="external">External</option>
-            </select>
-          </div>
           <label class="setting">
             <div>
-              <span class="setting-title">Keep view-once media</span>
+              <span class="setting-title">Run Android companion</span>
               <span class="setting-desc">
-                A view-once this device can fetch is downloaded and kept, so you can look at it and
-                save it again. Off keeps it one-time. Only has any effect when linked as an Android
-                phone.
+                Downloads and keeps one-time media the main link cannot fetch. Needs "Download and
+                keep history" on, since both links share one message store.
               </span>
             </div>
-            <input class="switch" type="checkbox" bind:checked={draft.keep_view_once} />
+            <input
+              class="switch"
+              type="checkbox"
+              bind:checked={draft.android_instance}
+              disabled={!draft.keep_history} />
           </label>
-          {#if pairedMode}
-            <p class="muted">
-              Currently linked as {pairedMode === "android" ? "an Android phone" : "an external device"}.
-              {#if pairedMode !== draft.pair_mode}
-                Save to switch to the other linked session.
+          {#if settings.android_instance}
+            <div class="setting stack">
+              <div>
+                <span class="setting-title">Status</span>
+                <span class="setting-desc">
+                  {once.connected
+                    ? "Linked and running in the background."
+                    : once.running
+                      ? once.paired
+                        ? "Starting…"
+                        : "Waiting for pairing."
+                      : "Stopped."}
+                </span>
+              </div>
+              {#if once.running && !once.paired && once.qrSvg}
+                <div class="qr">
+                  <div class="qr-code">
+                    {@html once.qrSvg}
+                  </div>
+                  <p class="setting-desc">
+                    In WhatsApp, open Settings → Linked devices → Link a device, then scan.
+                  </p>
+                </div>
               {/if}
-            </p>
+            </div>
           {/if}
         {:else if section === "media"}
           <h2>Media</h2>
@@ -970,6 +973,22 @@
   }
   .link-button:hover {
     text-decoration: underline;
+  }
+  .qr {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+  .qr-code {
+    background: var(--bg);
+    padding: 12px;
+    border-radius: 12px;
+    line-height: 0;
+  }
+  .qr-code :global(svg) {
+    width: 220px;
+    height: 220px;
   }
   .keybind {
     display: flex;

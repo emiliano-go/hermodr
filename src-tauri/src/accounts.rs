@@ -25,6 +25,8 @@ pub(crate) async fn add_account(
             id: id.clone(),
             label: label.unwrap_or_else(|| DEFAULT_ACCOUNT_LABEL.into()),
             jid: None,
+            once_paired: false,
+
         });
         file.active = Some(id.clone());
     }
@@ -86,6 +88,7 @@ pub(crate) async fn remove_account(app: AppHandle, state: State<'_, AppState>, i
         }
     }
     save_accounts(&app, &state.accounts.lock().unwrap());
+    crate::connection::stop_once(&app, &state).await?;
     let running = state.service.lock().unwrap().take();
     if let Some(existing) = running {
         // Only the running account can reach WhatsApp to unlink itself.

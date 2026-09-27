@@ -143,14 +143,16 @@ impl MessageStore {
         Ok(())
     }
 
-    /// Turns a view-once whose media was kept into an ordinary attachment:
-    /// the original kind comes back and the one-time mark is dropped, so it
-    /// renders and opens like any other media instead of being deleted unseen.
+    /// Turns a view-once whose media was kept into an ordinary attachment: the
+    /// original kind comes back and the one-time mark is dropped, so it renders
+    /// and opens like any other media instead of being deleted unseen.
+    /// `media_once_kind` is kept as the marker the UI uses to tell a kept
+    /// one-time attachment apart from an ordinary one.
     pub fn keep_view_once(&self, chat: &str, id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "UPDATE messages
-             SET media_kind = COALESCE(media_once_kind, media_kind), media_once_kind = NULL
+             SET media_kind = COALESCE(media_once_kind, media_kind)
              WHERE chat = ?1 AND id = ?2",
             params![chat, id],
         )?;

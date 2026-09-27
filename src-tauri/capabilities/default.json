@@ -23,7 +23,7 @@
     "allow-qr-svg",
     "allow-connection-state",
     "allow-boolean-props",
-    "allow-paired-mode",
+    "allow-once-state",
     "allow-resolve-names",
     "allow-mark-read",
     "allow-mark-read-until",

@@ -61,8 +61,6 @@
     onchataction,
     onmarkread,
     archivedChats,
-    keepingOnce,
-    onkeeponce,
     onresize,
   }: {
     searchQuery: string;
@@ -104,9 +102,6 @@
     onchataction: (command: string, args: Record<string, unknown>) => void;
     onmarkread: (chat: ChatSummary) => void;
     archivedChats: number;
-    /** Whether arriving view-once media is being kept as ordinary media. */
-    keepingOnce: boolean;
-    onkeeponce: () => void;
     onresize: (event: MouseEvent) => void;
   } = $props();
 
@@ -148,16 +143,6 @@
       {#if unreadPings > 0}<span class="icon-badge">{unreadPings > 99 ? "99+" : unreadPings}</span>{/if}
     </Button>
     <Button variant="icon" icon="star" iconSize={18} title="Starred messages" aria-label="Starred messages" onclick={onstarred} />
-    <Button
-      variant="icon"
-      cls="once-quick"
-      active={keepingOnce}
-      pressed={keepingOnce}
-      title={keepingOnce
-        ? "Keeping view-once media (click to stop)"
-        : "Keep view-once media"}
-      aria-label="Keep view-once media"
-      onclick={onkeeponce}>1</Button>
   </header>
   <label class="search">
     <Icon name="search" size={15} />

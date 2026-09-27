@@ -72,6 +72,13 @@ export class MessagesState {
   downloadTries = $state<Record<string, number>>({});
   /** View-once copies being recovered from a reply, keyed by that reply. */
   recovering = $state<Record<string, true>>({});
+  /** Kept one-time media whose filter was dismissed, keyed by message. */
+  revealedOnce = $state<Record<string, true>>({});
+
+  /** Lifts the one-time filter from a kept copy, for this visit to the chat. */
+  revealOnce(id: string) {
+    this.revealedOnce = { ...this.revealedOnce, [id]: true };
+  }
   /** Voice note to play next, set when the previous one ends on its own. */
   autoplayId = $state<string | null>(null);
   /** Unread mentions in the open chat, oldest first, for jump-to-mention. */
@@ -253,12 +260,14 @@ export class MessagesState {
     this.olderExhausted = false;
     this.loadOnScroll = true;
     this.autoplayId = null;
+    this.revealedOnce = {};
   }
 
   /** Mirrors resetUi: the list and the mention queue are dropped. */
   resetAccount() {
     this.messages = [];
     this.mentionQueue = [];
+    this.revealedOnce = {};
   }
 }
 

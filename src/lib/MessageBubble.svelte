@@ -194,16 +194,28 @@ import VideoPlayer from "$lib/VideoPlayer.svelte";
         {#if vm.downloading}<Spinner />{:else}<Icon name="sticker" size={28} />{/if}
       </button>
     {:else if message.media_kind === "image" && (message.media_path || message.media_thumb)}
+      {@const filtered = vm.onceKept && !vm.onceRevealed}
       <button
         class="media-button"
-        title={message.media_path ? "View" : "Download"}
-        onclick={() => (message.media_path ? api.onopenviewer(message) : api.ondownload(message))}>
+        class:once-kept={filtered}
+        title={filtered ? "One-time photo, click to reveal" : message.media_path ? "View" : "Download"}
+        onclick={() =>
+          filtered
+            ? api.onrevealonce(message)
+            : message.media_path
+              ? api.onopenviewer(message)
+              : api.ondownload(message)}>
         <img
           class="media"
           src={mediaSrc((message.media_path ?? message.media_thumb)!)}
           alt={message.text}
         />
-        {#if !message.media_path}
+        {#if filtered}
+          <span class="media-overlay once-overlay">
+            <span class="once-mark">1</span>
+            <span>One-time photo<small>Click to reveal</small></span>
+          </span>
+        {:else if !message.media_path}
           <span class="media-overlay">
             <span class="media-fetch">
               {#if vm.downloading}<Spinner />{:else}<Icon name="download" size={22} />{/if}
@@ -224,30 +236,61 @@ import VideoPlayer from "$lib/VideoPlayer.svelte";
       </button>
     {:else if (message.media_kind === "video" || message.media_kind === "gif") &&
     (message.media_path || message.media_thumb)}
+      {@const filtered = vm.onceKept && !vm.onceRevealed}
       <button
         class="media-button video"
-        title={message.media_path ? "Play" : "Download"}
-        onclick={() => (message.media_path ? api.onopenviewer(message) : api.ondownload(message))}>
+        class:once-kept={filtered}
+        title={filtered
+          ? "One-time video, click to reveal"
+          : message.media_path
+            ? "Play"
+            : "Download"}
+        onclick={() =>
+          filtered
+            ? api.onrevealonce(message)
+            : message.media_path
+              ? api.onopenviewer(message)
+              : api.ondownload(message)}>
         {#if message.media_thumb}
           <img class="media" src={mediaSrc(message.media_thumb)} alt="" />
         {/if}
-        <span class="media-overlay">
-          {#if message.media_kind === "gif"}GIF{:else}<span class="play">▶</span>{/if}
-        </span>
+        {#if filtered}
+          <span class="media-overlay once-overlay">
+            <span class="once-mark">1</span>
+            <span>{message.media_kind === "gif" ? "One-time GIF" : "One-time video"}<small
+                >Click to reveal</small></span>
+          </span>
+        {:else}
+          <span class="media-overlay">
+            {#if message.media_kind === "gif"}GIF{:else}<span class="play">▶</span>{/if}
+          </span>
+        {/if}
       </button>
     {:else if message.media_kind === "audio" && message.media_path}
-      <AudioPlayer
-        path={message.media_path}
-        duration={message.media_duration}
-        avatar={vm.voiceAvatar}
-        mine={message.from_me}
-        play={vm.autoplay}
-        chained={vm.autoplay}
-        title={message.from_me ? "You" : vm.senderText}
-        onplayed={() => api.onmarkplayed(message)}
-        onended={() => api.onnextvoice(message)}
-        onpaused={() => api.onpausevoice()}
-        initials={initials(message.from_me ? "You" : vm.senderText)} />
+      {#if vm.onceKept && !vm.onceRevealed}
+        <button
+          class="voice-pending"
+          title="One-time voice message, click to reveal"
+          onclick={() => api.onrevealonce(message)}>
+          <span class="voice-pending-icon"><span class="once-mark">1</span></span>
+          <span class="voice-pending-bars" aria-hidden="true">
+            {#each Array(34) as _, i (i)}<span style="height: {20 + ((i * 37) % 60)}%"></span>{/each}
+          </span>
+        </button>
+      {:else}
+        <AudioPlayer
+          path={message.media_path}
+          duration={message.media_duration}
+          avatar={vm.voiceAvatar}
+          mine={message.from_me}
+          play={vm.autoplay}
+          chained={vm.autoplay}
+          title={message.from_me ? "You" : vm.senderText}
+          onplayed={() => api.onmarkplayed(message)}
+          onended={() => api.onnextvoice(message)}
+          onpaused={() => api.onpausevoice()}
+          initials={initials(message.from_me ? "You" : vm.senderText)} />
+      {/if}
     {:else if message.media_kind === "audio"}
       <!-- Not downloaded yet: the note's own row, with the download where play will be. -->
       <button
@@ -704,6 +747,32 @@ import VideoPlayer from "$lib/VideoPlayer.svelte";
     background: rgba(6, 8, 10, 0.6);
     font-size: 16px;
     text-shadow: none;
+  }
+  /* A kept one-time copy sits behind its filter until clicked once. */
+  .media-button.once-kept {
+    cursor: pointer;
+  }
+  .media-button.once-kept .media {
+    filter: blur(14px);
+  }
+  .once-overlay {
+    flex-direction: column;
+    gap: 8px;
+    background: rgba(6, 8, 10, 0.35);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0;
+  }
+  .once-overlay span:last-child {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+  .once-overlay small {
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--muted);
   }
   .media-fetch {
     display: grid;

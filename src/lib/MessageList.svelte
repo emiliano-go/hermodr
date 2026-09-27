@@ -83,6 +83,8 @@
     onreplymenu,
     ononce,
     oncloseonce,
+    revealedOnce,
+    onrevealonce,
     oninviteopen,
   }: {
     /** Oldest first, the order the conversation is drawn in. */
@@ -153,6 +155,9 @@
     onreplymenu: (e: MouseEvent, m: StoredMessage) => void;
     ononce: (m: StoredMessage) => void;
     oncloseonce: () => void;
+    /** Kept one-time media whose filter was dismissed in this visit. */
+    revealedOnce: Record<string, true>;
+    onrevealonce: (m: StoredMessage) => void;
     oninviteopen: (jid: string) => void;
   } = $props();
 
@@ -184,6 +189,7 @@
     onreplymenu,
     ononce,
     oncloseonce,
+    onrevealonce,
     oninviteopen,
   });
 
@@ -197,6 +203,10 @@
       message.media_kind === "view_once"
         ? { id: message.id, opened: true, available: mark?.available ?? false }
         : mark;
+    // A copy the Android companion kept: an ordinary kind plus the once marker,
+    // behind a one-time filter until it is clicked in this visit to the chat.
+    const onceKept =
+      !!message.media_once_kind && message.media_kind !== "view_once" && !!message.media_path;
     const visual =
       !message.revoked &&
       !viewOnce &&
@@ -217,6 +227,8 @@
       visual,
       caption,
       viewOnce,
+      onceKept,
+      onceRevealed: !!revealedOnce[message.id],
       inlineMeta:
         message.revoked ||
         (!message.preview_url && (!message.media_kind || (!!caption && !!message.media_path))),

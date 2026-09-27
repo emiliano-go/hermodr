@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-once-state"
+description = "Enables the once_state command without any pre-configured scope."
+commands.allow = ["once_state"]
+
+[[permission]]
+identifier = "deny-once-state"
+description = "Denies the once_state command without any pre-configured scope."
+commands.deny = ["once_state"]

@@ -418,8 +418,6 @@ pub struct WhatsAppService {
     connected: Arc<AtomicBool>,
     /// Whether archived chats stay archived when new messages arrive.
     keep_archived: Arc<AtomicBool>,
-    /// Whether a fetchable view-once is kept as ordinary media.
-    keep_view_once: Arc<AtomicBool>,
     /// Single-flight guard for a forced reconnect after a stall or sleep.
     reconnecting: Arc<AtomicBool>,
     /// Groups whose subject query failed: when to retry, and the wait that set it.

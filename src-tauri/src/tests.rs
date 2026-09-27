@@ -84,11 +84,15 @@ fn an_untouched_account_takes_its_profile_name_once() {
                 id: "default".into(),
                 label: DEFAULT_ACCOUNT_LABEL.into(),
                 jid: None,
+                once_paired: false,
+
             },
             Account {
                 id: "acct-1".into(),
                 label: "Work phone".into(),
                 jid: None,
+                once_paired: false,
+
             },
         ],
         active: Some("default".into()),
@@ -107,6 +111,8 @@ fn a_name_the_user_chose_beats_the_profile_name() {
             id: "acct-1".into(),
             label: "Work phone".into(),
             jid: None,
+            once_paired: false,
+
         }],
         active: Some("acct-1".into()),
     };
@@ -121,6 +127,8 @@ fn an_unknown_profile_name_leaves_the_label_alone() {
             id: "default".into(),
             label: DEFAULT_ACCOUNT_LABEL.into(),
             jid: None,
+            once_paired: false,
+
         }],
         active: Some("default".into()),
     };
@@ -137,6 +145,8 @@ fn an_empty_label_is_seeded_like_the_default_one() {
             id: "default".into(),
             label: String::new(),
             jid: None,
+            once_paired: false,
+
         }],
         active: Some("default".into()),
     };

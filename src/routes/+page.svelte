@@ -38,6 +38,7 @@
   import { dispatchServiceEvent, queueRefreshChats } from "$lib/state/events";
   import { members } from "$lib/state/members.svelte";
   import { messages } from "$lib/state/messages.svelte";
+  import { once } from "$lib/state/once.svelte";
   import { player } from "$lib/state/player.svelte";
   import { session } from "$lib/state/session.svelte";
   import { ui } from "$lib/state/ui.svelte";
@@ -661,6 +662,7 @@
 
   onMount(() => {
     let unlisten: (() => void) | undefined;
+    let unlistenOnce: (() => void) | undefined;
 
     // Surface anything that escapes a handler, so a failure shows a message
     // rather than leaving the interface silently unresponsive.
@@ -735,11 +737,13 @@
 
     async function setup() {
       await session.loadSettings();
+      await once.refresh();
 
       // The listener is attached before connecting so no event can be missed.
       unlisten = await listen<ServiceEvent>("service-event", (event) =>
         dispatchServiceEvent(event.payload, host),
       );
+      unlistenOnce = await listen<ServiceEvent>("once-event", () => once.refresh());
 
       // Reuse a stored session automatically: pairing is only needed the very
       // first time, so the button should never be shown to a paired account.
@@ -758,6 +762,7 @@
 
     return () => {
       unlisten?.();
+      unlistenOnce?.();
       window.removeEventListener("error", onError);
       window.removeEventListener("unhandledrejection", onRejection);
       window.removeEventListener("keydown", onAnyKey);
@@ -883,12 +888,6 @@
       onchataction={(command, args) => chats.chatAction(command, args)}
       onmarkread={(chat) => chats.chatAction("mark_read", { chat: chat.chat })}
       archivedChats={chats.archivedChats}
-      keepingOnce={session.settings.keep_view_once}
-      onkeeponce={() =>
-        session.saveSettings({
-          ...session.settings,
-          keep_view_once: !session.settings.keep_view_once,
-        })}
       onresize={startResize} />
 
     <section class="conversation">
@@ -994,6 +993,8 @@
           onjumpquoted={jumpToQuoted}
           onrecoverquote={recoverQuote}
           recovering={messages.recovering}
+          revealedOnce={messages.revealedOnce}
+          onrevealonce={(m) => messages.revealOnce(m.id)}
           ondownload={(m) => messages.downloadMedia(chats.selectedChat, m)}
           onopenviewer={openViewer}
           onopenmedia={openMedia}
@@ -1447,9 +1448,8 @@
     bind:section={ui.settingsSection}
     onclose={() => (ui.showSettings = false)}
     onsave={async (next) => {
-      const switched = next.pair_mode !== session.settings.pair_mode;
       await session.saveSettings(next);
-      if (switched) ui.notify("Switched device mode. Scan the QR code once if this mode is not linked yet.");
+      await once.refresh();
     }}
     onflush={flushMedia}
     onclearhistory={clearHistory}
@@ -1875,19 +1875,6 @@
     text-align: center;
   }
   /* Active tint comes from Button itself. */
-  /* The quick view-once toggle: a small dashed ring that closes when on. */
-  :global(.once-quick) {
-    width: 24px;
-    height: 24px;
-    border: 2px dashed currentColor;
-    border-radius: 50%;
-    font: inherit;
-    font-size: 11px;
-    font-weight: 800;
-  }
-  :global(.once-quick.on) {
-    border-style: solid;
-  }
   :global(.tool-text) {
     font: inherit;
     font-size: 11px;

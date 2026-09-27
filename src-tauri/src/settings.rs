@@ -35,19 +35,11 @@ pub struct UiSettings {
     /// moves the chat back to the main list.
     #[serde(default = "default_true")]
     pub keep_archived: bool,
-    /// How this device links: "android" makes WhatsApp send view-once media
-    /// here, "external" links as an ordinary companion. Each mode keeps its own
-    /// link; switching hot-swaps which session runs and never unlinks.
-    #[serde(default = "default_pair_mode")]
-    pub pair_mode: String,
-    /// Whether an arriving view-once whose media can be fetched is downloaded
-    /// and kept as an ordinary attachment instead of one-time.
-    #[serde(default = "default_true")]
-    pub keep_view_once: bool,
-}
-
-fn default_pair_mode() -> String {
-    "android".to_string()
+    /// Whether the optional Android instance runs: a second link that fetches
+    /// one-time media the External companion never receives. Off stops it
+    /// without unlinking; the link stays paired for next time.
+    #[serde(default)]
+    pub android_instance: bool,
 }
 
 pub(crate) fn default_true() -> bool {
@@ -67,8 +59,7 @@ impl Default for UiSettings {
             keep_history: true,
             skip_loading_screen: false,
             keep_archived: true,
-            pair_mode: default_pair_mode(),
-            keep_view_once: true,
+            android_instance: false,
         }
     }
 }
@@ -110,38 +101,40 @@ pub(crate) fn get_settings(state: State<'_, AppState>) -> UiSettings {
     state.settings.lock().unwrap().clone()
 }
 
-/// Updates and saves settings. Service settings take effect immediately.
+/// Updates and saves settings.
 ///
-/// Changing the device mode hot-swaps which linked session runs; neither mode
-/// is unlinked, so the phone keeps both devices and switching back and forth
-/// needs no new pairing (only the first time a mode is used).
+/// Toggling the Android instance starts or stops it without touching the main
+/// link; nothing is unlinked either way.
 #[tauri::command]
 pub(crate) async fn set_settings(app: AppHandle, state: State<'_, AppState>, settings: UiSettings) -> Result<(), String> {
+    let instance_changed = state.settings.lock().unwrap().android_instance != settings.android_instance;
+    // Both links share one store, so the instance cannot run without history.
+    if instance_changed && settings.android_instance {
+        if !settings.keep_history {
+            return Err("The Android companion needs \"Download and keep history\" turned on".into());
+        }
+        if crate::account_store::active_account(&state).is_none() {
+            return Err("no account to attach the Android companion to".into());
+        }
+    }
     let path = settings_path(&app);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let json = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
     std::fs::write(path, json).map_err(|e| e.to_string())?;
-    let mode_changed = state.settings.lock().unwrap().pair_mode != settings.pair_mode;
     if let Ok(service) = state.service() {
         service.set_retention(settings.retention, settings.accept_full_history);
         service.set_keep_archived(settings.keep_archived);
-        service.set_keep_view_once(settings.keep_view_once);
     }
+    let enabled = settings.android_instance;
     *state.settings.lock().unwrap() = settings;
-    if mode_changed {
-        // Both modes stay linked; switching just restarts with the other
-        // session file. An unpaired mode shows its QR code once.
-        if let Some(account) = crate::account_store::active_account(&state) {
-            crate::connection::start_service(&app, &state, &account).await?;
+    if instance_changed {
+        if enabled {
+            crate::connection::start_once(&app, &state).await?;
+        } else {
+            crate::connection::stop_once(&app, &state).await?;
         }
     }
     Ok(())
-}
-
-/// How the current account was linked: `"android"` or `"external"`.
-#[tauri::command]
-pub(crate) fn paired_mode(state: State<'_, AppState>) -> Result<String, String> {
-    Ok(state.service()?.paired_mode().to_string())
 }
