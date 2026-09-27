@@ -246,6 +246,7 @@ import VideoPlayer from "$lib/VideoPlayer.svelte";
         avatar={vm.voiceAvatar}
         mine={message.from_me}
         play={vm.autoplay}
+        chained={vm.autoplay}
         title={message.from_me ? "You" : vm.senderText}
         onplayed={() => api.onmarkplayed(message)}
         onended={() => api.onnextvoice(message)}

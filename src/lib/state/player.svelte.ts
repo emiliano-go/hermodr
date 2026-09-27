@@ -18,6 +18,8 @@ export type VoiceTrack = {
   initials: string;
   /** Sender name for the sidebar player. */
   title: string;
+  /** The next note in a chain: cue, brief pause, then play. */
+  autoplay?: boolean;
   onplayed?: () => void;
   onended?: () => void;
   onpaused?: () => void;
@@ -85,6 +87,7 @@ class PlayerState {
   #seq = 0;
   #frame = 0;
   #heard = loadHeard();
+  #cues: AudioContext | null = null;
 
   get progress() {
     return this.duration ? Math.min(1, this.position / this.duration) : 0;
@@ -92,6 +95,32 @@ class PlayerState {
 
   heard(path: string) {
     return this.#heard.has(path);
+  }
+
+  /** A short cue between chained notes, and a different one when a chain ends. */
+  playCue(kind: "next" | "end") {
+    try {
+      const context = (this.#cues ??= new AudioContext());
+      if (context.state === "suspended") void context.resume();
+      // Rising pair into the next note, falling pair when the queue is done.
+      const tones = kind === "next" ? [660, 880] : [494, 330];
+      const now = context.currentTime;
+      tones.forEach((frequency, i) => {
+        const at = now + i * 0.09;
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        oscillator.type = "sine";
+        oscillator.frequency.value = frequency;
+        gain.gain.setValueAtTime(0.0001, at);
+        gain.gain.exponentialRampToValueAtTime(0.2, at + 0.012);
+        gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.085);
+        oscillator.connect(gain).connect(context.destination);
+        oscillator.start(at);
+        oscillator.stop(at + 0.1);
+      });
+    } catch {
+      // The cue is a nicety; playback continues without it.
+    }
   }
 
   #element() {
@@ -147,6 +176,12 @@ class PlayerState {
     }
 
     const seq = ++this.#seq;
+    // A chained note waits through its cue before starting.
+    if (track.autoplay) {
+      this.playCue("next");
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      if (seq !== this.#seq) return;
+    }
     audio.pause();
     this.#revoke();
     this.track = track;

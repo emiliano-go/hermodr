@@ -172,11 +172,12 @@ export class MessagesState {
     );
   }
 
-  /** The note after `finished` in the conversation, so the next one can autoplay. */
-  playNextVoice(finished: StoredMessage) {
+  /** Queues the note after `finished`; true when one was found to play next. */
+  playNextVoice(finished: StoredMessage): boolean {
     const at = this.ordered.findIndex((m) => m.id === finished.id);
-    this.autoplayId =
-      this.ordered.slice(at + 1).find((m) => m.media_kind === "audio" && m.media_path)?.id ?? null;
+    const next = this.ordered.slice(at + 1).find((m) => m.media_kind === "audio" && m.media_path);
+    this.autoplayId = next?.id ?? null;
+    return !!next;
   }
 
   settleRecall() {

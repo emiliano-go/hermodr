@@ -14,6 +14,8 @@
     play = false,
     /** Sender name for the sidebar player. */
     title = "",
+    /** The next note in a chain: cue and a short pause before it starts. */
+    chained = false,
     onplayed,
     onended,
     onpaused,
@@ -28,6 +30,7 @@
     /** Start as soon as this turns true, for the queue behind a voice note. */
     play?: boolean;
     title?: string;
+    chained?: boolean;
     /** Called the first time the note plays here, for the played receipt. */
     onplayed?: () => void;
     /** Called when the note reaches its end on its own, to chain to the next. */
@@ -59,6 +62,7 @@
       avatar,
       initials,
       title,
+      autoplay: chained,
       onplayed: () => {
         heard = true;
         onplayed?.();

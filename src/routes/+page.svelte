@@ -1497,7 +1497,8 @@
           onmarkplayed={(m) => messages.markPlayed(m)}
           onnextvoice={(m) => {
             // A note left playing in another chat has nothing to chain to.
-            if (chats.selectedChat === m.chat) messages.playNextVoice(m);
+            if (chats.selectedChat === m.chat && messages.playNextVoice(m)) return;
+            player.playCue("end");
           }}
           onpausevoice={() => (messages.autoplayId = null)}
           onreplymenu={(e, m) => {
