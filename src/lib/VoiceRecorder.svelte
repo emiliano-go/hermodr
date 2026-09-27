@@ -98,8 +98,11 @@
     if (!preview) return;
     if (previewing) return stopPreview();
     // Flush the chunk in progress so the preview reaches the pause.
-    recorder?.requestData();
-    await new Promise((r) => setTimeout(r, 60));
+    if (recorder && recorder.state !== "inactive") {
+      const flushed = new Promise((r) => recorder!.addEventListener("dataavailable", r, { once: true }));
+      recorder.requestData();
+      await flushed;
+    }
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     previewUrl = URL.createObjectURL(new Blob(chunks, { type: "audio/webm" }));
     preview.src = previewUrl;
