@@ -88,5 +88,13 @@ mod tests {
         assert_eq!(marks.polls.len(), 1);
         assert_eq!(marks.polls[0].votes.len(), 1);
         assert!(store.marks_for("test@s", Some(&[])).unwrap().starred.is_empty());
+        for id in ["c", "a", "b"] {
+            store.insert_message(&StoredMessage { header: MessageHeader {
+                chat: "ties@s".into(), id: id.into(), timestamp: 200, sender: "peer@s".into(), ..Default::default()
+            }, ..Default::default() }).unwrap();
+        }
+        assert_eq!(store.unread_until("ties@s", "b").unwrap().iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["a", "b"]);
+        assert_eq!(store.mark_read_until("ties@s", "b").unwrap(), 2);
+        assert!(!store.message("ties@s", "c").unwrap().local.read);
     }
 }

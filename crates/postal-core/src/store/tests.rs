@@ -862,9 +862,9 @@ fn merging_chats_folds_history_state_and_keeps_the_chat_visible() {
     s.set_pinned("123@lid", true).unwrap();
     s.set_name("123@lid", "Ma cherie").unwrap();
 
-    s.merge_chats("123@lid", "5989@s.whatsapp.net").unwrap();
+    s.set_lid_pn("123", "5989").unwrap();
 
-    assert!(!s.chat_exists("123@lid").unwrap());
+    assert_eq!(s.messages_for("123@lid", 10).unwrap()[0].header.chat, "5989@s.whatsapp.net");
     assert_eq!(s.messages_for("5989@s.whatsapp.net", 10).unwrap().len(), 3);
     assert!(s.is_archived("5989@s.whatsapp.net").unwrap());
     assert!(s.pinned_chats().unwrap().iter().any(|j| j == "5989@s.whatsapp.net"));

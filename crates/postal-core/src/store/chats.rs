@@ -135,23 +135,6 @@ impl MessageStore {
             .is_some_and(|v| v != 0))
     }
 
-    /// Whether any table still keeps rows for this chat.
-    pub fn chat_exists(&self, jid: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
-        let jid = &*names::canonical_chat(&conn, jid)?;
-        chat_rows_exist(&conn, jid)
-    }
-
-    /// Folds one chat's rows onto another, for the LID and phone forms of the
-    /// same direct chat. Called on write and on open so a split self-heals.
-    pub fn merge_chats(&self, from: &str, to: &str) -> Result<()> {
-        if from == to {
-            return Ok(());
-        }
-        let conn = self.conn.lock().unwrap();
-        fold_chat(&conn, from, to)
-    }
-
     /// Mirrors a chat's mute end (seconds; -1 indefinitely, 0 unmuted).
     pub fn set_muted_until(&self, jid: &str, until: i64) -> Result<()> {
         self.set_chat_state(jid, "muted_until", until)
@@ -316,29 +299,6 @@ impl MessageStore {
 }
 
 /// Whether any table keeps rows for a chat: messages or any of its list state.
-pub(crate) fn chat_rows_exist(conn: &Connection, jid: &str) -> Result<bool> {
-    for (table, column) in [
-        ("messages", "chat"),
-        ("chats", "jid"),
-        ("chat_state", "jid"),
-        ("pins", "jid"),
-        ("cleared_chats", "jid"),
-        ("hidden_chats", "jid"),
-    ] {
-        let found: Option<i64> = conn
-            .query_row(
-                &format!("SELECT 1 FROM {table} WHERE {column} = ?1 LIMIT 1"),
-                params![jid],
-                |r| r.get(0),
-            )
-            .optional()?;
-        if found.is_some() {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
 /// Moves every row from one chat to `to`, keeping whatever state either side
 /// had. A chat that just gained messages is never left hidden or kept-empty.
 pub(crate) fn fold_chat(conn: &Connection, from: &str, to: &str) -> Result<()> {

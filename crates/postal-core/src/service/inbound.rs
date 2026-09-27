@@ -298,7 +298,6 @@ impl Inbound {
             // available without a contacts query.
             let push_name = inbound.info.push_name.to_string();
             let sender = inbound.info.source.sender.to_string();
-            let raw_chat = inbound.info.source.chat.to_non_ad().to_string();
             let chat = canonical_chat(
                 client.as_deref(),
                 store,
@@ -308,12 +307,6 @@ impl Inbound {
             )
             .await;
             touched.push(chat.clone());
-            // The LID form of a direct chat still holding history folds onto the
-            // phone-number form, so a split cannot outlive this message.
-            if raw_chat != chat && raw_chat.ends_with("@lid") && store.chat_exists(&raw_chat).observed().unwrap_or(false)
-            {
-                store.merge_chats(&raw_chat, &chat).logged();
-            }
             let is_group = inbound.info.source.is_group
                 || chat.ends_with("@g.us");
             let from_me = inbound.info.source.is_from_me;

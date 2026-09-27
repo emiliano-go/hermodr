@@ -2,6 +2,7 @@ use super::*;
 use buffa::Message as _;
 use std::io::Write;
 use whatsapp_rust::wacore::types::events::LazyHistorySync;
+use whatsapp_rust::wacore::types::{events::{InboundMessage, MessageBatch, BatchOrigin, Receipt}, message::{MessageInfo, MessageSource}};
 
 fn inbound() -> (Inbound, broadcast::Receiver<ServiceEvent>) {
     let (events, received) = broadcast::channel(32);
@@ -13,6 +14,70 @@ fn inbound() -> (Inbound, broadcast::Receiver<ServiceEvent>) {
         downloads: Arc::new(tokio::sync::Semaphore::new(1)), sync_progress: Arc::default(),
         auto_download_default: false, keep_archived: Arc::default(), keep_view_once: Arc::default(),
     }, received)
+}
+
+fn message_event(chat: &str, sender: &str, id: &str, message: wa::Message) -> Event {
+    let info = MessageInfo { id: id.into(), source: MessageSource {
+        chat: chat.parse().unwrap(), sender: sender.parse().unwrap(), is_group: chat.ends_with("@g.us"), ..Default::default()
+    }, ..Default::default() };
+    let message = InboundMessage::builder().message(Arc::new(message)).info(Arc::new(info)).build();
+    Event::Messages(MessageBatch::builder().messages(vec![message].into()).origin(BatchOrigin::Live).build())
+}
+
+#[tokio::test]
+async fn decrypted_community_and_plaintext_reactions_share_parent_and_removal_semantics() {
+    use whatsapp_rust::wacore::reaction::{encrypt_reaction_with_secret, decrypt_reaction_with_secret};
+    let (inbound, _) = inbound();
+    let author = "100@s.whatsapp.net";
+    let reactor = "300@lid";
+    for chat in ["1@g.us", "200@s.whatsapp.net"] {
+        inbound.store.insert_message(&StoredMessage { header: MessageHeader {
+            chat: chat.into(), id: "parent".into(), sender: author.into(), ..Default::default()
+        }, text: "parent stays".into(), ..Default::default() }).unwrap();
+        for emoji in ["x", ""] {
+            let key = wa::MessageKey { remote_jid: Some(chat.into()), id: Some("parent".into()), participant: Some(author.into()), ..Default::default() };
+            let message = if chat.ends_with("@g.us") {
+                let secret = [7; 32];
+                let (payload, iv) = encrypt_reaction_with_secret(emoji, 100, &secret, "parent", author, reactor).unwrap();
+                assert!(decrypt_reaction_with_secret(&payload, &iv, &[8; 32], "parent", author, reactor).is_err());
+                let mut reaction = decrypt_reaction_with_secret(&payload, &iv, &secret, "parent", author, reactor).unwrap();
+                reaction.key = MessageField::some(key);
+                wa::Message { reaction_message: MessageField::some(reaction), ..Default::default() }
+            } else {
+                whatsapp_rust::wacore::proto_helpers::build_reaction_message(key, emoji, 100)
+            };
+            inbound.handle(&message_event(chat, reactor, "reaction", message)).await;
+            let reactions = inbound.store.marks(chat).unwrap().reactions;
+            if emoji.is_empty() { assert!(reactions.is_empty()); }
+            else {
+                assert_eq!(reactions.len(), 1);
+                assert_eq!(reactions[0].target, "parent");
+                assert_eq!(reactions[0].sender, reactor);
+                assert_eq!(reactions[0].emoji, emoji);
+            }
+        }
+    }
+    assert_eq!(inbound.store.count().unwrap(), 2);
+}
+
+#[tokio::test]
+async fn receipt_events_advance_delivery_without_regression() {
+    let (inbound, _) = inbound();
+    let chat = "1@g.us";
+    inbound.store.insert_message(&StoredMessage {
+        header: MessageHeader { chat: chat.into(), id: "sent".into(), sender: "100@s.whatsapp.net".into(), from_me: true, ..Default::default() },
+        local: LocalState { status: Some("pending".into()), ..Default::default() }, ..Default::default()
+    }).unwrap();
+    for kind in [ReceiptType::Read, ReceiptType::Delivered] {
+        let receipt = Receipt::builder().source(MessageSource {
+            chat: chat.parse().unwrap(), sender: "200:2@s.whatsapp.net".parse().unwrap(), is_group: true, ..Default::default()
+        }).message_ids(vec!["sent".into()]).timestamp("2026-09-27T00:00:00Z".parse().unwrap()).r#type(kind).offline(false).build();
+        inbound.handle(&Event::Receipt(receipt)).await;
+    }
+    assert_eq!(inbound.store.message(chat, "sent").unwrap().local.status.as_deref(), Some("read"));
+    let receipts = inbound.store.receipts("sent").unwrap();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0].recipient, "200@s.whatsapp.net");
 }
 
 fn history_chunk(chat: &str, id: &str, session: Option<&str>) -> LazyHistorySync {

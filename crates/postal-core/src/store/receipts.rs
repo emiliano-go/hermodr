@@ -153,16 +153,15 @@ impl MessageStore {
 
     /// Unread incoming messages up to and including `id`, oldest first.
     ///
-    /// The cutoff is the rowid of `id`, so messages sharing a timestamp are
-    /// split exactly where the boundary message sits.
+    /// The timestamp/id boundary matches message paging.
     pub fn unread_until(&self, chat: &str, id: &str) -> Result<Vec<(String, String)>> {
         let conn = self.conn.lock().unwrap();
         let chat = &*names::canonical_chat(&conn, chat)?;
         let mut stmt = conn.prepare(
             "SELECT id, sender FROM messages
              WHERE chat = ?1 AND read = 0 AND from_me = 0
-               AND rowid <= (SELECT rowid FROM messages WHERE chat = ?1 AND id = ?2)
-             ORDER BY timestamp",
+               AND (timestamp, id) <= (SELECT timestamp, id FROM messages WHERE chat = ?1 AND id = ?2)
+             ORDER BY timestamp, id",
         )?;
         let rows = stmt.query_map(params![chat, id], |r| Ok((r.get(0)?, r.get(1)?)))?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
@@ -175,7 +174,7 @@ impl MessageStore {
         let changed = conn.execute(
             "UPDATE messages SET read = 1
              WHERE chat = ?1 AND read = 0 AND from_me = 0
-               AND rowid <= (SELECT rowid FROM messages WHERE chat = ?1 AND id = ?2)",
+               AND (timestamp, id) <= (SELECT timestamp, id FROM messages WHERE chat = ?1 AND id = ?2)",
             params![chat, id],
         )?;
         Ok(changed)
