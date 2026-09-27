@@ -1809,6 +1809,16 @@
   </div>
 {/if}
 
+{#if session.connected && session.uiUnlocked && session.syncPending > 0 && !ui.pendingJump && !ui.notice}
+  <div class="notice" role="status">
+    <Spinner />
+    <span>
+      Syncing messages · {Math.max(0, session.syncPending - session.syncApplied)} left of {session.syncPending}
+      ({session.syncPercent}%)
+    </span>
+  </div>
+{/if}
+
 {#if ui.notice}
   <div class="notice">
     <span>{ui.notice}</span>
