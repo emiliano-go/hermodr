@@ -486,7 +486,7 @@ impl MessageStore {
     pub fn open(path: &Path, retention: Retention) -> Result<Self> {
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent).ok();
+                std::fs::create_dir_all(parent)?;
             }
         }
         let conn = Connection::open(path)
@@ -528,7 +528,13 @@ impl MessageStore {
     /// nest and may overlap across tasks; the last one to drop commits. Nothing
     /// is rolled back: a failed write fails alone, as it would outside a batch.
     pub fn batch(&self) -> Batch<'_> {
-        let open = self.conn.lock().unwrap().execute_batch("SAVEPOINT batch").is_ok();
+        let open = match self.conn.lock().unwrap().execute_batch("SAVEPOINT batch") {
+            Ok(()) => true,
+            Err(error) => {
+                log::error!("could not start storage batch: {error}");
+                false
+            }
+        };
         Batch { store: self, open }
     }
 

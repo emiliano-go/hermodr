@@ -17,7 +17,7 @@ impl MessageStore {
                     })
                 },
             )
-            .unwrap_or_default())
+            .optional()?.unwrap_or_default())
     }
 
     pub fn set_chat_retention(&self, jid: &str, retention: &ChatRetention) -> Result<()> {
@@ -86,7 +86,7 @@ impl MessageStore {
         if oldest.is_none() && !per_chat_age && cap.is_none() && !per_chat_cap {
             return Ok(0);
         }
-        let json = chats.map(|c| serde_json::to_string(c).unwrap_or_default());
+        let json = chats.map(serde_json::to_string).transpose()?;
         // Scoped statements filter on the (chat, timestamp) index instead of reading every row.
         let (scope, scope_m) = if json.is_some() {
             ("chat IN (SELECT value FROM json_each(:scope))", "m.chat IN (SELECT value FROM json_each(:scope))")

@@ -55,7 +55,7 @@ impl MessageStore {
                 params![chat, id],
                 |r| r.get::<_, Option<String>>(0),
             )
-            .ok()
+            .optional()?
             .flatten();
         Ok(value)
     }
@@ -80,7 +80,7 @@ impl MessageStore {
                 params![chat, id],
                 |r| r.get(0),
             )
-            .ok()
+            .optional()?
             .flatten();
         let Some(quoted) = quoted.filter(|q| !q.is_empty()) else {
             conn.execute(
@@ -108,7 +108,7 @@ impl MessageStore {
                 params![chat, id],
                 |r| r.get::<_, Option<Vec<u8>>>(0),
             )
-            .ok()
+            .optional()?
             .flatten();
         Ok(value)
     }
@@ -193,7 +193,7 @@ impl MessageStore {
                 params![chat, quoted],
                 |r| r.get::<_, Vec<u8>>(0),
             )
-            .ok();
+            .optional()?;
         Ok(found)
     }
 
@@ -222,7 +222,7 @@ impl MessageStore {
                 quoted_stored: r.get::<_, Option<i32>>(8)?.unwrap_or(0) != 0,
             })
         })?;
-        Ok(rows.flatten().collect())
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
     /// The newest reply quoting `id` that carries a copy of it.
@@ -236,7 +236,7 @@ impl MessageStore {
                 params![id],
                 |row| Ok(QuoteSource { chat: row.get(0)?, id: row.get(1)?, locator: row.get(2)? }),
             )
-            .ok())
+            .optional()?)
     }
 
     /// Whether a message is marked view-once, whether or not it has been opened.
@@ -248,7 +248,7 @@ impl MessageStore {
                 params![chat, id],
                 |r| r.get::<_, i32>(0),
             )
-            .is_ok())
+            .optional()?.is_some())
     }
 
     /// Opens a view-once message: marks it and forgets its file, returning the path to delete.
@@ -261,7 +261,7 @@ impl MessageStore {
                 params![chat, id],
                 |r| r.get(0),
             )
-            .ok()
+            .optional()?
             .flatten();
         conn.execute(
             "UPDATE messages SET media_path = NULL, media_thumb = NULL, media_ref = NULL
@@ -318,7 +318,9 @@ impl MessageStore {
                     if std::fs::rename(&source, &dest).is_err() {
                         // A different filesystem cannot be renamed across.
                         std::fs::copy(&source, &dest)?;
-                        let _ = std::fs::remove_file(&source);
+                        if let Err(error) = std::fs::remove_file(&source) {
+                            log::error!("media copied, but old file could not be removed: {error}");
+                        }
                     }
                 }
                 rewritten += conn.execute(

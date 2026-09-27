@@ -90,7 +90,13 @@ pub(crate) fn load_settings(app: &AppHandle) -> UiSettings {
 
 /// Whether a chat gets our (typing, read receipts): its overrides, else the global settings.
 pub(crate) fn sends_privacy(state: &AppState, service: &WhatsAppService, chat: &str) -> (bool, bool) {
-    let (typing, receipts) = service.chat_privacy(chat).unwrap_or_default();
+    let (typing, receipts) = match service.chat_privacy(chat) {
+        Ok(privacy) => privacy,
+        Err(error) => {
+            log::error!("could not read chat privacy settings: {error}");
+            return (false, false);
+        }
+    };
     let settings = state.settings.lock().unwrap();
     (
         typing.unwrap_or(settings.send_typing),

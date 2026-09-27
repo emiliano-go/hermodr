@@ -82,15 +82,15 @@ impl MessageStore {
     }
 
     /// Whether the stored name for a JID came from the address book.
-    pub fn name_is_saved(&self, jid: &str) -> bool {
+    pub fn name_is_saved(&self, jid: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
-        conn.query_row(
+        Ok(conn.query_row(
             "SELECT saved FROM names WHERE jid = ?1",
             params![jid],
             |r| r.get::<_, i32>(0),
         )
-        .map(|v| v != 0)
-        .unwrap_or(false)
+        .optional()?
+        .is_some_and(|v| v != 0))
     }
 
     /// Names matching a query, for the search box.
@@ -119,7 +119,7 @@ impl MessageStore {
             .query_row("SELECT name FROM names WHERE jid = ?1", params![jid], |r| {
                 r.get::<_, String>(0)
             })
-            .ok();
+            .optional()?;
         Ok(name)
     }
 
@@ -144,6 +144,6 @@ impl MessageStore {
                 params![user],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
-            .ok())
+            .optional()?)
     }
 }

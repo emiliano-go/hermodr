@@ -62,7 +62,7 @@ impl MessageStore {
             .collect::<rusqlite::Result<_>>()?;
         let pinned = conn
             .query_row("SELECT id FROM message_pins WHERE chat = ?1", params![chat], |r| r.get(0))
-            .ok();
+            .optional()?;
         let json = |s: String| serde_json::from_str::<Vec<String>>(&s).unwrap_or_default();
 
         let mut polls: Vec<Poll> = conn
@@ -182,15 +182,14 @@ impl MessageStore {
                 "SELECT creator, secret, options FROM polls WHERE chat = ?1 AND id = ?2",
                 params![chat, id],
                 |r| {
+                    let creator = r.get(0)?;
+                    let options = r.get::<_, String>(2)?;
                     Ok(r.get::<_, Option<Vec<u8>>>(1)?.map(|secret| Secretive {
-                        creator: r.get(0).unwrap_or_default(),
-                        secret,
-                        options: serde_json::from_str(&r.get::<_, String>(2).unwrap_or_default())
-                            .unwrap_or_default(),
+                        creator, secret, options: serde_json::from_str(&options).unwrap_or_default(),
                     }))
                 },
             )
-            .ok()
+            .optional()?
             .flatten())
     }
 
@@ -248,14 +247,13 @@ impl MessageStore {
                 "SELECT creator, secret FROM events WHERE chat = ?1 AND id = ?2",
                 params![chat, id],
                 |r| {
+                    let creator = r.get(0)?;
                     Ok(r.get::<_, Option<Vec<u8>>>(1)?.map(|secret| Secretive {
-                        creator: r.get(0).unwrap_or_default(),
-                        secret,
-                        options: Vec::new(),
+                        creator, secret, options: Vec::new(),
                     }))
                 },
             )
-            .ok()
+            .optional()?
             .flatten())
     }
 

@@ -55,7 +55,7 @@ impl MessageStore {
                 params![jid],
                 |r| r.get::<_, i32>(0),
             )
-            .ok();
+            .optional()?;
         Ok(value.map(|v| v != 0))
     }
 
@@ -298,7 +298,11 @@ impl MessageStore {
         };
         let removed = conn.execute("DELETE FROM messages WHERE chat = ?1", params![jid])?;
         for path in paths {
-            let _ = std::fs::remove_file(path);
+            if let Err(error) = std::fs::remove_file(path) {
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    log::error!("could not remove deleted chat media: {error}");
+                }
+            }
         }
         Ok(removed)
     }

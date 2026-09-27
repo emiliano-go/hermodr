@@ -182,7 +182,7 @@ impl MessageStore {
                     ))
                 },
             )
-            .ok();
+            .optional()?;
         Ok(row)
     }
 
@@ -211,7 +211,7 @@ impl MessageStore {
                 params![id],
                 |r| r.get::<_, String>(0),
             )
-            .ok();
+            .optional()?;
         Ok(chat)
     }
 

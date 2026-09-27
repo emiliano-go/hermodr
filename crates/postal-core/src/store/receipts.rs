@@ -56,7 +56,7 @@ impl MessageStore {
                 params![chat, id],
                 |row| row.get(0),
             )
-            .ok();
+            .optional()?;
         let Some(current) = current else {
             return Ok(false);
         };

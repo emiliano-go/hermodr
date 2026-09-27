@@ -352,7 +352,7 @@ impl WhatsAppService {
                 seen.insert(chat.chat.clone());
                 results.push(SearchResult {
                     kind: if chat.chat.ends_with("@g.us") { "group".to_string() } else { "contact".to_string() },
-                    saved: self.store.name_is_saved(&chat.chat),
+                    saved: self.store.name_is_saved(&chat.chat).observed().unwrap_or(false),
                     jid: chat.chat.clone(),
                     name,
                     number,
@@ -405,7 +405,7 @@ impl WhatsAppService {
             }
             results.push(SearchResult {
                 kind: "contact".to_string(),
-                saved: self.store.name_is_saved(&named),
+                saved: self.store.name_is_saved(&named).observed().unwrap_or(false),
                 jid: named.clone(),
                 name,
                 number,

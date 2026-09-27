@@ -1,6 +1,35 @@
 use super::*;
 
 #[test]
+fn optional_rows_do_not_hide_database_failures() {
+    let reads: &[(&str, fn(&MessageStore) -> Result<()>)] = &[
+        ("names", |s| s.name_for("absent").map(|_| ())),
+        ("names", |s| s.name_is_saved("absent").map(|_| ())),
+        ("lid_pn", |s| s.lid_pn("absent").map(|_| ())),
+        ("chat_settings", |s| s.chat_auto_download("absent").map(|_| ())),
+        ("chat_privacy", |s| s.chat_privacy("absent").map(|_| ())),
+        ("chat_retention", |s| s.chat_retention("absent").map(|_| ())),
+        ("messages", |s| s.oldest_message("absent").map(|_| ())),
+        ("messages", |s| s.chat_of_message("absent").map(|_| ())),
+        ("messages", |s| s.set_delivery_state("chat", "absent", "read").map(|_| ())),
+        ("messages", |s| s.media_ref_for("chat", "absent").map(|_| ())),
+        ("messages", |s| s.quote_media_path("chat", "absent").map(|_| ())),
+        ("messages", |s| s.view_once_copy("chat", "absent").map(|_| ())),
+        ("messages", |s| s.quote_source_for("absent").map(|_| ())),
+        ("view_once", |s| s.is_view_once("chat", "absent").map(|_| ())),
+        ("polls", |s| s.poll_secret("chat", "absent").map(|_| ())),
+        ("events", |s| s.event_secret("chat", "absent").map(|_| ())),
+        ("message_pins", |s| s.marks("absent").map(|_| ())),
+    ];
+    for (table, read) in reads {
+        let s = store(Retention::unlimited());
+        assert!(read(&s).is_ok(), "{table}: absent row is valid");
+        s.conn.lock().unwrap().execute_batch(&format!("DROP TABLE {table}")).unwrap();
+        assert!(read(&s).is_err(), "{table}: database failure must propagate");
+    }
+}
+
+#[test]
 fn address_reconciliation_uses_indexed_quote_lookup() {
     let store = store(Retention::unlimited());
     let conn = store.conn.lock().unwrap();
