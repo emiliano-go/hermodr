@@ -101,10 +101,6 @@ impl MessageStore {
             conn.execute(sql, params.as_slice())
         };
 
-        // Every chat keeps its newest message, whatever its age: a quiet chat
-        // must stay in the list with its last preview, not vanish.
-        let not_newest = "id != (SELECT newest.id FROM messages newest
-             WHERE newest.chat = messages.chat ORDER BY newest.timestamp DESC LIMIT 1)";
         let mut removed = 0;
 
         // A chat with its own window or cap is only bound by that one.
@@ -112,8 +108,7 @@ impl MessageStore {
             removed += run(
                 &format!(
                     "DELETE FROM messages WHERE {scope} AND timestamp < :oldest AND chat NOT IN
-                         (SELECT jid FROM chat_retention WHERE max_age_hours IS NOT NULL)
-                     AND {not_newest}"
+                         (SELECT jid FROM chat_retention WHERE max_age_hours IS NOT NULL)"
                 ),
                 &[(":oldest", &oldest)],
             )?;
@@ -126,8 +121,7 @@ impl MessageStore {
                 &format!(
                     "DELETE FROM messages WHERE {scope} AND EXISTS (
                          SELECT 1 FROM chat_retention r WHERE r.jid = messages.chat
-                         AND r.max_age_hours > 0 AND messages.timestamp < :now - r.max_age_hours * 3600)
-                     AND {not_newest}"
+                         AND r.max_age_hours > 0 AND messages.timestamp < :now - r.max_age_hours * 3600)"
                 ),
                 &[(":now", &unix_now())],
             )?;
@@ -159,7 +153,21 @@ impl MessageStore {
                      SELECT 1 FROM messages m WHERE m.chat = edited.chat AND m.id = edited.id);
                  DELETE FROM view_once WHERE NOT EXISTS (
                      SELECT 1 FROM messages m WHERE m.chat = view_once.chat AND m.id = view_once.id);
-                 DELETE FROM receipts WHERE NOT EXISTS (SELECT 1 FROM messages m WHERE m.id = receipts.id);",
+                 DELETE FROM receipts WHERE NOT EXISTS (SELECT 1 FROM messages m WHERE m.id = receipts.id);
+                 DELETE FROM reactions WHERE NOT EXISTS (
+                     SELECT 1 FROM messages m WHERE m.chat = reactions.chat AND m.id = reactions.target);
+                 DELETE FROM stars WHERE NOT EXISTS (
+                     SELECT 1 FROM messages m WHERE m.chat = stars.chat AND m.id = stars.id);
+                 DELETE FROM message_pins WHERE NOT EXISTS (
+                     SELECT 1 FROM messages m WHERE m.chat = message_pins.chat AND m.id = message_pins.id);
+                 DELETE FROM poll_votes WHERE NOT EXISTS (
+                     SELECT 1 FROM messages m WHERE m.chat = poll_votes.chat AND m.id = poll_votes.poll);
+                 DELETE FROM polls WHERE NOT EXISTS (
+                     SELECT 1 FROM messages m WHERE m.chat = polls.chat AND m.id = polls.id);
+                 DELETE FROM event_responses WHERE NOT EXISTS (
+                     SELECT 1 FROM messages m WHERE m.chat = event_responses.chat AND m.id = event_responses.event);
+                 DELETE FROM events WHERE NOT EXISTS (
+                     SELECT 1 FROM messages m WHERE m.chat = events.chat AND m.id = events.id);",
             )?;
             reclaim(&conn, 2_000)?;
         }

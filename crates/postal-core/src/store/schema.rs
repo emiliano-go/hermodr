@@ -13,6 +13,29 @@ mod tests {
     }
 
     #[test]
+    fn chat_metadata_migration_rolls_back_and_backfills_existing_and_cleared_chats() {
+        let conn = legacy();
+        for step in &MIGRATIONS[..4] { step(&conn).unwrap(); }
+        conn.pragma_update(None, "user_version", 4).unwrap();
+        conn.execute_batch(
+            "INSERT INTO cleared_chats VALUES ('empty@s.whatsapp.net');
+             CREATE TABLE chats (jid TEXT PRIMARY KEY, last_message_at INTEGER NOT NULL DEFAULT 0);
+             CREATE TRIGGER fail_metadata BEFORE INSERT ON chats BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END;",
+        ).unwrap();
+        assert!(migrate(&conn).is_err());
+        assert_eq!(version(&conn), 4);
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM chats", [], |r| r.get::<_, u32>(0)).unwrap(), 0);
+        conn.execute_batch("DROP TRIGGER fail_metadata").unwrap();
+        migrate(&conn).unwrap();
+        let rows = conn.prepare("SELECT jid, last_message_at FROM chats ORDER BY jid").unwrap()
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))).unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>().unwrap();
+        assert_eq!(rows, vec![("1@s.whatsapp.net".into(), 123), ("empty@s.whatsapp.net".into(), 0)]);
+        conn.execute_batch("DELETE FROM messages").unwrap();
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM chats", [], |r| r.get::<_, u32>(0)).unwrap(), 2);
+    }
+
+    #[test]
     fn caption_migration_recovers_batches_without_overwriting_message_state() {
         use buffa::{Message, MessageField};
         use whatsapp_rust::prelude::wa;
@@ -254,6 +277,7 @@ const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
     migrate_v2_legacy_data,
     migrate_v3_media_captions,
     migrate_v4_quote_chat_index,
+    migrate_v5_chat_metadata,
 ];
 
 pub(super) fn migrate(conn: &Connection) -> Result<()> {
@@ -557,5 +581,25 @@ fn migrate_v3_media_captions(conn: &Connection) -> Result<()> {
 fn migrate_v4_quote_chat_index(conn: &Connection) -> Result<()> {
     conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_reply_chat ON messages (reply_to_chat)
         WHERE reply_to_chat IS NOT NULL", [])?;
+    Ok(())
+}
+
+fn migrate_v5_chat_metadata(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS chats (jid TEXT PRIMARY KEY, last_message_at INTEGER NOT NULL DEFAULT 0);
+         INSERT OR IGNORE INTO chats (jid, last_message_at)
+             SELECT chat, MAX(timestamp) FROM messages
+             WHERE system_kind IS NULL OR system_kind LIKE 'CALL_MISSED%'
+                OR system_kind LIKE 'SILENCED_UNKNOWN_CALLER%' OR chat LIKE '%@g.us'
+             GROUP BY chat;
+         INSERT OR IGNORE INTO chats (jid) SELECT jid FROM cleared_chats;
+         CREATE TRIGGER IF NOT EXISTS remember_message_chat AFTER INSERT ON messages
+         WHEN NEW.system_kind IS NULL OR NEW.system_kind LIKE 'CALL_MISSED%'
+           OR NEW.system_kind LIKE 'SILENCED_UNKNOWN_CALLER%' OR NEW.chat LIKE '%@g.us'
+         BEGIN
+             INSERT INTO chats (jid, last_message_at) VALUES (NEW.chat, NEW.timestamp)
+             ON CONFLICT(jid) DO UPDATE SET last_message_at = MAX(chats.last_message_at, excluded.last_message_at);
+         END;",
+    )?;
     Ok(())
 }

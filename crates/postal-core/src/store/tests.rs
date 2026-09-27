@@ -60,7 +60,7 @@ fn retention_handles_a_large_backlog_across_many_chats() {
     let started = std::time::Instant::now();
     let removed = store.enforce_retention_for(&["0@s.whatsapp.net".into()]).unwrap();
     eprintln!("retention: {removed} rows in {:?}", started.elapsed());
-    assert_eq!(removed, 149_000);
+    assert_eq!(removed, 150_000);
     assert_eq!(store.chats().unwrap().len(), 1000);
 }
 
@@ -81,7 +81,7 @@ fn reopening_reconciles_mappings_learned_after_schema_migration() {
         let store = MessageStore::open(&path, Retention::unlimited()).unwrap();
         let conn = store.conn.lock().unwrap();
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
         drop(conn);
         let messages = store.messages_for("5989@s.whatsapp.net", 10).unwrap();
         assert_eq!(messages.len(), 1);
@@ -498,21 +498,31 @@ fn names_survive_message_pruning() {
     s.insert_message(&msg("a@s", "old", 48, "hi")).unwrap();
     s.set_name("a@s", "Alice").unwrap();
     s.enforce_retention().unwrap();
-    assert_eq!(s.count().unwrap(), 1);
+    assert_eq!(s.count().unwrap(), 0);
     assert_eq!(s.name_for("a@s").unwrap().as_deref(), Some("Alice"));
 }
 
 #[test]
-fn quiet_chats_keep_their_newest_message() {
+fn quiet_chats_keep_metadata_without_expired_message_content() {
     let s = store(Retention { max_age_hours: Some(24), max_messages_per_chat: None });
     s.insert_message(&msg("quiet@s", "1", 100, "first")).unwrap();
     s.insert_message(&msg("quiet@s", "2", 50, "last word")).unwrap();
     s.insert_message(&msg("busy@s", "1", 50, "old")).unwrap();
     s.insert_message(&msg("busy@s", "2", 1, "new")).unwrap();
+    s.set_saved_name("quiet@s", "Quiet contact").unwrap();
+    s.set_pinned("quiet@s", true).unwrap();
+    let last = s.messages_for("quiet@s", 1).unwrap()[0].header.timestamp;
     s.enforce_retention().unwrap();
     let chats = s.chats().unwrap();
     assert_eq!(chats.len(), 2, "no chat vanishes from the list");
-    assert_eq!(s.messages_for("quiet@s", 9).unwrap()[0].text, "last word");
+    assert!(s.messages_for("quiet@s", 9).unwrap().is_empty());
+    let quiet = chats.iter().find(|chat| chat.chat == "quiet@s").unwrap();
+    assert_eq!(quiet.last_message_at, last);
+    assert_eq!(quiet.display_name.as_deref(), Some("Quiet contact"));
+    assert!(quiet.pinned);
+    assert_eq!(quiet.message_count, 0);
+    assert!(quiet.last_text.is_empty());
+    assert!(s.search_messages("quiet@s", "last word", 10).unwrap().is_empty());
     assert_eq!(s.messages_for("busy@s", 9).unwrap().len(), 1);
 }
 
@@ -533,6 +543,28 @@ fn unread_counts_only_incoming_unread() {
 
     assert_eq!(s.mark_read("a@s").unwrap(), 1);
     assert_eq!(s.chats().unwrap()[0].unread_count, 0);
+}
+
+#[test]
+fn per_chat_age_removes_last_message_and_its_poll_state() {
+    let s = store(Retention::unlimited());
+    s.insert_message(&msg("quiet@s", "poll", 48, "Expired question")).unwrap();
+    s.save_poll("quiet@s", "poll", "them", "Expired question", &["one".into()], false, Some(&[1; 32])).unwrap();
+    s.set_poll_vote("quiet@s", "poll", "them", &["one".into()]).unwrap();
+    s.set_reaction("quiet@s", "poll", "them", "yes").unwrap();
+    s.set_starred("quiet@s", "poll", true).unwrap();
+    s.set_message_pin("quiet@s", Some("poll")).unwrap();
+    s.set_chat_retention("quiet@s", &ChatRetention {
+        max_age_hours: Some(1), max_messages: None, on_demand: true,
+    }).unwrap();
+    assert_eq!(s.enforce_retention().unwrap(), 1);
+    let marks = s.marks("quiet@s").unwrap();
+    assert!(marks.polls.is_empty());
+    assert!(marks.reactions.is_empty());
+    assert!(marks.starred.is_empty());
+    assert!(marks.pinned.is_none());
+    assert!(s.poll_secret("quiet@s", "poll").unwrap().is_none());
+    assert_eq!(s.chats().unwrap()[0].message_count, 0);
 }
 
 #[test]

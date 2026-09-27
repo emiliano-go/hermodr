@@ -14,3 +14,7 @@ Flag diagnostics checks:
 4. Simulate failure and refresh: error is visible and previous values remain.
 5. Toggle diagnostics off and Count reads. Wait over five seconds and count again:
    the count must stay unchanged.
+
+Chat metadata check: expand Retained chat metadata. Quiet contact must remain
+pinned with its last activity and "No stored messages"; selecting it must set
+the displayed selection. No expired message preview is supplied to the component.

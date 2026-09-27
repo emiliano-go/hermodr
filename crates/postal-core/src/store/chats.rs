@@ -10,6 +10,7 @@ pub(super) fn reconcile_addresses(conn: &Connection) -> Result<()> {
         let mut found = std::collections::BTreeSet::new();
         for (table, column) in [
             ("messages", "chat"),
+            ("chats", "jid"),
             ("chat_state", "jid"),
             ("pins", "jid"),
             ("cleared_chats", "jid"),
@@ -191,30 +192,30 @@ impl MessageStore {
         let mut stmt = conn.prepare_cached(
             // The preview row is one index seek per chat; a window over every
             // message would copy the whole table into a temporary sort.
-            "SELECT g.chat, g.last_message_at, g.message_count, n.name, g.unread_count,
-                    g.mention_count, p.jid IS NOT NULL AS pinned,
+            "SELECT c.jid, COALESCE(g.last_message_at, c.last_message_at), COALESCE(g.message_count, 0),
+                    n.name, COALESCE(g.unread_count, 0), COALESCE(g.mention_count, 0), p.jid IS NOT NULL AS pinned,
                     COALESCE(m.text, ''), COALESCE(m.from_me, 0), s.name, COALESCE(m.sender, ''),
                     CASE WHEN m.system_kind IS NOT NULL THEN 'missed_call' ELSE m.media_kind END,
                     COALESCE(cs.archived, 0), COALESCE(cs.muted_until, 0), COALESCE(cs.marked_unread, 0)
-             FROM (SELECT chat,
+             FROM chats c
+             LEFT JOIN (SELECT chat,
                           MAX(timestamp) AS last_message_at,
                           COUNT(*) AS message_count,
                           SUM(read = 0 AND from_me = 0) AS unread_count,
                           SUM(read = 0 AND from_me = 0 AND mentioned = 1) AS mention_count
-                   FROM messages WHERE chat NOT IN (SELECT jid FROM hidden_chats) GROUP BY chat) g
+                   FROM messages GROUP BY chat) g ON g.chat = c.jid
              LEFT JOIN messages m ON m.rowid =
-                  (SELECT rowid FROM messages WHERE chat = g.chat
+                  (SELECT rowid FROM messages WHERE chat = c.jid
                      AND (system_kind IS NULL OR system_kind LIKE 'CALL_MISSED%' OR system_kind LIKE 'SILENCED_UNKNOWN_CALLER%')
                    ORDER BY timestamp DESC LIMIT 1)
-             LEFT JOIN names n ON n.jid = g.chat
+             LEFT JOIN names n ON n.jid = c.jid
              LEFT JOIN names s ON s.jid = m.sender
-             LEFT JOIN pins p ON p.jid = g.chat
-             LEFT JOIN chat_state cs ON cs.jid = g.chat
-             -- History syncs security-code stubs for people never messaged; only a group may be notices alone.
-             WHERE m.rowid IS NOT NULL OR g.chat LIKE '%@g.us'
-             ORDER BY pinned DESC, g.last_message_at DESC",
+             LEFT JOIN pins p ON p.jid = c.jid
+             LEFT JOIN chat_state cs ON cs.jid = c.jid
+             WHERE c.jid NOT IN (SELECT jid FROM hidden_chats)
+             ORDER BY pinned DESC, COALESCE(g.last_message_at, c.last_message_at) DESC",
         )?;
-        let mut summaries = stmt
+        let summaries = stmt
             .query_map([], |row| {
                 Ok(ChatSummary {
                     chat: row.get(0)?,
@@ -235,42 +236,6 @@ impl MessageStore {
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        drop(stmt);
-        // Cleared chats with no messages left: empty rows that keep the chat
-        // in the list. Chats with real messages are already above.
-        let mut empty = conn.prepare(
-            "SELECT c.jid, n.name, p.jid IS NOT NULL AS pinned,
-                    COALESCE(cs.archived, 0), COALESCE(cs.muted_until, 0), COALESCE(cs.marked_unread, 0)
-             FROM cleared_chats c
-             LEFT JOIN names n ON n.jid = c.jid
-             LEFT JOIN pins p ON p.jid = c.jid
-             LEFT JOIN chat_state cs ON cs.jid = c.jid
-             WHERE c.jid NOT IN (SELECT jid FROM hidden_chats)
-               AND NOT EXISTS (SELECT 1 FROM messages WHERE chat = c.jid)",
-        )?;
-        let empties = empty
-            .query_map([], |row| {
-                Ok(ChatSummary {
-                    chat: row.get::<_, String>(0)?,
-                    last_message_at: 0,
-                    message_count: 0,
-                    display_name: row.get(1)?,
-                    unread_count: 0,
-                    mention_count: 0,
-                    pinned: row.get::<_, i64>(2)? != 0,
-                    last_text: String::new(),
-                    last_from_me: false,
-                    last_sender_name: None,
-                    last_sender: String::new(),
-                    last_media_kind: None,
-                    archived: row.get::<_, i64>(3)? != 0,
-                    muted_until: row.get(4)?,
-                    marked_unread: row.get::<_, i64>(5)? != 0,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        summaries.extend(empties);
-        summaries.sort_by(|a, b| b.pinned.cmp(&a.pinned).then(b.last_message_at.cmp(&a.last_message_at)));
         Ok(summaries)
     }
 
@@ -313,6 +278,7 @@ impl MessageStore {
         let removed = self.drop_chat_messages(&conn, jid)?;
         conn.execute("DELETE FROM hidden_chats WHERE jid = ?1", params![jid])?;
         conn.execute("INSERT OR IGNORE INTO cleared_chats (jid) VALUES (?1)", params![jid])?;
+        conn.execute("INSERT OR IGNORE INTO chats (jid) VALUES (?1)", params![jid])?;
         reclaim(&conn, 0)?;
         Ok(removed)
     }
@@ -324,6 +290,7 @@ impl MessageStore {
         let removed = self.drop_chat_messages(&conn, jid)?;
         conn.execute("DELETE FROM cleared_chats WHERE jid = ?1", params![jid])?;
         conn.execute("DELETE FROM pins WHERE jid = ?1", params![jid])?;
+        conn.execute("DELETE FROM chats WHERE jid = ?1", params![jid])?;
         conn.execute("INSERT OR IGNORE INTO hidden_chats (jid) VALUES (?1)", params![jid])?;
         reclaim(&conn, 0)?;
         Ok(removed)
@@ -341,6 +308,7 @@ impl MessageStore {
 pub(crate) fn chat_rows_exist(conn: &Connection, jid: &str) -> Result<bool> {
     for (table, column) in [
         ("messages", "chat"),
+        ("chats", "jid"),
         ("chat_state", "jid"),
         ("pins", "jid"),
         ("cleared_chats", "jid"),
@@ -366,6 +334,13 @@ pub(crate) fn fold_chat(conn: &Connection, from: &str, to: &str) -> Result<()> {
     if from == to {
         return Ok(());
     }
+    conn.execute(
+        "INSERT INTO chats (jid, last_message_at)
+         SELECT ?1, last_message_at FROM chats WHERE jid = ?2
+         ON CONFLICT(jid) DO UPDATE SET last_message_at = MAX(chats.last_message_at, excluded.last_message_at)",
+        params![to, from],
+    )?;
+    conn.execute("DELETE FROM chats WHERE jid = ?1", params![from])?;
     // Per-message state keyed by the chat.
     for table in [
         "reactions",

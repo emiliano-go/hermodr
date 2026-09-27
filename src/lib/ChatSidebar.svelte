@@ -260,7 +260,7 @@
           {#if typingLabelOf(chat.chat)}
             <span class="preview typing">{typingLabelOf(chat.chat)}</span>
           {:else if chat.message_count === 0}
-            <span class="preview empty-chat">No messages yet</span>
+            <span class="preview empty-chat">No stored messages</span>
           {:else}
             {@const author = previewAuthorOf(chat)}
             {@const icon = mediaIconOf(chat.last_media_kind)}

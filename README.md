@@ -22,7 +22,10 @@ Postal takes the other path. Because it implements the protocol itself:
 - **Message storage is ours.** History lives in a small SQLite database with a
   configurable retention window (1 day and 500 messages per chat by default,
   per-chat overrides possible). It can be cleared, or kept in memory only.
-  Nothing unbounded accumulates.
+  Disk retention deletes expired messages strictly, including a quiet chat's
+  last message. Chat identity, last activity, names and pins survive separately;
+  an empty chat has no retained message preview. Delete chat removes it from the
+  list; clearing history keeps chat metadata.
 - **No browser engine for WhatsApp.** No WebKit, no per-tab network processes,
   no compositing workarounds. The only webview is the one rendering this app's
   own UI.
