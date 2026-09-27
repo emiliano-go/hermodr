@@ -36,6 +36,7 @@
 <script lang="ts">
   import { convertFileSrc } from "@tauri-apps/api/core";
   import Icon from "$lib/Icon.svelte";
+  import Lightbox from "$lib/Lightbox.svelte";
   import Panel from "$lib/Panel.svelte";
   import { displayName, phoneLabel } from "$lib/phone";
 
@@ -407,9 +408,7 @@
 </Panel>
 
 {#if enlarged}
-  <button class="lightbox" aria-label="Close picture" onclick={() => (enlarged = null)}>
-    <img src={convertFileSrc(enlarged)} alt={title} />
-  </button>
+  <Lightbox {jid} preview={enlarged} alt={title} onclose={() => (enlarged = null)} />
 {/if}
 
 <style>
@@ -543,29 +542,6 @@
   }
   .hero-picture:not(:disabled):hover {
     filter: brightness(1.12);
-  }
-  .lightbox {
-    position: fixed;
-    inset: 0;
-    z-index: 100;
-    display: grid;
-    place-items: center;
-    padding: 40px;
-    border: 0;
-    background: var(--scrim);
-    cursor: zoom-out;
-    animation: lightbox-in calc(0.18s * var(--motion-scale)) var(--ease) both;
-  }
-  .lightbox img {
-    max-width: min(640px, 100%);
-    max-height: 100%;
-    border-radius: 12px;
-    box-shadow: var(--shadow);
-  }
-  @keyframes lightbox-in {
-    from {
-      opacity: 0;
-    }
   }
   .member-group {
     display: flex;

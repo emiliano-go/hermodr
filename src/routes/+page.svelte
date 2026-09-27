@@ -7,6 +7,7 @@
   import MessageFinder, { type FoundItem } from "$lib/MessageFinder.svelte";
   import ChatSettings, { type ChatRetention } from "$lib/ChatSettings.svelte";
   import ProfileCard from "$lib/ProfileCard.svelte";
+  import ContactInfo from "$lib/ContactInfo.svelte";
   import MessageInfo from "$lib/MessageInfo.svelte";
   import { isPlaceholder } from "$lib/phone";
   import { polyfillCountryFlagEmojis } from "country-flag-emoji-polyfill";
@@ -223,6 +224,7 @@
     composer.draft = composer.drafts[chat] ?? "";
     chats.showGroupInfo = false;
     chats.groupInfo = null;
+    contactInfoFor = null;
     try {
       // Invalidate any in-flight reload from the previous chat.
       const seq = messages.nextSeq();
@@ -466,6 +468,9 @@
     if (!session.connected) return;
     for (const chat of chats.chats) chats.loadAvatar(chat.chat);
   });
+
+  /** The direct chat whose contact panel is open. */
+  let contactInfoFor = $state<string | null>(null);
 
   function openProfile(jid: string, name: string, event: MouseEvent, self = false) {
     event.stopPropagation();
@@ -1358,7 +1363,8 @@
           mentionTotal={messages.mentionQueue.length}
           mentionCursor={messages.mentionCursor}
           pinned={pinnedView}
-          ongroupinfo={() => chats.openGroupInfo()}
+          ongroupinfo={() =>
+            selectedChat.endsWith("@g.us") ? chats.openGroupInfo() : (contactInfoFor = selectedChat)}
           onsearch={() =>
             (ui.finder = {
               mode: "search",
@@ -1762,6 +1768,16 @@
       ui.viewerIndex = null;
       scrollToMessage(id);
     }} />
+{/if}
+
+{#if contactInfoFor}
+  {@const jid = contactInfoFor}
+  <ContactInfo
+    {jid}
+    title={members.displayName(chats.chats.find((c) => c.chat === jid)?.display_name ?? null, jid)}
+    picture={chats.pictureOf(jid)}
+    aliases={members.aliasesFor(jid)}
+    onclose={() => (contactInfoFor = null)} />
 {/if}
 
 {#if chats.showGroupInfo && chats.selectedChat}

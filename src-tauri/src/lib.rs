@@ -1533,10 +1533,10 @@ async fn set_privacy(
         .map_err(|e| e.to_string())
 }
 
-/// A chat's cached profile picture path, if it has one.
+/// A chat's cached profile picture path, if it has one; `full` for the full-size one.
 #[tauri::command]
-async fn avatar(state: State<'_, AppState>, jid: String) -> Result<Option<String>, String> {
-    state.service()?.avatar(&jid).await.map_err(|e| e.to_string())
+async fn avatar(state: State<'_, AppState>, jid: String, full: Option<bool>) -> Result<Option<String>, String> {
+    state.service()?.avatar(&jid, full.unwrap_or(false)).await.map_err(|e| e.to_string())
 }
 
 /// Someone's profile card: names, number, username, about.

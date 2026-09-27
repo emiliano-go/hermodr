@@ -281,7 +281,7 @@ impl Service {
         let jid = group.id.to_string();
         // Already a member when the chat is here.
         let joined = self.store.chats()?.iter().any(|c| c.chat == jid);
-        let picture = self.avatar(&jid).await.ok().flatten();
+        let picture = self.avatar(&jid, false).await.ok().flatten();
         Ok(InviteInfo {
             size: group.size.unwrap_or(group.participants.len() as u32),
             subject: group.subject,

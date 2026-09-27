@@ -72,12 +72,14 @@
         >
       </button>
     {:else}
-      <Avatar src={avatar} label={title} seed={selectedChat} />
-      <span class="chat-title">
+      <button class="heading-avatar" title="Contact info" aria-label="Contact info" onclick={ongroupinfo}
+        ><Avatar src={avatar} label={title} seed={selectedChat} /></button
+      >
+      <button class="chat-title" title="Contact info" onclick={ongroupinfo}>
         {title}
         {#if typingNow}<span class="chat-sub typing">{typingNow}</span
           >{:else if presenceText}<span class="chat-sub">{presenceText}</span>{/if}
-      </span>
+      </button>
     {/if}
   </div>
   <div class="header-tools">

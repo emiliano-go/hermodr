@@ -133,6 +133,7 @@ impl Inbound {
                     let path = avatar_path(dir, &jid);
                     let _ = std::fs::remove_file(path.with_extension("none"));
                     let _ = std::fs::remove_file(path);
+                    let _ = std::fs::remove_file(avatar_full_path(dir, &jid));
                 }
                 let _ = events.send(ServiceEvent::AvatarChanged { jid });
             }

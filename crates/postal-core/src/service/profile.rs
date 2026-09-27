@@ -87,6 +87,7 @@ impl Service {
             let path = avatar_path(dir, &self.own_jid());
             let _ = std::fs::remove_file(path.with_extension("none"));
             let _ = std::fs::remove_file(path);
+            let _ = std::fs::remove_file(avatar_full_path(dir, &self.own_jid()));
         }
         Ok(())
     }
@@ -122,12 +123,13 @@ impl Service {
     /// Path to a chat's profile picture, cached for a day in the media folder.
     ///
     /// `None` when the chat has no picture, hides it from us, or media is off.
-    pub async fn avatar(&self, jid: &str) -> Result<Option<String>> {
+    /// `full` asks for the full-size picture instead of the small preview.
+    pub async fn avatar(&self, jid: &str, full: bool) -> Result<Option<String>> {
         const TTL: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
         let Some(dir) = self.media_dir.clone() else {
             return Ok(None);
         };
-        let path = avatar_path(&dir, jid);
+        let path = if full { avatar_full_path(&dir, jid) } else { avatar_path(&dir, jid) };
         // Marks a chat known to have no picture, so it is not asked again.
         let none = path.with_extension("none");
         let fresh = |p: &Path| {
@@ -148,7 +150,7 @@ impl Service {
         let picture = self
             .client
             .contacts()
-            .get_profile_picture(&target, true)
+            .get_profile_picture(&target, !full)
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         if let Some(parent) = path.parent() {

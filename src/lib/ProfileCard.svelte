@@ -16,6 +16,7 @@
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { invoke } from "$lib/ipc";
   import Icon from "$lib/Icon.svelte";
+  import Lightbox from "$lib/Lightbox.svelte";
   import { phoneLabel } from "$lib/phone";
 
   let {
@@ -55,6 +56,7 @@
   let failed = $state(false);
   let width = $state(320);
   let height = $state(360);
+  let enlarged = $state(false);
   let aliasDraft = $state("");
   let aliasBusy = $state<string | null>(null);
   let aliasError = $state<string | null>(null);
@@ -123,7 +125,9 @@
   <div class="banner"></div>
   <div class="avatar-wrap">
     {#if picture}
-      <img class="avatar" src={convertFileSrc(picture)} alt="" />
+      <button class="zoom" title="View picture" aria-label="View picture" onclick={() => (enlarged = true)}
+        ><img class="avatar" src={convertFileSrc(picture)} alt="" /></button
+      >
     {:else}
       <span class="avatar blank">{#if letters}{letters}{:else}<Icon name="user" size={34} />{/if}</span>
     {/if}
@@ -201,7 +205,21 @@
   </div>
 </div>
 
+{#if enlarged && picture}
+  <Lightbox {jid} preview={picture} alt={shown} onclose={() => (enlarged = false)} />
+{/if}
+
 <style>
+  .zoom {
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: none;
+    cursor: zoom-in;
+  }
+  .zoom:hover {
+    filter: brightness(1.12);
+  }
   .catcher {
     position: fixed;
     inset: 0;

@@ -560,6 +560,13 @@ pub(super) fn avatar_path(media_dir: &Path, jid: &str) -> PathBuf {
     media_dir.join("avatars").join(format!("{name}.jpg"))
 }
 
+/// Where the full-size picture is cached, beside the preview.
+pub(super) fn avatar_full_path(media_dir: &Path, jid: &str) -> PathBuf {
+    let preview = avatar_path(media_dir, jid);
+    let stem = preview.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+    preview.with_file_name(format!("{stem}-full.jpg"))
+}
+
 /// File extension for a downloaded media item.
 fn extension_for(kind: &str, media_type: MediaType) -> &'static str {
     match kind {
