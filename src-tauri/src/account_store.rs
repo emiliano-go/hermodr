@@ -151,7 +151,7 @@ pub(crate) fn config_for(app: &AppHandle, settings: &UiSettings, account: &str) 
         // Aliases outlive the history setting, so they never travel with it.
         aliases_path: base.join("aliases.db"),
         retention: settings.retention,
-        accept_full_history: settings.accept_full_history,
+        request_full_history: settings.request_full_history,
         auto_download_media: settings.auto_download_media,
         keep_archived: settings.keep_archived,
         // The main link is the ordinary companion; view-once media is fetched
@@ -182,7 +182,7 @@ pub(crate) fn once_config_for(app: &AppHandle, settings: &UiSettings, account: &
     // store but must not download ordinary media twice or ask for old history.
     config.auto_download_media = false;
     config.keep_view_once = true;
-    config.accept_full_history = false;
+    config.request_full_history = false;
     config.keep_archived = true;
     Ok(config)
 }

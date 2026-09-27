@@ -7,7 +7,7 @@
   let saved = $state("");
   let settings = $state<UiSettings>({
     retention: { max_age_hours: { kind: "limited", value: 24 }, max_messages_per_chat: { kind: "limited", value: 500 } },
-    accept_full_history: false, auto_download_media: false, warn_missing_video_preview: true,
+    request_full_history: false, auto_download_media: false, warn_missing_video_preview: true,
     media_dir: null, send_typing: false, send_receipts: false, keep_history: true,
     skip_loading_screen: false, keep_archived: true, android_instance: false,
   });

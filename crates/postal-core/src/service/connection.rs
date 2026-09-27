@@ -111,11 +111,6 @@ fn android_tablet_profile() -> whatsapp_rust::wacore::client_profile::ClientProf
     profile
 }
 
-/// The retention actually applied: keeping full history means nothing is pruned.
-pub(super) fn kept_retention(retention: Retention, full_history: bool) -> Retention {
-    if full_history { Retention::unlimited() } else { retention }
-}
-
 /// Builds the cache configuration for a given retention window.
 ///
 /// `msg_secrets` are the decryption keys kept so edits, reactions and poll
@@ -273,8 +268,7 @@ impl WhatsAppService {
     /// before the connection attempt began. The pairing code is emitted during
     /// startup, so a receiver created afterwards would miss it; the returned one
     /// is guaranteed to see every event from the beginning.
-    pub async fn start(mut config: ServiceConfig) -> Result<(Self, broadcast::Receiver<ServiceEvent>)> {
-        config.retention = kept_retention(config.retention, config.accept_full_history);
+    pub async fn start(config: ServiceConfig) -> Result<(Self, broadcast::Receiver<ServiceEvent>)> {
         log::info!(
             "starting: session {}, messages {}, aliases {}, media {:?}, retention {:?}, full history {}",
             config.session_path.display(),
@@ -282,7 +276,7 @@ impl WhatsAppService {
             config.aliases_path.display(),
             config.media_dir,
             config.retention,
-            config.accept_full_history,
+            config.request_full_history,
         );
         let store = Arc::new(MessageStore::open(
             &config.messages_path,
@@ -298,7 +292,7 @@ impl WhatsAppService {
             Err(e) => log::warn!("could not reclaim stale decryption secrets: {e}"),
         }
 
-        let policy = if config.accept_full_history {
+        let policy = if config.request_full_history {
             HistoryPolicy::accept_everything()
         } else {
             HistoryPolicy::default()
@@ -351,7 +345,7 @@ impl WhatsAppService {
             .with_watched_ab_props(super::diagnostics::boolean_props())
             .with_backend(SqliteStore::new(config.session_path.to_string_lossy().as_ref()).await?)
             .with_history_sync_admission(policy)
-            .with_device_props(pairing_props(config.accept_full_history, config.android_pair))
+            .with_device_props(pairing_props(config.request_full_history, config.android_pair))
             .with_cache_config(cache_config_for(&config.retention))
             .on_qr_code({
                 let events = events.clone();

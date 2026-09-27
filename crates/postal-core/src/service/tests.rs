@@ -368,7 +368,7 @@ fn default_config_targets_its_data_dir() {
     assert_eq!(c.session_path, Path::new("/tmp/example").join("session.db"));
     assert_eq!(c.messages_path, Path::new("/tmp/example").join("messages.db"));
     assert_eq!(c.retention, Retention::default());
-    assert!(!c.accept_full_history);
+    assert!(!c.request_full_history);
 }
 
 #[test]

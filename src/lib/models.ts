@@ -149,7 +149,7 @@ export type Retention = {
 };
 export type UiSettings = {
   retention: Retention;
-  accept_full_history: boolean;
+  request_full_history: boolean;
   auto_download_media: boolean;
   warn_missing_video_preview: boolean;
   media_dir: string | null;

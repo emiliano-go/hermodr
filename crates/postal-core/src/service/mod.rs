@@ -362,7 +362,7 @@ pub struct ServiceConfig {
     /// How much history to keep locally.
     pub retention: Retention,
     /// Whether to pull the deep history sync during pairing.
-    pub accept_full_history: bool,
+    pub request_full_history: bool,
     /// Where downloaded media is written. `None` disables media downloads.
     pub media_dir: Option<PathBuf>,
     /// Whether incoming media is downloaded when it arrives. A chat can
@@ -388,7 +388,7 @@ impl ServiceConfig {
             messages_path: data_dir.join("messages.db"),
             aliases_path: data_dir.join("aliases.db"),
             retention: Retention::default(),
-            accept_full_history: false,
+            request_full_history: false,
             auto_download_media: true,
             keep_archived: true,
             android_pair: true,

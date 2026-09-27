@@ -85,8 +85,8 @@ impl WhatsAppService {
     }
 
     /// Replaces the retention policy of the running service.
-    pub fn set_retention(&self, retention: Retention, full_history: bool) {
-        self.store.set_retention(kept_retention(retention, full_history));
+    pub fn set_retention(&self, retention: Retention) {
+        self.store.set_retention(retention);
     }
 
     /// Pages every chat back through the phone until it has nothing older,

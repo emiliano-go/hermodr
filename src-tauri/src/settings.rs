@@ -5,10 +5,12 @@ use crate::AppState;
 
 /// Settings the UI can change.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct UiSettings {
     pub retention: Retention,
-    /// Whether to pull the account's entire history during pairing.
-    pub accept_full_history: bool,
+    /// Requests deep history during pairing, independently of disk retention.
+    #[serde(alias = "accept_full_history")]
+    pub request_full_history: bool,
     /// Where downloaded media is stored. Empty disables downloads.
     pub media_dir: Option<String>,
     /// Whether to download incoming media automatically.
@@ -50,7 +52,7 @@ impl Default for UiSettings {
     fn default() -> Self {
         Self {
             retention: Retention::default(),
-            accept_full_history: false,
+            request_full_history: false,
             auto_download_media: true,
             media_dir: None,
             warn_missing_video_preview: true,
@@ -75,8 +77,17 @@ pub(crate) fn settings_path(app: &AppHandle) -> PathBuf {
 pub(crate) fn load_settings(app: &AppHandle) -> UiSettings {
     std::fs::read_to_string(settings_path(app))
         .ok()
-        .and_then(|json| serde_json::from_str(&json).ok())
+        .and_then(|json| parse_settings(&json).ok())
         .unwrap_or_default()
+}
+
+fn parse_settings(json: &str) -> serde_json::Result<UiSettings> {
+    let value: serde_json::Value = serde_json::from_str(json)?;
+    let legacy_unlimited = value.get("request_full_history").is_none()
+        && value.get("accept_full_history").and_then(|v| v.as_bool()) == Some(true);
+    let mut settings: UiSettings = serde_json::from_value(value)?;
+    if legacy_unlimited { settings.retention = Retention::unlimited(); }
+    Ok(settings)
 }
 
 /// Whether a chat gets our (typing, read receipts): its overrides, else the global settings.
@@ -126,7 +137,11 @@ pub(crate) async fn set_settings(app: AppHandle, state: State<'_, AppState>, set
     let json = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
     std::fs::write(path, json).map_err(|e| e.to_string())?;
     if let Ok(service) = state.service() {
-        service.set_retention(settings.retention, settings.accept_full_history);
+        service.set_retention(settings.retention);
+        service.set_keep_archived(settings.keep_archived);
+    }
+    if let Some(service) = state.once_service.lock().unwrap().as_ref() {
+        service.set_retention(settings.retention);
         service.set_keep_archived(settings.keep_archived);
     }
     let enabled = settings.android_instance;
@@ -139,4 +154,27 @@ pub(crate) async fn set_settings(app: AppHandle, state: State<'_, AppState>, set
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use postal_core::store::RetentionLimit;
+
+    #[test]
+    fn full_history_migration_preserves_effective_disk_policy() {
+        let legacy = r#"{"accept_full_history":true,"retention":{"max_age_hours":24,"max_messages_per_chat":500}}"#;
+        let migrated = parse_settings(legacy).unwrap();
+        assert!(migrated.request_full_history);
+        assert_eq!(migrated.retention, Retention::unlimited());
+        let saved = serde_json::to_string(&migrated).unwrap();
+        assert!(!saved.contains("accept_full_history"));
+        assert_eq!(parse_settings(&saved).unwrap().retention, Retention::unlimited());
+        let bounded = parse_settings(&legacy.replace("true", "false")).unwrap();
+        assert_eq!(bounded.retention, Retention::default());
+        let explicit = parse_settings(&legacy.replace("accept_full_history", "request_full_history")).unwrap();
+        assert!(explicit.request_full_history);
+        assert_eq!(explicit.retention.max_age_hours, RetentionLimit::Limited(24));
+        assert!(!parse_settings("{}").unwrap().request_full_history);
+    }
 }

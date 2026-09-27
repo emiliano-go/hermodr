@@ -17,8 +17,11 @@ gigabyte memory use, and a client that gets slower the more history you have.
 Postal takes the other path. Because it implements the protocol itself:
 
 - **History sync is a decision this program makes.** Pairing brings the recent
-  window only unless *Settings → Storage & history → Download full history when
-  pairing* is on; older messages are fetched from the phone on demand.
+  window only unless *Settings → Storage & history → Request full history when
+  pairing* is on (off by default). This requests up to 10,000 days; the phone
+  may supply less. Older messages can also be fetched on demand.
+  Sync requests never change disk retention. Legacy full-history settings
+  migrate to explicit unlimited global disk retention, preserving their effect.
 - **Message storage is ours.** History lives in a small SQLite database with a
   configurable retention window (1 day and 500 messages per chat by default,
   per-chat overrides possible). It can be cleared, or kept in memory only.

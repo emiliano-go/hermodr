@@ -3,7 +3,7 @@
   export type { Retention } from "$lib/models";
   export type UiSettings = {
     retention: Retention;
-    accept_full_history: boolean;
+    request_full_history: boolean;
     auto_download_media: boolean;
     warn_missing_video_preview: boolean;
     media_dir: string | null;
@@ -534,29 +534,27 @@
           </div>
           <label class="setting">
             <div>
-              <span class="setting-title">Download full history when pairing</span>
+              <span class="setting-title">Request full history when pairing</span>
               <span class="setting-desc">
-                The next time an account is linked, your phone sends every chat's whole history. This
-                can take a long time and a lot of space; message retention above still applies. Off
-                asks for the recent window only, and older messages are fetched when you scroll up.
+                The next link requests up to 10,000 days of history; your phone may supply less.
+                This can take time and disk space. Disk retention above still applies independently.
+                Off accepts recent history only; older messages remain available on demand.
               </span>
             </div>
-            <input class="switch" type="checkbox" bind:checked={draft.accept_full_history} />
+            <input class="switch" type="checkbox" bind:checked={draft.request_full_history} />
           </label>
           <div class="setting">
             <div>
               <span class="setting-title">Download all history now</span>
               <span class="setting-desc">
                 Asks your phone for every chat's older messages, page by page, for an account that is
-                already linked. {settings.accept_full_history
-                  ? "Keep the phone online; progress shows at the bottom."
-                  : "Turn on and save full history first, so retention does not prune it."}
+                already linked. Keep the phone online; progress shows at the bottom.
+                Disk retention still applies. Set both disk limits to unlimited to keep all fetched history.
                 {backfillError ?? ""}
               </span>
             </div>
             <button
               class="button"
-              disabled={!settings.accept_full_history}
               onclick={() => {
                 backfillError = null;
                 invoke("backfill_history").catch((e) => (backfillError = String(e)));
