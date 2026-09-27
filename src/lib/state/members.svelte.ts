@@ -175,6 +175,19 @@ export class MembersState {
     await this.loadAliases();
   }
 
+  /** Our own addresses in this chat: the phone form, and the LID a group lists us under. */
+  ownForms = $derived.by(() => {
+    const own = session.me ? bare(session.me) : null;
+    if (!own) return new Set<string>();
+    const number = own.split("@")[0];
+    const lid = this.participants.find((p) => p.number === number)?.jid;
+    return new Set([own, ...(lid ? [bare(lid)] : [])]);
+  });
+
+  isMe(jid: string) {
+    return jid === "@me" || this.ownForms.has(bare(jid));
+  }
+
   /** Who an `@<user>` token names: us, a group member, or whichever address form the core knows. */
   mentionTarget(user: string): { jid: string; name: string; self: boolean } {
     const own = session.me ? bare(session.me) : null;

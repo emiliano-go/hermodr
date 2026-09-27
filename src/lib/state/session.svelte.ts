@@ -27,6 +27,10 @@ export class SessionState {
   /** Offline-backlog progress: how many the server announced and how many stored. */
   syncPending = $state(0);
   syncApplied = $state(0);
+  /** A running full-history backfill, in chats. */
+  backfill = $state<{ done: number; total: number } | null>(null);
+  /** The phone's history sync after pairing, until it reaches 100%. */
+  historyPercent = $state<number | null>(null);
   /** Backlog applied, waiting for the first chat/message paint to land. */
   finalizing = $state(false);
   /** The loading screen may be left. Survives reconnects for this launch. */
@@ -47,7 +51,7 @@ export class SessionState {
 
   settings = $state<UiSettings>({
     retention: { max_age_hours: 24, max_messages_per_chat: 500 },
-    accept_full_history: true,
+    accept_full_history: false,
     auto_download_media: true,
     warn_missing_video_preview: true,
     media_dir: null,
@@ -164,6 +168,8 @@ export class SessionState {
     this.syncTimedOut = false;
     this.syncPending = 0;
     this.syncApplied = 0;
+    this.backfill = null;
+    this.historyPercent = null;
   }
 }
 

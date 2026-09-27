@@ -15,12 +15,19 @@ export type StoredMessage = {
   media_path: string | null;
   media_thumb: string | null;
   media_duration: number | null;
+  media_once_kind: string | null;
   reply_to_id: string | null;
   reply_to_text: string | null;
   reply_to_sender: string | null;
   reply_to_chat: string | null;
   reply_to_kind: string | null;
   reply_to_thumb: string | null;
+  /** The quoted message was view-once, the one copy a linked device is sent. */
+  reply_to_view_once: boolean;
+  /** This account sent that view-once, so it may take the quoted copy. */
+  reply_to_recoverable: boolean;
+  /** Where a recovered copy was written, once taken. */
+  reply_to_path: string | null;
   read: boolean;
   revoked: boolean;
   mentioned: boolean;
@@ -31,6 +38,9 @@ export type StoredMessage = {
   preview_site: string | null;
   preview_color: string | null;
   status: string | null;
+  /** Set on a system line (group change, security notice) instead of a message. */
+  system_kind: string | null;
+  system_params: string[];
 };
 export type ChatSummary = {
   chat: string;
@@ -45,6 +55,10 @@ export type ChatSummary = {
   unread_count: number;
   mention_count: number;
   pinned: boolean;
+  archived: boolean;
+  /** Unix seconds; -1 indefinitely, 0 not muted. */
+  muted_until: number;
+  marked_unread: boolean;
 };
 export type Account = { id: string; label: string; jid: string | null };
 export type SearchResult = {
@@ -118,10 +132,13 @@ export type ServiceEvent =
   | { kind: "messageHint"; chat: string; id: string; sender: string; from_me: boolean; fresh: boolean }
   | { kind: "retentionApplied"; removed: number }
   | { kind: "namesUpdated"; count: number }
+  | { kind: "chatStateChanged"; chat: string }
   | { kind: "syncing"; pending: number; applied: number }
   | { kind: "initialSyncComplete"; messages: number; chats: number }
   | { kind: "synced" }
   | { kind: "historyLoaded"; chats: string[] }
+  | { kind: "backfill"; done: number; total: number }
+  | { kind: "historyProgress"; percent: number }
   | { kind: "avatarChanged"; jid: string }
   | { kind: "typing"; chat: string; sender: string; state: string }
   | { kind: "presence"; jid: string; online: boolean; last_seen: number | null }
@@ -146,7 +163,7 @@ export type Marks = {
   pinned: string | null;
   polls: Poll[];
   events: ChatEvent[];
-  view_once: { id: string; opened: boolean }[];
+  view_once: { id: string; opened: boolean; available: boolean }[];
   forwarded: string[];
   edited: string[];
 };
@@ -167,7 +184,7 @@ export type Outgoing = {
 export type ChatPrivacy = { send_typing: boolean | null; send_receipts: boolean | null };
 
 /** Chat list filter tabs. */
-export type ChatFilter = "all" | "unread" | "groups";
+export type ChatFilter = "all" | "unread" | "groups" | "archived";
 
 /** Who an `@<user>` token names. */
 export type MentionTarget = { jid: string; name: string; self: boolean };
@@ -185,7 +202,7 @@ export type BubbleVm = {
   memberTag: string | null;
   visual: boolean;
   caption: string;
-  viewOnce: { opened: boolean } | null;
+  viewOnce: { opened: boolean; available: boolean } | null;
   inlineMeta: boolean;
   reactions: Reaction[] | undefined;
   isStarred: boolean;
@@ -198,6 +215,10 @@ export type BubbleVm = {
   poll: Poll | undefined;
   chatEvent: ChatEvent | undefined;
   downloading: boolean;
+  /** Why the last download failed, shown until it is tried again. */
+  downloadError: string | null;
+  /** Downloading kept failing, so the retry is no longer offered. */
+  downloadGaveUp: boolean;
   onceAudioOpen: boolean;
   autoplay: boolean;
   voiceAvatar: string | null;
@@ -218,9 +239,15 @@ export type BubbleApi = {
   onreplydraft: (m: StoredMessage) => void;
   onmenu: (e: MouseEvent, m: StoredMessage) => void;
   onjumpquoted: (m: StoredMessage) => void;
+  /** Takes back the view-once a reply quotes, then opens the recovered copy. */
+  onrecoverquote: (m: StoredMessage) => void;
+  /** A view-once copy is being recovered from this reply. */
+  recovering: Record<string, true>;
   ondownload: (m: StoredMessage) => void;
   onopenviewer: (m: StoredMessage) => void;
   onopenmedia: (path: string) => void;
+  /** Shows the view-once copy a reply carries in the built-in viewer. */
+  onopenquote: (m: StoredMessage) => void;
   onvote: (m: StoredMessage, options: string[]) => unknown;
   onrespond: (m: StoredMessage, response: string) => unknown;
   oneditrequest: (m: StoredMessage) => void;

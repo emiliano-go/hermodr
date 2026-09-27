@@ -11,6 +11,7 @@
   import MessageText from "$lib/MessageText.svelte";
   import PollCard from "$lib/PollCard.svelte";
   import Spinner from "$lib/Spinner.svelte";
+import VideoPlayer from "$lib/VideoPlayer.svelte";
   import Avatar from "$lib/Avatar.svelte";
   import { initials } from "$lib/avatar";
   import { mediaSrc } from "$lib/MediaViewer.svelte";
@@ -24,6 +25,13 @@
   import type { BubbleApi, BubbleVm, StoredMessage } from "$lib/models";
 
   let { message, vm, api }: { message: StoredMessage; vm: BubbleVm; api: BubbleApi } = $props();
+
+  /** The media kind a downloaded file's extension implies. */
+  function kindOfFile(path: string) {
+    if (/\.(ogg|opus|mp3|m4a|aac|wav)$/i.test(path)) return "audio";
+    if (/\.(mp4|mov|m4v|webm|mkv)$/i.test(path)) return "video";
+    return "image";
+  }
 
   /** An SVG file sent as a document, which is drawn in place like a picture. */
   function isSvg(m: StoredMessage) {
@@ -97,44 +105,82 @@
       <span class="forwarded-mark"><Icon name="forward" size={13} /> Forwarded</span>
     {/if}
     {#if message.reply_to_text}
+      <!-- A reply sent from this app never carries the view-once it quotes; one from the phone,
+           though also ours, does, and is told apart by holding the copy. -->
+      {@const sentHere =
+        message.from_me && message.reply_to_view_once && !message.reply_to_recoverable && !message.reply_to_path}
+      {@const onceCopy = message.reply_to_view_once && message.reply_to_recoverable && !sentHere}
       <Embed
         compact
-        tooltip="Go to message"
+        tooltip={message.reply_to_path
+          ? "Open the copy"
+          : onceCopy
+            ? "Save the copy"
+            : sentHere
+              ? "Only a reply sent from your phone, or by someone else, carries a copy of a view-once"
+              : "Go to message"}
         label={vm.quoteAuthor}
         text={vm.quoteText}
         image={message.reply_to_kind === "image" && message.reply_to_thumb
           ? mediaSrc(message.reply_to_thumb)
           : null}
         icon={message.reply_to_kind ? replyIcon(message.reply_to_kind) : null}
-        onclick={() => api.onjumpquoted(message)}>
+        onclick={message.reply_to_path
+          ? () => api.onopenquote(message)
+          : onceCopy
+            ? () => api.onrecoverquote(message)
+            : () => api.onjumpquoted(message)}>
         {#if vm.quoteChatName}
           <span class="quote-where">in {vm.quoteChatName}</span>
+        {/if}
+        {#if onceCopy && !message.reply_to_path}
+          <span class="quote-once">
+            <span class="once-mark">1</span>
+            {api.recovering[message.id] ? "Saving the copy…" : "Tap to save"}
+          </span>
+        {:else if sentHere}
+          <span class="quote-once">
+            <span class="once-mark">1</span>
+            No copy from this app
+          </span>
         {/if}
       </Embed>
     {/if}
 
-    {#if vm.viewOnce}
+    {#if vm.viewOnce && !message.media_path}
       {@const what = VIEW_ONCE_LABEL[message.media_kind ?? ""] ?? "View once message"}
-      {#if vm.onceAudioOpen && message.media_kind === "audio" && message.media_path}
-        <AudioPlayer path={message.media_path} duration={message.media_duration} />
-        <button class="once-done" onclick={() => api.oncloseonce()}>Done</button>
-      {:else if message.media_kind === "view_once"}
+      {#if vm.viewOnce.opened && !vm.viewOnce.available}
+        <!-- Nothing arrived, or this account sent it and the sender cannot
+             reopen it, and no reply carried a copy. There is nothing left to ask anyone for. -->
         <span class="once spent">
           <span class="once-mark">1</span>
-          <span>View once message<small>Open it on your phone</small></span>
-        </span>
-      {:else if vm.viewOnce.opened}
-        <span class="once spent">
-          <span class="once-mark">1</span>
-          <span>{what}<small>{message.from_me ? "View once" : "Opened"}</small></span>
+          <span>{what}<small>Open it on your phone</small></span>
         </span>
       {:else}
         <button
           class="once"
           onclick={() => api.ononce(message)}>
           <span class="once-mark">1</span>
-          <span>{what}<small>{message.media_path ? "View once" : "Download to view once"}</small></span>
+          <span>{what}<small>{vm.downloading
+              ? "Asking for it…"
+              : vm.viewOnce.available
+                ? "Open"
+                : "Tap to view"}</small></span>
         </button>
+      {/if}
+    {:else if vm.viewOnce && message.media_path}
+      <!-- Shown where it sits, as an ordinary photo would be: the only copy is
+           the one a reply carried, and it is ours to keep. -->
+      <!-- Copies taken before the kind was recorded are told apart by their file. -->
+      {@const onceKind = message.media_once_kind ?? kindOfFile(message.media_path)}
+      {#if onceKind === "video" || onceKind === "gif"}
+        <VideoPlayer src={convertFileSrc(message.media_path)} autoplay={false} />
+      {:else if onceKind === "audio"}
+        <AudioPlayer path={message.media_path} duration={message.media_duration} />
+      {:else if onceKind === "sticker"}
+        <img class="sticker" src={convertFileSrc(message.media_path)} alt="Sticker" />
+      {:else}
+        <img class="media" src={convertFileSrc(message.media_path)} alt={message.text} />
       {/if}
     {:else if message.media_kind === "sticker" && message.media_path}
       <img class="sticker" src={convertFileSrc(message.media_path)} alt="Sticker" />
@@ -278,6 +324,21 @@
         avatarOf={api.avatarOf}
         onprofile={api.onprofile}
         onopenurl={api.onopenurl} />
+    {/if}
+
+    {#if vm.downloadError && !vm.downloading}
+      <button
+        class="download-failed"
+        title={vm.downloadError}
+        disabled={vm.downloadGaveUp}
+        onclick={() => api.ondownload(message)}>
+        {#if vm.downloadGaveUp}
+          This media is no longer available
+        {:else}
+          <Icon name="repeat" size={14} />
+          Couldn't download · Retry
+        {/if}
+      </button>
     {/if}
 
     {#if vm.caption}
@@ -574,17 +635,6 @@
     border-color: var(--faint);
     color: var(--faint);
   }
-  .once-done {
-    align-self: flex-end;
-    padding: 4px 12px;
-    border: 0;
-    border-radius: 999px;
-    background: var(--accent-soft);
-    color: var(--accent-text);
-    font: inherit;
-    font-size: 12.5px;
-    cursor: pointer;
-  }
   .file {
     display: flex;
     align-items: center;
@@ -709,6 +759,21 @@
   .download:hover {
     background: rgba(0, 0, 0, 0.32);
   }
+  .download-failed {
+    align-self: flex-start;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+    background: var(--danger-soft);
+    border: 0;
+    border-radius: 999px;
+    color: var(--danger);
+    font: inherit;
+    font-size: 12px;
+    padding: 4px 12px 4px 10px;
+    cursor: pointer;
+  }
   .quote-where {
     flex: none;
     max-width: 16ch;
@@ -717,6 +782,19 @@
     white-space: nowrap;
     font-size: 11px;
     color: #71717a;
+  }
+  .download-failed:disabled {
+    cursor: default;
+  }
+  .quote-once {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+    font-size: 11px;
+    color: color-mix(in srgb, var(--text) 60%, transparent);
+    white-space: nowrap;
   }
   .meta {
     font-size: 11px;

@@ -57,6 +57,9 @@
     ontogglepin,
     onclearchat,
     ondeletechat,
+    onchataction,
+    onmarkread,
+    archivedChats,
     onresize,
   }: {
     searchQuery: string;
@@ -95,10 +98,23 @@
     ontogglepin: (chat: ChatSummary, event?: MouseEvent) => void;
     onclearchat: (chat: ChatSummary) => void;
     ondeletechat: (chat: ChatSummary) => void;
+    onchataction: (command: string, args: Record<string, unknown>) => void;
+    onmarkread: (chat: ChatSummary) => void;
+    archivedChats: number;
     onresize: (event: MouseEvent) => void;
   } = $props();
 
-  /** Right-click menu on a chat row: pin, clear, delete. */
+  const MUTES: [string, number][] = [
+    ["Mute for 8 hours", 8 * 3600],
+    ["Mute for 1 week", 7 * 86400],
+    ["Mute always", -1],
+  ];
+
+  function isMuted(chat: ChatSummary) {
+    return chat.muted_until < 0 || chat.muted_until * 1000 > Date.now();
+  }
+
+  /** Right-click menu on a chat row. */
   let chatMenu = $state<{ x: number; y: number; chat: ChatSummary } | null>(null);
 
   function openChatMenu(event: MouseEvent, chat: ChatSummary) {
@@ -146,6 +162,13 @@
         onclick={() => onfilter("unread")}>Unread</Button>
       <Button variant="chip" selected={chatFilter === "groups"} onclick={() => onfilter("groups")}
         >Groups</Button>
+      {#if archivedChats > 0 || chatFilter === "archived"}
+        <Button
+          variant="chip"
+          selected={chatFilter === "archived"}
+          count={archivedChats > 0 ? archivedChats : undefined}
+          onclick={() => onfilter("archived")}>Archived</Button>
+      {/if}
     </div>
   {/if}
   {#if searchQuery.trim()}
@@ -234,8 +257,13 @@
                   onopenchat(chat.chat, true);
                 }}>@</button>
             {/if}
+            {#if isMuted(chat)}
+              <span class="muted-mark" title="Muted"><Icon name="volume" size={13} /></span>
+            {/if}
             {#if chat.unread_count > 0}
               <span class="badge">{chat.unread_count > 99 ? "99+" : chat.unread_count}</span>
+            {:else if chat.marked_unread}
+              <span class="badge" title="Marked unread">&nbsp;</span>
             {/if}
             <button
               class="pin-toggle"
@@ -250,6 +278,8 @@
       <li class="empty">
         {chatFilter === "unread"
           ? "No unread chats."
+          : chatFilter === "archived"
+            ? "No archived chats."
           : chatFilter === "groups"
             ? "No groups yet."
             : "No conversations yet."}
@@ -338,6 +368,49 @@
       }}>{menuChat.pinned ? "Unpin" : "Pin"}</Button>
     <Button
       variant="menu"
+      icon="download"
+      iconSize={15}
+      role="menuitem"
+      onclick={() => {
+        onchataction("set_archived", { chat: menuChat.chat, archived: !menuChat.archived });
+        closeChatMenu();
+      }}>{menuChat.archived ? "Unarchive" : "Archive"}</Button>
+    {#if isMuted(menuChat)}
+      <Button
+        variant="menu"
+        icon="volume"
+        iconSize={15}
+        role="menuitem"
+        onclick={() => {
+          onchataction("set_muted", { chat: menuChat.chat, until: 0 });
+          closeChatMenu();
+        }}>Unmute</Button>
+    {:else}
+      {#each MUTES as [label, seconds] (label)}
+        <Button
+          variant="menu"
+          icon="clock"
+          iconSize={15}
+          role="menuitem"
+          onclick={() => {
+            const until = seconds < 0 ? -1 : Math.floor(Date.now() / 1000) + seconds;
+            onchataction("set_muted", { chat: menuChat.chat, until });
+            closeChatMenu();
+          }}>{label}</Button>
+      {/each}
+    {/if}
+    <Button
+      variant="menu"
+      icon={menuChat.unread_count > 0 || menuChat.marked_unread ? "check" : "message"}
+      iconSize={15}
+      role="menuitem"
+      onclick={() => {
+        if (menuChat.unread_count > 0) onmarkread(menuChat);
+        else onchataction("set_marked_unread", { chat: menuChat.chat, unread: !menuChat.marked_unread });
+        closeChatMenu();
+      }}>{menuChat.unread_count > 0 || menuChat.marked_unread ? "Mark as read" : "Mark as unread"}</Button>
+    <Button
+      variant="menu"
       icon="edit"
       iconSize={15}
       role="menuitem"
@@ -356,6 +429,18 @@
         closeChatMenu();
         ondeletechat(c);
       }}>Delete chat</Button>
+    {#if menuChat.chat.endsWith("@g.us")}
+      <Button
+        variant="menu"
+        icon="x"
+        iconSize={15}
+        role="menuitem"
+        onclick={() => {
+          const c = menuChat;
+          closeChatMenu();
+          if (confirm(`Exit ${c.display_name ?? "this group"}?`)) onchataction("leave_group", { chat: c.chat });
+        }}>Exit group</Button>
+    {/if}
   </div>
 {/if}
 
@@ -533,6 +618,11 @@
     font-size: 11px;
     font-weight: 700;
   }
+  .muted-mark {
+    display: inline-flex;
+    color: var(--muted);
+  }
+
   .pin-toggle {
     display: none;
     background: transparent;

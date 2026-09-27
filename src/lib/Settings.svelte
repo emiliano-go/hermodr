@@ -211,6 +211,7 @@
     ageUnit = unit;
   }
   let clearingHistory = $state(false);
+  let backfillError = $state<string | null>(null);
 
   // The account's profile lives on WhatsApp's servers, so it is fetched when a
   // section that shows it opens and written back field by field.
@@ -521,13 +522,32 @@
             <div>
               <span class="setting-title">Download full history when pairing</span>
               <span class="setting-desc">
-                The next time an account is linked, every chat comes over with its last couple of
-                days; anything older is fetched from your phone when you scroll up or open a reply
-                to it. Off asks for the recent window only, which can leave quiet chats out.
+                The next time an account is linked, your phone sends every chat's whole history. This
+                can take a long time and a lot of space; message retention above still applies. Off
+                asks for the recent window only, and older messages are fetched when you scroll up.
               </span>
             </div>
             <input class="switch" type="checkbox" bind:checked={draft.accept_full_history} />
           </label>
+          <div class="setting">
+            <div>
+              <span class="setting-title">Download all history now</span>
+              <span class="setting-desc">
+                Asks your phone for every chat's older messages, page by page, for an account that is
+                already linked. {settings.accept_full_history
+                  ? "Keep the phone online; progress shows at the bottom."
+                  : "Turn on and save full history first, so retention does not prune it."}
+                {backfillError ?? ""}
+              </span>
+            </div>
+            <button
+              class="button"
+              disabled={!settings.accept_full_history}
+              onclick={() => {
+                backfillError = null;
+                invoke("backfill_history").catch((e) => (backfillError = String(e)));
+              }}>Download</button>
+          </div>
           <div class="setting">
             <div>
               <span class="setting-title">Clear message history</span>

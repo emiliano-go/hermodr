@@ -51,14 +51,19 @@ export class ChatsState {
 
   visibleChats = $derived(
     this.chats.filter((c) =>
-      this.chatFilter === "all"
-        ? true
-        : this.chatFilter === "unread"
-          ? c.unread_count > 0
-          : c.chat.endsWith("@g.us"),
+      this.chatFilter === "archived"
+        ? c.archived
+        : c.archived
+          ? false
+          : this.chatFilter === "all"
+            ? true
+            : this.chatFilter === "unread"
+              ? c.unread_count > 0 || c.marked_unread
+              : c.chat.endsWith("@g.us"),
     ),
   );
-  unreadChats = $derived(this.chats.filter((c) => c.unread_count > 0).length);
+  archivedChats = $derived(this.chats.filter((c) => c.archived).length);
+  unreadChats = $derived(this.chats.filter((c) => !c.archived && (c.unread_count > 0 || c.marked_unread)).length);
   unreadPings = $derived(this.chats.reduce((n, c) => n + c.mention_count, 0));
 
   /** Each account's own picture as last seen, so it shows before that account connects. */
@@ -78,7 +83,7 @@ export class ChatsState {
   /** Who sent a chat's last message, as the list prefixes it. */
   previewAuthor(chat: ChatSummary) {
     if (chat.last_from_me) return "You";
-    if (!chat.chat.endsWith("@g.us")) return null;
+    if (!chat.chat.endsWith("@g.us") || chat.last_media_kind === "missed_call") return null;
     return members.displayName(chat.last_sender_name, chat.last_sender);
   }
 
@@ -88,6 +93,7 @@ export class ChatsState {
     if (kind === "poll") return `📊 ${chat.last_text}`;
     if (kind === "event") return `📅 ${chat.last_text}`;
     if (kind === "view_once") return "View once message";
+    if (kind === "missed_call") return "Missed call";
     if (!kind || chat.last_text.trim() !== `[${kind}]`) {
       return plain(chat.last_text, (user) => members.mentionName(user));
     }
@@ -152,6 +158,16 @@ export class ChatsState {
     event?.stopPropagation();
     try {
       await invoke("set_pinned", { chat: chat.chat, pinned: !chat.pinned });
+      await this.refreshChats();
+    } catch (e) {
+      ui.fail(e);
+    }
+  }
+
+  /** Runs a chat-state command (archive, mute, unread mark, leave) and reloads the list. */
+  async chatAction(command: string, args: Record<string, unknown>) {
+    try {
+      await invoke(command, args);
       await this.refreshChats();
     } catch (e) {
       ui.fail(e);

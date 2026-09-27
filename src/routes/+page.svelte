@@ -402,6 +402,7 @@
   async function removeAccount(id: string) {
     try {
       if (id === session.activeAccount) {
+        ui.showSettings = false;
         resetUi();
         session.connected = false;
         await session.showQr(null);
@@ -468,6 +469,9 @@
     if (!session.connected) return;
     for (const chat of chats.chats) chats.loadAvatar(chat.chat);
   });
+
+  /** A view-once copy from a reply, shown alone in the built-in viewer. */
+  let quoteView = $state<ViewerItem[] | null>(null);
 
   /** The direct chat whose contact panel is open. */
   let contactInfoFor = $state<string | null>(null);
@@ -725,6 +729,28 @@
       }
     }
     if (chat ?? chats.selectedChat) await jumpTo(chat ?? chats.selectedChat!, id);
+  }
+
+  /** Takes back the view-once a reply quotes, then opens the recovered copy. */
+  async function recoverQuote(message: StoredMessage) {
+    const path = await messages.recoverQuote(chats.selectedChat, message);
+    if (path) openQuote(message, path);
+  }
+
+  /** Shows the view-once copy a reply carries in the built-in viewer. */
+  function openQuote(m: StoredMessage, path: string) {
+    quoteView = [
+      {
+        id: m.id,
+        path,
+        thumb: null,
+        kind: m.reply_to_kind ?? "image",
+        caption: "",
+        author: m.reply_to_sender === "@me" ? "You" : members.senderName(m.reply_to_sender ?? ""),
+        avatar: null,
+        timestamp: m.timestamp,
+      },
+    ];
   }
 
   /** Opens a chat at a message; one older than the loaded window offers to fetch it. */
@@ -1341,6 +1367,9 @@
       ontogglepin={(chat, e) => chats.togglePin(chat, e)}
       onclearchat={(chat) => (ui.chatConfirm = { kind: "clear", chat: chat.chat })}
       ondeletechat={(chat) => (ui.chatConfirm = { kind: "delete", chat: chat.chat })}
+      onchataction={(command, args) => chats.chatAction(command, args)}
+      onmarkread={(chat) => chats.chatAction("mark_read", { chat: chat.chat })}
+      archivedChats={chats.archivedChats}
       onresize={startResize} />
 
     <section class="conversation">
@@ -1397,6 +1426,8 @@
           editedSet={messages.edited}
           forwardedSet={messages.forwarded}
           downloading={messages.downloading}
+          downloadErrors={messages.downloadErrors}
+          downloadTries={messages.downloadTries}
           replyingToId={composer.replyingTo?.id ?? null}
           highlightedId={ui.highlightedId}
           firstUnreadId={messages.firstUnreadId}
@@ -1404,7 +1435,7 @@
           menuId={ui.menu?.message.id ?? null}
           polls={messages.marks.polls}
           events={messages.marks.events}
-          namer={(jid) => (jid === "@me" ? "You" : members.senderName(jid))}
+          namer={(jid) => (members.isMe(jid) ? "You" : members.senderName(jid))}
           avatarOf={(jid) => chats.pictureOf(jid)}
           avatars={chats.avatars}
           voiceAvatarOf={(m) => {
@@ -1442,9 +1473,12 @@
             ui.menu = { x: e.clientX, y: e.clientY, message: m };
           }}
           onjumpquoted={jumpToQuoted}
+          onrecoverquote={recoverQuote}
+          recovering={messages.recovering}
           ondownload={(m) => messages.downloadMedia(chats.selectedChat, m)}
           onopenviewer={openViewer}
           onopenmedia={openMedia}
+          onopenquote={(m) => openQuote(m, m.reply_to_path!)}
           onvote={(m, options) =>
             act(() => invoke("vote_poll", { chat: m.chat, id: m.id, options }))}
           onrespond={(m, response) =>
@@ -1466,7 +1500,10 @@
             ui.menu = { x: rect.left, y: rect.bottom + 4, message: m };
           }}
           ononce={(m) => {
-            if (!m.media_path) return messages.downloadMedia(chats.selectedChat, m);
+            if (!m.media_path) {
+              const chat = chats.selectedChat;
+              return messages.downloadMedia(chat, m).then(() => messages.loadMarks(chat));
+            }
             ui.onceIndex = 0;
             ui.onceOpen = m;
           }}
@@ -1505,6 +1542,11 @@
           {selectedChat}
           enqueue={<T>(task: () => Promise<T>) => composer.enqueue(task)}
           onpickeremoji={(emoji) => composer.insertAtCaret(emoji)}
+          takereply={(): Record<string, string> => {
+            const reply = composer.replyingTo;
+            composer.replyingTo = null;
+            return reply ? { replyToId: reply.id, replyToSender: reply.sender, replyToText: reply.text } : {};
+          }}
           onpickersent={async () => {
             await messages.reloadMessages(chats.selectedChat);
             await chats.refreshChats();
@@ -1770,6 +1812,18 @@
     }} />
 {/if}
 
+{#if quoteView}
+  <MediaViewer
+    items={quoteView}
+    index={0}
+    onclose={() => (quoteView = null)}
+    onreply={() => (quoteView = null)}
+    onjump={(id) => {
+      quoteView = null;
+      scrollToMessage(id);
+    }} />
+{/if}
+
 {#if contactInfoFor}
   {@const jid = contactInfoFor}
   <ContactInfo
@@ -1825,13 +1879,24 @@
   </div>
 {/if}
 
-{#if session.connected && session.uiUnlocked && session.syncPending > 0 && !ui.pendingJump && !ui.notice}
+{#if session.connected && session.uiUnlocked && (session.syncPending > 0 || session.historyPercent !== null) && !ui.pendingJump && !ui.notice}
   <div class="notice" role="status">
     <Spinner />
     <span>
-      Syncing messages · {Math.max(0, session.syncPending - session.syncApplied)} left of {session.syncPending}
-      ({session.syncPercent}%)
+      {#if session.syncPending > 0}
+        Syncing messages · {Math.max(0, session.syncPending - session.syncApplied)} left of {session.syncPending}
+        ({session.syncPercent}%)
+      {:else}
+        Syncing history from your phone · {session.historyPercent}%
+      {/if}
     </span>
+  </div>
+{/if}
+
+{#if session.backfill && !ui.notice}
+  <div class="notice" role="status">
+    <Spinner />
+    <span>Downloading all history · {session.backfill.done} of {session.backfill.total} chats</span>
   </div>
 {/if}
 

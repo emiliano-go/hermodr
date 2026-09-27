@@ -24,6 +24,7 @@
   import { backgroundPress } from "$lib/press";
   import Icon from "$lib/Icon.svelte";
   import VideoPlayer from "$lib/VideoPlayer.svelte";
+  import AudioPlayer from "$lib/AudioPlayer.svelte";
 
   let {
     items,
@@ -44,6 +45,7 @@
 
   const item = $derived(items[index]);
   const isVideo = $derived(item?.kind === "video" || item?.kind === "gif");
+  const isAudio = $derived(item?.kind === "audio");
 
   let zoom = $state(1);
   let pan = $state({ x: 0, y: 0 });
@@ -152,7 +154,7 @@
         </span>
       </div>
       <div class="tools">
-        {#if !isVideo}
+        {#if !isVideo && !isAudio}
           <button class="tool" title="Zoom out" aria-label="Zoom out" disabled={zoom === 1} onclick={() => setZoom(zoom - 0.5)}
             ><Icon name="zoomOut" size={20} /></button>
           <button class="tool" title="Zoom in" aria-label="Zoom in" disabled={zoom === 5} onclick={() => setZoom(zoom + 0.5)}
@@ -181,6 +183,8 @@
             src={videoFallback ?? convertFileSrc(item.path)}
             gif={item.kind === "gif"}
             onerror={loadVideoFallback} />
+        {:else if isAudio}
+          <div class="audio"><AudioPlayer path={item.path} play /></div>
         {:else}
           <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
           <img
@@ -314,6 +318,12 @@
     overflow: hidden;
     padding: 0 72px;
     container-type: size;
+  }
+  .audio {
+    width: min(420px, 100%);
+    padding: 12px 16px;
+    border-radius: var(--radius-lg);
+    background: var(--surface);
   }
   .media {
     max-width: 100%;

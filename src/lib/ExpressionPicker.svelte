@@ -23,6 +23,7 @@
     chat,
     tab = $bindable("emoji"),
     enqueue,
+    takereply,
     onemoji,
     onsent,
     onerror,
@@ -32,6 +33,8 @@
     tab?: PickerTab;
     /** The app's ordered outbox, so picks go out in sequence with everything else. */
     enqueue: <T>(task: () => Promise<T>) => Promise<T>;
+    /** Takes the reply being composed, if any, as send arguments, clearing it. */
+    takereply: () => Record<string, string>;
     onemoji: (emoji: string) => void;
     onsent: () => void;
     onerror: (message: string) => void;
@@ -133,7 +136,8 @@
   }
 
   function sendFromLibrary(path: string, kind: "gif" | "sticker") {
-    send(() => invoke("send_from_library", { chat, path, kind }));
+    const reply = takereply();
+    send(() => invoke("send_from_library", { chat, path, kind, ...reply }));
   }
 
   function toBase64(file: File) {
@@ -151,7 +155,8 @@
       return;
     }
     const data = await toBase64(file);
-    send(() => invoke("send_media", { chat, name: file.name, data, gif: true }));
+    const reply = takereply();
+    send(() => invoke("send_media", { chat, name: file.name, data, gif: true, ...reply }));
   }
 
   /** A picture being cropped into a sticker. */
@@ -159,7 +164,8 @@
   async function sendMade(file: File) {
     making = null;
     const data = await toBase64(file);
-    send(() => invoke("send_sticker", { chat, data }));
+    const reply = takereply();
+    send(() => invoke("send_sticker", { chat, data, ...reply }));
   }
   async function saveMade(file: File) {
     making = null;

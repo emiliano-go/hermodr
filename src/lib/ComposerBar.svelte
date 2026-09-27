@@ -35,6 +35,7 @@
     pickerTab = $bindable(),
     selectedChat,
     enqueue,
+    takereply,
     onpickeremoji,
     onpickersent,
     onpickererror,
@@ -79,6 +80,8 @@
     pickerTab: PickerTab | null;
     selectedChat: string;
     enqueue: <T>(task: () => Promise<T>) => Promise<T>;
+    /** Takes the reply being composed as send arguments, clearing it. */
+    takereply: () => Record<string, string>;
     onpickeremoji: (emoji: string) => void;
     onpickersent: () => void;
     onpickererror: (message: string) => void;
@@ -256,6 +259,7 @@
     chat={selectedChat}
     bind:tab={pickerTab}
     {enqueue}
+    {takereply}
     onemoji={onpickeremoji}
     onsent={onpickersent}
     onerror={onpickererror}

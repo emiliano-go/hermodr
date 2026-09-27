@@ -101,6 +101,8 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       break;
     case "connected":
       session.connected = true;
+      // A code was on screen, so this is a fresh link: the phone's history sync starts now.
+      if (session.qrSvg) session.historyPercent = 0;
       await session.showQr(null);
       if (session.settings.skip_loading_screen) {
         session.gateDone = true;
@@ -164,6 +166,9 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
         queueReloadMessages(host, chats.selectedChat, false, false);
       }
       break;
+    case "chatStateChanged":
+      if (!deferRefresh(null)) queueRefreshChats();
+      break;
     case "namesUpdated":
       // Address-book names arrived after the initial fetch, so the cached
       // display names are stale until both lists reload.
@@ -181,6 +186,12 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       chatsDirty = false;
       messagesDirty = false;
       dirtyMarkRead = false;
+      break;
+    case "historyProgress":
+      session.historyPercent = payload.percent < 100 ? payload.percent : null;
+      break;
+    case "backfill":
+      session.backfill = payload.done < payload.total ? { done: payload.done, total: payload.total } : null;
       break;
     case "initialSyncComplete":
       // The backlog is in: paint it before the loading screen lifts, so

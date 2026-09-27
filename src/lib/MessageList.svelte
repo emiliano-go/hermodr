@@ -6,6 +6,8 @@
   import OutgoingItem from "$lib/OutgoingItem.svelte";
   import TypingIndicator from "$lib/TypingIndicator.svelte";
   import { bare } from "$lib/message";
+  import { noticeText } from "$lib/notices";
+  import { MAX_DOWNLOAD_TRIES } from "$lib/state/messages.svelte";
   import type {
     ChatEvent,
     MentionTarget,
@@ -32,6 +34,8 @@
     editedSet,
     forwardedSet,
     downloading,
+    downloadErrors,
+    downloadTries,
     replyingToId,
     highlightedId,
     firstUnreadId,
@@ -49,6 +53,8 @@
     autoplayId,
     onceAudioOpenId,
     loadingOlder,
+    onrecoverquote,
+    recovering,
     onloadolder,
     uploads,
     typers,
@@ -65,6 +71,7 @@
     ondownload,
     onopenviewer,
     onopenmedia,
+    onopenquote,
     onvote,
     onrespond,
     oneditrequest,
@@ -90,12 +97,14 @@
     memberTagOf: (sender: string) => string | null;
     hue: (jid: string) => number;
     captionOf: (m: StoredMessage) => string;
-    viewOnceMarks: { id: string; opened: boolean }[];
+    viewOnceMarks: { id: string; opened: boolean; available: boolean }[];
     reactionsFor: Map<string, Reaction[]>;
     starredSet: Set<string>;
     editedSet: Set<string>;
     forwardedSet: Set<string>;
     downloading: Record<string, true>;
+    downloadErrors: Record<string, string>;
+    downloadTries: Record<string, number>;
     replyingToId: string | null;
     highlightedId: string | null;
     /** Oldest unread message id; the divider is drawn above it. */
@@ -127,9 +136,12 @@
     onreplydraft: (m: StoredMessage) => void;
     onmenu: (e: MouseEvent, m: StoredMessage) => void;
     onjumpquoted: (m: StoredMessage) => void;
+    onrecoverquote: (m: StoredMessage) => void;
+    recovering: Record<string, true>;
     ondownload: (m: StoredMessage) => void;
     onopenviewer: (m: StoredMessage) => void;
     onopenmedia: (path: string) => void;
+    onopenquote: (m: StoredMessage) => void;
     onvote: (m: StoredMessage, options: string[]) => unknown;
     onrespond: (m: StoredMessage, response: string) => unknown;
     oneditrequest: (m: StoredMessage) => void;
@@ -155,9 +167,12 @@
     onreplydraft,
     onmenu,
     onjumpquoted,
+    onrecoverquote,
+    recovering,
     ondownload,
     onopenviewer,
     onopenmedia,
+    onopenquote,
     onvote,
     onrespond,
     oneditrequest,
@@ -176,10 +191,12 @@
     const prev = messages[i - 1];
     const newDay = !prev || dayKey(prev.timestamp) !== dayKey(message.timestamp);
     const first = newDay || prev.from_me !== message.from_me || prev.sender !== message.sender;
+    const mark = viewOnceMarks.find((v) => v.id === message.id) ?? null;
+    // A stub is spent unless a reply carried a copy of it, which the mark knows.
     const viewOnce =
       message.media_kind === "view_once"
-        ? { id: message.id, opened: true }
-        : (viewOnceMarks.find((v) => v.id === message.id) ?? null);
+        ? { id: message.id, opened: true, available: mark?.available ?? false }
+        : mark;
     const visual =
       !message.revoked &&
       !viewOnce &&
@@ -214,6 +231,8 @@
       poll: polls.find((p) => p.id === message.id),
       chatEvent: events.find((e) => e.id === message.id),
       downloading: !!downloading[message.id],
+      downloadError: message.media_path ? null : (downloadErrors[message.id] ?? null),
+      downloadGaveUp: (downloadTries[message.id] ?? 0) >= MAX_DOWNLOAD_TRIES,
       onceAudioOpen: onceAudioOpenId === message.id,
       autoplay: autoplayId === message.id,
       voiceAvatar: voiceAvatarOf(message),
@@ -238,6 +257,9 @@
     <button class="load-older" onclick={onloadolder} disabled={loadingOlder}>
       {loadingOlder ? "Asking your phone…" : "Load older messages"}
     </button>
+    <p class="system e2e">
+      Messages are end-to-end encrypted. No one outside of this chat, not even WhatsApp, can read or listen to them.
+    </p>
   {/if}
   {#each messages as message, i (message.id)}
     {@const prev = messages[i - 1]}
@@ -250,7 +272,12 @@
         <span>Unread messages</span>
       </button>
     {/if}
-    <MessageBubble {message} vm={vmFor(message, i)} {api} />
+    {#if message.system_kind}
+      {@const line = noticeText(message.system_kind, message.system_params, namer)}
+      {#if line}<p class="system">{line}</p>{/if}
+    {:else}
+      <MessageBubble {message} vm={vmFor(message, i)} {api} />
+    {/if}
   {/each}
   {#each uploads as upload (upload.token)}
     <OutgoingItem {upload} />
@@ -329,6 +356,21 @@
   }
   .unread-divider:hover span {
     text-decoration: underline;
+  }
+  .system {
+    align-self: center;
+    max-width: min(60ch, 80%);
+    margin: 6px 0;
+    padding: 5px 12px;
+    background: var(--surface);
+    color: var(--muted);
+    border-radius: var(--radius-sm);
+    font-size: 12.5px;
+    text-align: center;
+    box-shadow: 0 1px 0.5px rgba(11, 20, 26, 0.13);
+  }
+  .system.e2e {
+    color: var(--faint);
   }
   .load-older {
     align-self: center;

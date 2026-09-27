@@ -8,6 +8,7 @@ import type { Marks, Reaction, StoredMessage } from "$lib/models";
 import { ui } from "./ui.svelte";
 
 const PAGE = 200;
+export const MAX_DOWNLOAD_TRIES = 3;
 
 export class MessagesState {
   /** How many messages the open chat shows; "load older" raises it. */
@@ -65,6 +66,12 @@ export class MessagesState {
 
   /** Media downloads in flight, so a second click does not start another. */
   downloading = $state<Record<string, true>>({});
+  /** Why a message's last download failed, until it is tried again. */
+  downloadErrors = $state<Record<string, string>>({});
+  /** Failed downloads per message; at `MAX_DOWNLOAD_TRIES` the retry is withdrawn. */
+  downloadTries = $state<Record<string, number>>({});
+  /** View-once copies being recovered from a reply, keyed by that reply. */
+  recovering = $state<Record<string, true>>({});
   /** Voice note to play next, set when the previous one ends on its own. */
   autoplayId = $state<string | null>(null);
   /** Unread mentions in the open chat, oldest first, for jump-to-mention. */
@@ -121,15 +128,39 @@ export class MessagesState {
 
   /** `quiet` for background fetches, whose failures only matter once clicked. */
   async downloadMedia(chat: string | null, message: StoredMessage, quiet = false) {
-    if (!chat || this.downloading[message.id]) return;
+    const tries = this.downloadTries[message.id] ?? 0;
+    if (!chat || this.downloading[message.id] || tries >= MAX_DOWNLOAD_TRIES) return;
     this.downloading[message.id] = true;
+    delete this.downloadErrors[message.id];
     try {
       await invoke("download_media", { chat, id: message.id });
+      delete this.downloadTries[message.id];
       await this.reloadMessages(chat);
     } catch (e) {
+      // The core already asked the sender to upload it again; what is left is shown on the message.
+      this.downloadErrors[message.id] = String(e);
+      this.downloadTries[message.id] = tries + 1;
       if (!quiet) ui.fail(e);
     } finally {
       delete this.downloading[message.id];
+    }
+  }
+
+  /** Takes back the view-once a reply quotes, returning where the copy landed. */
+  async recoverQuote(chat: string | null, message: StoredMessage): Promise<string | null> {
+    if (!chat || this.recovering[message.id]) return null;
+    this.recovering[message.id] = true;
+    delete this.downloadErrors[message.id];
+    try {
+      await invoke("recover_quote_media", { chat, id: message.id });
+      await this.reloadMessages(chat);
+      return this.ordered.find((m) => m.id === message.id)?.reply_to_path ?? null;
+    } catch (e) {
+      this.downloadErrors[message.id] = String(e);
+      ui.fail(e);
+      return null;
+    } finally {
+      delete this.recovering[message.id];
     }
   }
 
