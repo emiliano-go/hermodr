@@ -1765,7 +1765,23 @@ pub fn run() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // A second launch hands its arguments to the running instance and exits,
+    // so one process at a time owns the WhatsApp session. The dev server is
+    // exempt so a dev instance can run beside the installed app.
+    let builder = if tauri::is_dev() {
+        builder
+    } else {
+        builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
+    };
+
+    builder
         .setup(|app| {
             init_logging(&log_path(app.handle()));
             let accounts = load_accounts(app.handle());
