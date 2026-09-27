@@ -116,6 +116,7 @@ impl Service {
     ) -> Result<Option<String>> {
         let SendOptions { gif, view_once, voice, forwarded, mentions, progress } = options;
         let to: Jid = chat.parse()?;
+        self.unarchive_on_send(chat);
         let to_self = self.is_self_jid(&to);
         let chat_jid = to.to_string();
         let file_name = file_name.to_string();
@@ -351,6 +352,7 @@ impl Service {
         reply: Option<(String, String, String)>,
     ) -> Result<()> {
         let to: Jid = chat.parse()?;
+        self.unarchive_on_send(chat);
         let context = self.reply_context(&to, reply.as_ref())?;
         let context = if forwarded { Some(forwarded_context(context)) } else { context };
         let to_self = self.is_self_jid(&to);

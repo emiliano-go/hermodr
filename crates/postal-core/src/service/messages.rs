@@ -16,6 +16,7 @@ impl Service {
         mentions: Vec<String>,
     ) -> Result<()> {
         let to: Jid = chat.parse()?;
+        self.unarchive_on_send(chat);
         let to_self = self.is_self_jid(&to);
         let text = text.into();
         // `@all` is a group mention, carried separately from member mentions.
@@ -131,6 +132,24 @@ impl Service {
             actions.unarchive_chat(&jid, None).await
         };
         result.map_err(|e| anyhow::anyhow!(e.to_string()))
+    }
+
+    /// Sending to an archived chat brings it back to the main list, as WhatsApp
+    /// does; the account is told too so the phone agrees.
+    pub(super) fn unarchive_on_send(&self, chat: &str) {
+        let Ok(jid) = chat.parse::<Jid>() else { return };
+        let bare = jid.to_non_ad().to_string();
+        if !self.store.is_archived(&bare).unwrap_or(false) {
+            return;
+        }
+        self.store.set_archived(&bare, false).logged();
+        let _ = self.events.send(ServiceEvent::ChatStateChanged { chat: bare });
+        let client = self.client.clone();
+        tokio::spawn(async move {
+            if let Err(e) = client.chat_actions().unarchive_chat(&jid, None).await {
+                log::warn!("could not unarchive {jid}: {e}");
+            }
+        });
     }
 
     /// Mutes a chat until `until` (Unix seconds; -1 indefinitely, 0 unmutes).
@@ -454,6 +473,7 @@ impl Service {
         quote_chat: Option<&str>,
     ) -> Result<()> {
         let to: Jid = chat.parse()?;
+        self.unarchive_on_send(chat);
         let to_self = self.is_self_jid(&to);
         let quoted_chat: Jid = match quote_chat {
             Some(other) => other.parse()?,
