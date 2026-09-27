@@ -1,8 +1,237 @@
-use anyhow::Result;
-use rusqlite::{params, Connection, OptionalExtension};
+#[cfg(test)]
 use super::chats;
+use anyhow::{Context, Result};
+use rusqlite::Connection;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn version(conn: &Connection) -> i64 {
+        conn.pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap()
+    }
+
+    fn legacy() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE messages (
+                chat TEXT NOT NULL, id TEXT NOT NULL, sender TEXT NOT NULL,
+                timestamp INTEGER NOT NULL, from_me INTEGER NOT NULL, text TEXT NOT NULL,
+                PRIMARY KEY (chat, id));
+             CREATE TABLE names (jid TEXT PRIMARY KEY, name TEXT NOT NULL);
+             INSERT INTO messages VALUES ('1@s.whatsapp.net', 'm', '1@s.whatsapp.net', 123, 0, 'kept');
+             INSERT INTO names VALUES ('1:2@lid', 'Ada');",
+        ).unwrap();
+        conn
+    }
+
+    #[test]
+    fn fresh_and_legacy_databases_reach_current_version() {
+        for (conn, expected) in [(Connection::open_in_memory().unwrap(), 0), (legacy(), 1)] {
+            migrate(&conn).unwrap();
+            assert_eq!(version(&conn), 2);
+            conn.prepare(
+                "SELECT media_ref, reply_to_locator, media_duration, status FROM messages",
+            )
+            .unwrap();
+            conn.prepare("SELECT secret FROM polls").unwrap();
+            conn.prepare("SELECT secret FROM events").unwrap();
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM messages WHERE text = 'kept'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                count,
+                conn.query_row("SELECT COUNT(*) FROM messages", [], |r| r.get::<_, i64>(0))
+                    .unwrap()
+            );
+            assert_eq!(count, expected);
+        }
+    }
+
+    #[test]
+    fn unversioned_current_database_preserves_secrets_and_folds_address_forms() {
+        let conn = legacy();
+        migrate(&conn).unwrap();
+        conn.execute_batch(
+            "PRAGMA user_version = 0;
+             INSERT INTO polls VALUES ('1@s.whatsapp.net', 'poll', 'me', 'Question', '[]', 0, X'010203');
+             INSERT INTO events VALUES ('1@s.whatsapp.net', 'event', 'me', 'Meeting', NULL, NULL, NULL, NULL, NULL, 0, X'040506');
+             INSERT INTO lid_pn VALUES ('9', '1');
+             INSERT INTO messages (chat, id, sender, timestamp, from_me, text)
+                 VALUES ('9@lid', 'older', '9@lid', 100, 0, 'old');
+             INSERT INTO chat_state VALUES ('9@lid', 1, -1, 1);",
+        ).unwrap();
+        migrate(&conn).unwrap();
+        chats::reconcile_addresses(&conn).unwrap();
+        assert_eq!(version(&conn), 2);
+        assert_eq!(
+            conn.query_row("SELECT secret FROM polls", [], |r| r.get::<_, Vec<u8>>(0))
+                .unwrap(),
+            [1, 2, 3]
+        );
+        assert_eq!(
+            conn.query_row("SELECT secret FROM events", [], |r| r.get::<_, Vec<u8>>(0))
+                .unwrap(),
+            [4, 5, 6]
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM messages WHERE chat = '1@s.whatsapp.net'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            2
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT archived FROM chat_state WHERE jid = '1@s.whatsapp.net'",
+                [],
+                |r| r.get::<_, bool>(0)
+            )
+            .unwrap(),
+            true
+        );
+    }
+
+    #[test]
+    fn completed_migrations_are_not_replayed() {
+        let conn = legacy();
+        migrate(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO names (jid, name) VALUES ('later:3@lid', 'Later')",
+            [],
+        )
+        .unwrap();
+        migrate(&conn).unwrap();
+        assert_eq!(version(&conn), 2);
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM names WHERE jid = 'later@lid'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn failed_cleanup_rolls_back_its_data_and_version_then_retries() {
+        let conn = legacy();
+        conn.execute_batch(
+            "INSERT INTO messages VALUES ('status@broadcast', 'status', 'them', 10, 0, 'status');
+             INSERT INTO names VALUES ('masked@lid', '+598∙∙27');
+             CREATE TRIGGER fail_cleanup BEFORE DELETE ON names BEGIN SELECT RAISE(ABORT, 'test failure'); END;",
+        ).unwrap();
+        assert!(migrate(&conn).is_err());
+        assert_eq!(version(&conn), 1);
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM messages WHERE chat = 'status@broadcast'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM names WHERE jid = 'masked@lid'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+        conn.execute_batch("DROP TRIGGER fail_cleanup").unwrap();
+        migrate(&conn).unwrap();
+        assert_eq!(version(&conn), 2);
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM messages WHERE chat = 'status@broadcast'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row("SELECT name FROM names WHERE jid = '1@lid'", [], |r| r
+                .get::<_, String>(
+                0
+            ))
+            .unwrap(),
+            "Ada"
+        );
+    }
+
+    #[test]
+    fn failed_schema_step_leaves_no_partial_tables() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE VIEW names AS SELECT '1@lid' AS jid, 'Ada' AS name")
+            .unwrap();
+        assert!(migrate(&conn).is_err());
+        assert_eq!(version(&conn), 0);
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn unsupported_version_is_rejected_without_schema_changes() {
+        for version in [-1, 3] {
+            let conn = Connection::open_in_memory().unwrap();
+            conn.pragma_update(None, "user_version", version).unwrap();
+            assert!(migrate(&conn).is_err());
+            assert_eq!(
+                conn.query_row("SELECT COUNT(*) FROM sqlite_master", [], |r| r
+                    .get::<_, i64>(0))
+                    .unwrap(),
+                0
+            );
+        }
+    }
+}
+
+const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
+    migrate_v1_schema,
+    migrate_v2_legacy_data,
+];
 
 pub(super) fn migrate(conn: &Connection) -> Result<()> {
+    loop {
+        let tx =
+            rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+        let version: i64 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
+        anyhow::ensure!(
+            (0..=MIGRATIONS.len() as i64).contains(&version),
+            "unsupported message schema version {version}"
+        );
+        let Some(step) = MIGRATIONS.get(version as usize) else {
+            tx.commit()?;
+            return Ok(());
+        };
+        let next = version + 1;
+        step(&tx).with_context(|| format!("applying message schema migration {next}"))?;
+        tx.pragma_update(None, "user_version", next)?;
+        tx.commit()?;
+    }
+}
+
+// Version 0 covered several released schemas; only this adoption step probes columns.
+fn migrate_v1_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS messages (
              chat         TEXT NOT NULL,
@@ -65,7 +294,10 @@ pub(super) fn migrate(conn: &Connection) -> Result<()> {
         "system_params",
     ] {
         if !existing.iter().any(|c| c == column) {
-            conn.execute(&format!("ALTER TABLE messages ADD COLUMN {column} TEXT"), [])?;
+            conn.execute(
+                &format!("ALTER TABLE messages ADD COLUMN {column} TEXT"),
+                [],
+            )?;
         }
     }
 
@@ -93,7 +325,10 @@ pub(super) fn migrate(conn: &Connection) -> Result<()> {
         ("media_once_kind", "TEXT"),
     ] {
         if !existing.iter().any(|c| c == column) {
-            conn.execute(&format!("ALTER TABLE messages ADD COLUMN {column} {decl}"), [])?;
+            conn.execute(
+                &format!("ALTER TABLE messages ADD COLUMN {column} {decl}"),
+                [],
+            )?;
         }
     }
 
@@ -170,8 +405,14 @@ pub(super) fn migrate(conn: &Connection) -> Result<()> {
     // Local-only chat list state. Clearing a chat drops its messages but
     // keeps an empty row in the list; deleting one hides it until a new
     // message arrives. Neither touches the phone or the other side.
-    conn.execute("CREATE TABLE IF NOT EXISTS hidden_chats (jid TEXT PRIMARY KEY)", [])?;
-    conn.execute("CREATE TABLE IF NOT EXISTS cleared_chats (jid TEXT PRIMARY KEY)", [])?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS hidden_chats (jid TEXT PRIMARY KEY)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS cleared_chats (jid TEXT PRIMARY KEY)",
+        [],
+    )?;
 
     // The media reference is a blob, so it cannot go through the TEXT
     // migration loop above.
@@ -190,9 +431,31 @@ pub(super) fn migrate(conn: &Connection) -> Result<()> {
         rows.collect::<rusqlite::Result<Vec<_>>>()?
     };
     if !existing_names.iter().any(|c| c == "saved") {
-        conn.execute("ALTER TABLE names ADD COLUMN saved INTEGER NOT NULL DEFAULT 0", [])?;
+        conn.execute(
+            "ALTER TABLE names ADD COLUMN saved INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
     }
 
+    if !existing.iter().any(|c| c == "read") {
+        conn.execute(
+            "ALTER TABLE messages ADD COLUMN read INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+    if !existing.iter().any(|c| c == "revoked") {
+        conn.execute(
+            "ALTER TABLE messages ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+    if !existing.iter().any(|c| c == "status") {
+        conn.execute("ALTER TABLE messages ADD COLUMN status TEXT", [])?;
+    }
+    Ok(())
+}
+
+fn migrate_v2_legacy_data(conn: &Connection) -> Result<()> {
     // Status updates were once stored as a chat. Drop them so the list stops
     // showing a "status" conversation.
     conn.execute("DELETE FROM messages WHERE chat = 'status@broadcast'", [])?;
@@ -215,58 +478,5 @@ pub(super) fn migrate(conn: &Connection) -> Result<()> {
          WHERE jid LIKE '%:%@%'",
         [],
     )?;
-    if !existing.iter().any(|c| c == "read") {
-        conn.execute(
-            "ALTER TABLE messages ADD COLUMN read INTEGER NOT NULL DEFAULT 0",
-            [],
-        )?;
-    }
-    if !existing.iter().any(|c| c == "revoked") {
-        conn.execute(
-            "ALTER TABLE messages ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0",
-            [],
-        )?;
-    }
-    if !existing.iter().any(|c| c == "status") {
-        conn.execute("ALTER TABLE messages ADD COLUMN status TEXT", [])?;
-    }
-
-    // One direct chat can be stored under both its LID and phone-number
-    // forms, which shows the same contact twice. Fold the LID copy onto the
-    // phone-number one; the write path now keys direct chats by number.
-    let lid_chats: Vec<String> = {
-        let mut found = std::collections::BTreeSet::new();
-        for (table, column) in [
-            ("messages", "chat"),
-            ("chat_state", "jid"),
-            ("pins", "jid"),
-            ("cleared_chats", "jid"),
-            ("hidden_chats", "jid"),
-        ] {
-            let mut stmt = conn.prepare(&format!(
-                "SELECT DISTINCT {column} FROM {table} WHERE {column} LIKE '%@lid'"
-            ))?;
-            let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
-            for row in rows {
-                found.insert(row?);
-            }
-        }
-        found.into_iter().collect()
-    };
-    if !lid_chats.is_empty() {
-        let tx = conn.unchecked_transaction()?;
-        for lid_chat in &lid_chats {
-            let Some(user) = lid_chat.split('@').next().and_then(|u| u.split(':').next()) else {
-                continue;
-            };
-            let pn: Option<String> = tx
-                .query_row("SELECT pn FROM lid_pn WHERE lid = ?1", params![user], |r| r.get(0))
-                .optional()?;
-            if let Some(pn) = pn {
-                chats::fold_chat(&tx, lid_chat, &format!("{pn}@s.whatsapp.net"))?;
-            }
-        }
-        tx.commit()?;
-    }
     Ok(())
 }

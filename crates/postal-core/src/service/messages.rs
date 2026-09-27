@@ -3,7 +3,7 @@
 
 use super::*;
 
-impl Service {
+impl WhatsAppService {
     /// Sends a text message to a chat.
     ///
     /// The sent message is stored and dispatched locally. WhatsApp does not echo

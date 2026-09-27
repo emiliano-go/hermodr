@@ -51,6 +51,7 @@ mod notices;
 mod polls;
 mod profile;
 mod receipts;
+mod user_info;
 #[cfg(test)]
 mod tests;
 
@@ -184,7 +185,7 @@ pub struct Profile {
     pub privacy: std::collections::BTreeMap<String, String>,
 }
 
-/// How [`Service::send_media`] sends a file beyond its type.
+/// How [`WhatsAppService::send_media`] sends a file beyond its type.
 #[derive(Debug, Default)]
 pub struct SendOptions {
     /// A video that plays muted and looping, as WhatsApp's GIFs are.
@@ -365,7 +366,8 @@ impl ServiceConfig {
 /// A running account client.
 ///
 /// Dropping this stops the background task and closes the stores.
-pub struct Service {
+pub struct WhatsAppService {
+    user_info_slots: tokio::sync::Semaphore,
     client: Arc<Client>,
     store: Arc<MessageStore>,
     /// Local, per-contact aliases, kept in their own file beside the messages.
@@ -388,14 +390,11 @@ pub struct Service {
     /// lookups do not re-query it for the same people.
     nameless: Mutex<std::collections::HashSet<String>>,
     resolving: AtomicBool,
-    /// Group metadata for this run, so opening a chat does not re-query the
-    /// server and trip its rate limit. Group membership changes rarely enough
-    /// that a session-lifetime cache is fine.
-    /// Shared with the event handler, which patches member tags as they change.
+    /// Cached until a group update invalidates it; member tags are also patched live.
     group_cache: std::sync::Arc<Mutex<std::collections::HashMap<String, GroupInfo>>>,
-    /// Every group the account is in, `(jid, subject)`, filled on first search.
+    /// Every group the account is in; None means a refresh is needed.
     /// Shared with the event handler, which drops it when any group changes.
-    groups_cache: Arc<Mutex<Vec<whatsapp_rust::GroupOverview>>>,
+    groups_cache: Arc<Mutex<Option<Vec<whatsapp_rust::GroupOverview>>>>,
     /// Pending "load older" requests, request session to the chat it was for.
     /// Shared with the event handler, which completes one when the phone's
     /// history sync carries that session back.

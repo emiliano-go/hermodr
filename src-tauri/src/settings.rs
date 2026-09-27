@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use postal_core::{Retention, Service};
+use postal_core::{Retention, WhatsAppService};
 use tauri::{AppHandle, Manager, State};
 use crate::AppState;
 
@@ -74,7 +74,7 @@ pub(crate) fn load_settings(app: &AppHandle) -> UiSettings {
 }
 
 /// Whether a chat gets our (typing, read receipts): its overrides, else the global settings.
-pub(crate) fn sends_privacy(state: &AppState, service: &Service, chat: &str) -> (bool, bool) {
+pub(crate) fn sends_privacy(state: &AppState, service: &WhatsAppService, chat: &str) -> (bool, bool) {
     let (typing, receipts) = service.chat_privacy(chat).unwrap_or_default();
     let settings = state.settings.lock().unwrap();
     (
@@ -89,7 +89,7 @@ pub(crate) fn get_settings(state: State<'_, AppState>) -> UiSettings {
     state.settings.lock().unwrap().clone()
 }
 
-/// Updates and saves settings. Service settings take effect on the next connection.
+/// Updates and saves settings. Backend settings take effect on the next connection.
 #[tauri::command]
 pub(crate) fn set_settings(app: AppHandle, state: State<'_, AppState>, settings: UiSettings) -> Result<(), String> {
     let path = settings_path(&app);

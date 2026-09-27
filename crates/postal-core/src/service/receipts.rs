@@ -88,7 +88,7 @@ impl Inbound {
     }
 }
 
-impl Service {
+impl WhatsAppService {
     /// Whether the account has read receipts turned off in its privacy
     /// settings. The protocol client keeps this in sync with the server; when
     /// true, read and played receipts must not be sent.

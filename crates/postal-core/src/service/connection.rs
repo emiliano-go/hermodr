@@ -189,7 +189,7 @@ pub(super) fn sync_ready(p: &SyncProgress, elapsed: std::time::Duration) -> bool
     (p.offline_done || no_backlog) && quiescent
 }
 
-impl Service {
+impl WhatsAppService {
     /// Connects an account, pairing first if it has no session yet.
     ///
     /// Returns the service along with an event receiver that was registered
@@ -241,7 +241,7 @@ impl Service {
 
         let media_dir = config.media_dir.clone();
         let group_cache: Arc<Mutex<std::collections::HashMap<String, GroupInfo>>> = Arc::default();
-        let groups_cache: Arc<Mutex<Vec<whatsapp_rust::GroupOverview>>> = Arc::default();
+        let groups_cache: Arc<Mutex<Option<Vec<whatsapp_rust::GroupOverview>>>> = Arc::default();
         // Progress of the initial catch-up; shared with the readiness task that
         // decides when the UI may leave its loading screen.
         let sync_progress: Arc<Mutex<SyncProgress>> = Arc::default();
@@ -456,6 +456,7 @@ impl Service {
                 keep_archived: keep_archived_state,
                 subject_backoff: Mutex::default(),
                 nameless: Mutex::default(),
+                user_info_slots: tokio::sync::Semaphore::new(user_info::MAX_REQUESTS),
                 resolving: AtomicBool::new(false),
                 group_cache,
                 groups_cache,

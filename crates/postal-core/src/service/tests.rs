@@ -1,6 +1,74 @@
 use super::*;
 use std::path::Path;
 
+#[tokio::test]
+async fn group_changes_invalidate_fetched_metadata_and_overviews() {
+    use whatsapp_rust::wacore::{
+        stanza::groups::GroupNotificationAction,
+        types::events::GroupUpdate,
+    };
+    let (events, mut received) = broadcast::channel(32);
+    let inbound = Inbound {
+        store: Arc::new(MessageStore::open(Path::new(":memory:"), Retention::unlimited()).unwrap()),
+        events,
+        connected: Arc::default(),
+        client_for_events: Arc::default(),
+        media_dir: None,
+        group_cache: Arc::default(),
+        groups_cache: Arc::default(),
+        older_waits: Arc::default(),
+        downloads: Arc::new(tokio::sync::Semaphore::new(1)),
+        sync_progress: Arc::default(),
+        auto_download_default: false,
+        keep_archived: Arc::default(),
+    };
+    for action in [
+        GroupNotificationAction::Subject {
+            subject: "New subject".into(), subject_owner: None, subject_owner_pn: None,
+            subject_owner_username: None, subject_time: None,
+        },
+        GroupNotificationAction::Description { id: "description".into(), description: Some("New description".into()) },
+        GroupNotificationAction::Add { participants: vec![], reason: None },
+    ] {
+        inbound.group_cache.lock().unwrap().insert("1@g.us".into(), GroupInfo {
+            subject: Some("Old subject".into()), description: Some("Old description".into()),
+            ..Default::default()
+        });
+        inbound.group_cache.lock().unwrap().insert("other@g.us".into(), GroupInfo::default());
+        *inbound.groups_cache.lock().unwrap() = Some(vec![]);
+        let update = GroupUpdate::builder()
+            .group_jid("1@g.us".parse().unwrap())
+            .timestamp("2026-09-27T00:00:00Z".parse().unwrap())
+            .is_lid_addressing_mode(false)
+            .action(Box::new(action))
+            .build();
+        inbound.handle(&Event::GroupUpdate(update)).await;
+        assert!(!inbound.group_cache.lock().unwrap().contains_key("1@g.us"));
+        assert!(inbound.group_cache.lock().unwrap().contains_key("other@g.us"));
+        assert!(inbound.groups_cache.lock().unwrap().is_none());
+        assert_eq!(inbound.store.name_for("1@g.us").unwrap().as_deref(), Some("New subject"));
+        let mut announced = false;
+        while let Ok(event) = received.try_recv() {
+            if matches!(event, ServiceEvent::GroupChanged { chat } if chat == "1@g.us") {
+                announced = true;
+            }
+        }
+        assert!(announced);
+    }
+}
+
+#[test]
+fn learned_caller_address_forms_reach_saved_names() {
+    let store = MessageStore::open(Path::new(":memory:"), Retention::unlimited()).unwrap();
+    let lid: Jid = "123:4@lid".parse().unwrap();
+    let pn: Jid = "59897504482:5@s.whatsapp.net".parse().unwrap();
+    remember_lid_pn(&store, &lid, Some(&pn));
+    store.set_saved_name("59897504482@s.whatsapp.net", "Ada").unwrap();
+    let forms = contact_forms(&store, "123@lid");
+    assert_eq!(forms, ["123@lid", "59897504482@s.whatsapp.net"]);
+    assert_eq!(forms.iter().find_map(|jid| store.name_for(jid).unwrap()), Some("Ada".into()));
+}
+
 /// A contact the core has mapped to a phone number answers to both forms,
 /// so an alias added from either place is found from the other.
 #[test]

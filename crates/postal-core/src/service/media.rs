@@ -36,7 +36,7 @@ impl std::io::Read for CountingReader {
     }
 }
 
-impl Service {
+impl WhatsAppService {
     /// Downloads a message's media on demand, when automatic downloads were
     /// off or the earlier attempt failed.
     pub async fn download_media(&self, chat: &str, id: &str) -> Result<()> {

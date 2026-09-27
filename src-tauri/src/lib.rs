@@ -1,7 +1,7 @@
 //! Tauri shell composition and shared application state.
 
 use std::sync::{Arc, Mutex};
-use postal_core::Service;
+use postal_core::WhatsAppService;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
 use account_store::{AccountsFile, load_accounts};
@@ -33,13 +33,13 @@ mod tests;
 const SERVICE_EVENT: &str = "service-event";
 
 struct AppState {
-    service: Mutex<Option<Arc<Service>>>,
+    service: Mutex<Option<Arc<WhatsAppService>>>,
     settings: Mutex<UiSettings>,
     accounts: Mutex<AccountsFile>,
 }
 
 impl AppState {
-    fn service(&self) -> Result<Arc<Service>, String> {
+    fn service(&self) -> Result<Arc<WhatsAppService>, String> {
         self.service
             .lock()
             .unwrap()

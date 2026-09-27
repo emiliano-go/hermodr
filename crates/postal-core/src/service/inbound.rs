@@ -12,7 +12,7 @@ pub(super) struct Inbound {
     pub(super) client_for_events: Arc<std::sync::OnceLock<Arc<Client>>>,
     pub(super) media_dir: Option<PathBuf>,
     pub(super) group_cache: Arc<Mutex<std::collections::HashMap<String, GroupInfo>>>,
-    pub(super) groups_cache: Arc<Mutex<Vec<whatsapp_rust::GroupOverview>>>,
+    pub(super) groups_cache: Arc<Mutex<Option<Vec<whatsapp_rust::GroupOverview>>>>,
     pub(super) older_waits: Arc<Mutex<OlderWaits>>,
     pub(super) downloads: Arc<tokio::sync::Semaphore>,
     pub(super) sync_progress: Arc<Mutex<SyncProgress>>,
@@ -198,7 +198,7 @@ impl Inbound {
                 let chat = update.group_jid.to_non_ad().to_string();
                 log::debug!("group {chat} changed: {:?}", update.action);
                 group_cache.lock().unwrap().remove(&chat);
-                groups_cache.lock().unwrap().clear();
+                *groups_cache.lock().unwrap() = None;
                 if let GroupNotificationAction::Subject { subject, .. } = update.action.as_ref() {
                     store.set_name(&chat, subject).logged();
                 }

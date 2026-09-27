@@ -1,5 +1,32 @@
 use super::*;
 
+#[test]
+fn reopening_reconciles_mappings_learned_after_schema_migration() {
+    let path = std::env::temp_dir().join(format!(
+        "postal-schema-reopen-{}-{}.db",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+    ));
+    {
+        let store = MessageStore::open(&path, Retention::unlimited()).unwrap();
+        store.insert_message(&msg("123@lid", "kept", 0, "hello")).unwrap();
+        store.set_lid_pn("123", "5989").unwrap();
+        assert_eq!(store.messages_for("123@lid", 10).unwrap().len(), 1);
+    }
+    {
+        let store = MessageStore::open(&path, Retention::unlimited()).unwrap();
+        let conn = store.conn.lock().unwrap();
+        let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+        assert_eq!(version, 2);
+        drop(conn);
+        let messages = store.messages_for("5989@s.whatsapp.net", 10).unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].text, "hello");
+        assert!(store.messages_for("123@lid", 10).unwrap().is_empty());
+    }
+    std::fs::remove_file(path).unwrap();
+}
+
 fn now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

@@ -184,7 +184,7 @@ pub(super) fn backfill_lid_names(session_path: &std::path::Path, store: &Message
     }
 }
 
-impl Service {
+impl WhatsAppService {
     /// Our own JID without a device suffix, or empty before pairing.
     pub fn own_jid(&self) -> String {
         self.client
@@ -270,7 +270,7 @@ impl Service {
         unknown.retain(|(_, jid)| !self.nameless.lock().unwrap().contains(&jid.to_string()));
         if !unknown.is_empty() {
             let query: Vec<Jid> = unknown.iter().map(|(_, j)| j.clone()).collect();
-            match self.client.contacts().get_user_info(&query).await {
+            match self.user_info(&query).await {
                 Ok(infos) => {
                     let mut learned = 0;
                     let mut nameless = self.nameless.lock().unwrap();
@@ -314,7 +314,7 @@ impl Service {
         } else {
             other_form(&self.client, &self.store, &bare).await.map(|(_, pn)| pn)
         };
-        if let Ok(infos) = self.client.contacts().get_user_info(std::slice::from_ref(&bare)).await {
+        if let Ok(infos) = self.user_info(std::slice::from_ref(&bare)).await {
             if let Some(info) = infos.into_values().next() {
                 profile.about = info.status.filter(|s| !s.is_empty());
                 profile.username = info.username.map(|u| u.to_string());

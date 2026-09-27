@@ -31,7 +31,7 @@ pub(super) async fn fetch_group_subject(client: &Client, group: &str) -> Option<
         .filter(|s| !s.is_empty())
 }
 
-impl Service {
+impl WhatsAppService {
     /// Resolves display names for chats that do not have one yet.
     ///
     /// Only groups need a query: a one-to-one chat is named after its contact,
@@ -163,10 +163,10 @@ impl Service {
                 label,
             });
         }
-        // Group metadata rarely carries usernames; one usync query fills them in,
+        // Group metadata rarely carries usernames; bounded usync queries fill them in,
         // and gives members we only know by number a username or business name.
         let jids: Vec<Jid> = participants.iter().filter_map(|p| p.jid.parse().ok()).collect();
-        if let Ok(infos) = self.client.contacts().get_user_info(&jids).await {
+        if let Ok(infos) = self.user_info(&jids).await {
             let numeric = |n: &str| is_placeholder_name(n);
             for p in participants.iter_mut() {
                 let user = p.jid.split('@').next().unwrap_or_default();
@@ -308,17 +308,17 @@ impl Service {
         Ok((joined.group_jid().to_string(), pending))
     }
 
-    /// Every group the account is in, fetched once and cached.
+    /// Every group the account is in, refreshed after group-update events.
     pub(super) async fn participating(&self) -> Vec<whatsapp_rust::GroupOverview> {
         {
             let cache = self.groups_cache.lock().unwrap();
-            if !cache.is_empty() {
-                return cache.clone();
+            if let Some(groups) = cache.as_ref() {
+                return groups.clone();
             }
         }
         match self.client.groups().list_participating().await {
             Ok(groups) => {
-                *self.groups_cache.lock().unwrap() = groups.clone();
+                *self.groups_cache.lock().unwrap() = Some(groups.clone());
                 groups
             }
             Err(e) => {

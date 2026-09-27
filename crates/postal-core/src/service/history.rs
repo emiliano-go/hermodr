@@ -61,7 +61,7 @@ pub(super) fn recall_allowed(chat: &str) -> bool {
     true
 }
 
-impl Service {
+impl WhatsAppService {
     /// Asks the phone for older messages in a chat.
     ///
     /// The request goes to our own primary device, and the messages arrive

@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use postal_core::{Service, ServiceEvent};
+use postal_core::{WhatsAppService, ServiceEvent};
 use tauri::{AppHandle, Emitter, Manager, State};
 use crate::{AppState, SERVICE_EVENT, account_store::{Account, DEFAULT_ACCOUNT_LABEL, SESSION_POINTER, account_base, active_account, config_for, now_millis, remove_stale_sessions, save_accounts}};
 
@@ -16,7 +16,7 @@ pub struct ConnectionState {
 }
 
 /// The event that tells a fallen-behind UI what the current state is.
-pub(crate) fn resync_event(service: &Service) -> ServiceEvent {
+pub(crate) fn resync_event(service: &WhatsAppService) -> ServiceEvent {
     if service.is_connected() {
         ServiceEvent::Connected
     } else if let Some(code) = service.current_qr() {
@@ -60,7 +60,7 @@ pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &s
 
     remove_stale_sessions(&account_base(app, account), &config.session_path);
 
-    let (service, mut events) = Service::start(config).await.map_err(|e| {
+    let (service, mut events) = WhatsAppService::start(config).await.map_err(|e| {
         log::error!("failed to start account {account}: {e:#}");
         format!("failed to start service: {e}")
     })?;
@@ -112,7 +112,7 @@ pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &s
 ///
 /// The old file cannot be deleted yet: Windows keeps it locked until the
 /// library releases its connection pool.
-pub(crate) fn forget_session(app: &AppHandle, account: &str, service: &Arc<Service>) {
+pub(crate) fn forget_session(app: &AppHandle, account: &str, service: &Arc<WhatsAppService>) {
     let state = app.state::<AppState>();
     {
         let mut slot = state.service.lock().unwrap();

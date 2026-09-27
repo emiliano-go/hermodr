@@ -1,4 +1,4 @@
-//! Exercises the [`Service`] against a real account.
+//! Exercises the [`WhatsAppService`] against a real account.
 //!
 //! Phase 1 verification: pair (or reuse a session), receive and store messages,
 //! enforce retention, and send a reply. Unlike the spike, this goes through the
@@ -11,7 +11,7 @@
 use std::{env, path::PathBuf, time::Duration};
 
 use anyhow::Result;
-use postal_core::{Retention, Service, ServiceConfig, ServiceEvent};
+use postal_core::{Retention, WhatsAppService, ServiceConfig, ServiceEvent};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
         retention.max_age_hours, retention.max_messages_per_chat
     );
 
-    let (service, mut events) = Service::start(config).await?;
+    let (service, mut events) = WhatsAppService::start(config).await?;
 
     println!("[check] listening for events (Ctrl-C to stop)\n");
 
@@ -114,7 +114,7 @@ struct Stats {
     pruned: usize,
 }
 
-fn report(service: &Service, stats: &Stats) {
+fn report(service: &WhatsAppService, stats: &Stats) {
     match service.chats() {
         Ok(chats) => {
             println!(

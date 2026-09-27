@@ -35,6 +35,7 @@ jobs:
         run: |
           node --experimental-strip-types src/lib/phone.ts
           node --experimental-strip-types src/lib/format.ts
+          node --experimental-strip-types --test src/lib/files.test.ts
 
   core:
     name: Core (${{ matrix.os }})

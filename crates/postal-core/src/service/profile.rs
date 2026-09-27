@@ -2,7 +2,7 @@
 
 use super::*;
 
-impl Service {
+impl WhatsAppService {
     /// Tells the chat we are typing, or that we stopped.
     pub async fn send_typing(&self, chat: &str, typing: bool) -> Result<()> {
         let jid: Jid = chat.parse()?;
@@ -41,9 +41,7 @@ impl Service {
     pub async fn profile(&self) -> Result<Profile> {
         let own: Jid = self.own_jid().parse()?;
         let about = self
-            .client
-            .contacts()
-            .get_user_info(std::slice::from_ref(&own))
+            .user_info(std::slice::from_ref(&own))
             .await
             .ok()
             .and_then(|mut info| info.drain().next())

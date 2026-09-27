@@ -65,7 +65,7 @@ pub(super) fn response_name(response: Option<wa::message::event_response_message
     }
 }
 
-impl Service {
+impl WhatsAppService {
     pub async fn create_poll(&self, chat: &str, question: &str, options: Vec<String>, multi: bool) -> Result<()> {
         let to: Jid = chat.parse()?;
         let to_self = self.is_self_jid(&to);

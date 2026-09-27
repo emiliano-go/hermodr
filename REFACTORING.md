@@ -16,9 +16,8 @@ Keep structural changes separate from issue fixes.
 | Shell | Separate account persistence, connection, settings, platform/logging, and command domains | Implemented; 6 tests pass |
 | Core | Separate wire-message decoding, media codecs/transfers, and schema setup | Implemented; 78 unit and 10 integration tests pass |
 | Preview | Render real app components with inert fixture data; share menu presentation | Implemented; all four scenes checked in browser |
-| Backend issues | Recheck #129, #143, #146, #148, #149 against current code and complete acceptance tests | Pending |
-| Verification | Core and shell tests, frontend checks/build, IPC registration parity, diff review | In progress |
-| Delivery | Signed commits, fast-forward integration with latest master, push, issue comments and closure | Pending |
+| Backend issues | Complete #129, #143, #146, #148, #149 with deterministic regression coverage | Implemented |
+| Verification | Core and shell tests, frontend checks/build, IPC registration parity, diff review | Windows: 86 core unit, 10 integration and 6 shell tests pass; frontend gates pass; 90 commands match handlers/build declarations/capabilities |
 
 ## Baseline
 
@@ -31,6 +30,26 @@ Keep structural changes separate from issue fixes.
 - Refactored frontend: Svelte check 0 errors / 0 warnings; production build,
   phone/format self-checks and base64 binary/chunk-boundary checks pass.
 - Browser checks cover preview rendering; live WhatsApp/Tauri IPC was not exercised.
+
+## Backend acceptance coverage
+
+- #129: one adapter maps upstream enum constants to semantic history kinds;
+  table tests cover all known kinds, missing values and unknown values under
+  both admission policies.
+- #143: schema versions 1 and 2 run in immediate transactions. Tests cover
+  fresh, legacy and unversioned current databases, secret preservation,
+  rollback/retry, unsupported versions and no repeated cleanup. Address-form
+  reconciliation remains startup maintenance; a disk reopen test covers a
+  mapping learned after schema migration.
+- #146: `WhatsAppService` replaces `Service` in the core, shell and CLI;
+  no compatibility alias. All crates compile and existing tests pass.
+- #148: group updates invalidate metadata and overview caches and notify the
+  UI to refresh. Tests feed subject, description and membership events through
+  the real inbound handler with populated caches. Empty group lists are now
+  cached separately from an invalidated list.
+- #149: every user-info caller shares 100-JID batches and a two-request
+  semaphore. Tests cover three overlapping 1,001-JID requests, empty input,
+  failure cleanup, complete result collection and learned LID/phone mappings.
 
 ## Follow-up boundaries
 

@@ -510,6 +510,7 @@ impl MessageStore {
             log::info!("message store switched to incremental vacuum in {:?}", started.elapsed());
         }
         schema::migrate(&conn)?;
+        chats::reconcile_addresses(&conn)?;
 
         Ok(Self {
             conn: Mutex::new(conn),
