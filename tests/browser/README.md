@@ -18,3 +18,8 @@ Flag diagnostics checks:
 Chat metadata check: expand Retained chat metadata. Quiet contact must remain
 pinned with its last activity and "No stored messages"; selecting it must set
 the displayed selection. No expired message preview is supplied to the component.
+
+Retention checks: open per-chat retention. Default means inherit; Forever and
+No limit save unlimited tags. A one-week age with Default count saves
+limited(168) and inherit. Open global retention, clear both numeric fields and
+save: both limits must be unlimited. Saved payloads appear below the launch buttons.

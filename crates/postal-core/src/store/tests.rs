@@ -43,7 +43,7 @@ fn address_reconciliation_uses_indexed_quote_lookup() {
 #[test]
 fn retention_handles_a_large_backlog_across_many_chats() {
     let store = MessageStore::open(Path::new(":memory:"), Retention {
-        max_age_hours: Some(24), max_messages_per_chat: Some(19_999_999),
+        max_age_hours: RetentionLimit::Limited(24), max_messages_per_chat: RetentionLimit::Limited(19_999_999),
     }).unwrap();
     {
         let _batch = store.batch();
@@ -81,7 +81,7 @@ fn reopening_reconciles_mappings_learned_after_schema_migration() {
         let store = MessageStore::open(&path, Retention::unlimited()).unwrap();
         let conn = store.conn.lock().unwrap();
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
         drop(conn);
         let messages = store.messages_for("5989@s.whatsapp.net", 10).unwrap();
         assert_eq!(messages.len(), 1);
@@ -120,7 +120,7 @@ fn msg(chat: &str, id: &str, age_hours: i64, text: &str) -> StoredMessage {
 
 #[test]
 fn scoped_retention_only_touches_the_given_chats() {
-    let s = store(Retention { max_age_hours: None, max_messages_per_chat: Some(1) });
+    let s = store(Retention { max_age_hours: RetentionLimit::Unlimited, max_messages_per_chat: RetentionLimit::Limited(1) });
     for chat in ["a@s", "b@s"] {
         s.insert_message(&msg(chat, "old", 2, "x")).unwrap();
         s.insert_message(&msg(chat, "new", 1, "y")).unwrap();
@@ -227,13 +227,13 @@ fn overlapping_batches_commit_when_the_last_drops() {
 
 #[test]
 fn chat_retention_overrides_the_global_policy() {
-    let s = store(Retention { max_age_hours: Some(24), max_messages_per_chat: Some(1) });
+    let s = store(Retention { max_age_hours: RetentionLimit::Limited(24), max_messages_per_chat: RetentionLimit::Limited(1) });
     for (chat, id, age) in [("a", "1", 1), ("a", "2", 2), ("a", "3", 48), ("b", "1", 1), ("b", "2", 48), ("c", "1", 1), ("c", "2", 3)] {
         s.insert_message(&msg(chat, id, age, "x")).unwrap();
     }
-    let keep_all = ChatRetention { max_age_hours: Some(0), max_messages: Some(0), on_demand: true };
+    let keep_all = ChatRetention { max_age_hours: RetentionLimit::Unlimited, max_messages: RetentionLimit::Unlimited, on_demand: true };
     s.set_chat_retention("a", &keep_all).unwrap();
-    let two_hours = ChatRetention { max_age_hours: Some(2), max_messages: None, on_demand: true };
+    let two_hours = ChatRetention { max_age_hours: RetentionLimit::Limited(2), max_messages: RetentionLimit::Inherit, on_demand: true };
     s.set_chat_retention("c", &two_hours).unwrap();
     s.enforce_retention().unwrap();
     assert_eq!(s.messages_for("a", 10).unwrap().len(), 3, "unlimited override");
@@ -391,8 +391,8 @@ fn audio_duration_survives_a_replay_without_it() {
 #[test]
 fn drops_messages_older_than_the_window() {
     let s = store(Retention {
-        max_age_hours: Some(24),
-        max_messages_per_chat: None,
+        max_age_hours: RetentionLimit::Limited(24),
+        max_messages_per_chat: RetentionLimit::Unlimited,
     });
     s.insert_message(&msg("a@s", "old", 48, "ancient")).unwrap();
     s.insert_message(&msg("a@s", "new", 1, "recent")).unwrap();
@@ -405,8 +405,8 @@ fn drops_messages_older_than_the_window() {
 #[test]
 fn caps_messages_per_chat() {
     let s = store(Retention {
-        max_age_hours: None,
-        max_messages_per_chat: Some(3),
+        max_age_hours: RetentionLimit::Unlimited,
+        max_messages_per_chat: RetentionLimit::Limited(3),
     });
     for i in 0..10 {
         s.insert_message(&msg("a@s", &i.to_string(), i, &format!("m{i}")))
@@ -422,8 +422,8 @@ fn caps_messages_per_chat() {
 #[test]
 fn cap_applies_per_chat() {
     let s = store(Retention {
-        max_age_hours: None,
-        max_messages_per_chat: Some(2),
+        max_age_hours: RetentionLimit::Unlimited,
+        max_messages_per_chat: RetentionLimit::Limited(2),
     });
     for i in 0..5 {
         s.insert_message(&msg("a@s", &i.to_string(), i, "x")).unwrap();
@@ -491,8 +491,8 @@ fn names_survive_message_pruning() {
     // A name is learned from a message but must outlive it, otherwise the
     // chat list falls back to a raw number once history ages out.
     let s = store(Retention {
-        max_age_hours: Some(1),
-        max_messages_per_chat: None,
+        max_age_hours: RetentionLimit::Limited(1),
+        max_messages_per_chat: RetentionLimit::Unlimited,
     });
     s.insert_message(&msg("a@s", "older", 72, "hello")).unwrap();
     s.insert_message(&msg("a@s", "old", 48, "hi")).unwrap();
@@ -504,7 +504,7 @@ fn names_survive_message_pruning() {
 
 #[test]
 fn quiet_chats_keep_metadata_without_expired_message_content() {
-    let s = store(Retention { max_age_hours: Some(24), max_messages_per_chat: None });
+    let s = store(Retention { max_age_hours: RetentionLimit::Limited(24), max_messages_per_chat: RetentionLimit::Unlimited });
     s.insert_message(&msg("quiet@s", "1", 100, "first")).unwrap();
     s.insert_message(&msg("quiet@s", "2", 50, "last word")).unwrap();
     s.insert_message(&msg("busy@s", "1", 50, "old")).unwrap();
@@ -546,6 +546,24 @@ fn unread_counts_only_incoming_unread() {
 }
 
 #[test]
+fn explicit_zero_count_keeps_no_messages_without_becoming_unlimited_or_inherited() {
+    let s = store(Retention::unlimited());
+    for chat in ["empty", "unlimited", "inherited"] {
+        s.insert_message(&msg(chat, "one", 1, "kept by default")).unwrap();
+    }
+    s.set_chat_retention("empty", &ChatRetention {
+        max_age_hours: RetentionLimit::Inherit,
+        max_messages: RetentionLimit::Limited(0),
+        on_demand: true,
+    }).unwrap();
+    assert_eq!(s.enforce_retention().unwrap(), 1);
+    assert!(s.messages_for("empty", 10).unwrap().is_empty());
+    assert_eq!(s.messages_for("unlimited", 10).unwrap().len(), 1);
+    assert_eq!(s.messages_for("inherited", 10).unwrap().len(), 1);
+    assert_eq!(s.chats().unwrap().len(), 3);
+}
+
+#[test]
 fn per_chat_age_removes_last_message_and_its_poll_state() {
     let s = store(Retention::unlimited());
     s.insert_message(&msg("quiet@s", "poll", 48, "Expired question")).unwrap();
@@ -555,7 +573,7 @@ fn per_chat_age_removes_last_message_and_its_poll_state() {
     s.set_starred("quiet@s", "poll", true).unwrap();
     s.set_message_pin("quiet@s", Some("poll")).unwrap();
     s.set_chat_retention("quiet@s", &ChatRetention {
-        max_age_hours: Some(1), max_messages: None, on_demand: true,
+        max_age_hours: RetentionLimit::Limited(1), max_messages: RetentionLimit::Inherit, on_demand: true,
     }).unwrap();
     assert_eq!(s.enforce_retention().unwrap(), 1);
     let marks = s.marks("quiet@s").unwrap();

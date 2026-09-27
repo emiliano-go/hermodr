@@ -130,6 +130,7 @@ pub(super) fn kept_retention(retention: Retention, full_history: bool) -> Retent
 pub(super) fn cache_config_for(retention: &Retention) -> CacheConfig {
     let horizon = retention
         .max_age_hours
+        .value()
         .map(|hours| Duration::from_secs(u64::from(hours) * 3600))
         .unwrap_or_else(|| Duration::from_secs(30 * 86_400))
         .max(Duration::from_secs(3600));
@@ -162,7 +163,7 @@ pub(super) fn reclaim_oversized_secrets(
     retention: &Retention,
     store: &MessageStore,
 ) -> Result<usize> {
-    let Some(hours) = retention.max_age_hours else {
+    let Some(hours) = retention.max_age_hours.value() else {
         return Ok(0);
     };
     if !session_path.exists() {

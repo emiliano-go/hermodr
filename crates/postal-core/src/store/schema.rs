@@ -36,6 +36,35 @@ mod tests {
     }
 
     #[test]
+    fn explicit_limits_migrate_legacy_overrides_without_changing_their_policy() {
+        let conn = Connection::open_in_memory().unwrap();
+        for step in &MIGRATIONS[..5] { step(&conn).unwrap(); }
+        conn.pragma_update(None, "user_version", 5).unwrap();
+        conn.execute_batch(
+            "INSERT INTO chat_retention (jid, max_age_hours, max_messages, on_demand) VALUES
+                 ('inherit', NULL, NULL, 1), ('unlimited', 0, 0, 0), ('bounded', 24, 500, 1);
+             CREATE VIEW legacy_chat_retention AS SELECT 1;",
+        ).unwrap();
+        assert!(migrate(&conn).is_err());
+        assert_eq!(version(&conn), 5);
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM chat_retention", [], |r| r.get::<_, u32>(0)).unwrap(), 3);
+        conn.execute_batch("DROP VIEW legacy_chat_retention").unwrap();
+        migrate(&conn).unwrap();
+        let rows = conn.prepare("SELECT jid, age_mode, max_age_hours, count_mode, max_messages, on_demand FROM chat_retention ORDER BY jid").unwrap()
+            .query_map([], |r| Ok((r.get::<_, String>(0)?,
+                crate::store::RetentionLimit::from_row(r, 1, 2)?,
+                crate::store::RetentionLimit::from_row(r, 3, 4)?,
+                r.get::<_, bool>(5)?))).unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>().unwrap();
+        use crate::store::RetentionLimit::*;
+        assert_eq!(rows, vec![
+            ("bounded".into(), Limited(24), Limited(500), true),
+            ("inherit".into(), Inherit, Inherit, true),
+            ("unlimited".into(), Unlimited, Unlimited, false),
+        ]);
+    }
+
+    #[test]
     fn caption_migration_recovers_batches_without_overwriting_message_state() {
         use buffa::{Message, MessageField};
         use whatsapp_rust::prelude::wa;
@@ -278,6 +307,7 @@ const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
     migrate_v3_media_captions,
     migrate_v4_quote_chat_index,
     migrate_v5_chat_metadata,
+    migrate_v6_explicit_limits,
 ];
 
 pub(super) fn migrate(conn: &Connection) -> Result<()> {
@@ -600,6 +630,39 @@ fn migrate_v5_chat_metadata(conn: &Connection) -> Result<()> {
              INSERT INTO chats (jid, last_message_at) VALUES (NEW.chat, NEW.timestamp)
              ON CONFLICT(jid) DO UPDATE SET last_message_at = MAX(chats.last_message_at, excluded.last_message_at);
          END;",
+    )?;
+    Ok(())
+}
+
+fn migrate_v6_explicit_limits(conn: &Connection) -> Result<()> {
+    let columns = conn.prepare("PRAGMA table_info(chat_retention)")?
+        .query_map([], |r| r.get::<_, String>(1))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    if columns.iter().any(|c| c == "age_mode" || c == "count_mode") {
+        anyhow::ensure!(columns.iter().any(|c| c == "age_mode") && columns.iter().any(|c| c == "count_mode"),
+            "incomplete explicit retention schema");
+        return Ok(());
+    }
+    conn.execute_batch(
+        "ALTER TABLE chat_retention RENAME TO legacy_chat_retention;
+         CREATE TABLE chat_retention (
+             jid TEXT PRIMARY KEY,
+             age_mode TEXT NOT NULL CHECK(age_mode IN ('inherit', 'unlimited', 'limited')),
+             max_age_hours INTEGER CHECK(max_age_hours >= 0),
+             count_mode TEXT NOT NULL CHECK(count_mode IN ('inherit', 'unlimited', 'limited')),
+             max_messages INTEGER CHECK(max_messages >= 0),
+             on_demand INTEGER NOT NULL DEFAULT 1,
+             CHECK((age_mode = 'limited') = (max_age_hours IS NOT NULL)),
+             CHECK((count_mode = 'limited') = (max_messages IS NOT NULL))
+         );
+         INSERT INTO chat_retention
+             SELECT jid,
+                 CASE WHEN max_age_hours IS NULL THEN 'inherit' WHEN max_age_hours <= 0 THEN 'unlimited' ELSE 'limited' END,
+                 CASE WHEN max_age_hours > 0 THEN max_age_hours ELSE NULL END,
+                 CASE WHEN max_messages IS NULL THEN 'inherit' WHEN max_messages <= 0 THEN 'unlimited' ELSE 'limited' END,
+                 CASE WHEN max_messages > 0 THEN max_messages ELSE NULL END,
+                 on_demand
+             FROM legacy_chat_retention;
+         DROP TABLE legacy_chat_retention;",
     )?;
     Ok(())
 }

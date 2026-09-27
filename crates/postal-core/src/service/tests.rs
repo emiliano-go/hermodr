@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::RetentionLimit;
 use std::path::Path;
 
 #[tokio::test]
@@ -374,8 +375,8 @@ fn default_config_targets_its_data_dir() {
 fn default_retention_is_bounded() {
     // The whole point of the rewrite: the default must not be unbounded.
     let r = Retention::default();
-    assert!(r.max_age_hours.is_some());
-    assert!(r.max_messages_per_chat.is_some());
+    assert!(r.max_age_hours.value().is_some());
+    assert!(r.max_messages_per_chat.value().is_some());
 }
 
 #[test]
@@ -383,8 +384,8 @@ fn secret_horizon_tracks_the_message_window() {
     // Keys must not outlive the messages they belong to, or the session
     // database grows far beyond the history we actually keep.
     let config = cache_config_for(&Retention {
-        max_age_hours: Some(24),
-        max_messages_per_chat: None,
+        max_age_hours: RetentionLimit::Limited(24),
+        max_messages_per_chat: RetentionLimit::Unlimited,
     });
     let day = Duration::from_secs(24 * 3600);
     assert!(config.msg_secret_retention.text < day * 2);
@@ -396,8 +397,8 @@ fn secret_horizon_has_a_floor() {
     // An edit can arrive shortly after its parent, so the horizon must not
     // collapse to zero for a very short retention window.
     let config = cache_config_for(&Retention {
-        max_age_hours: Some(0),
-        max_messages_per_chat: None,
+        max_age_hours: RetentionLimit::Limited(0),
+        max_messages_per_chat: RetentionLimit::Unlimited,
     });
     assert!(config.msg_secret_retention.text >= Duration::from_secs(3600));
 }

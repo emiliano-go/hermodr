@@ -1,5 +1,6 @@
 <script lang="ts" module>
-  export type Retention = { max_age_hours: number | null; max_messages_per_chat: number | null };
+  import type { Retention } from "$lib/models";
+  export type { Retention } from "$lib/models";
   export type UiSettings = {
     retention: Retention;
     accept_full_history: boolean;
@@ -47,6 +48,7 @@
   import Customization from "$lib/Customization.svelte";
   import Panel from "$lib/Panel.svelte";
   import BooleanProps from "$lib/BooleanProps.svelte";
+  import { limitValue, parseLimit } from "$lib/retention";
   import {
     ACTIONS,
     keybinds,
@@ -196,7 +198,7 @@
   }
 
   function hoursField(value: string) {
-    return value ? Math.max(1, Number(value)) : null;
+    return value ? Math.min(0xffffffff, Math.max(1, Math.floor(Number(value)))) : null;
   }
 
   /** Hours per unit of the "keep messages for" field; a month counts as 30 days. */
@@ -208,13 +210,13 @@
   ];
   let ageUnit = $state(
     untrack(() => {
-      const hours = settings.retention.max_age_hours;
+      const hours = limitValue(settings.retention.max_age_hours);
       return [720, 168, 24].find((unit) => hours && hours % unit === 0) ?? 1;
     }),
   );
   function setAgeUnit(unit: number) {
-    const hours = draft.retention.max_age_hours;
-    if (hours) draft.retention.max_age_hours = Math.max(1, Math.round(hours / ageUnit)) * unit;
+    const hours = limitValue(draft.retention.max_age_hours);
+    if (hours !== null) draft.retention.max_age_hours = parseLimit(String(Math.min(0xffffffff, Math.max(1, Math.round(hours / ageUnit)) * unit)));
     ageUnit = unit;
   }
   let clearingHistory = $state(false);
@@ -489,7 +491,7 @@
               <span class="setting-title">Keep messages for</span>
               <span class="setting-desc">
                 Older messages are deleted from this device after each new message, and the space is
-                freed. Default: 1 day.
+                freed. Default: 1 day. Leave blank for no limit.
               </span>
             </div>
             <span class="unit-field">
@@ -497,10 +499,12 @@
                 class="field number"
                 type="number"
                 min="1"
-                value={draft.retention.max_age_hours ? draft.retention.max_age_hours / ageUnit : ""}
+                value={limitValue(draft.retention.max_age_hours) === null ? "" : limitValue(draft.retention.max_age_hours)! / ageUnit}
+                aria-label="Retention duration"
                 oninput={(e) => {
+                  if (e.currentTarget.validity.badInput) return;
                   const amount = hoursField(e.currentTarget.value);
-                  draft.retention.max_age_hours = amount && amount * ageUnit;
+                  draft.retention.max_age_hours = parseLimit(amount === null ? "" : String(Math.min(0xffffffff, amount * ageUnit)));
                 }} />
               <select class="field" value={ageUnit} onchange={(e) => setAgeUnit(Number(e.currentTarget.value))}>
                 {#each AGE_UNITS as [unit, label] (unit)}
@@ -514,16 +518,18 @@
               <span class="setting-title">Messages per chat</span>
               <span class="setting-desc">
                 Only the newest are kept in each conversation. Default: 500. Search stays fast up to
-                about 50 000.
+                about 50 000. Leave blank for no limit.
               </span>
             </div>
             <input
               class="field number"
               type="number"
               min="1"
-              value={draft.retention.max_messages_per_chat ?? ""}
-              oninput={(e) =>
-                (draft.retention.max_messages_per_chat = hoursField(e.currentTarget.value))} />
+              value={limitValue(draft.retention.max_messages_per_chat) ?? ""}
+              aria-label="Messages per chat"
+              oninput={(e) => {
+                if (!e.currentTarget.validity.badInput) draft.retention.max_messages_per_chat = parseLimit(String(hoursField(e.currentTarget.value) ?? ""));
+              }} />
           </div>
           <label class="setting">
             <div>

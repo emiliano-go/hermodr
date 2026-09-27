@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { ChatRetention } from "$lib/models";
+  import type { ChatRetention, RetentionLimit } from "$lib/models";
+  import { limitKey, parseLimit } from "$lib/retention";
   import { onMount } from "svelte";
   import { fade, scale } from "svelte/transition";
   import {
@@ -37,27 +38,26 @@
     onclose: () => void;
   } = $props();
 
-  // `null` follows the global setting; 0 keeps without limit.
-  const WINDOWS: [number | null, string][] = [
-    [null, "Default"],
-    [24, "1 day"],
-    [24 * 7, "1 week"],
-    [24 * 30, "30 days"],
-    [24 * 365, "1 year"],
-    [0, "Forever"],
+  const WINDOWS: [string, string][] = [
+    ["inherit", "Default"],
+    ["24", "1 day"],
+    ["168", "1 week"],
+    ["720", "30 days"],
+    ["8760", "1 year"],
+    ["unlimited", "Forever"],
   ];
-  const CAPS: [number | null, string][] = [
-    [null, "Default"],
-    [200, "200"],
-    [1000, "1,000"],
-    [5000, "5,000"],
-    [0, "No limit"],
+  const CAPS: [string, string][] = [
+    ["inherit", "Default"],
+    ["200", "200"],
+    ["1000", "1,000"],
+    ["5000", "5,000"],
+    ["unlimited", "No limit"],
   ];
 
   let loaded = $state(false);
   let failed = $state<string | null>(null);
   let busy = $state(false);
-  let retention = $state<ChatRetention>({ max_age_hours: null, max_messages: null, on_demand: true });
+  let retention = $state<ChatRetention>({ max_age_hours: { kind: "inherit" }, max_messages: { kind: "inherit" }, on_demand: true });
   let autoDownload = $state<boolean | null>(null);
   let initial = "";
 
@@ -126,15 +126,15 @@
 
 <svelte:window onkeydown={(e) => e.key === "Escape" && onclose()} />
 
-{#snippet choices(options: [number | null, string][], value: number | null, set: (v: number | null) => void, label: string)}
+{#snippet choices(options: [string, string][], value: RetentionLimit, set: (v: RetentionLimit) => void, label: string)}
   <div class="choices" role="radiogroup" aria-label={label}>
     {#each options as [option, text] (text)}
       <button
         class="choice"
-        class:on={value === option}
+        class:on={limitKey(value) === option}
         role="radio"
-        aria-checked={value === option}
-        onclick={() => set(option)}>{text}</button>
+        aria-checked={limitKey(value) === option}
+        onclick={() => set(parseLimit(option))}>{text}</button>
     {/each}
   </div>
 {/snippet}
@@ -177,7 +177,7 @@
           </div>
           <div class="field">
             <span class="name">Keep at most</span>
-            <span class="desc">Only the newest messages are kept. The latest one always stays.</span>
+              <span class="desc">Only messages within the age and count limits are kept. The chat stays when empty.</span>
             {@render choices(CAPS, retention.max_messages, (v) => (retention.max_messages = v), "Keep at most")}
           </div>
           <label class="toggle-row">

@@ -1,6 +1,7 @@
 <script lang="ts">
   import BooleanProps from "$lib/BooleanProps.svelte";
   import ChatMetadata from "./ChatMetadata.svelte";
+  import RetentionSettings from "./RetentionSettings.svelte";
   import { fixture } from "./ipc";
   let mounted = $state(true);
   let calls = $state(0);
@@ -15,6 +16,7 @@
 <output aria-label="Read count">{calls}</output>
 {#if mounted}<BooleanProps />{/if}
 <details><summary>Retained chat metadata</summary><ChatMetadata /></details>
+<RetentionSettings />
 
 <style>
   :global(:root) { --raised: #233138; --text: #eee; --border: #53616a; --muted: #b5c5cd; }

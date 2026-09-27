@@ -11,7 +11,7 @@
 use std::{env, path::PathBuf, time::Duration};
 
 use anyhow::Result;
-use postal_core::{Retention, WhatsAppService, ServiceConfig, ServiceEvent};
+use postal_core::{Retention, RetentionLimit, WhatsAppService, ServiceConfig, ServiceEvent};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -22,8 +22,8 @@ async fn main() -> Result<()> {
 
     // A deliberately short window so retention is observable within a run.
     let retention = Retention {
-        max_age_hours: Some(24),
-        max_messages_per_chat: Some(20),
+        max_age_hours: RetentionLimit::Limited(24),
+        max_messages_per_chat: RetentionLimit::Limited(20),
     };
 
     let config = ServiceConfig {

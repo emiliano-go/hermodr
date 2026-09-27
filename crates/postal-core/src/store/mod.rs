@@ -19,6 +19,8 @@ mod messages;
 mod names;
 mod receipts;
 mod retention;
+mod limits;
+pub use limits::RetentionLimit;
 #[cfg(test)]
 mod tests;
 
@@ -36,10 +38,10 @@ const PLACEHOLDER_SQL: &str = "(name NOT GLOB '*[^0-9+]*' OR (name GLOB '+*' AND
 /// How much history to keep locally.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Retention {
-    /// Drop messages older than this many hours. `None` keeps everything.
-    pub max_age_hours: Option<u32>,
-    /// Cap on stored messages per chat. `None` means no cap.
-    pub max_messages_per_chat: Option<u32>,
+    #[serde(deserialize_with = "limits::global_age")]
+    pub max_age_hours: RetentionLimit,
+    #[serde(deserialize_with = "limits::global_count")]
+    pub max_messages_per_chat: RetentionLimit,
 }
 
 impl Default for Retention {
@@ -47,8 +49,8 @@ impl Default for Retention {
         // A small window by default: enough for current conversations without
         // re-creating the multi-gigabyte history the web client pulled in.
         Self {
-            max_age_hours: Some(24),
-            max_messages_per_chat: Some(500),
+            max_age_hours: RetentionLimit::Limited(24),
+            max_messages_per_chat: RetentionLimit::Limited(500),
         }
     }
 }
@@ -57,14 +59,14 @@ impl Retention {
     /// Keep everything, matching the default WhatsApp client behaviour.
     pub fn unlimited() -> Self {
         Self {
-            max_age_hours: None,
-            max_messages_per_chat: None,
+            max_age_hours: RetentionLimit::Unlimited,
+            max_messages_per_chat: RetentionLimit::Unlimited,
         }
     }
 
     /// The oldest timestamp still inside the window, if one is set.
     fn oldest_allowed(&self) -> Option<i64> {
-        self.max_age_hours.map(|hours| {
+        self.max_age_hours.value().map(|hours| {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs() as i64)
@@ -326,18 +328,19 @@ pub struct MessageReceipt {
 }
 
 /// A chat's own retention, overriding the global policy where set.
-/// `Some(0)` keeps without limit; `None` defers to the global setting.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChatRetention {
-    pub max_age_hours: Option<i64>,
-    pub max_messages: Option<i64>,
+    #[serde(deserialize_with = "limits::chat_limit")]
+    pub max_age_hours: RetentionLimit,
+    #[serde(deserialize_with = "limits::chat_limit")]
+    pub max_messages: RetentionLimit,
     /// Whether scrolling to the top asks the phone for older messages.
     pub on_demand: bool,
 }
 
 impl Default for ChatRetention {
     fn default() -> Self {
-        Self { max_age_hours: None, max_messages: None, on_demand: true }
+        Self { max_age_hours: RetentionLimit::Inherit, max_messages: RetentionLimit::Inherit, on_demand: true }
     }
 }
 

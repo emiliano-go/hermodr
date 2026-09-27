@@ -48,7 +48,7 @@ export class SessionState {
   privacy = $state<Record<string, string>>({});
 
   settings = $state<UiSettings>({
-    retention: { max_age_hours: 24, max_messages_per_chat: 500 },
+    retention: { max_age_hours: { kind: "limited", value: 24 }, max_messages_per_chat: { kind: "limited", value: 500 } },
     accept_full_history: false,
     auto_download_media: true,
     warn_missing_video_preview: true,

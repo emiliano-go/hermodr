@@ -44,8 +44,8 @@ export type StarredItem = {
 };
 
 export type ChatRetention = {
-  max_age_hours: number | null;
-  max_messages: number | null;
+  max_age_hours: RetentionLimit;
+  max_messages: RetentionLimit;
   on_demand: boolean;
 };
 
@@ -142,9 +142,10 @@ export type GroupInfo = {
   admin: boolean;
   can_send: boolean;
 };
+export type RetentionLimit = { kind: "inherit" } | { kind: "unlimited" } | { kind: "limited"; value: number };
 export type Retention = {
-  max_age_hours: number | null;
-  max_messages_per_chat: number | null;
+  max_age_hours: RetentionLimit;
+  max_messages_per_chat: RetentionLimit;
 };
 export type UiSettings = {
   retention: Retention;

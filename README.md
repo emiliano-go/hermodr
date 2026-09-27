@@ -26,9 +26,15 @@ Postal takes the other path. Because it implements the protocol itself:
   last message. Chat identity, last activity, names and pins survive separately;
   an empty chat has no retained message preview. Delete chat removes it from the
   list; clearing history keeps chat metadata.
+
 - **No browser engine for WhatsApp.** No WebKit, no per-tab network processes,
   no compositing workarounds. The only webview is the one rendering this app's
   own UI.
+
+Retention limits use explicit `limited`, `unlimited` and per-chat `inherit`
+states. Existing numeric settings and per-chat overrides migrate without changing
+their disk policy. A limited count of zero means retain no messages; unlimited
+is a separate state. Global settings cannot inherit.
 
 ## Measured impact
 

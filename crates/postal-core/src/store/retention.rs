@@ -7,13 +7,13 @@ impl MessageStore {
         let conn = self.conn.lock().unwrap();
         Ok(conn
             .query_row(
-                "SELECT max_age_hours, max_messages, on_demand FROM chat_retention WHERE jid = ?1",
+                "SELECT age_mode, max_age_hours, count_mode, max_messages, on_demand FROM chat_retention WHERE jid = ?1",
                 params![jid],
                 |r| {
                     Ok(ChatRetention {
-                        max_age_hours: r.get(0)?,
-                        max_messages: r.get(1)?,
-                        on_demand: r.get::<_, i32>(2)? != 0,
+                        max_age_hours: RetentionLimit::from_row(r, 0, 1)?,
+                        max_messages: RetentionLimit::from_row(r, 2, 3)?,
+                        on_demand: r.get::<_, i32>(4)? != 0,
                     })
                 },
             )
@@ -26,11 +26,13 @@ impl MessageStore {
             conn.execute("DELETE FROM chat_retention WHERE jid = ?1", params![jid])?;
         } else {
             conn.execute(
-                "INSERT INTO chat_retention (jid, max_age_hours, max_messages, on_demand)
-                 VALUES (?1, ?2, ?3, ?4)
+                "INSERT INTO chat_retention (jid, max_age_hours, max_messages, on_demand, age_mode, count_mode)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                  ON CONFLICT(jid) DO UPDATE SET max_age_hours = excluded.max_age_hours,
-                     max_messages = excluded.max_messages, on_demand = excluded.on_demand",
-                params![jid, retention.max_age_hours, retention.max_messages, retention.on_demand as i32],
+                     max_messages = excluded.max_messages, on_demand = excluded.on_demand,
+                     age_mode = excluded.age_mode, count_mode = excluded.count_mode",
+                params![jid, retention.max_age_hours.value(), retention.max_messages.value(), retention.on_demand as i32,
+                    retention.max_age_hours.mode(), retention.max_messages.mode()],
             )?;
         }
         Ok(())
@@ -70,15 +72,15 @@ impl MessageStore {
         let oldest = self.retention.lock().unwrap().oldest_allowed();
         let per_chat_age = conn
             .query_row(
-                "SELECT EXISTS(SELECT 1 FROM chat_retention WHERE max_age_hours IS NOT NULL AND max_age_hours > 0)",
+                "SELECT EXISTS(SELECT 1 FROM chat_retention WHERE age_mode = 'limited')",
                 [],
                 |r| r.get::<_, i32>(0),
             )?
             != 0;
-        let cap = self.retention.lock().unwrap().max_messages_per_chat.filter(|c| *c > 0);
+        let cap = self.retention.lock().unwrap().max_messages_per_chat.value();
         let per_chat_cap = conn
             .query_row(
-                "SELECT EXISTS(SELECT 1 FROM chat_retention WHERE max_messages IS NOT NULL AND max_messages > 0)",
+                "SELECT EXISTS(SELECT 1 FROM chat_retention WHERE count_mode = 'limited')",
                 [],
                 |r| r.get::<_, i32>(0),
             )?
@@ -108,7 +110,7 @@ impl MessageStore {
             removed += run(
                 &format!(
                     "DELETE FROM messages WHERE {scope} AND timestamp < :oldest AND chat NOT IN
-                         (SELECT jid FROM chat_retention WHERE max_age_hours IS NOT NULL)"
+                         (SELECT jid FROM chat_retention WHERE age_mode != 'inherit')"
                 ),
                 &[(":oldest", &oldest)],
             )?;
@@ -121,7 +123,7 @@ impl MessageStore {
                 &format!(
                     "DELETE FROM messages WHERE {scope} AND EXISTS (
                          SELECT 1 FROM chat_retention r WHERE r.jid = messages.chat
-                         AND r.max_age_hours > 0 AND messages.timestamp < :now - r.max_age_hours * 3600)"
+                         AND r.age_mode = 'limited' AND messages.timestamp < :now - r.max_age_hours * 3600)"
                 ),
                 &[(":now", &unix_now())],
             )?;
@@ -135,13 +137,14 @@ impl MessageStore {
                          SELECT chat, id FROM (
                              SELECT m.chat, m.id,
                                     ROW_NUMBER() OVER (PARTITION BY m.chat ORDER BY m.timestamp DESC) AS rank,
-                                    COALESCE(r.max_messages, :cap) AS cap
+                                    CASE WHEN r.jid IS NULL OR r.count_mode = 'inherit' THEN :cap
+                                         WHEN r.count_mode = 'limited' THEN r.max_messages ELSE NULL END AS cap
                              FROM messages m LEFT JOIN chat_retention r ON r.jid = m.chat
                              WHERE {scope_m}
-                         ) WHERE cap > 0 AND rank > cap
+                         ) WHERE cap IS NOT NULL AND rank > cap
                      )"
                 ),
-                &[(":cap", &cap.map(|c| c as i64).unwrap_or(0))],
+                &[(":cap", &cap)],
             )?;
         }
         // State attached to messages only goes stale when messages go.
