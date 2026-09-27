@@ -98,3 +98,11 @@ mod tests {
         assert!(!store.message("ties@s", "c").unwrap().local.read);
     }
 }
+
+impl StoreWorker {
+    pub(crate) async fn message_page(&self, chat: &str, limit: u32, cursor: Option<&MessageCursor>, direction: MessagePageDirection) -> Result<MessagePage> {
+        let chat = chat.to_owned();
+        let cursor = cursor.cloned();
+        self.run(move |store| store.message_page(&chat, limit, cursor.as_ref(), direction)).await
+    }
+}

@@ -4,8 +4,8 @@ use crate::AppState;
 
 /// Chat summaries, most recently active first.
 #[tauri::command(async)]
-pub(crate) fn chats(state: State<'_, AppState>) -> Result<Vec<ChatSummary>, String> {
-    state.service()?.chats().map_err(|e| e.to_string())
+pub(crate) async fn chats(state: State<'_, AppState>) -> Result<Vec<ChatSummary>, String> {
+    state.service()?.chats().await.map_err(|e| e.to_string())
 }
 
 #[derive(serde::Serialize)]
@@ -19,24 +19,24 @@ pub(crate) struct ChatSettings {
 }
 
 #[tauri::command(async)]
-pub(crate) fn chat_settings(state: State<'_, AppState>, chat: String) -> Result<ChatSettings, String> {
+pub(crate) async fn chat_settings(state: State<'_, AppState>, chat: String) -> Result<ChatSettings, String> {
     let service = state.service()?;
-    let (send_typing, send_receipts) = service.chat_privacy(&chat).map_err(|e| e.to_string())?;
+    let (send_typing, send_receipts) = service.chat_privacy(&chat).await.map_err(|e| e.to_string())?;
     Ok(ChatSettings {
         send_typing,
         send_receipts,
-        auto_download: service.chat_auto_download(&chat).map_err(|e| e.to_string())?,
-        retention: service.chat_retention(&chat).map_err(|e| e.to_string())?,
+        auto_download: service.chat_auto_download(&chat).await.map_err(|e| e.to_string())?,
+        retention: service.chat_retention(&chat).await.map_err(|e| e.to_string())?,
     })
 }
 
 #[tauri::command(async)]
-pub(crate) fn set_chat_retention(
+pub(crate) async fn set_chat_retention(
     state: State<'_, AppState>,
     chat: String,
     retention: postal_core::ChatRetention,
 ) -> Result<(), String> {
-    state.service()?.set_chat_retention(&chat, &retention).map_err(|e| e.to_string())
+    state.service()?.set_chat_retention(&chat, &retention).await.map_err(|e| e.to_string())
 }
 
 /// Pins or unpins a chat, mirroring it to the account.
@@ -69,27 +69,27 @@ pub(crate) async fn set_marked_unread(state: State<'_, AppState>, chat: String, 
 
 /// Deletes every message stored on this device; the phone keeps its copy.
 #[tauri::command(async)]
-pub(crate) fn clear_history(state: State<'_, AppState>) -> Result<usize, String> {
-    state.service()?.clear_history().map_err(|e| e.to_string())
+pub(crate) async fn clear_history(state: State<'_, AppState>) -> Result<usize, String> {
+    state.service()?.clear_history().await.map_err(|e| e.to_string())
 }
 
 /// Clears one chat on this device only: its messages go, the empty chat stays.
 /// Never touches the phone or the other side.
 #[tauri::command(async)]
-pub(crate) fn clear_chat(state: State<'_, AppState>, chat: String) -> Result<usize, String> {
-    state.service()?.clear_chat(&chat).map_err(|e| e.to_string())
+pub(crate) async fn clear_chat(state: State<'_, AppState>, chat: String) -> Result<usize, String> {
+    state.service()?.clear_chat(&chat).await.map_err(|e| e.to_string())
 }
 
 /// Deletes one chat on this device only: its messages go and it leaves the
 /// list until a new message arrives. Never touches the phone or the other side.
 #[tauri::command(async)]
-pub(crate) fn delete_chat(state: State<'_, AppState>, chat: String) -> Result<usize, String> {
-    state.service()?.delete_chat(&chat).map_err(|e| e.to_string())
+pub(crate) async fn delete_chat(state: State<'_, AppState>, chat: String) -> Result<usize, String> {
+    state.service()?.delete_chat(&chat).await.map_err(|e| e.to_string())
 }
 
 /// Sets a chat's auto download override.
 #[tauri::command(async)]
-pub(crate) fn set_chat_auto_download(
+pub(crate) async fn set_chat_auto_download(
     state: State<'_, AppState>,
     chat: String,
     enabled: bool,
@@ -97,12 +97,12 @@ pub(crate) fn set_chat_auto_download(
     state
         .service()?
         .set_chat_auto_download(&chat, enabled)
-        .map_err(|e| e.to_string())
+        .await.map_err(|e| e.to_string())
 }
 
 /// Sets a chat's typing and read receipt overrides; `None` follows the global setting.
 #[tauri::command(async)]
-pub(crate) fn set_chat_privacy(
+pub(crate) async fn set_chat_privacy(
     state: State<'_, AppState>,
     chat: String,
     typing: Option<bool>,
@@ -111,5 +111,5 @@ pub(crate) fn set_chat_privacy(
     state
         .service()?
         .set_chat_privacy(&chat, typing, receipts)
-        .map_err(|e| e.to_string())
+        .await.map_err(|e| e.to_string())
 }

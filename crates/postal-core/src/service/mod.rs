@@ -30,9 +30,8 @@ use whatsapp_rust::{
 };
 
 use crate::{
-    aliases::AliasStore,
     history::HistoryPolicy,
-    store::{LinkCard, LocalState, Media, MessageHeader, MessageStore, Quote, DiskRetention, DiskRetentionManager, StoredMessage},
+    store::{LinkCard, LocalState, Media, MessageHeader, MessageStore, StoreWorker, AliasWorker, Quote, DiskRetention, DiskRetentionManager, StoredMessage},
 };
 
 mod connection;
@@ -406,10 +405,10 @@ impl ServiceConfig {
 pub struct WhatsAppService {
     user_info_slots: tokio::sync::Semaphore,
     client: Arc<Client>,
-    store: Arc<MessageStore>,
+    store: StoreWorker,
     disk_retention: Arc<DiskRetentionManager>,
     /// Local, per-contact aliases, kept in their own file beside the messages.
-    aliases: Arc<AliasStore>,
+    aliases: AliasWorker,
     // Broadcast send only fails with no subscribers, expected during shutdown.
     events: broadcast::Sender<ServiceEvent>,
     /// Fires the shutdown signal. `None` once it has been sent.

@@ -6,7 +6,7 @@ use whatsapp_rust::wacore::types::events::MessageBatch;
 /// What the protocol event handler shares with the service, cloned per event.
 #[derive(Clone)]
 pub(super) struct Inbound {
-    pub(super) store: Arc<MessageStore>,
+    pub(super) store: StoreWorker,
     pub(super) disk_retention: Arc<DiskRetentionManager>,
     pub(super) events: broadcast::Sender<ServiceEvent>,
     pub(super) connected: Arc<AtomicBool>,
@@ -42,8 +42,8 @@ impl Inbound {
                 connected.store(false, Ordering::SeqCst);
                 let _ = events.send(ServiceEvent::LoggedOut);
             }
-            Event::Receipt(receipt) => self.on_receipt(receipt),
-            Event::ServerAck(ack) => self.on_server_ack(ack),
+            Event::Receipt(receipt) => self.on_receipt(receipt).await,
+            Event::ServerAck(ack) => self.on_server_ack(ack).await,
             // The name the user saved for a contact comes from
             // the address book and outranks the push name the
             // contact set for themselves.
@@ -54,11 +54,11 @@ impl Inbound {
                     .as_deref()
                     .or(update.action.first_name.as_deref());
                 if let Some(name) = name.filter(|n| !n.trim().is_empty()) {
-                    store.set_saved_name(&update.jid.to_string(), name).logged();
+                    store.set_saved_name(&update.jid.to_string(), name).await.logged();
                 }
             }
             Event::ContactRemoved(removed) => {
-                store.clear_saved_name(&removed.jid.to_string()).logged();
+                store.clear_saved_name(&removed.jid.to_string()).await.logged();
             }
             // Progress for the initial catch-up, so the UI can
             // show how much of the backlog is still arriving.
@@ -141,8 +141,8 @@ impl Inbound {
                     last_seen: presence.last_seen.map(|t| t.timestamp()),
                 });
             }
-            Event::IdentityChange(change) => self.on_identity_change(change),
-            Event::DeviceListUpdate(update) => self.on_device_change(update),
+            Event::IdentityChange(change) => self.on_identity_change(change).await,
+            Event::DeviceListUpdate(update) => self.on_device_change(update).await,
             Event::PictureUpdate(update) => {
                 let jid = update.jid.to_non_ad().to_string();
                 if let Some(dir) = media_dir.as_deref() {
@@ -170,7 +170,7 @@ impl Inbound {
                 )
                 .await;
                 let id = info.id.to_string();
-                if store.message(&chat, &id).observed().is_some() {
+                if store.message(&chat, &id).await.observed().is_some() {
                     return;
                 }
                 log::debug!("view-once in {chat}: arrived as a bare stub (no media)");
@@ -191,8 +191,8 @@ impl Inbound {
                     local: LocalState { read: from_me, ..Default::default() },
                     ..Default::default()
                 };
-                store.set_view_once(&chat, &id, from_me).logged();
-                if store.insert_message(&message).observed().is_some() {
+                store.set_view_once(&chat, &id, from_me).await.logged();
+                if store.insert_message(&message).await.observed().is_some() {
                     let _ = events.send(ServiceEvent::hint(&message, true));
                 }
             }
@@ -205,12 +205,12 @@ impl Inbound {
                 group_cache.lock().unwrap().remove(&chat);
                 *groups_cache.lock().unwrap() = None;
                 if let GroupNotificationAction::Subject { subject, .. } = update.action.as_ref() {
-                    store.set_name(&chat, subject).logged();
+                    store.set_name(&chat, subject).await.logged();
                 }
-                self.on_group_update(update);
+                self.on_group_update(update).await;
                 let _ = events.send(ServiceEvent::GroupChanged { chat });
             }
-            Event::MissedCall(call) => self.on_missed_call(call),
+            Event::MissedCall(call) => self.on_missed_call(call).await,
             Event::UndecryptableMessage(stub) => {
                 log::warn!(
                     "could not decrypt message {} in {} from {} ({:?})",
@@ -225,7 +225,7 @@ impl Inbound {
             Event::PinUpdate(pin) => {
                 let pinned = pin.action.pinned.unwrap_or(false);
                 let jid = resolve_chat(client_for_events.get().map(|c| c.as_ref()), store, &pin.jid).await;
-                store.set_pinned(&jid, pinned).logged();
+                store.set_pinned(&jid, pinned).await.logged();
                 let _ = events.send(ServiceEvent::ChatStateChanged { chat: jid });
             }
             Event::ArchiveUpdate(update) => {
@@ -235,7 +235,7 @@ impl Inbound {
                     "archive update for {jid}: archived={archived} full_sync={}",
                     update.from_full_sync
                 );
-                store.set_archived(&jid, archived).logged();
+                store.set_archived(&jid, archived).await.logged();
                 let _ = events.send(ServiceEvent::ChatStateChanged { chat: jid });
             }
             Event::MuteUpdate(update) => {
@@ -245,13 +245,13 @@ impl Inbound {
                     (true, Some(ms)) if ms > 0 => ms / 1000,
                     (true, _) => -1,
                 };
-                store.set_muted_until(&jid, until).logged();
+                store.set_muted_until(&jid, until).await.logged();
                 let _ = events.send(ServiceEvent::ChatStateChanged { chat: jid });
             }
             Event::MarkChatAsReadUpdate(update) => {
                 let jid = resolve_chat(client_for_events.get().map(|c| c.as_ref()), store, &update.jid).await;
                 let read = update.action.read.unwrap_or(true);
-                store.set_marked_unread(&jid, !read).logged();
+                store.set_marked_unread(&jid, !read).await.logged();
                 if read {
                     // Another device read the chat; clear the messages here too,
                     // or the unread badge stays though nothing is unseen.
@@ -261,8 +261,8 @@ impl Inbound {
                         .as_option()
                         .and_then(|range| range.last_message_timestamp);
                     let changed = match through {
-                        Some(ts) => store.mark_read_through(&jid, ts).observed().unwrap_or(0),
-                        None => store.mark_read(&jid).observed().unwrap_or(0),
+                        Some(ts) => store.mark_read_through(&jid, ts).await.observed().unwrap_or(0),
+                        None => store.mark_read(&jid).await.observed().unwrap_or(0),
                     };
                     log::debug!("chat read on another device: {jid} ({changed} message(s))");
                 }
@@ -277,7 +277,8 @@ impl Inbound {
             self;
         let auto_download_default = *auto_download_default;
         let started = std::time::Instant::now();
-        let _commit = store.batch();
+        let batch_guard = store.batch().await;
+        let store = &*batch_guard;
         let client = client_for_events.get().cloned();
         // Our own addresses, so a mention can be
         // recognised whichever form it uses.
@@ -328,12 +329,12 @@ impl Inbound {
                 &store,
                 &inbound.info.source.sender,
                 inbound.info.source.sender_alt.as_ref(),
-            );
+            ).await;
             if let Some(alt) =
                 inbound.info.source.sender_alt.as_ref().map(|j| j.to_string())
             {
                 let known =
-                    store.name_for(&alt).observed().flatten().filter(|n| !is_placeholder_name(n));
+                    store.name_for(&alt).await.observed().flatten().filter(|n| !is_placeholder_name(n));
                 let is_saved = known.is_some();
                 // Fall back to the phone number, never
                 // the unreadable LID.
@@ -341,29 +342,29 @@ impl Inbound {
                     alt.split('@').next().unwrap_or(&alt).to_string()
                 });
                 if is_saved {
-                    store.set_saved_name(&sender, &name).logged();
+                    store.set_saved_name(&sender, &name).await.logged();
                     if !is_group && !from_me {
-                        store.set_saved_name(&chat, &name).logged();
+                        store.set_saved_name(&chat, &name).await.logged();
                     }
                 } else {
                     // The bare number is only a placeholder;
                     // it must not replace a push name that a
                     // message without one would otherwise erase.
-                    let unnamed = |jid: &str| {
-                        store.name_for(jid).observed().flatten().is_none()
+                    let unnamed = async |jid: &str| {
+                        store.name_for(jid).await.observed().flatten().is_none()
                     };
-                    if unnamed(&sender) {
-                        store.set_name(&sender, &name).logged();
+                    if unnamed(&sender).await {
+                        store.set_name(&sender, &name).await.logged();
                     }
-                    if !is_group && !from_me && unnamed(&chat) {
-                        store.set_name(&chat, &name).logged();
+                    if !is_group && !from_me && unnamed(&chat).await {
+                        store.set_name(&chat, &name).await.logged();
                     }
                 }
             }
 
             if !push_name.is_empty() {
                 // Push names never override a saved one.
-                store.set_name(&sender, &push_name).logged();
+                store.set_name(&sender, &push_name).await.logged();
                 // A participant's JID has no device suffix
                 // while a message's sender does, so store
                 // the bare form too or the group member
@@ -375,7 +376,7 @@ impl Inbound {
                         server
                     );
                     if bare != sender {
-                        store.set_name(&bare, &push_name).logged();
+                        store.set_name(&bare, &push_name).await.logged();
                     }
                 }
                 // A one-to-one chat is named after its
@@ -384,7 +385,7 @@ impl Inbound {
                 // never name a chat after us, which is
                 // what turned a group into our own name.
                 if !is_group && !from_me {
-                    store.set_name(&chat, &push_name).logged();
+                    store.set_name(&chat, &push_name).await.logged();
                 }
             }
 
@@ -395,12 +396,12 @@ impl Inbound {
             } else {
                 inbound.info.source.sender.to_non_ad().to_string()
             };
-            remember_structures(&store, &chat, &message_id, &author, &inbound.message);
+            remember_structures(&store, &chat, &message_id, &author, &inbound.message).await;
 
             if let Some(update) = base.poll_update_message.as_option() {
                 use whatsapp_rust::wacore::poll::{compute_option_hash, PollVoteCiphertext};
                 let poll_id = update.poll_creation_message_key.as_option().and_then(|k| k.id.clone());
-                let def = poll_id.as_deref().and_then(|id| store.poll_secret(&chat, id).observed().flatten());
+                let def = match poll_id.as_deref() { Some(id) => store.poll_secret(&chat, id).await.observed().flatten(), None => None };
                 if let (Some(poll_id), Some(def), Some(vote), Some(client)) = (
                     poll_id,
                     def,
@@ -448,7 +449,7 @@ impl Inbound {
                                 .cloned()
                                 .collect();
                             let who = if from_me { "@me".to_string() } else { voter.to_string() };
-                            store.set_poll_vote(&chat, &poll_id, &who, &chosen).logged();
+                            store.set_poll_vote(&chat, &poll_id, &who, &chosen).await.logged();
                             let _ = events.send(ServiceEvent::Marks { chat: chat.clone() });
                         }
                         Err(e) => log::warn!("could not open a vote on poll {poll_id}: {e}"),
@@ -459,7 +460,7 @@ impl Inbound {
 
             if let Some(response) = base.enc_event_response_message.as_option() {
                 let event_id = response.event_creation_message_key.as_option().and_then(|k| k.id.clone());
-                let def = event_id.as_deref().and_then(|id| store.event_secret(&chat, id).observed().flatten());
+                let def = match event_id.as_deref() { Some(id) => store.event_secret(&chat, id).await.observed().flatten(), None => None };
                 if let (Some(event_id), Some(def)) = (event_id, def) {
                     let responder = inbound.info.source.sender.to_non_ad().to_string();
                     // Our own events may have been answered under our other address.
@@ -481,7 +482,7 @@ impl Inbound {
                     match opened {
                         Some(answer) => {
                             let who = if from_me { "@me".to_string() } else { responder };
-                            store.set_event_response(&chat, &event_id, &who, response_name(answer.response)).logged();
+                            store.set_event_response(&chat, &event_id, &who, response_name(answer.response)).await.logged();
                             let _ = events.send(ServiceEvent::Marks { chat: chat.clone() });
                         }
                         None => log::warn!("could not open an RSVP to event {event_id}"),
@@ -500,7 +501,7 @@ impl Inbound {
                         inbound.info.source.sender.to_non_ad().to_string()
                     };
                     let emoji = reaction.text.clone().unwrap_or_default();
-                    store.set_reaction(&chat, &target, &who, &emoji).logged();
+                    store.set_reaction(&chat, &target, &who, &emoji).await.logged();
                     let _ = events.send(ServiceEvent::Marks { chat: chat.clone() });
                 }
                 continue;
@@ -511,7 +512,7 @@ impl Inbound {
                 let pinned = pin.r#type == Some(Type::PIN_FOR_ALL);
                 store
                     .set_message_pin(&chat, target.as_deref().filter(|_| pinned))
-                    .logged();
+                    .await.logged();
                 let _ = events.send(ServiceEvent::Marks { chat: chat.clone() });
                 continue;
             }
@@ -539,9 +540,9 @@ impl Inbound {
             // dropping the notice, so the chat shows
             // that something was removed.
             if let Some(target) = revoke_target(&inbound.message) {
-                if let Some(true) = store.revoke_message(&chat, &target).observed() {
+                if let Some(true) = store.revoke_message(&chat, &target).await.observed() {
                     if let Some(updated) =
-                        store.message(&chat, &target).observed()
+                        store.message(&chat, &target).await.observed()
                     {
                         let _ = events.send(ServiceEvent::hint(&updated, false));
                     }
@@ -550,8 +551,8 @@ impl Inbound {
             }
 
             if let Some((target, text)) = edit_of(&inbound.message) {
-                if let Some(true) = store.update_message_content(&chat, &target, &text).observed() {
-                    if let Some(updated) = store.message(&chat, &target).observed() {
+                if let Some(true) = store.update_message_content(&chat, &target, &text).await.observed() {
+                    if let Some(updated) = store.message(&chat, &target).await.observed() {
                         let _ = events.send(ServiceEvent::hint(&updated, false));
                     }
                     let _ = events.send(ServiceEvent::Marks { chat: chat.clone() });
@@ -567,7 +568,7 @@ impl Inbound {
             let auto_download = small
                 || store
                     .chat_auto_download(&chat)
-                    .observed()
+                    .await.observed()
                     .flatten()
                     .unwrap_or(auto_download_default);
             let Some(mut message) =
@@ -580,23 +581,23 @@ impl Inbound {
             // resolves them when drawn, so later names apply.
             message.local.mentioned = mentions_me(&inbound.message, &own);
             if inbound.message.is_view_once() {
-                store.set_view_once(&chat, &message.header.id, from_me).logged();
+                store.set_view_once(&chat, &message.header.id, from_me).await.logged();
             }
             if is_forwarded(&inbound.message) {
-                store.set_forwarded(&chat, &message.header.id).logged();
+                store.set_forwarded(&chat, &message.header.id).await.logged();
             }
             // Pairing only brings recent days; a reply to something
             // older pulls that chat's past so the quote can be opened.
             if let (Some(quoted), Some(client)) = (message.quote.id.clone(), client.clone()) {
                 let quoted_chat = message.quote.chat.clone().unwrap_or_else(|| chat.clone());
-                if store.message(&quoted_chat, &quoted).is_err() && recall_allowed(&quoted_chat) {
+                if store.message(&quoted_chat, &quoted).await.is_err() && recall_allowed(&quoted_chat) {
                     let store = store.clone();
                     tokio::spawn(async move {
                         fetch_older(&client, &store, &quoted_chat, 50).await.logged();
                     });
                 }
             }
-            if let Err(e) = store.insert_message(&message) {
+            if let Err(e) = store.insert_message(&message).await {
                 log::error!("could not store message {} in {chat}: {e}", message.header.id);
             } else {
                 // Count backlog progress so the loading
@@ -628,9 +629,9 @@ impl Inbound {
                 // account is told too, so the phone cannot re-archive it later.
                 if !from_me
                     && !self.keep_archived.load(Ordering::SeqCst)
-                    && store.is_archived(&chat).observed().unwrap_or(false)
+                    && store.is_archived(&chat).await.observed().unwrap_or(false)
                 {
-                    store.set_archived(&chat, false).logged();
+                    store.set_archived(&chat, false).await.logged();
                     let _ = events.send(ServiceEvent::ChatStateChanged { chat: chat.clone() });
                     if let (Some(client), Ok(jid)) = (client.clone(), chat.parse::<Jid>()) {
                         tokio::spawn(async move {
@@ -671,9 +672,9 @@ impl Inbound {
                     match fetch_media(&client, &store, &dir, &chat, &id).await {
                         Ok(updated) => {
                             if keep_once {
-                                if let Err(e) = store.keep_view_once(&chat, &id) {
+                                if let Err(e) = store.keep_view_once(&chat, &id).await {
                                     log::warn!("could not keep view-once {id}: {e}");
-                                } else if let Some(kept) = store.message(&chat, &id).observed() {
+                                } else if let Some(kept) = store.message(&chat, &id).await.observed() {
                                     // The mark is gone, so the row reloads as
                                     // ordinary media already holding the file.
                                     let _ = events.send(ServiceEvent::hint(&kept, false));
@@ -693,7 +694,8 @@ impl Inbound {
         let pruning = std::time::Instant::now();
         touched.sort_unstable();
         touched.dedup();
-        let removed = match self.disk_retention.enforce_for(store, &touched) {
+        let retention = self.disk_retention.clone();
+        let removed = match store.run(move |store| retention.enforce_for(store, &touched)).await {
             Ok(removed) => removed,
             Err(e) => {
                 log::error!("retention failed: {e}");
@@ -703,10 +705,12 @@ impl Inbound {
         if removed > 0 {
             let _ = events.send(ServiceEvent::RetentionApplied { removed });
             // A pruned reply can be the last one naming a recovered view-once.
-            if let Err(e) = prune_quote_files(media_dir.as_deref(), store) {
+            let directory = media_dir.clone();
+            if let Err(e) = store.run(move |store| prune_quote_files(directory.as_deref(), store)).await {
                 log::error!("pruning recovered view-once files failed: {e}");
             }
         }
+        batch_guard.finish().await.logged();
         log::debug!(
             "{} live message(s) in {:?} (retention {:?}, pruned {removed})",
             batch.messages.len(),

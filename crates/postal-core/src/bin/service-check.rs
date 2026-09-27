@@ -63,7 +63,7 @@ async fn main() -> Result<()> {
             }
             Ok(Err(_)) => break,
             Err(_) => {
-                report(&service, &stats);
+                report(&service, &stats).await;
                 continue;
             }
         };
@@ -116,8 +116,8 @@ struct Stats {
     pruned: usize,
 }
 
-fn report(service: &WhatsAppService, stats: &Stats) {
-    match service.chats() {
+async fn report(service: &WhatsAppService, stats: &Stats) {
+    match service.chats().await {
         Ok(chats) => {
             println!(
                 "[check] {} chat(s), {} received, {} pruned",

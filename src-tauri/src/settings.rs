@@ -94,8 +94,8 @@ fn parse_settings(json: &str) -> serde_json::Result<UiSettings> {
 }
 
 /// Whether a chat gets our (typing, read receipts): its overrides, else the global settings.
-pub(crate) fn sends_privacy(state: &AppState, service: &WhatsAppService, chat: &str) -> (bool, bool) {
-    let (typing, receipts) = match service.chat_privacy(chat) {
+pub(crate) async fn sends_privacy(state: &AppState, service: &WhatsAppService, chat: &str) -> (bool, bool) {
+    let (typing, receipts) = match service.chat_privacy(chat).await {
         Ok(privacy) => privacy,
         Err(error) => {
             log::error!("could not read chat privacy settings: {error}");

@@ -23,7 +23,7 @@ pub(crate) async fn search(
 #[tauri::command]
 pub(crate) async fn send_typing(state: State<'_, AppState>, chat: String, typing: bool) -> Result<(), String> {
     let service = state.service()?;
-    if typing && !sends_privacy(&state, &service, &chat).0 {
+    if typing && !sends_privacy(&state, &service, &chat).await.0 {
         return Ok(());
     }
     service.send_typing(&chat, typing).await.map_err(|e| e.to_string())
@@ -32,10 +32,10 @@ pub(crate) async fn send_typing(state: State<'_, AppState>, chat: String, typing
 /// Every contact alias in the account, keyed by each address form of its
 /// contact so the UI can look one up without knowing which form it holds.
 #[tauri::command(async)]
-pub(crate) fn contact_aliases(
+pub(crate) async fn contact_aliases(
     state: State<'_, AppState>,
 ) -> Result<std::collections::HashMap<String, Vec<String>>, String> {
-    state.service()?.all_aliases().map_err(|e| e.to_string())
+    state.service()?.all_aliases().await.map_err(|e| e.to_string())
 }
 
 /// Gives a contact a local alias so they can be addressed as `@alias`.
@@ -43,16 +43,16 @@ pub(crate) fn contact_aliases(
 /// Fails when another contact already answers to it, so an alias always names
 /// one person. Nothing is sent to the phone and no name is changed.
 #[tauri::command(async)]
-pub(crate) fn add_contact_alias(state: State<'_, AppState>, jid: String, alias: String) -> Result<(), String> {
+pub(crate) async fn add_contact_alias(state: State<'_, AppState>, jid: String, alias: String) -> Result<(), String> {
     state
         .service()?
         .add_alias(&jid, &alias)
-        .map_err(|e| e.to_string())
+        .await.map_err(|e| e.to_string())
 }
 
 /// Drops one of a contact's aliases.
 #[tauri::command(async)]
-pub(crate) fn remove_contact_alias(
+pub(crate) async fn remove_contact_alias(
     state: State<'_, AppState>,
     jid: String,
     alias: String,
@@ -60,7 +60,7 @@ pub(crate) fn remove_contact_alias(
     state
         .service()?
         .remove_alias(&jid, &alias)
-        .map_err(|e| e.to_string())
+        .await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]

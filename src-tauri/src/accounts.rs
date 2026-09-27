@@ -93,7 +93,7 @@ pub(crate) async fn remove_account(app: AppHandle, state: State<'_, AppState>, i
     if let Some(existing) = running {
         // Only the running account can reach WhatsApp to unlink itself.
         if was_active {
-            for path in existing.media_paths().unwrap_or_default() {
+            for path in existing.media_paths().await.unwrap_or_default() {
                 let _ = std::fs::remove_file(path);
             }
             existing.logout().await;

@@ -8,8 +8,8 @@ use whatsapp_rust::wacore::types::events::LazyHistorySync;
 ///
 /// Returns the request session the phone will answer, or `None` when the chat
 /// has nothing stored to page back from and no request was made.
-pub(super) async fn fetch_older(client: &Arc<Client>, store: &MessageStore, chat: &str, count: i32) -> Result<Option<String>> {
-    let Some((id, from_me, timestamp)) = store.oldest_message(chat)? else {
+pub(super) async fn fetch_older(client: &Arc<Client>, store: &StoreWorker, chat: &str, count: i32) -> Result<Option<String>> {
+    let Some((id, from_me, timestamp)) = store.oldest_message(chat).await? else {
         return Ok(None);
     };
     let jid: Jid = chat.parse()?;
@@ -92,12 +92,12 @@ impl WhatsAppService {
     /// Pages every chat back through the phone until it has nothing older,
     /// one request at a time, reporting progress as `Backfill` events.
     pub async fn backfill_history(&self) -> Result<()> {
-        let chats: Vec<String> = self.store.chats()?.into_iter().map(|c| c.chat).collect();
+        let chats: Vec<String> = self.store.chats().await?.into_iter().map(|c| c.chat).collect();
         let total = chats.len();
         for (done, chat) in chats.iter().enumerate() {
             let _ = self.events.send(ServiceEvent::Backfill { done, total });
             loop {
-                let before = self.store.oldest_message(chat)?;
+                let before = self.store.oldest_message(chat).await?;
                 let mut answers = self.events.subscribe();
                 let Some(session) = fetch_older(&self.client, &self.store, chat, 50).await? else { break };
                 self.older_waits.lock().unwrap().remember(std::time::Instant::now(), &session, chat);
@@ -113,7 +113,7 @@ impl WhatsAppService {
                 })
                 .await
                 .unwrap_or(false);
-                if !answered || self.store.oldest_message(chat)? == before {
+                if !answered || self.store.oldest_message(chat).await? == before {
                     break;
                 }
             }
@@ -139,7 +139,8 @@ impl Inbound {
             history.pushnames.len(),
             history.phone_number_to_lid_mappings.len(),
         );
-        let _commit = store.batch();
+        let batch_guard = store.batch().await;
+        let store = &*batch_guard;
         let client = client_for_events.get().cloned();
         let own = client
             .as_deref()
@@ -148,18 +149,18 @@ impl Inbound {
         let mut names_learned = 0;
         for push in &history.pushnames {
             if let (Some(id), Some(name)) = (&push.id, &push.pushname) {
-                if !name.is_empty() && store.set_name(id, name).observed().is_some() {
+                if !name.is_empty() && store.set_name(id, name).await.observed().is_some() {
                     names_learned += 1;
                 }
             }
         }
-        let pair = |lid: Option<&str>, pn: Option<&str>| {
+        let pair = async |lid: Option<&str>, pn: Option<&str>| {
             let (Some(lid), Some(pn)) = (lid, pn) else { return false };
             let user = |j: &str| j.split(['@', ':']).next().unwrap_or(j).to_string();
-            store.set_lid_pn(&user(lid), &user(pn)).observed().is_some()
+            store.set_lid_pn(&user(lid), &user(pn)).await.observed().is_some()
         };
         for mapping in &history.phone_number_to_lid_mappings {
-            if pair(mapping.lid_jid.as_deref(), mapping.pn_jid.as_deref()) {
+            if pair(mapping.lid_jid.as_deref(), mapping.pn_jid.as_deref()).await {
                 names_learned += 1;
             }
         }
@@ -168,7 +169,7 @@ impl Inbound {
             if conversation.id == "status@broadcast" {
                 continue;
             }
-            pair(conversation.lid_jid.as_deref(), conversation.pn_jid.as_deref());
+            pair(conversation.lid_jid.as_deref(), conversation.pn_jid.as_deref()).await;
             let Some(jid) = conversation.id.parse::<Jid>().observed() else { continue };
             let chat = resolve_chat(client.as_deref(), store, &jid).await;
             if !chat.ends_with("@g.us") {
@@ -178,14 +179,14 @@ impl Inbound {
                     .or(conversation.username.as_deref())
                     .filter(|n| !n.trim().is_empty());
                 if let Some(name) = name {
-                    store.set_name(&chat, name).logged();
+                    store.set_name(&chat, name).await.logged();
                 }
             }
             if let Some(subject) =
                 conversation.name.as_deref().filter(|n| !n.is_empty())
             {
                 if chat.ends_with("@g.us") {
-                    store.set_name(&chat, subject).logged();
+                    store.set_name(&chat, subject).await.logged();
                 }
             }
             let mut added = false;
@@ -202,9 +203,9 @@ impl Inbound {
                         notice,
                         web.message_stub_parameters.clone(),
                     );
-                    let seen = store.message(&chat, &stored.header.id).observed().is_some()
-                        || store.has_system_near(&chat, &notice_kind, stored.header.timestamp).observed().unwrap_or(false);
-                    if !seen && store.insert_message(&stored).observed().is_some() {
+                    let seen = store.message(&chat, &stored.header.id).await.observed().is_some()
+                        || store.has_system_near(&chat, &notice_kind, stored.header.timestamp).await.observed().unwrap_or(false);
+                    if !seen && store.insert_message(&stored).await.observed().is_some() {
                         added = true;
                     }
                     continue;
@@ -228,20 +229,20 @@ impl Inbound {
                 if let Some(push) =
                     web.push_name.as_deref().filter(|p| !p.is_empty())
                 {
-                    if !from_me && store.set_name(&sender, push).observed().is_some() {
+                    if !from_me && store.set_name(&sender, push).await.observed().is_some() {
                         names_learned += 1;
                     }
                 }
                 // A stored row is already complete; rebuilding
                 // it would only rewrite its thumbnails.
-                if store.message(&chat, &id).observed().is_some() {
+                if store.message(&chat, &id).await.observed().is_some() {
                     continue;
                 }
                 if let Some(target) = revoke_target(message) {
-                    store.revoke_message(&chat, &target).logged();
+                    store.revoke_message(&chat, &target).await.logged();
                     continue;
                 }
-                remember_structures(&store, &chat, &id, &sender, message);
+                remember_structures(&store, &chat, &id, &sender, message).await;
                 let header = MessageHeader {
                     chat: chat.clone(),
                     id,
@@ -264,11 +265,11 @@ impl Inbound {
                 };
                 // Old messages must not raise unread counts.
                 stored.local.read = true;
-                match store.insert_message(&stored) {
+                match store.insert_message(&stored).await {
                     Ok(()) => {
                         added = true;
                         if message.is_view_once() {
-                            store.set_view_once(&chat, &stored.header.id, stored.header.from_me).logged();
+                            store.set_view_once(&chat, &stored.header.id, stored.header.from_me).await.logged();
                         }
                     }
                     Err(e) => log::error!("could not store history message in {chat}: {e}"),
@@ -313,5 +314,6 @@ impl Inbound {
         if let Some(percent) = sync.progress().filter(|_| sync.sync_type() != 6) {
             let _ = events.send(ServiceEvent::HistoryProgress { percent });
         }
+        batch_guard.finish().await.logged();
     }
 }

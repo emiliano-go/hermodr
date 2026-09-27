@@ -404,3 +404,69 @@ pub(crate) fn fold_chat(conn: &Connection, from: &str, to: &str) -> Result<()> {
     )?;
     Ok(())
 }
+
+impl StoreWorker {
+    pub(crate) async fn chat_auto_download(&self, jid: &str) -> Result<Option<bool>> {
+        let jid = jid.to_owned();
+        self.run(move |store| store.chat_auto_download(&jid)).await
+    }
+
+    pub(crate) async fn set_chat_auto_download(&self, jid: &str, enabled: bool) -> Result<()> {
+        let jid = jid.to_owned();
+        self.run(move |store| store.set_chat_auto_download(&jid, enabled)).await
+    }
+
+    pub(crate) async fn chat_privacy(&self, jid: &str) -> Result<(Option<bool>, Option<bool>)> {
+        let jid = jid.to_owned();
+        self.run(move |store| store.chat_privacy(&jid)).await
+    }
+
+    pub(crate) async fn set_chat_privacy(&self, jid: &str, typing: Option<bool>, receipts: Option<bool>) -> Result<()> {
+        let jid = jid.to_owned();
+        self.run(move |store| store.set_chat_privacy(&jid, typing, receipts)).await
+    }
+
+    pub(crate) async fn set_pinned(&self, jid: &str, pinned: bool) -> Result<()> {
+        let jid = jid.to_owned();
+        self.run(move |store| store.set_pinned(&jid, pinned)).await
+    }
+
+    pub(crate) async fn set_archived(&self, jid: &str, archived: bool) -> Result<()> {
+        let jid = jid.to_owned();
+        self.run(move |store| store.set_archived(&jid, archived)).await
+    }
+
+    pub(crate) async fn is_archived(&self, jid: &str) -> Result<bool> {
+        let jid = jid.to_owned();
+        self.run(move |store| store.is_archived(&jid)).await
+    }
+
+    pub(crate) async fn set_muted_until(&self, jid: &str, until: i64) -> Result<()> {
+        let jid = jid.to_owned();
+        self.run(move |store| store.set_muted_until(&jid, until)).await
+    }
+
+    pub(crate) async fn set_marked_unread(&self, jid: &str, unread: bool) -> Result<()> {
+        let jid = jid.to_owned();
+        self.run(move |store| store.set_marked_unread(&jid, unread)).await
+    }
+
+    pub(crate) async fn clear_marked_unread(&self, jid: &str) -> Result<bool> {
+        let jid = jid.to_owned();
+        self.run(move |store| store.clear_marked_unread(&jid)).await
+    }
+
+    pub(crate) async fn chats(&self) -> Result<Vec<ChatSummary>> {
+        self.run(move |store| store.chats()).await
+    }
+
+    pub(crate) async fn clear_chat(&self, jid: &str) -> Result<usize> {
+        let jid = jid.to_owned();
+        self.run(move |store| store.clear_chat(&jid)).await
+    }
+
+    pub(crate) async fn delete_chat(&self, jid: &str) -> Result<usize> {
+        let jid = jid.to_owned();
+        self.run(move |store| store.delete_chat(&jid)).await
+    }
+}

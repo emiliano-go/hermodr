@@ -2,15 +2,27 @@
 
 use super::*;
 
+pub(super) async fn first_stored_name(store: &StoreWorker, forms: &[String]) -> Option<(String, String)> {
+    let forms = forms.to_vec();
+    store.run(move |store| {
+        for form in forms {
+            if let Some(name) = store.name_for(&form)?.filter(|name| !is_placeholder_name(name)) {
+                return Ok(Some((form, name)));
+            }
+        }
+        Ok(None)
+    }).await.observed().flatten()
+}
+
 /// Stores the LID and phone forms of one sender when a message carries both.
-pub(super) fn remember_lid_pn(store: &MessageStore, sender: &Jid, alt: Option<&Jid>) {
+pub(super) async fn remember_lid_pn(store: &StoreWorker, sender: &Jid, alt: Option<&Jid>) {
     let Some(alt) = alt else { return };
     let (lid, pn) = match (sender.is_lid(), alt.is_lid()) {
         (true, false) => (sender, alt),
         (false, true) => (alt, sender),
         _ => return,
     };
-    store.set_lid_pn(&lid.user, &pn.user).logged();
+    store.set_lid_pn(&lid.user, &pn.user).await.logged();
 }
 
 /// The chat key a direct message belongs under: the phone-number form when the
@@ -18,7 +30,7 @@ pub(super) fn remember_lid_pn(store: &MessageStore, sender: &Jid, alt: Option<&J
 /// numbered chats pass through untouched.
 pub(super) async fn canonical_chat(
     client: Option<&Client>,
-    store: &MessageStore,
+    store: &StoreWorker,
     chat: &Jid,
     sender: &Jid,
     alt: Option<&Jid>,
@@ -33,7 +45,7 @@ pub(super) async fn canonical_chat(
         if let Some(other) = alt {
             let other = other.to_non_ad();
             if other.is_pn() {
-                store.set_lid_pn(&bare.user, &other.user).logged();
+                store.set_lid_pn(&bare.user, &other.user).await.logged();
                 return other.to_string();
             }
         }
@@ -46,7 +58,7 @@ pub(super) async fn canonical_chat(
 /// as the chat's messages. Groups and already numbered chats pass through.
 pub(super) async fn resolve_chat(
     client: Option<&Client>,
-    store: &MessageStore,
+    store: &StoreWorker,
     jid: &Jid,
 ) -> String {
     let bare = jid.to_non_ad();
@@ -55,7 +67,7 @@ pub(super) async fn resolve_chat(
     }
     let pn = match client {
         Some(client) => other_form(client, store, &bare).await.map(|(_, pn)| pn),
-        None => store.lid_pn(&bare.user).observed().flatten().map(|(_, pn)| pn),
+        None => store.lid_pn(&bare.user).await.observed().flatten().map(|(_, pn)| pn),
     };
     match pn {
         Some(pn) => {
@@ -67,13 +79,13 @@ pub(super) async fn resolve_chat(
 }
 
 /// The other address form of a bare user JID, from the session or our own record of it.
-pub(super) async fn other_form(client: &Client, store: &MessageStore, bare: &Jid) -> Option<(String, String)> {
+pub(super) async fn other_form(client: &Client, store: &StoreWorker, bare: &Jid) -> Option<(String, String)> {
     if let Some(Some(entry)) = client.get_lid_pn_entry(bare).await.observed() {
         let (lid, pn) = (entry.lid.to_string(), entry.phone_number.to_string());
-        store.set_lid_pn(&lid, &pn).logged();
+        store.set_lid_pn(&lid, &pn).await.logged();
         return Some((lid, pn));
     }
-    store.lid_pn(&bare.user).observed().flatten()
+    store.lid_pn(&bare.user).await.observed().flatten()
 }
 
 /// The user part of a JID, without the device suffix or server.
@@ -94,9 +106,9 @@ pub(super) fn user_part(jid: &str) -> String {
 /// Without this an alias added from a group roster (a LID) would be invisible
 /// to a direct chat (a phone-number JID), and the second write would be refused
 /// as a clash. A contact the core has not mapped to a twin has just the one.
-pub(super) fn contact_forms(store: &MessageStore, jid: &str) -> Vec<String> {
+pub(super) async fn contact_forms(store: &StoreWorker, jid: &str) -> Vec<String> {
     let mut forms = vec![jid.to_string()];
-    let twin = match store.lid_pn(&user_part(jid)).observed().flatten() {
+    let twin = match store.lid_pn(&user_part(jid)).await.observed().flatten() {
         Some((_, pn)) if jid.ends_with("@lid") => format!("{pn}@s.whatsapp.net"),
         Some((lid, _)) => format!("{lid}@lid"),
         _ => return forms,
@@ -229,7 +241,7 @@ impl WhatsAppService {
                 out.insert(jid.clone(), push_name.clone());
                 continue;
             }
-            let mut name = self.store.name_for(&key).observed().flatten();
+            let mut name = self.store.name_for(&key).await.observed().flatten();
             let mut number = bare.is_pn().then(|| bare.user.to_string());
             if name.as_deref().is_none_or(numeric) {
                 if let Some((lid, pn)) = other_form(&self.client, &self.store, &bare).await {
@@ -239,7 +251,7 @@ impl WhatsAppService {
                         format!("{lid}@lid")
                     };
                     number = Some(pn);
-                    if let Some(found) = self.store.name_for(&other).observed().flatten() {
+                    if let Some(found) = self.store.name_for(&other).await.observed().flatten() {
                         if !numeric(&found) {
                             name = Some(found);
                         }
@@ -266,7 +278,6 @@ impl WhatsAppService {
             match self.user_info(&query).await {
                 Ok(infos) => {
                     let mut learned = 0;
-                    let mut nameless = self.nameless.lock().unwrap();
                     for (asked, jid) in unknown.iter() {
                         let info = infos.values().find(|i| {
                             i.jid.user == jid.user || i.lid.as_ref().is_some_and(|l| l.user == jid.user)
@@ -278,11 +289,11 @@ impl WhatsAppService {
                                 .or_else(|| i.username.as_ref().map(|u| u.to_string()))
                         });
                         if let Some(found) = found.filter(|n| !n.trim().is_empty()) {
-                            self.store.set_name(&jid.to_string(), &found).logged();
+                            self.store.set_name(&jid.to_string(), &found).await.logged();
                             out.insert(asked.clone(), found);
                             learned += 1;
                         } else {
-                            nameless.insert(jid.to_string());
+                            self.nameless.lock().unwrap().insert(jid.to_string());
                         }
                     }
                     log::debug!(
@@ -331,14 +342,14 @@ impl WhatsAppService {
             return Ok(Vec::new());
         }
 
-        let local = self.store.chats()?;
+        let local = self.store.chats().await?;
         let local_counts: std::collections::HashMap<&str, i64> =
             local.iter().map(|c| (c.chat.as_str(), c.message_count)).collect();
         let has_local_messages = |jid: &str| local_counts.get(jid).is_some_and(|&n| n > 0);
         // A local alias is the one thing that can find a contact whose name and
         // number say nothing about the query, so it is matched alongside them.
         // Read once up front: an account holds a handful of aliases.
-        let aliases = self.all_aliases()?;
+        let aliases = self.all_aliases().await?;
         let of = |jid: &str| -> Vec<String> { aliases.get(jid).cloned().unwrap_or_default() };
         let mut results: Vec<SearchResult> = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
@@ -352,7 +363,7 @@ impl WhatsAppService {
                 seen.insert(chat.chat.clone());
                 results.push(SearchResult {
                     kind: if chat.chat.ends_with("@g.us") { "group".to_string() } else { "contact".to_string() },
-                    saved: self.store.name_is_saved(&chat.chat).observed().unwrap_or(false),
+                    saved: self.store.name_is_saved(&chat.chat).await.observed().unwrap_or(false),
                     jid: chat.chat.clone(),
                     name,
                     number,
@@ -363,7 +374,7 @@ impl WhatsAppService {
         }
 
         // Address book and learned names.
-        for (jid, name, saved) in self.store.search_names(&needle, 50)? {
+        for (jid, name, saved) in self.store.search_names(&needle, 50).await? {
             if !seen.insert(jid.clone()) {
                 continue;
             }
@@ -382,30 +393,28 @@ impl WhatsAppService {
         // this runs per alias rather than per address form; the form a name is
         // known under is preferred, since a phone number reads better than a
         // bare LID.
-        for (jid, alias) in self.aliases.all()? {
+        for (jid, alias) in self.aliases.all().await? {
             if !alias.to_lowercase().contains(&needle) {
                 continue;
             }
-            let forms = self.contact_forms(&jid);
+            let forms = contact_forms(&self.store, &jid).await;
             if forms.iter().any(|form| seen.contains(form)) {
                 continue;
             }
             // A form the contact has a name under beats the one the alias was
             // stored against, and a phone number beats a bare LID, which is a
             // number nobody recognises.
-            let named = forms
-                .iter()
-                .find_map(|form| self.store.name_for(form).observed().flatten().filter(|n| !is_placeholder_name(n)))
+            let named = first_stored_name(&self.store, &forms).await.map(|(form, _)| form)
                 .or_else(|| forms.iter().find(|f| f.ends_with("@s.whatsapp.net")).cloned())
                 .unwrap_or_else(|| jid.clone());
             let number = user_part(&named);
-            let name = self.store.name_for(&named).observed().flatten().unwrap_or_else(|| number.clone());
+            let name = self.store.name_for(&named).await.observed().flatten().unwrap_or_else(|| number.clone());
             for form in &forms {
                 seen.insert(form.clone());
             }
             results.push(SearchResult {
                 kind: "contact".to_string(),
-                saved: self.store.name_is_saved(&named).observed().unwrap_or(false),
+                saved: self.store.name_is_saved(&named).await.observed().unwrap_or(false),
                 jid: named.clone(),
                 name,
                 number,
@@ -433,20 +442,15 @@ impl WhatsAppService {
         Ok(results)
     }
 
-    /// The address forms one contact answers to: [`contact_forms`].
-    fn contact_forms(&self, jid: &str) -> Vec<String> {
-        contact_forms(&self.store, jid)
-    }
-
     /// Every alias in the account, keyed by each address form of its contact.
     ///
     /// The account holds a handful of aliases at most, so the UI takes them
     /// all in one go rather than asking per contact.
-    pub fn all_aliases(&self) -> Result<std::collections::HashMap<String, Vec<String>>> {
+    pub async fn all_aliases(&self) -> Result<std::collections::HashMap<String, Vec<String>>> {
         use std::collections::HashMap;
         let mut out: HashMap<String, Vec<String>> = HashMap::new();
-        for (jid, alias) in self.aliases.all()? {
-            for form in self.contact_forms(&jid) {
+        for (jid, alias) in self.aliases.all().await? {
+            for form in contact_forms(&self.store, &jid).await {
                 out.entry(form).or_default().push(alias.clone());
             }
         }
@@ -455,16 +459,16 @@ impl WhatsAppService {
 
     /// Gives a contact another local alias for `@` addressing. Rejected when
     /// another contact already answers to it, so an alias names one person.
-    pub fn add_alias(&self, jid: &str, alias: &str) -> Result<()> {
-        self.aliases.add(&self.contact_forms(jid), alias)
+    pub async fn add_alias(&self, jid: &str, alias: &str) -> Result<()> {
+        self.aliases.add(&contact_forms(&self.store, jid).await, alias).await
     }
 
     /// Drops one of a contact's aliases. Every address form is tried, since
     /// which one the row was written under depends on what was known at the
     /// time the alias was added.
-    pub fn remove_alias(&self, jid: &str, alias: &str) -> Result<()> {
-        for form in self.contact_forms(jid) {
-            self.aliases.remove(&form, alias)?;
+    pub async fn remove_alias(&self, jid: &str, alias: &str) -> Result<()> {
+        for form in contact_forms(&self.store, jid).await {
+            self.aliases.remove(&form, alias).await?;
         }
         Ok(())
     }

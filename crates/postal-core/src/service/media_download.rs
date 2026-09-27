@@ -4,13 +4,13 @@ use super::*;
 ///
 /// A failed or corrupt download asks the sender's phone to upload the file
 /// again, once per call, and keeps the new location for later attempts.
-pub(super) async fn fetch_media(client: &Client, store: &MessageStore, dir: &Path, chat: &str, id: &str) -> Result<StoredMessage> {
+pub(super) async fn fetch_media(client: &Client, store: &StoreWorker, dir: &Path, chat: &str, id: &str) -> Result<StoredMessage> {
     let message = store
-        .media_ref_for(chat, id)?
+        .media_ref_for(chat, id).await?
         .map(|bytes| <wa::Message as buffa::Message>::decode(&mut bytes.as_slice()))
         .transpose()
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    let once = store.is_view_once(chat, id)?;
+    let once = store.is_view_once(chat, id).await?;
     // A view-once has no address of its own, or reached this device only as a
     // stub. A reply quoting it carries a complete copy, and that is the only
     // one the platform ever sends, so it is used before the sender's phone is
@@ -21,9 +21,9 @@ pub(super) async fn fetch_media(client: &Client, store: &MessageStore, dir: &Pat
             std::fs::create_dir_all(dir)?;
             let path = dir.join(format!("{id}.{}", copied.extension()));
             std::fs::write(&path, &data)?;
-            store.set_media_path(chat, id, &path.to_string_lossy())?;
-            store.set_once_kind(chat, id, copied.kind)?;
-            return store.message(chat, id);
+            store.set_media_path(chat, id, &path.to_string_lossy()).await?;
+            store.set_once_kind(chat, id, copied.kind).await?;
+            return store.message(chat, id).await;
         }
     }
     let Some(message) = message else {
@@ -43,7 +43,7 @@ pub(super) async fn fetch_media(client: &Client, store: &MessageStore, dir: &Pat
             let mut message = message;
             let path = reupload(client, store, chat, id, &message).await.map_err(|e| first.context(e))?;
             set_direct_path(&mut message, &path);
-            store.set_media_ref(chat, id, &buffa::Message::encode_to_vec(&message))?;
+            store.set_media_ref(chat, id, &buffa::Message::encode_to_vec(&message)).await?;
             media = detect_media(&message).ok_or_else(|| anyhow::anyhow!("message carries no media"))?;
             download_bytes(client, &media).await?
         }
@@ -52,17 +52,17 @@ pub(super) async fn fetch_media(client: &Client, store: &MessageStore, dir: &Pat
     std::fs::create_dir_all(dir)?;
     let path = dir.join(format!("{}.{}", id, media.extension()));
     std::fs::write(&path, &data)?;
-    store.set_media_path(chat, id, &path.to_string_lossy())?;
-    store.message(chat, id)
+    store.set_media_path(chat, id, &path.to_string_lossy()).await?;
+    store.message(chat, id).await
 }
 
 /// Downloads the copy a reply to a view-once carries.
 ///
 /// The copy arrives complete, with the address the view-once itself lacks, so
 /// this is the only route to the media that does not need the sender's phone.
-async fn fetch_quoted_copy(client: &Client, store: &MessageStore, id: &str) -> Result<Option<(MediaInfo, Vec<u8>)>> {
+async fn fetch_quoted_copy(client: &Client, store: &StoreWorker, id: &str) -> Result<Option<(MediaInfo, Vec<u8>)>> {
     use whatsapp_rust::wacore::proto_helpers::MessageExt;
-    let Some(source) = store.quote_source_for(id)? else { return Ok(None) };
+    let Some(source) = store.quote_source_for(id).await? else { return Ok(None) };
     let message = <wa::Message as buffa::Message>::decode(&mut source.locator.as_slice())
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
     let media = detect_media(message.get_base_message())
@@ -74,9 +74,9 @@ async fn fetch_quoted_copy(client: &Client, store: &MessageStore, id: &str) -> R
 }
 
 /// Asks the sender's phone to upload a message's media again; the new direct path on success.
-async fn reupload(client: &Client, store: &MessageStore, chat: &str, id: &str, message: &wa::Message) -> Result<String> {
+async fn reupload(client: &Client, store: &StoreWorker, chat: &str, id: &str, message: &wa::Message) -> Result<String> {
     let key = media_key(message).ok_or_else(|| anyhow::anyhow!("the message carries no media key"))?;
-    let row = store.message(chat, id)?;
+    let row = store.message(chat, id).await?;
     let chat_jid: Jid = chat.parse().map_err(|e| anyhow::anyhow!("{e:?}"))?;
     let sender: Option<Jid> = chat_jid.is_group().then(|| row.header.sender.parse().ok()).flatten();
     let request = whatsapp_rust::MediaReuploadRequest {
@@ -166,12 +166,12 @@ pub fn prune_quote_files(dir: Option<&Path>, store: &MessageStore) -> Result<usi
 /// quoted view-once is not one.
 pub(super) async fn fetch_quote_media(
     client: &Client,
-    store: &MessageStore,
+    store: &StoreWorker,
     dir: &Path,
     chat: &str,
     id: &str,
 ) -> Result<StoredMessage> {
-    let row = store.message(chat, id)?;
+    let row = store.message(chat, id).await?;
     // The gate again, applied here rather than at store time, and with the same
     // answer the store recorded: the operator owns this client, so the owner
     // branch is the one that applies.
@@ -204,8 +204,8 @@ pub(super) async fn fetch_quote_media(
     // shares one file and one download.
     let path = dir.join(format!("{QUOTE_FILE_PREFIX}{quoted}.{}", media.extension()));
     std::fs::write(&path, &data)?;
-    store.set_quote_media_path(chat, id, &path.to_string_lossy())?;
-    store.message(chat, id)
+    store.set_quote_media_path(chat, id, &path.to_string_lossy()).await?;
+    store.message(chat, id).await
 }
 
 /// Fetches and decrypts a media submessage.

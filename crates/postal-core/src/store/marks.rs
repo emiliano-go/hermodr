@@ -284,3 +284,89 @@ impl MessageStore {
         Ok(())
     }
 }
+
+impl StoreWorker {
+    pub(crate) async fn set_reaction(&self, chat: &str, target: &str, sender: &str, emoji: &str) -> Result<()> {
+        let chat = chat.to_owned();
+        let target = target.to_owned();
+        let sender = sender.to_owned();
+        let emoji = emoji.to_owned();
+        self.run(move |store| store.set_reaction(&chat, &target, &sender, &emoji)).await
+    }
+
+    pub(crate) async fn set_starred(&self, chat: &str, id: &str, starred: bool) -> Result<()> {
+        let chat = chat.to_owned();
+        let id = id.to_owned();
+        self.run(move |store| store.set_starred(&chat, &id, starred)).await
+    }
+
+    pub(crate) async fn set_message_pin(&self, chat: &str, id: Option<&str>) -> Result<()> {
+        let chat = chat.to_owned();
+        let id = id.map(str::to_owned);
+        self.run(move |store| store.set_message_pin(&chat, id.as_deref())).await
+    }
+
+    pub(crate) async fn marks(&self, chat: &str) -> Result<ChatMarks> {
+        let chat = chat.to_owned();
+        self.run(move |store| store.marks(&chat)).await
+    }
+
+    pub(crate) async fn marks_for(&self, chat: &str, message_ids: Option<&[String]>) -> Result<ChatMarks> {
+        let chat = chat.to_owned();
+        let message_ids = message_ids.map(|value| value.to_vec());
+        self.run(move |store| store.marks_for(&chat, message_ids.as_deref())).await
+    }
+
+    pub(crate) async fn set_forwarded(&self, chat: &str, id: &str) -> Result<()> {
+        let chat = chat.to_owned();
+        let id = id.to_owned();
+        self.run(move |store| store.set_forwarded(&chat, &id)).await
+    }
+
+    pub(crate) async fn save_poll(&self, chat: &str, id: &str, creator: &str, name: &str, options: &[String], multi: bool, secret: Option<&[u8]>) -> Result<()> {
+        let chat = chat.to_owned();
+        let id = id.to_owned();
+        let creator = creator.to_owned();
+        let name = name.to_owned();
+        let options = options.to_vec();
+        let secret = secret.map(|value| value.to_vec());
+        self.run(move |store| store.save_poll(&chat, &id, &creator, &name, &options, multi, secret.as_deref())).await
+    }
+
+    pub(crate) async fn poll_secret(&self, chat: &str, id: &str) -> Result<Option<Secretive>> {
+        let chat = chat.to_owned();
+        let id = id.to_owned();
+        self.run(move |store| store.poll_secret(&chat, &id)).await
+    }
+
+    pub(crate) async fn set_poll_vote(&self, chat: &str, poll: &str, voter: &str, options: &[String]) -> Result<()> {
+        let chat = chat.to_owned();
+        let poll = poll.to_owned();
+        let voter = voter.to_owned();
+        let options = options.to_vec();
+        self.run(move |store| store.set_poll_vote(&chat, &poll, &voter, &options)).await
+    }
+
+    pub(crate) async fn save_event(&self, chat: &str, id: &str, creator: &str, event: &NewEvent, secret: Option<&[u8]>) -> Result<()> {
+        let chat = chat.to_owned();
+        let id = id.to_owned();
+        let creator = creator.to_owned();
+        let event = event.clone();
+        let secret = secret.map(|value| value.to_vec());
+        self.run(move |store| store.save_event(&chat, &id, &creator, &event, secret.as_deref())).await
+    }
+
+    pub(crate) async fn event_secret(&self, chat: &str, id: &str) -> Result<Option<Secretive>> {
+        let chat = chat.to_owned();
+        let id = id.to_owned();
+        self.run(move |store| store.event_secret(&chat, &id)).await
+    }
+
+    pub(crate) async fn set_event_response(&self, chat: &str, event: &str, responder: &str, response: &str) -> Result<()> {
+        let chat = chat.to_owned();
+        let event = event.to_owned();
+        let responder = responder.to_owned();
+        let response = response.to_owned();
+        self.run(move |store| store.set_event_response(&chat, &event, &responder, &response)).await
+    }
+}

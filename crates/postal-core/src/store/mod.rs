@@ -21,6 +21,8 @@ mod retention;
 pub use retention::{DiskRetention, DiskRetentionManager};
 mod limits;
 mod storage;
+mod worker;
+pub(crate) use worker::{StoreWorker, AliasWorker};
 pub use limits::RetentionLimit;
 #[cfg(test)]
 mod tests;

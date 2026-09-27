@@ -45,13 +45,13 @@ fn message_secret(message: &wa::Message) -> Option<Vec<u8>> {
 }
 
 /// Keeps a poll's or event's definition, which its later votes and RSVPs need.
-pub(super) fn remember_structures(store: &MessageStore, chat: &str, id: &str, creator: &str, message: &wa::Message) {
+pub(super) async fn remember_structures(store: &StoreWorker, chat: &str, id: &str, creator: &str, message: &wa::Message) {
     let secret = message_secret(message);
     if let Some((name, options, multi)) = poll_of(message) {
-        store.save_poll(chat, id, creator, &name, &options, multi, secret.as_deref()).logged();
+        store.save_poll(chat, id, creator, &name, &options, multi, secret.as_deref()).await.logged();
     }
     if let Some(event) = event_of(message) {
-        store.save_event(chat, id, creator, &event, secret.as_deref()).logged();
+        store.save_event(chat, id, creator, &event, secret.as_deref()).await.logged();
     }
 }
 
@@ -78,9 +78,9 @@ impl WhatsAppService {
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let id = result.message_id.clone();
         self.store
-            .save_poll(chat, &id, &self.own_jid(), question, &options, multi, Some(&secret))?;
+            .save_poll(chat, &id, &self.own_jid(), question, &options, multi, Some(&secret)).await?;
         let stored = self.own_message(chat, &id, question.to_string(), "poll", to_self);
-        self.store.insert_message(&stored)?;
+        self.store.insert_message(&stored).await?;
         let _ = self.events.send(ServiceEvent::hint(&stored, true));
         Ok(())
     }
@@ -89,7 +89,7 @@ impl WhatsAppService {
     pub async fn vote_poll(&self, chat: &str, id: &str, options: Vec<String>) -> Result<()> {
         let def = self
             .store
-            .poll_secret(chat, id)?
+            .poll_secret(chat, id).await?
             .ok_or_else(|| anyhow::anyhow!("this poll arrived without its key, so it cannot be voted on here"))?;
         let jid: Jid = chat.parse()?;
         let creator: Jid = def.creator.parse()?;
@@ -98,7 +98,7 @@ impl WhatsAppService {
             .vote(jid, id, &creator, &def.secret, &options)
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        self.store.set_poll_vote(chat, id, "@me", &options)?;
+        self.store.set_poll_vote(chat, id, "@me", &options).await?;
         let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
         Ok(())
     }
@@ -126,9 +126,9 @@ impl WhatsAppService {
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let id = result.message_id.clone();
-        self.store.save_event(chat, &id, &self.own_jid(), &event, Some(&secret))?;
+        self.store.save_event(chat, &id, &self.own_jid(), &event, Some(&secret)).await?;
         let stored = self.own_message(chat, &id, event.name, "event", to_self);
-        self.store.insert_message(&stored)?;
+        self.store.insert_message(&stored).await?;
         let _ = self.events.send(ServiceEvent::hint(&stored, true));
         Ok(())
     }
@@ -138,7 +138,7 @@ impl WhatsAppService {
     pub async fn edit_event(&self, chat: &str, id: &str, event: crate::store::NewEvent) -> Result<()> {
         let def = self
             .store
-            .event_secret(chat, id)?
+            .event_secret(chat, id).await?
             .ok_or_else(|| anyhow::anyhow!("this event's key never reached this device"))?;
         let own: Vec<String> = [self.client.pn(), self.client.lid()]
             .into_iter()
@@ -170,8 +170,8 @@ impl WhatsAppService {
             .edit_message_encrypted(to, id, &def.secret, content)
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        self.store.save_event(chat, id, &def.creator, &event, None)?;
-        self.store.update_message_content(chat, id, &event.name)?;
+        self.store.save_event(chat, id, &def.creator, &event, None).await?;
+        self.store.update_message_content(chat, id, &event.name).await?;
         let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
         Ok(())
     }
@@ -187,7 +187,7 @@ impl WhatsAppService {
         };
         let def = self
             .store
-            .event_secret(chat, id)?
+            .event_secret(chat, id).await?
             .ok_or_else(|| anyhow::anyhow!("this event arrived without its key, so it cannot be answered here"))?;
         let jid: Jid = chat.parse()?;
         let creator: Jid = def.creator.parse()?;
@@ -196,7 +196,7 @@ impl WhatsAppService {
             .respond(jid, id, &creator, &def.secret, answer, None)
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        self.store.set_event_response(chat, id, "@me", response)?;
+        self.store.set_event_response(chat, id, "@me", response).await?;
         let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
         Ok(())
     }

@@ -6,7 +6,7 @@ use whatsapp_rust::wacore::types::events::{Receipt, ServerAck};
 impl Inbound {
     // A receipt names the messages it refers to, so the
     // outgoing row can move to delivered or read.
-    pub(super) fn on_receipt(&self, receipt: &Receipt) {
+    pub(super) async fn on_receipt(&self, receipt: &Receipt) {
         let Self { store, events, .. } = self;
         let status = match receipt.r#type {
             ReceiptType::Read
@@ -31,20 +31,20 @@ impl Inbound {
             let recipient = receipt.source.sender.to_non_ad().to_string();
             let at = receipt.timestamp.timestamp();
             for id in receipt.message_ids.iter() {
-                store.record_receipt(id.as_str(), &recipient, kind, at).logged();
+                store.record_receipt(id.as_str(), &recipient, kind, at).await.logged();
             }
         }
         if let Some(status) = status {
             let chat = receipt.source.chat.to_string();
             for id in receipt.message_ids.iter() {
                 if let Some(true) =
-                    store.set_delivery_state(&chat, id.as_str(), status).observed()
+                    store.set_delivery_state(&chat, id.as_str(), status).await.observed()
                 {
-                    if let Some(updated) = store.message(&chat, id.as_str()).observed() {
+                    if let Some(updated) = store.message(&chat, id.as_str()).await.observed() {
                         let _ = events.send(ServiceEvent::hint(&updated, false));
                     }
                 } else if let Some(updated) =
-                    store.set_delivery_state_by_id(id.as_str(), status).observed()
+                    store.set_delivery_state_by_id(id.as_str(), status).await.observed()
                 {
                     for message in updated {
                         let _ = events.send(ServiceEvent::hint(&message, false));
@@ -58,7 +58,7 @@ impl Inbound {
     // The ack only sometimes names the chat, and the named
     // JID can differ in form from the stored one, so the
     // id alone is the reliable correlator.
-    pub(super) fn on_server_ack(&self, ack: &ServerAck) {
+    pub(super) async fn on_server_ack(&self, ack: &ServerAck) {
         let Self { store, events, .. } = self;
         let accepted = ack.error.is_none();
         let is_message =
@@ -67,9 +67,9 @@ impl Inbound {
             let mut done = false;
             if let Some(chat) = ack.from.as_ref() {
                 let chat = chat.to_string();
-                if let Some(true) = store.set_delivery_state(&chat, &ack.id, "sent").observed()
+                if let Some(true) = store.set_delivery_state(&chat, &ack.id, "sent").await.observed()
                 {
-                    if let Some(updated) = store.message(&chat, &ack.id).observed() {
+                    if let Some(updated) = store.message(&chat, &ack.id).await.observed() {
                         let _ = events.send(ServiceEvent::hint(&updated, false));
                     }
                     done = true;
@@ -77,7 +77,7 @@ impl Inbound {
             }
             if !done {
                 if let Some(updated) =
-                    store.set_delivery_state_by_id(&ack.id, "sent").observed()
+                    store.set_delivery_state_by_id(&ack.id, "sent").await.observed()
                 {
                     for message in updated {
                         let _ = events.send(ServiceEvent::hint(&message, false));
@@ -102,14 +102,14 @@ impl WhatsAppService {
     /// Marks a chat's incoming messages as read, and with `receipts` tells
     /// their senders. Returns how many changed.
     pub async fn mark_read(&self, chat: &str, receipts: bool) -> Result<usize> {
-        let unread = if receipts { self.store.unread_ids(chat)? } else { Vec::new() };
-        let changed = self.store.mark_read(chat)?;
+        let unread = if receipts { self.store.unread_ids(chat).await? } else { Vec::new() };
+        let changed = self.store.mark_read(chat).await?;
         self.send_read_receipts(chat, unread).await?;
         if changed > 0 {
-            let range = self.read_range(chat, None);
+            let range = self.read_range(chat, None).await;
             self.sync_chat_read(chat, range).await;
         }
-        self.clear_unread_mark(chat);
+        self.clear_unread_mark(chat).await;
         Ok(changed)
     }
 
@@ -118,14 +118,14 @@ impl WhatsAppService {
     /// Used when a chat is opened at its unread divider: only what has actually
     /// been scrolled past is read, so messages below stay unread.
     pub async fn mark_read_until(&self, chat: &str, id: &str, receipts: bool) -> Result<usize> {
-        let unread = if receipts { self.store.unread_until(chat, id)? } else { Vec::new() };
-        let changed = self.store.mark_read_until(chat, id)?;
+        let unread = if receipts { self.store.unread_until(chat, id).await? } else { Vec::new() };
+        let changed = self.store.mark_read_until(chat, id).await?;
         self.send_read_receipts(chat, unread).await?;
         if changed > 0 {
-            let range = self.read_range(chat, Some(id));
+            let range = self.read_range(chat, Some(id)).await;
             self.sync_chat_read(chat, range).await;
         }
-        self.clear_unread_mark(chat);
+        self.clear_unread_mark(chat).await;
         Ok(changed)
     }
 
@@ -140,15 +140,15 @@ impl WhatsAppService {
 
     /// The message range naming where a chat was read to: the boundary message
     /// itself, or the newest one when the whole chat was read.
-    fn read_range(
+    async fn read_range(
         &self,
         chat: &str,
         up_to: Option<&str>,
     ) -> Option<whatsapp_rust::SyncActionMessageRange> {
         let remote = chat.parse::<Jid>().ok()?;
         let boundary = match up_to {
-            Some(id) => self.store.message(chat, id).observed()?,
-            None => self.store.messages_for(chat, 1).observed()?.into_iter().next()?,
+            Some(id) => self.store.message(chat, id).await.observed()?,
+            None => self.store.messages_for(chat, 1).await.observed()?.into_iter().next()?,
         };
         let participant = (remote.is_group() && !boundary.header.from_me)
             .then(|| boundary.header.sender.parse::<Jid>().ok().map(|j| j.to_non_ad()))
@@ -168,9 +168,9 @@ impl WhatsAppService {
 
     /// Opening a chat lifts a manual unread mark locally; the account is told
     /// by [`sync_chat_read`](Self::sync_chat_read).
-    fn clear_unread_mark(&self, chat: &str) {
+    async fn clear_unread_mark(&self, chat: &str) {
         let Ok(jid) = chat.parse::<Jid>() else { return };
-        self.store.clear_marked_unread(&jid.to_non_ad().to_string()).logged();
+        self.store.clear_marked_unread(&jid.to_non_ad().to_string()).await.logged();
     }
 
     /// Sends read receipts for the given `(id, sender)` pairs, grouped per author.

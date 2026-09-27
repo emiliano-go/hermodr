@@ -166,3 +166,52 @@ impl MessageStore {
             .optional()?)
     }
 }
+
+impl StoreWorker {
+    pub(crate) async fn set_name(&self, jid: &str, name: &str) -> Result<()> {
+        let jid = jid.to_owned();
+        let name = name.to_owned();
+        self.run(move |store| store.set_name(&jid, &name)).await
+    }
+
+    pub(crate) async fn set_saved_name(&self, jid: &str, name: &str) -> Result<()> {
+        let jid = jid.to_owned();
+        let name = name.to_owned();
+        self.run(move |store| store.set_saved_name(&jid, &name)).await
+    }
+
+    pub(crate) async fn clear_saved_name(&self, jid: &str) -> Result<()> {
+        let jid = jid.to_owned();
+        self.run(move |store| store.clear_saved_name(&jid)).await
+    }
+
+    pub(crate) async fn saved_name_count(&self) -> Result<usize> {
+        self.run(move |store| store.saved_name_count()).await
+    }
+
+    pub(crate) async fn name_is_saved(&self, jid: &str) -> Result<bool> {
+        let jid = jid.to_owned();
+        self.run(move |store| store.name_is_saved(&jid)).await
+    }
+
+    pub(crate) async fn search_names(&self, query: &str, limit: u32) -> Result<Vec<(String, String, bool)>> {
+        let query = query.to_owned();
+        self.run(move |store| store.search_names(&query, limit)).await
+    }
+
+    pub(crate) async fn name_for(&self, jid: &str) -> Result<Option<String>> {
+        let jid = jid.to_owned();
+        self.run(move |store| store.name_for(&jid)).await
+    }
+
+    pub(crate) async fn set_lid_pn(&self, lid: &str, pn: &str) -> Result<()> {
+        let lid = lid.to_owned();
+        let pn = pn.to_owned();
+        self.run(move |store| store.set_lid_pn(&lid, &pn)).await
+    }
+
+    pub(crate) async fn lid_pn(&self, user: &str) -> Result<Option<(String, String)>> {
+        let user = user.to_owned();
+        self.run(move |store| store.lid_pn(&user)).await
+    }
+}

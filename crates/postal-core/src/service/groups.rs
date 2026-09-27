@@ -50,10 +50,10 @@ impl WhatsAppService {
 
     async fn resolve_untried_groups(&self) -> Result<usize> {
         let now = std::time::Instant::now();
+        let chats = self.store.chats().await?;
         let due: Vec<String> = {
             let backoff = self.subject_backoff.lock().unwrap();
-            self.store
-                .chats()?
+            chats
                 .into_iter()
                 .filter(|c| c.display_name.is_none() && c.chat.ends_with("@g.us"))
                 .map(|c| c.chat)
@@ -63,7 +63,7 @@ impl WhatsAppService {
         let mut resolved = 0;
         for chat in due {
             if let Some(subject) = fetch_group_subject(&self.client, &chat).await {
-                self.store.set_name(&chat, &subject)?;
+                self.store.set_name(&chat, &subject).await?;
                 self.subject_backoff.lock().unwrap().remove(&chat);
                 resolved += 1;
             } else {
@@ -111,7 +111,7 @@ impl WhatsAppService {
             if !seen.insert(mention.clone()) {
                 continue;
             }
-            remember_lid_pn(&self.store, &member.jid, member.phone_number.as_ref().or(member.lid.as_ref()));
+            remember_lid_pn(&self.store, &member.jid, member.phone_number.as_ref().or(member.lid.as_ref())).await;
             let candidates = [
                 member.phone_number.as_ref(),
                 member.lid.as_ref(),
@@ -138,11 +138,8 @@ impl WhatsAppService {
             // phone number, and only last the masked number or the LID.
             // A placeholder under one form must not hide a real name stored
             // under the other.
-            let name = candidates
-                .into_iter()
-                .flatten()
-                .filter_map(|j| self.store.name_for(&j.to_string()).observed().flatten())
-                .find(|n| !is_placeholder_name(n))
+            let candidates: Vec<String> = candidates.into_iter().flatten().map(|j| j.to_string()).collect();
+            let name = first_stored_name(&self.store, &candidates).await.map(|(_, name)| name)
                 .or_else(|| username.clone())
                 .or_else(|| number.clone())
                 .or(masked)
@@ -209,7 +206,7 @@ impl WhatsAppService {
         });
         let parent = metadata.parent_group_jid.as_ref().map(|j| j.to_string());
         let parent_name = match &parent {
-            Some(jid) => match self.store.name_for(jid).observed().flatten() {
+            Some(jid) => match self.store.name_for(jid).await.observed().flatten() {
                 Some(name) => Some(name),
                 None => self.group_overviews().await.into_iter().find(|(id, _)| id == jid).map(|(_, s)| s),
             },
@@ -235,14 +232,10 @@ impl WhatsAppService {
                 participants.iter().find(|p| p.jid == jid)
             });
         let owner_jid = member.map(|p| p.jid.clone()).or_else(|| creator.first().cloned());
+        let named_owner = if member.is_none() { first_stored_name(&self.store, &creator).await.map(|(_, name)| name) } else { None };
         let owner = member
             .map(|p| p.name.clone())
-            .or_else(|| {
-                creator
-                    .iter()
-                    .filter_map(|j| self.store.name_for(j).observed().flatten())
-                    .find(|n| !is_placeholder_name(n))
-            })
+            .or(named_owner)
             .or_else(|| metadata.creator_username.clone())
             .or_else(|| metadata.creator_pn.as_ref().map(|j| format!("+{}", j.user)));
         let community = metadata.is_parent_group;
@@ -280,7 +273,7 @@ impl WhatsAppService {
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let jid = group.id.to_string();
         // Already a member when the chat is here.
-        let joined = self.store.chats()?.iter().any(|c| c.chat == jid);
+        let joined = self.store.chats().await?.iter().any(|c| c.chat == jid);
         let picture = self.avatar(&jid, false).await.ok().flatten();
         Ok(InviteInfo {
             size: group.size.unwrap_or(group.participants.len() as u32),
@@ -377,19 +370,19 @@ impl WhatsAppService {
             .get_reported_messages(jid)
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        Ok(reported
-            .reports
-            .into_iter()
-            .map(|report| AdminReport {
-                message: self.store.message(chat, &report.message_id).observed(),
+        let mut reports = Vec::with_capacity(reported.reports.len());
+        for report in reported.reports {
+            reports.push(AdminReport {
+                message: self.store.message(chat, &report.message_id).await.observed(),
                 reporters: report
                     .reporters
                     .into_iter()
                     .map(|r| (r.phone_number.unwrap_or(r.jid).to_non_ad().to_string(), r.timestamp))
                     .collect(),
                 id: report.message_id,
-            })
-            .collect())
+            });
+        }
+        Ok(reports)
     }
 
     /// Lets members report messages to the admins, or stops them.

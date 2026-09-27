@@ -278,13 +278,15 @@ impl WhatsAppService {
             config.retention,
             config.request_full_history,
         );
-        let store = Arc::new(MessageStore::open(&config.messages_path)?);
+        let store = StoreWorker::open(&config.messages_path).await?;
         let disk_retention = Arc::new(DiskRetentionManager::new(config.retention));
-        let aliases = Arc::new(AliasStore::open(&config.aliases_path)?);
+        let aliases = AliasWorker::open(&config.aliases_path).await?;
         let (events, initial_rx) = broadcast::channel(256);
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
 
-        match reclaim_oversized_secrets(&config.session_path, &config.retention, &store) {
+        let session_path = config.session_path.clone();
+        let retention = config.retention;
+        match store.run(move |store| reclaim_oversized_secrets(&session_path, &retention, store)).await {
             Ok(0) => {}
             Ok(removed) => log::info!("reclaimed {removed} stale decryption secret(s)"),
             Err(e) => log::warn!("could not reclaim stale decryption secrets: {e}"),
@@ -425,8 +427,8 @@ impl WhatsAppService {
                                     .await
                                 {
                                     Ok(_) => {
-                                        backfill_lid_names(&session_path, &store);
-                                        if let Some(count) = store.saved_name_count().observed() {
+                                        store.run(move |store| { backfill_lid_names(&session_path, store); Ok(()) }).await.logged();
+                                        if let Some(count) = store.saved_name_count().await.observed() {
                                             log::info!("address book: {count} saved name(s)");
                                             if count > 0 {
                                                 let _ =

@@ -4,19 +4,19 @@ use tauri::State;
 use crate::AppState;
 
 #[tauri::command(async)]
-pub(crate) fn storage_report(
+pub(crate) async fn storage_report(
     state: State<'_, AppState>, chat: Option<String>,
     order: Option<postal_core::service::StorageOrder>, offset: Option<usize>,
 ) -> Result<postal_core::service::StorageReport, String> {
     state.service()?.storage_report(chat.as_deref(), order.unwrap_or_default(), offset.unwrap_or(0))
-        .map_err(|error| error.to_string())
+        .await.map_err(|error| error.to_string())
 }
 
 #[tauri::command(async)]
-pub(crate) fn storage_cleanup(
+pub(crate) async fn storage_cleanup(
     state: State<'_, AppState>, action: postal_core::service::StorageCleanup,
 ) -> Result<postal_core::service::CleanupResult, String> {
-    state.service()?.cleanup_storage(action).map_err(|error| error.to_string())
+    state.service()?.cleanup_storage(action).await.map_err(|error| error.to_string())
 }
 
 /// Sends an attachment as an image or document.
@@ -119,7 +119,7 @@ pub(crate) fn save_sticker(state: State<'_, AppState>, data: String) -> Result<S
 
 /// Stickers or GIFs already downloaded, newest first.
 #[tauri::command(async)]
-pub(crate) fn media_library(
+pub(crate) async fn media_library(
     state: State<'_, AppState>,
     kind: String,
     prefer: Option<Vec<String>>,
@@ -127,7 +127,7 @@ pub(crate) fn media_library(
     state
         .service()?
         .media_library(&kind, &prefer.unwrap_or_default())
-        .map_err(|e| e.to_string())
+        .await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -175,8 +175,8 @@ pub(crate) fn read_file(path: String) -> Result<String, String> {
 
 /// Deletes downloaded media, keeping the messages.
 #[tauri::command(async)]
-pub(crate) fn flush_media(state: State<'_, AppState>) -> Result<usize, String> {
-    state.service()?.flush_media().map_err(|e| e.to_string())
+pub(crate) async fn flush_media(state: State<'_, AppState>) -> Result<usize, String> {
+    state.service()?.flush_media().await.map_err(|e| e.to_string())
 }
 
 /// Downloads a message's media on demand.
@@ -209,6 +209,6 @@ pub(crate) async fn recover_quote_media(
 
 /// Marks a view-once message opened and deletes its file.
 #[tauri::command(async)]
-pub(crate) fn open_view_once(state: State<'_, AppState>, chat: String, id: String) -> Result<(), String> {
-    state.service()?.open_view_once(&chat, &id).map_err(|e| e.to_string())
+pub(crate) async fn open_view_once(state: State<'_, AppState>, chat: String, id: String) -> Result<(), String> {
+    state.service()?.open_view_once(&chat, &id).await.map_err(|e| e.to_string())
 }

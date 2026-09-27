@@ -188,15 +188,16 @@ pub(super) fn cleanup_storage(store: &MessageStore, directory: &Path, action: St
 }
 
 impl WhatsAppService {
-    pub fn storage_report(&self, chat: Option<&str>, order: StorageOrder, offset: usize) -> Result<StorageReport> {
-        Ok(storage_report(&self.store, self.media_dir.as_deref().ok_or_else(|| anyhow::anyhow!("no media folder configured"))?)?
-            .page(chat, order, offset))
+    pub async fn storage_report(&self, chat: Option<&str>, order: StorageOrder, offset: usize) -> Result<StorageReport> {
+        let directory = self.media_dir.clone().ok_or_else(|| anyhow::anyhow!("no media folder configured"))?;
+        let chat = chat.map(str::to_owned);
+        self.store.run(move |store| Ok(storage_report(store, &directory)?.page(chat.as_deref(), order, offset))).await
     }
 
-    pub fn cleanup_storage(&self, action: StorageCleanup) -> Result<CleanupResult> {
-        let result = cleanup_storage(&self.store,
-            self.media_dir.as_deref().ok_or_else(|| anyhow::anyhow!("no media folder configured"))?, action);
-        if let Some(chats) = self.store.chats().observed() {
+    pub async fn cleanup_storage(&self, action: StorageCleanup) -> Result<CleanupResult> {
+        let directory = self.media_dir.clone().ok_or_else(|| anyhow::anyhow!("no media folder configured"))?;
+        let result = self.store.run(move |store| cleanup_storage(store, &directory, action)).await;
+        if let Some(chats) = self.store.chats().await.observed() {
             let _ = self.events.send(ServiceEvent::HistoryLoaded { chats: chats.into_iter().map(|chat| chat.chat).collect() });
         }
         result

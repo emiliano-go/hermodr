@@ -365,3 +365,87 @@ impl MessageStore {
         Ok(rewritten)
     }
 }
+
+impl StoreWorker {
+    pub(crate) async fn media_paths(&self) -> Result<Vec<String>> {
+        self.run(move |store| store.media_paths()).await
+    }
+
+    pub(crate) async fn set_quote_media_path(&self, chat: &str, id: &str, path: &str) -> Result<()> {
+        let chat = chat.to_owned();
+        let id = id.to_owned();
+        let path = path.to_owned();
+        self.run(move |store| store.set_quote_media_path(&chat, &id, &path)).await
+    }
+
+    pub(crate) async fn media_ref_for(&self, chat: &str, id: &str) -> Result<Option<Vec<u8>>> {
+        let chat = chat.to_owned();
+        let id = id.to_owned();
+        self.run(move |store| store.media_ref_for(&chat, &id)).await
+    }
+
+    pub(crate) async fn set_media_ref(&self, chat: &str, id: &str, media_ref: &[u8]) -> Result<()> {
+        let chat = chat.to_owned();
+        let id = id.to_owned();
+        let media_ref = media_ref.to_vec();
+        self.run(move |store| store.set_media_ref(&chat, &id, &media_ref)).await
+    }
+
+    pub(crate) async fn set_media_path(&self, chat: &str, id: &str, path: &str) -> Result<()> {
+        let chat = chat.to_owned();
+        let id = id.to_owned();
+        let path = path.to_owned();
+        self.run(move |store| store.set_media_path(&chat, &id, &path)).await
+    }
+
+    pub(crate) async fn set_once_kind(&self, chat: &str, id: &str, kind: &str) -> Result<()> {
+        let chat = chat.to_owned();
+        let id = id.to_owned();
+        let kind = kind.to_owned();
+        self.run(move |store| store.set_once_kind(&chat, &id, &kind)).await
+    }
+
+    pub(crate) async fn pending_view_once(&self, within: std::time::Duration) -> Result<Vec<(String, String)>> {
+        self.run(move |store| store.pending_view_once(within)).await
+    }
+
+    pub(crate) async fn keep_view_once(&self, chat: &str, id: &str) -> Result<()> {
+        let chat = chat.to_owned();
+        let id = id.to_owned();
+        self.run(move |store| store.keep_view_once(&chat, &id)).await
+    }
+
+    pub(crate) async fn set_view_once(&self, chat: &str, id: &str, opened: bool) -> Result<()> {
+        let chat = chat.to_owned();
+        let id = id.to_owned();
+        self.run(move |store| store.set_view_once(&chat, &id, opened)).await
+    }
+
+    pub(crate) async fn view_once_copy(&self, chat: &str, quoted: &str) -> Result<Option<Vec<u8>>> {
+        let chat = chat.to_owned();
+        let quoted = quoted.to_owned();
+        self.run(move |store| store.view_once_copy(&chat, &quoted)).await
+    }
+
+    pub(crate) async fn quote_source_for(&self, id: &str) -> Result<Option<QuoteSource>> {
+        let id = id.to_owned();
+        self.run(move |store| store.quote_source_for(&id)).await
+    }
+
+    pub(crate) async fn is_view_once(&self, chat: &str, id: &str) -> Result<bool> {
+        let chat = chat.to_owned();
+        let id = id.to_owned();
+        self.run(move |store| store.is_view_once(&chat, &id)).await
+    }
+
+    pub(crate) async fn open_view_once(&self, chat: &str, id: &str) -> Result<Option<String>> {
+        let chat = chat.to_owned();
+        let id = id.to_owned();
+        self.run(move |store| store.open_view_once(&chat, &id)).await
+    }
+
+    pub(crate) async fn recent_media(&self, kind: &str, limit: u32) -> Result<Vec<String>> {
+        let kind = kind.to_owned();
+        self.run(move |store| store.recent_media(&kind, limit)).await
+    }
+}

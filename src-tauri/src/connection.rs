@@ -231,13 +231,12 @@ pub(crate) fn spawn_once_manager(app: &AppHandle) {
                         }
                     }
                 } else {
-                    let pending: std::collections::HashSet<(String, String)> = state
-                        .service
-                        .lock()
-                        .unwrap()
-                        .as_ref()
-                        .map(|s| s.pending_view_once(ONCE_RECOVERY_WINDOW))
-                        .unwrap_or_default()
+                    let service = state.service.lock().unwrap().clone();
+                    let pending = match service {
+                        Some(service) => service.pending_view_once(ONCE_RECOVERY_WINDOW).await,
+                        None => Vec::new(),
+                    };
+                    let pending: std::collections::HashSet<(String, String)> = pending
                         .into_iter()
                         .filter(|id| !ignored.contains(id))
                         .collect();

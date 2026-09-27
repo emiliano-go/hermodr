@@ -32,7 +32,7 @@ async fn storage_failures_are_logged_and_event_processing_continues() {
     conn.execute_batch("CREATE TRIGGER fail_name BEFORE INSERT ON names BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END;").unwrap();
     let (events, mut received) = broadcast::channel(32);
     let inbound = Inbound {
-        store: Arc::new(store), events, connected: Arc::default(), client_for_events: Arc::default(),
+        store: StoreWorker::new(store), events, connected: Arc::default(), client_for_events: Arc::default(),
         disk_retention: Arc::new(DiskRetentionManager::new(DiskRetention::unlimited())),
         media_dir: None, group_cache: Arc::default(), groups_cache: Arc::default(),
         older_waits: Arc::default(), downloads: Arc::new(tokio::sync::Semaphore::new(1)),
@@ -49,10 +49,10 @@ async fn storage_failures_are_logged_and_event_processing_continues() {
         })).build());
     inbound.handle(&update("rejected")).await;
     assert!(ERRORS.with_borrow(|errors| errors.iter().any(|error| error.contains("synthetic write failure"))));
-    assert!(inbound.store.name_for("1@g.us").unwrap().is_none());
+    assert!(inbound.store.name_for("1@g.us").await.unwrap().is_none());
     conn.execute_batch("DROP TRIGGER fail_name").unwrap();
     inbound.handle(&update("accepted")).await;
-    assert_eq!(inbound.store.name_for("1@g.us").unwrap().as_deref(), Some("accepted"));
+    assert_eq!(inbound.store.name_for("1@g.us").await.unwrap().as_deref(), Some("accepted"));
     assert!(std::iter::from_fn(|| received.try_recv().ok()).any(|event| matches!(event, ServiceEvent::GroupChanged { .. })));
     assert!(stored_message(&wa::Message::default(), MessageHeader::default(), None, None, false).await.is_none());
     drop(inbound);
@@ -126,7 +126,7 @@ async fn group_changes_invalidate_fetched_metadata_and_overviews() {
     };
     let (events, mut received) = broadcast::channel(32);
     let inbound = Inbound {
-        store: Arc::new(MessageStore::open(Path::new(":memory:")).unwrap()),
+        store: StoreWorker::open(Path::new(":memory:")).await.unwrap(),
         disk_retention: Arc::new(DiskRetentionManager::new(DiskRetention::unlimited())),
         events,
         connected: Arc::default(),
@@ -165,7 +165,7 @@ async fn group_changes_invalidate_fetched_metadata_and_overviews() {
         assert!(!inbound.group_cache.lock().unwrap().contains_key("1@g.us"));
         assert!(inbound.group_cache.lock().unwrap().contains_key("other@g.us"));
         assert!(inbound.groups_cache.lock().unwrap().is_none());
-        assert_eq!(inbound.store.name_for("1@g.us").unwrap().as_deref(), Some("New subject"));
+        assert_eq!(inbound.store.name_for("1@g.us").await.unwrap().as_deref(), Some("New subject"));
         let mut announced = false;
         while let Ok(event) = received.try_recv() {
             if matches!(event, ServiceEvent::GroupChanged { chat } if chat == "1@g.us") {
@@ -176,40 +176,40 @@ async fn group_changes_invalidate_fetched_metadata_and_overviews() {
     }
 }
 
-#[test]
-fn learned_caller_address_forms_reach_saved_names() {
-    let store = MessageStore::open(Path::new(":memory:")).unwrap();
+#[tokio::test]
+async fn learned_caller_address_forms_reach_saved_names() {
+    let store = StoreWorker::open(Path::new(":memory:")).await.unwrap();
     let lid: Jid = "123:4@lid".parse().unwrap();
     let pn: Jid = "59897504482:5@s.whatsapp.net".parse().unwrap();
-    remember_lid_pn(&store, &lid, Some(&pn));
-    store.set_saved_name("59897504482@s.whatsapp.net", "Ada").unwrap();
-    let forms = contact_forms(&store, "123@lid");
+    remember_lid_pn(&store, &lid, Some(&pn)).await;
+    store.set_saved_name("59897504482@s.whatsapp.net", "Ada").await.unwrap();
+    let forms = contact_forms(&store, "123@lid").await;
     assert_eq!(forms, ["123@lid", "59897504482@s.whatsapp.net"]);
-    assert_eq!(forms.iter().find_map(|jid| store.name_for(jid).unwrap()), Some("Ada".into()));
+    assert_eq!(first_stored_name(&store, &forms).await, Some(("59897504482@s.whatsapp.net".into(), "Ada".into())));
 }
 
 /// A contact the core has mapped to a phone number answers to both forms,
 /// so an alias added from either place is found from the other.
-#[test]
-fn an_alias_reaches_a_contact_through_both_of_its_address_forms() {
-    let store = MessageStore::open(Path::new(":memory:")).unwrap();
-    store.set_lid_pn("12345", "59891954564").unwrap();
+#[tokio::test]
+async fn an_alias_reaches_a_contact_through_both_of_its_address_forms() {
+    let store = StoreWorker::open(Path::new(":memory:")).await.unwrap();
+    store.set_lid_pn("12345", "59891954564").await.unwrap();
     assert_eq!(
-        contact_forms(&store, "12345@lid"),
+        contact_forms(&store, "12345@lid").await,
         ["12345@lid", "59891954564@s.whatsapp.net"]
     );
     assert_eq!(
-        contact_forms(&store, "59891954564@s.whatsapp.net"),
+        contact_forms(&store, "59891954564@s.whatsapp.net").await,
         ["59891954564@s.whatsapp.net", "12345@lid"]
     );
 }
 
 /// A contact the core has not mapped has no twin, and still gets an alias.
-#[test]
-fn an_unmapped_contact_has_only_the_form_it_was_given() {
-    let store = MessageStore::open(Path::new(":memory:")).unwrap();
+#[tokio::test]
+async fn an_unmapped_contact_has_only_the_form_it_was_given() {
+    let store = StoreWorker::open(Path::new(":memory:")).await.unwrap();
     assert_eq!(
-        contact_forms(&store, "59891954564@s.whatsapp.net"),
+        contact_forms(&store, "59891954564@s.whatsapp.net").await,
         ["59891954564@s.whatsapp.net"]
     );
 }
@@ -482,8 +482,8 @@ fn view_once_media_is_nested_in_the_v2_container() {
 /// and its messages are stored under, so archive/pin/mute land on the right row.
 #[tokio::test]
 async fn a_lid_state_change_lands_on_the_phone_number_row() {
-    let store = MessageStore::open(Path::new(":memory:")).unwrap();
-    store.set_lid_pn("12345", "59891954564").unwrap();
+    let store = StoreWorker::open(Path::new(":memory:")).await.unwrap();
+    store.set_lid_pn("12345", "59891954564").await.unwrap();
 
     let lid: Jid = "12345@lid".parse().unwrap();
     assert_eq!(

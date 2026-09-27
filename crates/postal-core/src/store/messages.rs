@@ -316,3 +316,76 @@ impl MessageStore {
         Ok(changed > 0)
     }
 }
+
+impl StoreWorker {
+    pub(crate) async fn insert_message(&self, message: &StoredMessage) -> Result<()> {
+        let message = message.clone();
+        self.run(move |store| store.insert_message(&message)).await
+    }
+
+    pub(crate) async fn messages_for(&self, chat: &str, limit: u32) -> Result<Vec<StoredMessage>> {
+        let chat = chat.to_owned();
+        self.run(move |store| store.messages_for(&chat, limit)).await
+    }
+
+    pub(crate) async fn pings(&self, chat: Option<&str>, limit: u32) -> Result<Vec<StoredMessage>> {
+        let chat = chat.map(str::to_owned);
+        self.run(move |store| store.pings(chat.as_deref(), limit)).await
+    }
+
+    pub(crate) async fn search_messages(&self, chat: &str, query: &str, limit: u32) -> Result<Vec<StoredMessage>> {
+        let chat = chat.to_owned();
+        let query = query.to_owned();
+        self.run(move |store| store.search_messages(&chat, &query, limit)).await
+    }
+
+    pub(crate) async fn starred_messages(&self) -> Result<Vec<StoredMessage>> {
+        self.run(move |store| store.starred_messages()).await
+    }
+
+    pub(crate) async fn oldest_message(&self, chat: &str) -> Result<Option<(String, bool, i64)>> {
+        let chat = chat.to_owned();
+        self.run(move |store| store.oldest_message(&chat)).await
+    }
+
+    pub(crate) async fn has_system_near(&self, chat: &str, kind: &str, timestamp: i64) -> Result<bool> {
+        let chat = chat.to_owned();
+        let kind = kind.to_owned();
+        self.run(move |store| store.has_system_near(&chat, &kind, timestamp)).await
+    }
+
+    pub(crate) async fn chat_of_message(&self, id: &str) -> Result<Option<String>> {
+        let id = id.to_owned();
+        self.run(move |store| store.chat_of_message(&id)).await
+    }
+
+    pub(crate) async fn update_message_content(&self, chat: &str, id: &str, text: &str) -> Result<bool> {
+        let chat = chat.to_owned();
+        let id = id.to_owned();
+        let text = text.to_owned();
+        self.run(move |store| store.update_message_content(&chat, &id, &text)).await
+    }
+
+    pub(crate) async fn delete_message(&self, chat: &str, id: &str) -> Result<()> {
+        let chat = chat.to_owned();
+        let id = id.to_owned();
+        self.run(move |store| store.delete_message(&chat, &id)).await
+    }
+
+    pub(crate) async fn unread_mentions(&self, chat: &str) -> Result<Vec<String>> {
+        let chat = chat.to_owned();
+        self.run(move |store| store.unread_mentions(&chat)).await
+    }
+
+    pub(crate) async fn message(&self, chat: &str, id: &str) -> Result<StoredMessage> {
+        let chat = chat.to_owned();
+        let id = id.to_owned();
+        self.run(move |store| store.message(&chat, &id)).await
+    }
+
+    pub(crate) async fn revoke_message(&self, chat: &str, id: &str) -> Result<bool> {
+        let chat = chat.to_owned();
+        let id = id.to_owned();
+        self.run(move |store| store.revoke_message(&chat, &id)).await
+    }
+}

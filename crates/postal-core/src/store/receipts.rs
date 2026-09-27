@@ -180,3 +180,57 @@ impl MessageStore {
         Ok(changed)
     }
 }
+
+impl StoreWorker {
+    pub(crate) async fn record_receipt(&self, id: &str, recipient: &str, kind: &str, at: i64) -> Result<()> {
+        let id = id.to_owned();
+        let recipient = recipient.to_owned();
+        let kind = kind.to_owned();
+        self.run(move |store| store.record_receipt(&id, &recipient, &kind, at)).await
+    }
+
+    pub(crate) async fn receipts(&self, id: &str) -> Result<Vec<MessageReceipt>> {
+        let id = id.to_owned();
+        self.run(move |store| store.receipts(&id)).await
+    }
+
+    pub(crate) async fn set_delivery_state(&self, chat: &str, id: &str, status: &str) -> Result<bool> {
+        let chat = chat.to_owned();
+        let id = id.to_owned();
+        let status = status.to_owned();
+        self.run(move |store| store.set_delivery_state(&chat, &id, &status)).await
+    }
+
+    pub(crate) async fn set_delivery_state_by_id(&self, id: &str, status: &str) -> Result<Vec<StoredMessage>> {
+        let id = id.to_owned();
+        let status = status.to_owned();
+        self.run(move |store| store.set_delivery_state_by_id(&id, &status)).await
+    }
+
+    pub(crate) async fn unread_ids(&self, chat: &str) -> Result<Vec<(String, String)>> {
+        let chat = chat.to_owned();
+        self.run(move |store| store.unread_ids(&chat)).await
+    }
+
+    pub(crate) async fn mark_read(&self, chat: &str) -> Result<usize> {
+        let chat = chat.to_owned();
+        self.run(move |store| store.mark_read(&chat)).await
+    }
+
+    pub(crate) async fn mark_read_through(&self, chat: &str, timestamp: i64) -> Result<usize> {
+        let chat = chat.to_owned();
+        self.run(move |store| store.mark_read_through(&chat, timestamp)).await
+    }
+
+    pub(crate) async fn unread_until(&self, chat: &str, id: &str) -> Result<Vec<(String, String)>> {
+        let chat = chat.to_owned();
+        let id = id.to_owned();
+        self.run(move |store| store.unread_until(&chat, &id)).await
+    }
+
+    pub(crate) async fn mark_read_until(&self, chat: &str, id: &str) -> Result<usize> {
+        let chat = chat.to_owned();
+        let id = id.to_owned();
+        self.run(move |store| store.mark_read_until(&chat, &id)).await
+    }
+}

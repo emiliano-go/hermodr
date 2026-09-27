@@ -16,7 +16,7 @@ impl WhatsAppService {
         mentions: Vec<String>,
     ) -> Result<()> {
         let to: Jid = chat.parse()?;
-        self.unarchive_on_send(chat);
+        self.unarchive_on_send(chat).await;
         let to_self = self.is_self_jid(&to);
         let text = text.into();
         // `@all` is a group mention, carried separately from member mentions.
@@ -46,7 +46,7 @@ impl WhatsAppService {
             if mention_all {
                 context.group_mentions = vec![wa::GroupMention {
                     group_jid: Some(chat.to_string()),
-                    group_subject: self.store.name_for(chat).observed().flatten(),
+                    group_subject: self.store.name_for(chat).await.observed().flatten(),
                 }];
             }
             let extended = wa::message::ExtendedTextMessage {
@@ -79,7 +79,7 @@ impl WhatsAppService {
                 color: p.color.clone(),
             };
         }
-        self.store.insert_message(&message)?;
+        self.store.insert_message(&message).await?;
         let _ = self.events.send(ServiceEvent::hint(&message, true));
         Ok(())
     }
@@ -91,7 +91,7 @@ impl WhatsAppService {
         if text.trim().is_empty() {
             anyhow::bail!("an edit cannot be empty");
         }
-        let existing = self.store.message(chat, id)?;
+        let existing = self.store.message(chat, id).await?;
         if !existing.header.from_me {
             anyhow::bail!("only your own messages can be edited");
         }
@@ -99,8 +99,8 @@ impl WhatsAppService {
             .edit_message(to, id, wa::Message::text(text.clone()))
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        self.store.update_message_content(chat, id, &text)?;
-        if let Some(updated) = self.store.message(chat, id).observed() {
+        self.store.update_message_content(chat, id, &text).await?;
+        if let Some(updated) = self.store.message(chat, id).await.observed() {
             // Status-only: the row refetches, without following or marking read.
             let _ = self.events.send(ServiceEvent::hint(&updated, false));
         }
@@ -113,7 +113,7 @@ impl WhatsAppService {
         let jid: Jid = chat.parse()?;
         let key = resolve_chat(Some(self.client.as_ref()), &self.store, &jid).await;
         let jid: Jid = key.parse()?;
-        self.store.set_pinned(&key, pinned)?;
+        self.store.set_pinned(&key, pinned).await?;
         let actions = self.client.chat_actions();
         let result = if pinned {
             actions.pin_chat(&jid).await
@@ -126,9 +126,9 @@ impl WhatsAppService {
     /// The message range WhatsApp Web attaches to an archive action, so the
     /// receiving devices can resolve conflicts. Built from the chat's newest
     /// messages; `None` when there are none to name.
-    fn archive_range(&self, chat: &str) -> Option<whatsapp_rust::SyncActionMessageRange> {
+    async fn archive_range(&self, chat: &str) -> Option<whatsapp_rust::SyncActionMessageRange> {
         let remote = chat.parse::<Jid>().ok()?;
-        let messages = self.store.messages_for(chat, 3).observed()?;
+        let messages = self.store.messages_for(chat, 3).await.observed()?;
         let last = messages.first()?.header.timestamp;
         let mut keys = Vec::with_capacity(messages.len());
         for m in &messages {
@@ -154,8 +154,8 @@ impl WhatsAppService {
         let key = resolve_chat(Some(self.client.as_ref()), &self.store, &jid).await;
         let jid: Jid = key.parse()?;
         log::debug!("set_archived {key}: {archived}");
-        self.store.set_archived(&key, archived)?;
-        let range = self.archive_range(&key);
+        self.store.set_archived(&key, archived).await?;
+        let range = self.archive_range(&key).await;
         let actions = self.client.chat_actions();
         let result = if archived {
             actions.archive_chat(&jid, range).await
@@ -167,13 +167,13 @@ impl WhatsAppService {
 
     /// Sending to an archived chat brings it back to the main list, as WhatsApp
     /// does; the account is told too so the phone agrees.
-    pub(super) fn unarchive_on_send(&self, chat: &str) {
+    pub(super) async fn unarchive_on_send(&self, chat: &str) {
         let Ok(jid) = chat.parse::<Jid>() else { return };
         let bare = jid.to_non_ad().to_string();
-        if !self.store.is_archived(&bare).observed().unwrap_or(false) {
+        if !self.store.is_archived(&bare).await.observed().unwrap_or(false) {
             return;
         }
-        self.store.set_archived(&bare, false).logged();
+        self.store.set_archived(&bare, false).await.logged();
         let _ = self.events.send(ServiceEvent::ChatStateChanged { chat: bare });
         let client = self.client.clone();
         tokio::spawn(async move {
@@ -188,7 +188,7 @@ impl WhatsAppService {
         let jid: Jid = chat.parse()?;
         let key = resolve_chat(Some(self.client.as_ref()), &self.store, &jid).await;
         let jid: Jid = key.parse()?;
-        self.store.set_muted_until(&key, until)?;
+        self.store.set_muted_until(&key, until).await?;
         let actions = self.client.chat_actions();
         let result = match until {
             0 => actions.unmute_chat(&jid).await,
@@ -203,7 +203,7 @@ impl WhatsAppService {
         let jid: Jid = chat.parse()?;
         let key = resolve_chat(Some(self.client.as_ref()), &self.store, &jid).await;
         let jid: Jid = key.parse()?;
-        self.store.set_marked_unread(&key, unread)?;
+        self.store.set_marked_unread(&key, unread).await?;
         self.client
             .chat_actions()
             .mark_chat_as_read(&jid, !unread, None)
@@ -218,34 +218,34 @@ impl WhatsAppService {
     }
 
     /// The chat a stored message id belongs to.
-    pub fn chat_for_message(&self, id: &str) -> Result<Option<String>> {
-        self.store.chat_of_message(id)
+    pub async fn chat_for_message(&self, id: &str) -> Result<Option<String>> {
+        self.store.chat_of_message(id).await
     }
 
     /// Sets a chat's auto download override.
-    pub fn set_chat_auto_download(&self, chat: &str, enabled: bool) -> Result<()> {
-        self.store.set_chat_auto_download(chat, enabled)
+    pub async fn set_chat_auto_download(&self, chat: &str, enabled: bool) -> Result<()> {
+        self.store.set_chat_auto_download(chat, enabled).await
     }
 
     /// Deletes every message stored on this device; the phone keeps its copy.
-    pub fn clear_history(&self) -> Result<usize> {
-        let removed = self.store.clear_history()?;
-        self.prune_quote_files()?;
+    pub async fn clear_history(&self) -> Result<usize> {
+        let removed = self.store.clear_history().await?;
+        self.prune_quote_files().await?;
         Ok(removed)
     }
 
     /// Clears one chat locally: its messages go, the empty chat stays.
-    pub fn clear_chat(&self, chat: &str) -> Result<usize> {
-        let removed = self.store.clear_chat(chat)?;
-        self.prune_quote_files()?;
+    pub async fn clear_chat(&self, chat: &str) -> Result<usize> {
+        let removed = self.store.clear_chat(chat).await?;
+        self.prune_quote_files().await?;
         Ok(removed)
     }
 
     /// Deletes one chat locally: its messages go and it leaves the list until
     /// a new message arrives. Never touches the phone or the other side.
-    pub fn delete_chat(&self, chat: &str) -> Result<usize> {
-        let removed = self.store.delete_chat(chat)?;
-        self.prune_quote_files()?;
+    pub async fn delete_chat(&self, chat: &str) -> Result<usize> {
+        let removed = self.store.delete_chat(chat).await?;
+        self.prune_quote_files().await?;
         Ok(removed)
     }
 
@@ -276,7 +276,7 @@ impl WhatsAppService {
             .send_reaction(jid, Self::message_key(chat, id, sender, from_me), emoji)
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        self.store.set_reaction(chat, id, "@me", emoji)?;
+        self.store.set_reaction(chat, id, "@me", emoji).await?;
         let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
         Ok(())
     }
@@ -291,7 +291,7 @@ impl WhatsAppService {
             actions.unstar_message(&jid, participant.as_ref(), id, from_me).await
         };
         done.map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        self.store.set_starred(chat, id, starred)?;
+        self.store.set_starred(chat, id, starred).await?;
         let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
         Ok(())
     }
@@ -307,7 +307,7 @@ impl WhatsAppService {
             self.client.unpin_message(jid, key).await
         };
         sent.map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        self.store.set_message_pin(chat, pinned.then_some(id))?;
+        self.store.set_message_pin(chat, pinned.then_some(id)).await?;
         let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
         Ok(())
     }
@@ -325,10 +325,10 @@ impl WhatsAppService {
             .revoke_message(jid, id, kind)
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        self.store.revoke_message(chat, id)?;
+        self.store.revoke_message(chat, id).await?;
         // A revoked reply stops naming any view-once copy it had recovered.
-        self.prune_quote_files()?;
-        if let Some(updated) = self.store.message(chat, id).observed() {
+        self.prune_quote_files().await?;
+        if let Some(updated) = self.store.message(chat, id).await.observed() {
             let _ = self.events.send(ServiceEvent::hint(&updated, false));
         }
         Ok(())
@@ -344,19 +344,19 @@ impl WhatsAppService {
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         // The stored copy is gone, so its media file has no other referent.
-        if let Some(message) = self.store.message(chat, id).observed() {
+        if let Some(message) = self.store.message(chat, id).await.observed() {
             if let Some(path) = message.media.path.as_deref() {
                 remove_cached_file(path);
             }
         }
-        self.store.delete_message(chat, id)?;
-        self.prune_quote_files()?;
+        self.store.delete_message(chat, id).await?;
+        self.prune_quote_files().await?;
         Ok(())
     }
 
     /// Sends a copy of a stored message to another chat.
     pub async fn forward(&self, from_chat: &str, id: &str, to_chat: &str) -> Result<()> {
-        let message = self.store.message(from_chat, id)?;
+        let message = self.store.message(from_chat, id).await?;
         // Uncaptioned media is stored as `[kind]`, which must not become a caption.
         let placeholder = message.media.kind.as_ref().map(|kind| format!("[{kind}]"));
         let text = message.text.trim();
@@ -392,26 +392,26 @@ impl WhatsAppService {
                     ..Default::default()
                 };
                 let result = self.client.send_message(to, content).await?;
-                self.store.set_forwarded(to_chat, &result.message_id)?;
+                self.store.set_forwarded(to_chat, &result.message_id).await?;
                 let stored = self.own_message(to_chat, &result.message_id, message.text, "", to_self);
-                self.store.insert_message(&stored)?;
+                self.store.insert_message(&stored).await?;
                 let _ = self.events.send(ServiceEvent::hint(&stored, true));
             }
         }
         Ok(())
     }
 
-    pub fn marks(&self, chat: &str) -> Result<crate::store::ChatMarks> {
-        self.store.marks(chat)
+    pub async fn marks(&self, chat: &str) -> Result<crate::store::ChatMarks> {
+        self.store.marks(chat).await
     }
 
-    pub fn marks_for(&self, chat: &str, ids: &[String]) -> Result<crate::store::ChatMarks> {
-        self.store.marks_for(chat, Some(ids))
+    pub async fn marks_for(&self, chat: &str, ids: &[String]) -> Result<crate::store::ChatMarks> {
+        self.store.marks_for(chat, Some(ids)).await
     }
 
     /// Marks a view-once message opened and deletes its media.
-    pub fn open_view_once(&self, chat: &str, id: &str) -> Result<()> {
-        if let Some(path) = self.store.open_view_once(chat, id)? {
+    pub async fn open_view_once(&self, chat: &str, id: &str) -> Result<()> {
+        if let Some(path) = self.store.open_view_once(chat, id).await? {
             remove_cached_file(path);
         }
         let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
@@ -442,57 +442,58 @@ impl WhatsAppService {
     }
 
     /// Who got, read and played one of our messages.
-    pub fn message_info(&self, id: &str) -> Result<Vec<crate::store::MessageReceipt>> {
-        self.store.receipts(id)
+    pub async fn message_info(&self, id: &str) -> Result<Vec<crate::store::MessageReceipt>> {
+        self.store.receipts(id).await
     }
 
     /// Starred messages across every chat, newest first.
-    pub fn starred_messages(&self) -> Result<Vec<StoredMessage>> {
-        self.store.starred_messages()
+    pub async fn starred_messages(&self) -> Result<Vec<StoredMessage>> {
+        self.store.starred_messages().await
     }
 
     /// Messages that mention us, in one chat or all of them, newest first.
-    pub fn pings(&self, chat: Option<&str>) -> Result<Vec<StoredMessage>> {
-        self.store.pings(chat, 500)
+    pub async fn pings(&self, chat: Option<&str>) -> Result<Vec<StoredMessage>> {
+        self.store.pings(chat, 500).await
     }
 
     /// Up to `limit` messages in a chat containing `query`, newest first.
-    pub fn search_messages(&self, chat: &str, query: &str, limit: u32) -> Result<Vec<StoredMessage>> {
+    pub async fn search_messages(&self, chat: &str, query: &str, limit: u32) -> Result<Vec<StoredMessage>> {
         if query.trim().is_empty() {
             return Ok(Vec::new());
         }
-        self.store.search_messages(chat, query.trim(), limit)
+        self.store.search_messages(chat, query.trim(), limit).await
     }
 
-    pub fn chat_retention(&self, chat: &str) -> Result<crate::store::ChatRetention> {
-        self.store.chat_retention(chat)
+    pub async fn chat_retention(&self, chat: &str) -> Result<crate::store::ChatRetention> {
+        self.store.chat_retention(chat).await
     }
 
     /// Sets a chat's own retention and applies it at once.
-    pub fn set_chat_retention(&self, chat: &str, retention: &crate::store::ChatRetention) -> Result<()> {
-        self.store.set_chat_retention(chat, retention)?;
-        self.disk_retention.enforce(&self.store)?;
-        self.prune_quote_files()?;
+    pub async fn set_chat_retention(&self, chat: &str, retention: &crate::store::ChatRetention) -> Result<()> {
+        self.store.set_chat_retention(chat, retention).await?;
+        let retention = self.disk_retention.clone();
+        self.store.run(move |store| retention.enforce(store)).await?;
+        self.prune_quote_files().await?;
         Ok(())
     }
 
     /// The per chat auto download override, if one is set.
-    pub fn chat_auto_download(&self, chat: &str) -> Result<Option<bool>> {
-        self.store.chat_auto_download(chat)
+    pub async fn chat_auto_download(&self, chat: &str) -> Result<Option<bool>> {
+        self.store.chat_auto_download(chat).await
     }
 
     /// The chat's (typing, read receipts) overrides; `None` follows the global setting.
-    pub fn chat_privacy(&self, chat: &str) -> Result<(Option<bool>, Option<bool>)> {
-        self.store.chat_privacy(chat)
+    pub async fn chat_privacy(&self, chat: &str) -> Result<(Option<bool>, Option<bool>)> {
+        self.store.chat_privacy(chat).await
     }
 
-    pub fn set_chat_privacy(&self, chat: &str, typing: Option<bool>, receipts: Option<bool>) -> Result<()> {
-        self.store.set_chat_privacy(chat, typing, receipts)
+    pub async fn set_chat_privacy(&self, chat: &str, typing: Option<bool>, receipts: Option<bool>) -> Result<()> {
+        self.store.set_chat_privacy(chat, typing, receipts).await
     }
 
     /// Unread messages that mention us, oldest first.
-    pub fn unread_mentions(&self, chat: &str) -> Result<Vec<String>> {
-        self.store.unread_mentions(chat)
+    pub async fn unread_mentions(&self, chat: &str) -> Result<Vec<String>> {
+        self.store.unread_mentions(chat).await
     }
 
     /// Sends a text message quoting an earlier one.
@@ -512,7 +513,7 @@ impl WhatsAppService {
         quote_chat: Option<&str>,
     ) -> Result<()> {
         let to: Jid = chat.parse()?;
-        self.unarchive_on_send(chat);
+        self.unarchive_on_send(chat).await;
         let to_self = self.is_self_jid(&to);
         let quoted_chat: Jid = match quote_chat {
             Some(other) => other.parse()?,
@@ -528,7 +529,7 @@ impl WhatsAppService {
         // The quoted message is the message itself where the store has it, and
         // nothing at all otherwise: the recipient resolves a bare stanza id from
         // its own history, but renders a stand-in as if it were the real thing.
-        let quoted = self.quoted_message(&quoted_chat.to_string(), reply_to_id, reply_to_text);
+        let quoted = self.quoted_message(&quoted_chat.to_string(), reply_to_id, reply_to_text).await;
         let mut context =
             build_quote_context_with_info(reply_to_id, &sender, &quoted_chat, &to, quoted.as_ref().unwrap_or(&wa::Message::text("")));
         if quoted.is_none() {
@@ -542,7 +543,7 @@ impl WhatsAppService {
         if mention_all {
             context.group_mentions = vec![wa::GroupMention {
                 group_jid: Some(chat.to_string()),
-                group_subject: self.store.name_for(chat).observed().flatten(),
+                group_subject: self.store.name_for(chat).await.observed().flatten(),
             }];
         }
 
@@ -551,9 +552,9 @@ impl WhatsAppService {
         let result = self.client.send_message(to, message).await?;
 
         let mut stored = self.own_message(chat, &result.message_id, text, "", to_self);
-        stored.quote = self.local_quote(&quoted_chat.to_string(), reply_to_id, reply_to_sender, sender.to_string() == self.own_jid());
+        stored.quote = self.local_quote(&quoted_chat.to_string(), reply_to_id, reply_to_sender, sender.to_string() == self.own_jid()).await;
         stored.quote.chat = quote_chat.map(str::to_string);
-        self.store.insert_message(&stored)?;
+        self.store.insert_message(&stored).await?;
         let _ = self.events.send(ServiceEvent::hint(&stored, true));
         Ok(())
     }
@@ -571,12 +572,12 @@ impl WhatsAppService {
     /// message from its text. When neither exists the quote is left empty for
     /// the recipient to resolve from its own history, which is what it does
     /// with a reply whose quoted content was withheld.
-    pub(super) fn quoted_message(&self, chat: &str, id: &str, text: &str) -> Option<wa::Message> {
-        if let Some(bytes) = self.store.media_ref_for(chat, id).observed().flatten() {
+    pub(super) async fn quoted_message(&self, chat: &str, id: &str, text: &str) -> Option<wa::Message> {
+        if let Some(bytes) = self.store.media_ref_for(chat, id).await.observed().flatten() {
             if let Ok(message) = <wa::Message as buffa::Message>::decode(&mut bytes.as_slice()) {
                 if detect_media(&message).is_some() {
                     // The locator is the bare media; a view-once is quoted in its wrapper.
-                    let once = self.store.is_view_once(chat, id).observed()?;
+                    let once = self.store.is_view_once(chat, id).await.observed()?;
                     return Some(if once { wrap_view_once(message) } else { message });
                 }
             }
@@ -584,13 +585,13 @@ impl WhatsAppService {
         // A view-once reaches a linked device as a stub with no content. A reply
         // someone else sent quoting it carries the real one, which is quoted
         // back when stored; otherwise an empty view-once of the same kind.
-        if let Some(row) = self.store.message(chat, id).observed() {
+        if let Some(row) = self.store.message(chat, id).await.observed() {
             if row.media.kind.as_deref() == Some("view_once") {
                 use whatsapp_rust::wacore::proto_helpers::MessageExt;
                 let copy = self
                     .store
                     .view_once_copy(chat, id)
-                    .observed()
+                    .await.observed()
                     .flatten()
                     .and_then(|b| <wa::Message as buffa::Message>::decode(&mut b.as_slice()).ok())
                     .filter(|m| detect_media(m.get_base_message()).is_some());
@@ -607,15 +608,16 @@ impl WhatsAppService {
 
     /// The quote to store beside a reply this account sent, so it renders the
     /// message it answers rather than a label.
-    pub(super) fn local_quote(&self, chat: &str, id: &str, sender: &str, is_me: bool) -> Quote {
-        let row = self.store.message(chat, id).observed();
+    pub(super) async fn local_quote(&self, chat: &str, id: &str, sender: &str, is_me: bool) -> Quote {
+        let row = self.store.message(chat, id).await.observed();
+        let once = self.store.is_view_once(chat, id).await.observed();
         let kind = row.as_ref().and_then(|m| m.media.kind.clone());
         let text = row
             .as_ref()
             .map(|m| m.text.clone())
             .filter(|t| !t.trim().is_empty())
             .or_else(|| {
-                let once = self.store.is_view_once(chat, id).observed()?;
+                let once = once?;
                 kind.as_deref().map(|k| match (once, k) {
                     (true, _) => "View once message".to_string(),
                     (false, "image") => "Photo".to_string(),
@@ -634,17 +636,17 @@ impl WhatsAppService {
             sender: Some(if is_me { "@me".to_string() } else { sender.to_string() }),
             kind,
             thumb: row.and_then(|m| m.media.thumb),
-            view_once: self.store.is_view_once(chat, id).observed().unwrap_or(true),
+            view_once: once.unwrap_or(true),
             recoverable: false,
             ..Default::default()
         }
     }
 
     /// Stored messages for a chat, newest first.
-    pub fn message_page(&self, chat: &str, limit: u32, cursor: Option<crate::store::MessageCursor>,
+    pub async fn message_page(&self, chat: &str, limit: u32, cursor: Option<crate::store::MessageCursor>,
         direction: crate::store::MessagePageDirection, anchor_id: Option<&str>) -> Result<crate::store::MessagePage> {
         let cursor = if let Some(id) = anchor_id {
-            match self.store.message(chat, id) {
+            match self.store.message(chat, id).await {
                 Ok(message) => Some(crate::store::MessageCursor { timestamp: message.header.timestamp, id: message.header.id }),
                 Err(error) if error.downcast_ref::<rusqlite::Error>() == Some(&rusqlite::Error::QueryReturnedNoRows) => {
                     return Ok(crate::store::MessagePage { messages: vec![], has_more: false });
@@ -652,15 +654,15 @@ impl WhatsAppService {
                 Err(error) => return Err(error),
             }
         } else { cursor };
-        self.store.message_page(chat, limit, cursor.as_ref(), direction)
+        self.store.message_page(chat, limit, cursor.as_ref(), direction).await
     }
 
-    pub fn messages(&self, chat: &str, limit: u32) -> Result<Vec<StoredMessage>> {
-        self.store.messages_for(chat, limit)
+    pub async fn messages(&self, chat: &str, limit: u32) -> Result<Vec<StoredMessage>> {
+        self.store.messages_for(chat, limit).await
     }
 
     /// Chat summaries, most recently active first.
-    pub fn chats(&self) -> Result<Vec<crate::store::ChatSummary>> {
-        self.store.chats()
+    pub async fn chats(&self) -> Result<Vec<crate::store::ChatSummary>> {
+        self.store.chats().await
     }
 }

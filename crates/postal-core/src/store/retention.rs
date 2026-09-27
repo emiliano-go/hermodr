@@ -251,3 +251,25 @@ impl MessageStore {
         Ok(conn.query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0))?)
     }
 }
+
+impl StoreWorker {
+    pub(crate) async fn chat_retention(&self, jid: &str) -> Result<ChatRetention> {
+        let jid = jid.to_owned();
+        self.run(move |store| store.chat_retention(&jid)).await
+    }
+
+    pub(crate) async fn set_chat_retention(&self, jid: &str, retention: &ChatRetention) -> Result<()> {
+        let jid = jid.to_owned();
+        let retention = retention.clone();
+        self.run(move |store| store.set_chat_retention(&jid, &retention)).await
+    }
+
+    pub(crate) async fn clear_history(&self) -> Result<usize> {
+        self.run(move |store| store.clear_history()).await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn count(&self) -> Result<i64> {
+        self.run(move |store| store.count()).await
+    }
+}

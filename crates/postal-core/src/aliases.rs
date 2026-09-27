@@ -282,3 +282,21 @@ mod tests {
         assert_eq!(aliases_of(&s, "b@s"), no_aliases());
     }
 }
+
+impl crate::store::AliasWorker {
+    pub(crate) async fn all(&self) -> Result<Vec<(String, String)>> {
+        self.run(move |store| store.all()).await
+    }
+
+    pub(crate) async fn add(&self, jids: &[String], alias: &str) -> Result<()> {
+        let jids = jids.to_vec();
+        let alias = alias.to_owned();
+        self.run(move |store| store.add(&jids, &alias)).await
+    }
+
+    pub(crate) async fn remove(&self, jid: &str, alias: &str) -> Result<()> {
+        let jid = jid.to_owned();
+        let alias = alias.to_owned();
+        self.run(move |store| store.remove(&jid, &alias)).await
+    }
+}

@@ -95,6 +95,21 @@ src/                    Svelte 5 UI (chat list, conversation, pairing)
 `postal-core` is built on [`whatsapp-rust`](https://github.com/oxidezap/whatsapp-rust),
 a pure-Rust implementation of the WhatsApp multi-device protocol.
 
+Service database calls use `StoreWorker`/`AliasWorker`: an async gate queues callers
+before `spawn_blocking` runs SQLite. Reads and writes share one connection per
+service. Live/history batches hold an exclusive lease through their savepoint;
+background downloads and other callers wait without occupying Tokio workers.
+Cancellation lets an already-started write finish before releasing the savepoint
+and lease. Network requests remain async and do not run in the blocking pool.
+
+One connection preserves batch ordering and avoids cross-connection cache and
+transaction rules. A large query can delay another database request, but cannot
+stall unrelated async tasks. Add separate read connections only if measured read
+latency warrants them. The optional Android companion owns its own connection;
+SQLite coordinates those connections through WAL and its busy timeout. Synchronous
+`MessageStore` remains available for startup migrations, CLI tools and tests;
+async callers must use the worker boundary.
+
 ## Installing
 
 Releases ship an AppImage. Download it from the releases page, or run:

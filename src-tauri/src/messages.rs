@@ -3,16 +3,16 @@ use tauri::State;
 use crate::{AppState, settings::sends_privacy};
 
 #[tauri::command(async)]
-pub(crate) fn message_page(state: State<'_, AppState>, chat: String, limit: Option<u32>,
+pub(crate) async fn message_page(state: State<'_, AppState>, chat: String, limit: Option<u32>,
     cursor: Option<postal_core::store::MessageCursor>, direction: Option<postal_core::store::MessagePageDirection>,
     anchor_id: Option<String>) -> Result<postal_core::store::MessagePage, String> {
     state.service()?.message_page(&chat, limit.unwrap_or(500), cursor, direction.unwrap_or_default(), anchor_id.as_deref())
-        .map_err(|error| error.to_string())
+        .await.map_err(|error| error.to_string())
 }
 
 /// Stored messages for a chat, newest first.
 #[tauri::command(async)]
-pub(crate) fn messages(
+pub(crate) async fn messages(
     state: State<'_, AppState>,
     chat: String,
     limit: Option<u32>,
@@ -20,14 +20,14 @@ pub(crate) fn messages(
     state
         .service()?
         .messages(&chat, limit.unwrap_or(200))
-        .map_err(|e| e.to_string())
+        .await.map_err(|e| e.to_string())
 }
 
 /// Marks a chat as read. Returns how many messages were newly marked.
 #[tauri::command]
 pub(crate) async fn mark_read(state: State<'_, AppState>, chat: String) -> Result<usize, String> {
     let service = state.service()?;
-    let receipts = sends_privacy(&state, &service, &chat).1;
+    let receipts = sends_privacy(&state, &service, &chat).await.1;
     service.mark_read(&chat, receipts).await.map_err(|e| e.to_string())
 }
 
@@ -39,7 +39,7 @@ pub(crate) async fn mark_read_until(
     id: String,
 ) -> Result<usize, String> {
     let service = state.service()?;
-    let receipts = sends_privacy(&state, &service, &chat).1;
+    let receipts = sends_privacy(&state, &service, &chat).await.1;
     service
         .mark_read_until(&chat, &id, receipts)
         .await
@@ -50,7 +50,7 @@ pub(crate) async fn mark_read_until(
 #[tauri::command]
 pub(crate) async fn mark_played(state: State<'_, AppState>, chat: String, id: String, sender: String) -> Result<(), String> {
     let service = state.service()?;
-    if !sends_privacy(&state, &service, &chat).1 {
+    if !sends_privacy(&state, &service, &chat).await.1 {
         return Ok(());
     }
     service.mark_played(&chat, &id, &sender).await.map_err(|e| e.to_string())
@@ -156,37 +156,38 @@ pub(crate) async fn forward_message(
 }
 
 #[tauri::command(async)]
-pub(crate) fn marks(state: State<'_, AppState>, chat: String, ids: Option<Vec<String>>) -> Result<postal_core::ChatMarks, String> {
+pub(crate) async fn marks(state: State<'_, AppState>, chat: String, ids: Option<Vec<String>>) -> Result<postal_core::ChatMarks, String> {
     let service = state.service()?;
+    let limit = state.settings.lock().unwrap().message_window_size;
     let ids = match ids {
         Some(ids) => ids,
-        None => service.messages(&chat, state.settings.lock().unwrap().message_window_size)
-            .map_err(|error| error.to_string())?.into_iter().map(|m| m.header.id).collect(),
+        None => service.messages(&chat, limit)
+            .await.map_err(|error| error.to_string())?.into_iter().map(|m| m.header.id).collect(),
     };
-    service.marks_for(&chat, &ids).map_err(|e| e.to_string())
+    service.marks_for(&chat, &ids).await.map_err(|e| e.to_string())
 }
 
 /// Who got, read and played one of our messages.
 #[tauri::command(async)]
-pub(crate) fn message_info(state: State<'_, AppState>, id: String) -> Result<Vec<postal_core::MessageReceipt>, String> {
-    state.service()?.message_info(&id).map_err(|e| e.to_string())
+pub(crate) async fn message_info(state: State<'_, AppState>, id: String) -> Result<Vec<postal_core::MessageReceipt>, String> {
+    state.service()?.message_info(&id).await.map_err(|e| e.to_string())
 }
 
 /// Starred messages across every chat, newest first.
 #[tauri::command(async)]
-pub(crate) fn starred_messages(state: State<'_, AppState>) -> Result<Vec<StoredMessage>, String> {
-    state.service()?.starred_messages().map_err(|e| e.to_string())
+pub(crate) async fn starred_messages(state: State<'_, AppState>) -> Result<Vec<StoredMessage>, String> {
+    state.service()?.starred_messages().await.map_err(|e| e.to_string())
 }
 
 /// Messages that mention us, in one chat or (without `chat`) all of them.
 #[tauri::command(async)]
-pub(crate) fn pings(state: State<'_, AppState>, chat: Option<String>) -> Result<Vec<StoredMessage>, String> {
-    state.service()?.pings(chat.as_deref()).map_err(|e| e.to_string())
+pub(crate) async fn pings(state: State<'_, AppState>, chat: Option<String>) -> Result<Vec<StoredMessage>, String> {
+    state.service()?.pings(chat.as_deref()).await.map_err(|e| e.to_string())
 }
 
 /// Up to `limit` (default 50) messages in one chat whose text contains `query`.
 #[tauri::command(async)]
-pub(crate) fn search_messages(
+pub(crate) async fn search_messages(
     state: State<'_, AppState>,
     chat: String,
     query: String,
@@ -195,7 +196,7 @@ pub(crate) fn search_messages(
     state
         .service()?
         .search_messages(&chat, &query, limit.unwrap_or(50).clamp(1, 500))
-        .map_err(|e| e.to_string())
+        .await.map_err(|e| e.to_string())
 }
 
 /// Sends a text message to a chat.
@@ -230,11 +231,11 @@ pub(crate) async fn edit_message(
 
 /// The chat a stored message id belongs to.
 #[tauri::command(async)]
-pub(crate) fn chat_for_message(state: State<'_, AppState>, id: String) -> Result<Option<String>, String> {
+pub(crate) async fn chat_for_message(state: State<'_, AppState>, id: String) -> Result<Option<String>, String> {
     state
         .service()?
         .chat_for_message(&id)
-        .map_err(|e| e.to_string())
+        .await.map_err(|e| e.to_string())
 }
 
 /// Asks the phone for older messages in a chat.
@@ -265,9 +266,9 @@ pub(crate) fn backfill_history(state: State<'_, AppState>) -> Result<(), String>
 
 /// Unread messages that mention us, oldest first.
 #[tauri::command(async)]
-pub(crate) fn unread_mentions(state: State<'_, AppState>, chat: String) -> Result<Vec<String>, String> {
+pub(crate) async fn unread_mentions(state: State<'_, AppState>, chat: String) -> Result<Vec<String>, String> {
     state
         .service()?
         .unread_mentions(&chat)
-        .map_err(|e| e.to_string())
+        .await.map_err(|e| e.to_string())
 }

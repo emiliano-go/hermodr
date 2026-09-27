@@ -39,11 +39,11 @@ impl std::io::Read for CountingReader {
 impl WhatsAppService {
     /// Returns an ordinary attachment, downloading its original file if needed.
     pub async fn media_for_export(&self, chat: &str, id: &str) -> Result<StoredMessage> {
-        let mut message = self.store.message(chat, id)?;
+        let mut message = self.store.message(chat, id).await?;
         ensure_exportable_media(&message)?;
         if message.media.path.as_ref().is_none_or(|path| !Path::new(path).is_file()) {
             self.download_media(chat, id).await?;
-            message = self.store.message(chat, id)?;
+            message = self.store.message(chat, id).await?;
             ensure_exportable_media(&message)?;
         }
         Ok(message)
@@ -81,27 +81,31 @@ impl WhatsAppService {
     ///
     /// Called wherever rows go, since a copy outlives the reply that fetched it
     /// only as long as some row still names it.
-    pub fn prune_quote_files(&self) -> Result<usize> {
-        prune_quote_files(self.media_dir.as_deref(), &self.store)
+    pub async fn prune_quote_files(&self) -> Result<usize> {
+        let directory = self.media_dir.clone();
+        self.store.run(move |store| prune_quote_files(directory.as_deref(), store)).await
     }
 
     /// Deletes downloaded media and forgets the paths, keeping the messages.
-    pub fn flush_media(&self) -> Result<usize> {
-        let cleared = self.store.clear_media_paths()?;
-        if let Some(dir) = &self.media_dir {
-            if dir.exists() {
-                for entry in std::fs::read_dir(dir)? {
-                    let entry = entry?;
-                    let path = entry.path();
-                    if path.is_dir() {
-                        std::fs::remove_dir_all(&path)?;
-                    } else {
-                        std::fs::remove_file(&path)?;
+    pub async fn flush_media(&self) -> Result<usize> {
+        let directory = self.media_dir.clone();
+        self.store.run(move |store| {
+            let cleared = store.clear_media_paths()?;
+            if let Some(dir) = &directory {
+                if dir.exists() {
+                    for entry in std::fs::read_dir(dir)? {
+                        let entry = entry?;
+                        let path = entry.path();
+                        if path.is_dir() {
+                            std::fs::remove_dir_all(&path)?;
+                        } else {
+                            std::fs::remove_file(&path)?;
+                        }
                     }
                 }
             }
-        }
-        Ok(cleared)
+            Ok(cleared)
+        }).await
     }
 
     /// Where media is stored, if enabled.
@@ -110,14 +114,14 @@ impl WhatsAppService {
     }
 
     /// Every downloaded file this account's messages point at.
-    pub fn media_paths(&self) -> Result<Vec<String>> {
-        self.store.media_paths()
+    pub async fn media_paths(&self) -> Result<Vec<String>> {
+        self.store.media_paths().await
     }
 
     /// Incoming one-time messages still waiting for their media. The optional
     /// Android instance wakes on these instead of staying linked.
-    pub fn pending_view_once(&self, within: std::time::Duration) -> Vec<(String, String)> {
-        match self.store.pending_view_once(within) {
+    pub async fn pending_view_once(&self, within: std::time::Duration) -> Vec<(String, String)> {
+        match self.store.pending_view_once(within).await {
             Ok(pending) => pending,
             Err(error) => {
                 log::error!("could not list pending view-once media: {error}");
@@ -141,7 +145,7 @@ impl WhatsAppService {
     ) -> Result<Option<String>> {
         let SendOptions { gif, view_once, voice, forwarded, mentions, progress } = options;
         let to: Jid = chat.parse()?;
-        self.unarchive_on_send(chat);
+        self.unarchive_on_send(chat).await;
         let to_self = self.is_self_jid(&to);
         let chat_jid = to.to_string();
         let file_name = file_name.to_string();
@@ -184,7 +188,7 @@ impl WhatsAppService {
         // An attachment can carry a quote, the same as a text reply. The quoted
         // message is the message itself where the store has it, so the recipient
         // renders the view-once it answers rather than a stand-in for it.
-        let context = self.reply_context(&to, reply.as_ref())?;
+        let context = self.reply_context(&to, reply.as_ref()).await?;
         let context = if forwarded { Some(forwarded_context(context)) } else { context };
         let context = if mentions.is_empty() {
             context
@@ -265,11 +269,11 @@ impl WhatsAppService {
         let locator = (!view_once).then(|| media_locator(&message));
         let result = self.client.send_message(to, message).await?;
         if forwarded {
-            self.store.set_forwarded(chat, &result.message_id)?;
+            self.store.set_forwarded(chat, &result.message_id).await?;
         }
         // The sender cannot reopen view-once media either, so no copy is kept.
         if view_once {
-            self.store.set_view_once(chat, &result.message_id, true)?;
+            self.store.set_view_once(chat, &result.message_id, true).await?;
         }
 
         // Keep our own copy so the sender sees what they sent.
@@ -298,9 +302,9 @@ impl WhatsAppService {
         stored.media.locator = locator;
         stored.media.duration = voice_seconds;
         if let Some(reply) = &reply {
-            stored.quote = self.reply_quote(&chat_jid, reply)?;
+            stored.quote = self.reply_quote(&chat_jid, reply).await?;
         }
-        self.store.insert_message(&stored)?;
+        self.store.insert_message(&stored).await?;
         let _ = self.events.send(ServiceEvent::hint(&stored, true));
         Ok(warning)
     }
@@ -308,11 +312,11 @@ impl WhatsAppService {
     /// The quote context for an attachment answering `(id, sender, text)`. The
     /// quoted message is the message itself where the store has it, so the
     /// recipient renders the view-once it answers rather than a stand-in.
-    fn reply_context(&self, to: &Jid, reply: Option<&(String, String, String)>) -> Result<Option<Box<wa::ContextInfo>>> {
+    async fn reply_context(&self, to: &Jid, reply: Option<&(String, String, String)>) -> Result<Option<Box<wa::ContextInfo>>> {
         let Some((id, sender, text)) = reply else { return Ok(None) };
         use whatsapp_rust::wacore::proto_helpers::build_quote_context_with_info;
         let sender: Jid = sender.parse::<Jid>()?.to_non_ad();
-        let quoted = self.quoted_message(&to.to_string(), id, text);
+        let quoted = self.quoted_message(&to.to_string(), id, text).await;
         let mut context = build_quote_context_with_info(id, &sender, to, to, quoted.as_ref().unwrap_or(&wa::Message::text("")));
         if quoted.is_none() {
             context.quoted_message = Default::default();
@@ -321,9 +325,9 @@ impl WhatsAppService {
     }
 
     /// The quote stored beside an attachment this account sent as a reply.
-    fn reply_quote(&self, chat: &str, (id, sender, _): &(String, String, String)) -> Result<Quote> {
+    async fn reply_quote(&self, chat: &str, (id, sender, _): &(String, String, String)) -> Result<Quote> {
         let sender: Jid = sender.parse::<Jid>()?.to_non_ad();
-        Ok(self.local_quote(chat, id, &sender.to_string(), sender.to_string() == self.own_jid()))
+        Ok(self.local_quote(chat, id, &sender.to_string(), sender.to_string() == self.own_jid()).await)
     }
 
     /// Uploads media while reporting its progress as [`ServiceEvent::UploadProgress`], about once per percent.
@@ -386,8 +390,8 @@ impl WhatsAppService {
         reply: Option<(String, String, String)>,
     ) -> Result<()> {
         let to: Jid = chat.parse()?;
-        self.unarchive_on_send(chat);
-        let context = self.reply_context(&to, reply.as_ref())?;
+        self.unarchive_on_send(chat).await;
+        let context = self.reply_context(&to, reply.as_ref()).await?;
         let context = if forwarded { Some(forwarded_context(context)) } else { context };
         let to_self = self.is_self_jid(&to);
         let webp = sticker_webp(&bytes)
@@ -416,7 +420,7 @@ impl WhatsAppService {
         let locator = media_locator(&message);
         let result = self.client.send_message(to, message).await?;
         if forwarded {
-            self.store.set_forwarded(chat, &result.message_id)?;
+            self.store.set_forwarded(chat, &result.message_id).await?;
         }
 
         let media_path = self.media_dir().and_then(|dir| {
@@ -429,9 +433,9 @@ impl WhatsAppService {
         stored.media.path = media_path;
         stored.media.locator = Some(locator);
         if let Some(reply) = &reply {
-            stored.quote = self.reply_quote(chat, reply)?;
+            stored.quote = self.reply_quote(chat, reply).await?;
         }
-        self.store.insert_message(&stored)?;
+        self.store.insert_message(&stored).await?;
         let _ = self.events.send(ServiceEvent::hint(&stored, true));
         Ok(())
     }
@@ -439,10 +443,10 @@ impl WhatsAppService {
     /// Stickers or GIFs already on this device, newest first, for the picker.
     /// Recent stickers or GIFs, newest first, one per distinct file. Copies of a
     /// path in `prefer` (the favourites) are dropped in its favour.
-    pub fn media_library(&self, kind: &str, prefer: &[String]) -> Result<Vec<String>> {
+    pub async fn media_library(&self, kind: &str, prefer: &[String]) -> Result<Vec<String>> {
         use std::hash::{Hash, Hasher};
         use std::io::Read;
-        let recent = self.store.recent_media(kind, 200)?;
+        let recent = self.store.recent_media(kind, 200).await?;
         let dir = self.media_dir().and_then(|d| std::fs::canonicalize(d).ok());
         // Favourites come from the UI, so only files in the media folder count.
         let preferred = prefer.iter().filter(|p| {
