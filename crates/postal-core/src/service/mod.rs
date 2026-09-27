@@ -1,0 +1,387 @@
+//! The client service: connection lifecycle, typed events, and storage.
+//!
+//! This is the layer the UI talks to. It owns the protocol [`Bot`], converts
+//! library events into [`ServiceEvent`]s the UI can render, and persists
+//! messages through the [`MessageStore`] so retention stays enforced.
+
+use std::{
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex,
+    },
+    time::Duration,
+};
+
+use anyhow::Result;
+use serde::Serialize;
+use tokio::sync::broadcast;
+use whatsapp_rust::{
+    download::{Downloadable, MediaType},
+    prelude::*,
+    wacore::msg_secret::MsgSecretRetention,
+    wacore::iq::privacy::{PrivacyCategory, PrivacyValue},
+    wacore::types::presence::{ChatPresence, ChatPresenceMedia, ReceiptType},
+    wacore::types::events::Event,
+    wacore_binary::builder::NodeBuilder,
+    wacore_binary::JidExt,
+    CacheConfig,
+    WAPatchName,
+};
+
+use crate::{
+    aliases::AliasStore,
+    history::HistoryPolicy,
+    store::{LinkCard, LocalState, Media, MessageHeader, MessageStore, Quote, Retention, StoredMessage},
+};
+
+mod connection;
+mod contacts;
+mod groups;
+mod history;
+mod inbound;
+mod links;
+mod media;
+mod messages;
+mod polls;
+mod profile;
+mod receipts;
+#[cfg(test)]
+mod tests;
+
+use connection::*;
+use contacts::*;
+use history::*;
+use inbound::*;
+use links::*;
+use media::*;
+use messages::*;
+use polls::*;
+
+use crate::store::is_placeholder_name;
+
+/// For store writes that must not stop the event loop but must not vanish
+/// either: a failure is logged with the calling line.
+trait Logged {
+    fn logged(self);
+}
+
+impl<T> Logged for Result<T> {
+    #[track_caller]
+    fn logged(self) {
+        if let Err(e) = self {
+            let at = std::panic::Location::caller();
+            log::error!("store write failed at {}:{}: {e:#}", at.file(), at.line());
+        }
+    }
+}
+
+/// Events the UI reacts to.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ServiceEvent {
+    /// A pairing QR is ready to display.
+    ///
+    /// Every variant uses named fields: an internally tagged enum cannot
+    /// represent a newtype variant holding a bare `String`, and serialization
+    /// failure would silently drop the event.
+    QrCode { code: String },
+    Connected,
+    Disconnected,
+    /// WhatsApp revoked this device; the stored session can never sign in again.
+    LoggedOut,
+    /// A message was received or sent and stored.
+    ///
+    /// Boxed because `StoredMessage` is far larger than the other variants, and
+    /// every clone of the enum is stored in the broadcast buffer.
+    Message { message: Box<StoredMessage> },
+    /// A lightweight invalidation for the same arrival: the row is already in
+    /// the store, so the UI refetches instead of parsing a full payload.
+    /// Emitted alongside `Message`; burst paths send only this.
+    /// `fresh` is a new arrival (follow, typing clear, subject lookup);
+    /// status-only updates (receipts, acks, media fill-in) send `false`.
+    MessageHint { chat: String, id: String, sender: String, from_me: bool, fresh: bool },
+    /// Message history was changed by retention, so the UI should refresh.
+    RetentionApplied { removed: usize },
+    /// Address-book names were learned, so cached chats and messages now hold
+    /// stale display names and should be refetched.
+    NamesUpdated { count: usize },
+    /// The offline backlog is draining; `pending` is how many messages the
+    /// server announced at the start of the drain, `applied` how many have been
+    /// stored so far.
+    Syncing { pending: usize, applied: usize },
+    /// The initial catch-up (offline drain and the initial history window) has
+    /// been applied. The UI may leave its loading screen without landing in a UI
+    /// that is still updating underneath it.
+    InitialSyncComplete { messages: usize, chats: usize },
+    /// The backlog finished draining.
+    Synced,
+    /// History sync stored older messages for these chats.
+    ///
+    /// Also sent when the phone answered with nothing new (or nothing at
+    /// all): without it the UI's "load older" wait only ends on its timeout
+    /// and reports a failure that never happened.
+    HistoryLoaded { chats: Vec<String> },
+    /// A chat's profile picture changed, so its cached avatar is stale.
+    AvatarChanged { jid: String },
+    /// Someone started or stopped typing; `state` is `typing`, `recording` or
+    /// `paused`.
+    Typing { chat: String, sender: String, state: String },
+    /// A watched contact came online or went offline; `last_seen` when they share it.
+    Presence { jid: String, online: bool, last_seen: Option<i64> },
+    /// A group member changed their tag; empty means they cleared it.
+    MemberLabel { chat: String, jid: String, label: String },
+    /// A group's settings, admins, members or name changed.
+    GroupChanged { chat: String },
+    /// Reactions, stars or the pinned message of a chat changed.
+    Marks { chat: String },
+    /// Bytes of an outgoing file sent so far, named by the caller's token.
+    UploadProgress { token: String, sent: u64, total: u64 },
+}
+
+impl ServiceEvent {
+    /// Lightweight invalidation for a stored message: the UI refetches the row
+    /// instead of parsing a full payload per event.
+    fn hint(message: &StoredMessage, fresh: bool) -> ServiceEvent {
+        ServiceEvent::MessageHint {
+            chat: message.header.chat.clone(),
+            id: message.header.id.clone(),
+            sender: message.header.sender.clone(),
+            from_me: message.header.from_me,
+            fresh,
+        }
+    }
+}
+
+/// The account's own profile and privacy, as the settings panel edits them.
+#[derive(Debug, Clone, Serialize)]
+pub struct Profile {
+    pub name: String,
+    pub about: Option<String>,
+    /// The account's username, without the `@`, if one is set or reserved.
+    pub username: Option<String>,
+    /// Reserved but not yet active.
+    pub username_reserved: bool,
+    /// Privacy category (`last`, `profile`, `readreceipts`, …) to its value.
+    pub privacy: std::collections::BTreeMap<String, String>,
+}
+
+/// How [`Service::send_media`] sends a file beyond its type.
+#[derive(Debug, Default)]
+pub struct SendOptions {
+    /// A video that plays muted and looping, as WhatsApp's GIFs are.
+    pub gif: bool,
+    /// Opens once for the recipient, then is gone.
+    pub view_once: bool,
+    /// Present for a recorded voice note (an Ogg/Opus file).
+    pub voice: Option<VoiceNote>,
+    /// Carries WhatsApp's "Forwarded" label.
+    pub forwarded: bool,
+    /// JIDs the caption mentions as `@<number>`.
+    pub mentions: Vec<String>,
+    /// Names the upload in [`ServiceEvent::UploadProgress`], when the caller wants progress.
+    pub progress: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct VoiceNote {
+    pub seconds: u32,
+    /// 64 loudness levels, 0 to 100, drawn as the note's waveform.
+    pub waveform: Vec<u8>,
+}
+
+/// A group member, as the mention autocomplete needs it.
+#[derive(Debug, Clone, Serialize)]
+pub struct Participant {
+    /// JID to put in `mentioned_jid` and to mention in the text.
+    pub jid: String,
+    /// Display name, from the address book when known.
+    pub name: String,
+    /// Whether the member is a group admin.
+    pub admin: bool,
+    /// Whether the member created the group (a super admin).
+    pub owner: bool,
+    /// Phone number, when known.
+    pub number: Option<String>,
+    /// WhatsApp username, when the member has one.
+    pub username: Option<String>,
+    /// The member's own tag in this group, such as "Long live EclipseOS".
+    pub label: Option<String>,
+}
+
+/// One row of the chat/contact search.
+#[derive(Debug, Clone, Serialize)]
+pub struct SearchResult {
+    pub jid: String,
+    pub name: String,
+    /// The JID's user part, so the UI can show "number - name".
+    pub number: String,
+    /// `contact` or `group`.
+    pub kind: String,
+    /// Whether the name came from the address book.
+    pub saved: bool,
+    /// Whether the chat already has messages locally.
+    pub has_messages: bool,
+    /// The contact's local aliases, which the UI may match on. Empty for a
+    /// group: an alias addresses a person, not a room.
+    pub aliases: Vec<String>,
+}
+
+/// Everything the group info sidebar shows.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct GroupInfo {
+    pub subject: Option<String>,
+    pub description: Option<String>,
+    pub created_at: Option<u64>,
+    /// Name and address of whoever created the group.
+    pub owner: Option<String>,
+    pub owner_jid: Option<String>,
+    pub participants: Vec<Participant>,
+    /// Whether members may report messages to the group's admins.
+    pub allow_admin_reports: bool,
+    /// Only admins can send messages (announcement mode).
+    pub announce: bool,
+    /// Only admins can edit the group's name, picture and description.
+    pub locked: bool,
+    /// A community's parent group, which has no conversation of its own.
+    pub community: bool,
+    /// The community's announcement group.
+    pub announcements: bool,
+    /// The community this group belongs to, and that community's name.
+    pub parent: Option<String>,
+    pub parent_name: Option<String>,
+    /// We are an admin of this group.
+    pub admin: bool,
+    /// We may send messages here.
+    pub can_send: bool,
+}
+
+/// How a group sits in a community, for the chat list.
+#[derive(Debug, Clone, Serialize)]
+pub struct GroupKind {
+    pub community: bool,
+    pub announcements: bool,
+    pub parent: Option<String>,
+}
+
+/// What an invite link card shows about its group.
+#[derive(Debug, Clone, Serialize)]
+pub struct InviteInfo {
+    pub jid: String,
+    pub subject: Option<String>,
+    pub description: Option<String>,
+    pub size: u32,
+    pub created_at: Option<u64>,
+    /// Joining needs an admin's approval.
+    pub approval: bool,
+    pub community: bool,
+    /// We are already in it.
+    pub joined: bool,
+    pub picture: Option<String>,
+}
+
+/// What a profile card shows about someone.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct UserProfile {
+    pub jid: String,
+    /// Saved, push, business or user name; `None` when only the number is known.
+    pub name: Option<String>,
+    /// Phone number digits, when known.
+    pub number: Option<String>,
+    pub username: Option<String>,
+    pub about: Option<String>,
+    /// Verified business name, for business accounts.
+    pub business: Option<String>,
+}
+
+/// A message reported to a group's admins, with who reported it and when.
+#[derive(Debug, Clone, Serialize)]
+pub struct AdminReport {
+    pub id: String,
+    /// The message as stored here, when this device has it.
+    pub message: Option<StoredMessage>,
+    pub reporters: Vec<(String, u64)>,
+}
+
+/// How the service should behave for one account.
+#[derive(Debug, Clone)]
+pub struct ServiceConfig {
+    /// Session database (protocol and crypto state).
+    pub session_path: PathBuf,
+    /// Message store database.
+    pub messages_path: PathBuf,
+    /// Contact alias database. Kept out of the message store so aliases
+    /// survive `messages_path` being turned into an in-memory store.
+    pub aliases_path: PathBuf,
+    /// How much history to keep locally.
+    pub retention: Retention,
+    /// Whether to pull the deep history sync during pairing.
+    pub accept_full_history: bool,
+    /// Where downloaded media is written. `None` disables media downloads.
+    pub media_dir: Option<PathBuf>,
+    /// Whether incoming media is downloaded when it arrives. A chat can
+    /// override this in the store.
+    pub auto_download_media: bool,
+}
+
+impl ServiceConfig {
+    /// Sensible defaults for a single account under `data_dir`.
+    pub fn under(data_dir: impl Into<PathBuf>) -> Self {
+        let data_dir = data_dir.into();
+        Self {
+            session_path: data_dir.join("session.db"),
+            messages_path: data_dir.join("messages.db"),
+            aliases_path: data_dir.join("aliases.db"),
+            retention: Retention::default(),
+            accept_full_history: false,
+            auto_download_media: true,
+            media_dir: Some(data_dir.join("media")),
+        }
+    }
+}
+
+/// A running account client.
+///
+/// Dropping this stops the background task and closes the stores.
+pub struct Service {
+    client: Arc<Client>,
+    store: Arc<MessageStore>,
+    /// Local, per-contact aliases, kept in their own file beside the messages.
+    aliases: Arc<AliasStore>,
+    events: broadcast::Sender<ServiceEvent>,
+    /// Fires the shutdown signal. `None` once it has been sent.
+    shutdown: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    /// Where downloaded media is written; `None` disables media.
+    media_dir: Option<PathBuf>,
+    /// Latest pairing code, kept so a subscriber that attaches after the code
+    /// was issued can still display it. The QR is emitted during startup, which
+    /// a late subscriber would otherwise miss entirely.
+    qr: Arc<Mutex<Option<String>>>,
+    connected: Arc<AtomicBool>,
+    /// Groups whose subject query failed: when to retry, and the wait that set it.
+    subject_backoff: Mutex<std::collections::HashMap<String, (std::time::Instant, Duration)>>,
+    /// JIDs the server already had no name for this run, so the UI's repeated
+    /// lookups do not re-query it for the same people.
+    nameless: Mutex<std::collections::HashSet<String>>,
+    resolving: AtomicBool,
+    /// Group metadata for this run, so opening a chat does not re-query the
+    /// server and trip its rate limit. Group membership changes rarely enough
+    /// that a session-lifetime cache is fine.
+    /// Shared with the event handler, which patches member tags as they change.
+    group_cache: std::sync::Arc<Mutex<std::collections::HashMap<String, GroupInfo>>>,
+    /// Every group the account is in, `(jid, subject)`, filled on first search.
+    /// Shared with the event handler, which drops it when any group changes.
+    groups_cache: Arc<Mutex<Vec<whatsapp_rust::GroupOverview>>>,
+    /// Pending "load older" requests, request session to the chat it was for.
+    /// Shared with the event handler, which completes one when the phone's
+    /// history sync carries that session back.
+    older_waits: Arc<Mutex<OlderWaits>>,
+}
+
+/// Seconds since the Unix epoch.
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
