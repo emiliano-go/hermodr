@@ -193,11 +193,12 @@ impl MessageStore {
              LEFT JOIN (SELECT chat,
                           MAX(timestamp) AS last_message_at,
                           COUNT(*) AS message_count,
-                          SUM(read = 0 AND from_me = 0) AS unread_count,
-                          SUM(read = 0 AND from_me = 0 AND mentioned = 1) AS mention_count
+                          SUM(read = 0 AND from_me = 0 AND deleted = 0) AS unread_count,
+                          SUM(read = 0 AND from_me = 0 AND mentioned = 1 AND deleted = 0) AS mention_count
                    FROM messages GROUP BY chat) g ON g.chat = c.jid
              LEFT JOIN messages m ON m.rowid =
                   (SELECT rowid FROM messages WHERE chat = c.jid
+                     AND deleted = 0
                      AND (system_kind IS NULL OR system_kind LIKE 'CALL_MISSED%' OR system_kind LIKE 'SILENCED_UNKNOWN_CALLER%')
                    ORDER BY timestamp DESC, sort_order DESC, id DESC LIMIT 1)
              LEFT JOIN names n ON n.jid = c.jid

@@ -1258,14 +1258,14 @@
     label="Delete message"
     title="Delete message?"
     hint={canDeleteForEveryone(m)
-      ? "Delete it for everyone in this chat, or only from your devices."
-      : "It is removed from your devices only."}
+      ? "Delete it for everyone in this chat, or only on this computer (kept greyed out)."
+      : "It is deleted on this computer only, and kept greyed out here."}
     onclose={() => (ui.deleting = null)}>
     {#snippet actions()}
       {#if canDeleteForEveryone(m)}
         <button class="danger" onclick={() => deleteMessage(true)}>Delete for everyone</button>
       {/if}
-      <button class="danger" onclick={() => deleteMessage(false)}>Delete for me</button>
+      <button class="danger" onclick={() => deleteMessage(false)}>Delete on this computer</button>
       <button onclick={() => (ui.deleting = null)}>Cancel</button>
     {/snippet}
   </ConfirmDialog>

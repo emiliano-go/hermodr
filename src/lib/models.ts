@@ -77,6 +77,8 @@ export type StoredMessage = {
   reply_to_path: string | null;
   read: boolean;
   revoked: boolean;
+  /** Deleted on this device only: kept, plus greyed out in the chat. */
+  deleted: boolean;
   mentioned: boolean;
   preview_url: string | null;
   preview_title: string | null;

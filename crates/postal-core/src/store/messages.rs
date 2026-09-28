@@ -145,7 +145,7 @@ impl MessageStore {
             "SELECT {MESSAGE_COLUMNS}
              FROM messages m
              LEFT JOIN names n ON n.jid = m.sender
-             WHERE m.mentioned = 1 AND m.from_me = 0 AND (?1 IS NULL OR m.chat = ?1)
+             WHERE m.mentioned = 1 AND m.from_me = 0 AND m.deleted = 0 AND (?1 IS NULL OR m.chat = ?1)
              ORDER BY m.timestamp DESC, m.sort_order DESC, m.id DESC LIMIT ?2"
         ))?;
         let rows = stmt.query_map(params![chat, limit], message_row)?;
@@ -163,7 +163,7 @@ impl MessageStore {
             "SELECT {MESSAGE_COLUMNS}
              FROM messages m
              LEFT JOIN names n ON n.jid = m.sender
-             WHERE m.chat = ?1 AND lower(m.text) LIKE ?2 ESCAPE '\\'
+             WHERE m.chat = ?1 AND lower(m.text) LIKE ?2 ESCAPE '\\' AND m.deleted = 0
              ORDER BY m.timestamp DESC, m.sort_order DESC, m.id DESC LIMIT ?3"
         ))?;
         let rows = stmt.query_map(params![chat, pattern, limit], message_row)?;
@@ -249,19 +249,16 @@ impl MessageStore {
         Ok(changed > 0)
     }
 
-    /// Removes one message, as "delete for me" does.
-    pub fn delete_message(&self, chat: &str, id: &str) -> Result<()> {
+    /// Marks a message deleted on this device only. The row and its marks are
+    /// kept, so the chat can still show it greyed out and nothing on WhatsApp
+    /// changes.
+    pub fn set_message_deleted(&self, chat: &str, id: &str, deleted: bool) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let chat = &*names::canonical_chat(&conn, chat)?;
-        conn.execute("DELETE FROM messages WHERE chat = ?1 AND id = ?2", params![chat, id])?;
-        conn.execute("DELETE FROM reactions WHERE chat = ?1 AND target = ?2", params![chat, id])?;
-        conn.execute("DELETE FROM stars WHERE chat = ?1 AND id = ?2", params![chat, id])?;
-        conn.execute("DELETE FROM poll_votes WHERE chat = ?1 AND poll = ?2", params![chat, id])?;
-        conn.execute("DELETE FROM event_responses WHERE chat = ?1 AND event = ?2", params![chat, id])?;
-        conn.execute("DELETE FROM view_once WHERE chat = ?1 AND id = ?2", params![chat, id])?;
-        conn.execute("DELETE FROM forwarded WHERE chat = ?1 AND id = ?2", params![chat, id])?;
-        conn.execute("DELETE FROM edited WHERE chat = ?1 AND id = ?2", params![chat, id])?;
-        conn.execute("DELETE FROM receipts WHERE id = ?1", params![id])?;
+        conn.execute(
+            "UPDATE messages SET deleted = ?3 WHERE chat = ?1 AND id = ?2",
+            params![chat, id, deleted as i32],
+        )?;
         Ok(())
     }
 
@@ -271,7 +268,7 @@ impl MessageStore {
         let chat = &*names::canonical_chat(&conn, chat)?;
         let mut stmt = conn.prepare(
             "SELECT id FROM messages
-             WHERE chat = ?1 AND read = 0 AND from_me = 0 AND mentioned = 1
+             WHERE chat = ?1 AND read = 0 AND from_me = 0 AND mentioned = 1 AND deleted = 0
              ORDER BY timestamp ASC, sort_order ASC, id ASC",
         )?;
         let rows = stmt.query_map(params![chat], |r| r.get::<_, String>(0))?;
@@ -368,10 +365,10 @@ impl StoreWorker {
         self.run(move |store| store.update_message_content(&chat, &id, &text)).await
     }
 
-    pub(crate) async fn delete_message(&self, chat: &str, id: &str) -> Result<()> {
+    pub(crate) async fn set_message_deleted(&self, chat: &str, id: &str, deleted: bool) -> Result<()> {
         let chat = chat.to_owned();
         let id = id.to_owned();
-        self.run(move |store| store.delete_message(&chat, &id)).await
+        self.run(move |store| store.set_message_deleted(&chat, &id, deleted)).await
     }
 
     pub(crate) async fn unread_mentions(&self, chat: &str) -> Result<Vec<String>> {

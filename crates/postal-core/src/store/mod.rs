@@ -182,6 +182,10 @@ pub struct LocalState {
     pub read: bool,
     /// Whether the sender deleted the message for everyone.
     pub revoked: bool,
+    /// Deleted by the user on this device only. The row is kept and shown
+    /// greyed out; nothing about it leaves this computer.
+    #[serde(default)]
+    pub deleted: bool,
     /// Whether the message mentions us (directly or via @all).
     pub mentioned: bool,
     /// Delivery state of a message we sent: `pending`, `sent`, `delivered` or
@@ -228,7 +232,7 @@ const MESSAGE_COLUMNS: &str = "m.chat, m.id, m.sender, m.timestamp, m.from_me, m
     m.reply_to_kind, m.reply_to_thumb, m.media_thumb, m.media_ref, m.reply_to_chat,
     m.preview_site, m.preview_color, m.media_duration, m.system_kind, m.system_params,
     m.reply_to_view_once, m.reply_to_recoverable, m.reply_to_path, m.reply_to_locator,
-  m.media_once_kind, m.sort_order";
+  m.media_once_kind, m.sort_order, m.deleted";
 
 fn message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
     Ok(StoredMessage {
@@ -273,6 +277,7 @@ fn message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
             sort_order: row.get(35)?,
             read: row.get::<_, i32>(11)? != 0,
             revoked: row.get::<_, i32>(12)? != 0,
+            deleted: row.get::<_, i32>(36)? != 0,
             mentioned: row.get::<_, i32>(15)? != 0,
             status: row.get(13)?,
         },

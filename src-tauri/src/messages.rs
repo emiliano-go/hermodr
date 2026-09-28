@@ -125,7 +125,6 @@ pub(crate) async fn delete_message(
     state: State<'_, AppState>,
     target: Target,
     everyone: bool,
-    timestamp: i64,
 ) -> Result<(), String> {
     let service = state.service()?;
     let done = if everyone {
@@ -133,9 +132,7 @@ pub(crate) async fn delete_message(
             .delete_for_everyone(&target.chat, &target.id, &target.sender, target.from_me)
             .await
     } else {
-        service
-            .delete_for_me(&target.chat, &target.id, &target.sender, target.from_me, timestamp)
-            .await
+        service.delete_for_me(&target.chat, &target.id).await
     };
     done.map_err(|e| e.to_string())
 }

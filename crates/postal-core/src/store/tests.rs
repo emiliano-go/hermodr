@@ -82,7 +82,7 @@ fn new_mappings_merge_immediately_and_survive_reopen() {
         let store = MessageStore::open(&path).unwrap();
         let conn = store.conn.lock().unwrap();
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
-        assert_eq!(version, 10);
+        assert_eq!(version, 11);
         drop(conn);
         let messages = store.messages_for("5989@s.whatsapp.net", 10).unwrap();
         assert_eq!(messages.len(), 1);
@@ -333,21 +333,28 @@ fn receipts_only_move_forward() {
 }
 
 #[test]
-fn delete_message_clears_its_related_rows() {
+fn soft_delete_keeps_the_row_and_its_marks() {
     let s = store(DiskRetention::unlimited());
     s.insert_message(&msg("a", "1", 0, "hi")).unwrap();
     s.set_forwarded("a", "1").unwrap();
-    s.update_message_content("a", "1", "edited").unwrap();
     s.set_view_once("a", "1", true).unwrap();
-    s.record_receipt("1", "them", "read", 10).unwrap();
 
-    s.delete_message("a", "1").unwrap();
+    s.set_message_deleted("a", "1", true).unwrap();
 
+    // The row and its marks are all still here; only the flag changed.
+    let kept = s.message("a", "1").unwrap();
+    assert!(kept.local.deleted);
+    assert_eq!(kept.text, "hi");
     let marks = s.marks("a").unwrap();
-    assert!(marks.forwarded.is_empty());
-    assert!(marks.edited.is_empty());
-    assert!(marks.view_once.is_empty());
-    assert!(s.receipts("1").unwrap().is_empty());
+    assert_eq!(marks.forwarded, vec!["1".to_string()]);
+    assert_eq!(marks.view_once.len(), 1);
+    // The chat preview skips deleted rows.
+    let summary = s.chats().unwrap().into_iter().find(|c| c.chat == "a").unwrap();
+    assert_ne!(summary.last_text, "hi");
+
+    // Clearing the flag restores it; nothing was ever removed.
+    s.set_message_deleted("a", "1", false).unwrap();
+    assert!(!s.message("a", "1").unwrap().local.deleted);
 }
 
 #[test]

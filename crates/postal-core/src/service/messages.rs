@@ -334,23 +334,11 @@ impl WhatsAppService {
         Ok(())
     }
 
-    /// Deletes a message from our devices only.
-    pub async fn delete_for_me(&self, chat: &str, id: &str, sender: &str, from_me: bool, timestamp: i64) -> Result<()> {
-        let jid: Jid = chat.parse()?;
-        let participant = Self::participant(chat, sender, from_me);
-        self.client
-            .chat_actions()
-            .delete_message_for_me(&jid, participant.as_ref(), id, from_me, true, Some(timestamp))
-            .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        // The stored copy is gone, so its media file has no other referent.
-        if let Some(message) = self.store.message(chat, id).await.observed() {
-            if let Some(path) = message.media.path.as_deref() {
-                remove_cached_file(path);
-            }
-        }
-        self.store.delete_message(chat, id).await?;
-        self.prune_quote_files().await?;
+    /// Deletes a message on this device only: the row is kept and flagged, so
+    /// the chat can show it greyed out. Nothing is sent to WhatsApp, and no
+    /// file is removed, so the copy stays recoverable.
+    pub async fn delete_for_me(&self, chat: &str, id: &str) -> Result<()> {
+        self.store.set_message_deleted(chat, id, true).await?;
         Ok(())
     }
 

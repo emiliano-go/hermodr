@@ -75,6 +75,7 @@ import VideoPlayer from "$lib/VideoPlayer.svelte";
     !vm.showSender}
   class:menu-open={vm.menuOpen}
   class:edited={vm.isEdited}
+  class:deleted={message.deleted}
   data-id={message.id}>
   {#if vm.showSender}
     <button
@@ -534,6 +535,20 @@ import VideoPlayer from "$lib/VideoPlayer.svelte";
   .bubble.mine {
     align-self: flex-end;
     background: var(--bubble-mine);
+  }
+  /* Deleted locally: the row stays, greyed, and warms to red under the pointer. */
+  .bubble.deleted {
+    filter: grayscale(1);
+    opacity: 0.55;
+  }
+  .bubble.deleted:hover {
+    filter: none;
+    opacity: 1;
+    background: color-mix(in srgb, var(--danger) 18%, var(--bubble));
+    box-shadow: inset 0 0 0 1px var(--danger);
+  }
+  .bubble.mine.deleted:hover {
+    background: color-mix(in srgb, var(--danger) 18%, var(--bubble-mine));
   }
   /* The tail marks the first bubble of a run from one sender. */
   .bubble.first:not(.mine) {

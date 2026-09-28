@@ -130,7 +130,7 @@ export async function deleteMessage(everyone: boolean) {
   ui.deleting = null;
   if (!m) return;
   await act(async () => {
-    await invoke("delete_message", { target: target(m), everyone, timestamp: m.timestamp });
+    await invoke("delete_message", { target: target(m), everyone });
     await messages.reloadMessages(chats.selectedChat);
     await chats.refreshChats();
   });
