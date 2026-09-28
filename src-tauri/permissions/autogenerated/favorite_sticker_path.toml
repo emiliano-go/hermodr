@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-favorite-sticker-path"
+description = "Enables the favorite_sticker_path command without any pre-configured scope."
+commands.allow = ["favorite_sticker_path"]
+
+[[permission]]
+identifier = "deny-favorite-sticker-path"
+description = "Denies the favorite_sticker_path command without any pre-configured scope."
+commands.deny = ["favorite_sticker_path"]

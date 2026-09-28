@@ -318,6 +318,13 @@ pub(super) async fn stored_message(
         } else if let Some(event) = event_of(message) {
             text = event.name;
             media_kind = Some("event".to_string());
+        } else if let Some(music) = message.music_message.as_option() {
+            // A music sticker: no media of its own, just the track's details.
+            let music = music.embedded_music.as_option();
+            let title = music.and_then(|m| m.title.clone()).unwrap_or_default();
+            let author = music.and_then(|m| m.author.clone()).unwrap_or_default();
+            text = if author.is_empty() { title } else { format!("{title} — {author}") };
+            media_kind = Some("music".to_string());
         }
     }
 
@@ -400,10 +407,11 @@ fn card_of(message: &wa::Message) -> Option<(&'static str, String, Option<Vec<u8
 }
 
 /// A received thumbnail as a `data:` URI, stored in the row rather than as one
-/// file per message.
-pub(super) fn thumb_uri(jpeg: &[u8]) -> String {
+/// file per message. Sticker previews are PNG, everything else JPEG.
+pub(super) fn thumb_uri(bytes: &[u8]) -> String {
     use base64::Engine as _;
-    format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(jpeg))
+    let mime = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) { "image/png" } else { "image/jpeg" };
+    format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes))
 }
 
 /// The message cut down to what `download_media` needs: the media entry

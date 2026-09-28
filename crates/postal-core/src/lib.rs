@@ -16,11 +16,11 @@ pub use aliases::AliasStore;
 pub use history::HistoryPolicy;
 pub use service::{
     AdminReport, GroupInfo, GroupKind, InviteInfo, UserProfile, Participant, Profile, SearchResult, SendOptions, WhatsAppService, ServiceConfig,
-    ServiceEvent, VoiceNote,
+    ServiceEvent, VoiceNote, StickerLibrary, StickerResyncReport,
 };
 pub use store::{
     ChatMarks, ChatRetention, ChatSummary, MessageReceipt, MessageStore, NewEvent, DiskRetention, RetentionLimit, StoredMessage,
-    ViewOnce,
+    ViewOnce, Sticker, StickerPack,
 };
 
 /// Renders a pairing code as an SVG string for the UI to display.

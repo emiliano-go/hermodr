@@ -21,6 +21,7 @@ import { composer } from "./composer.svelte";
 import { members } from "./members.svelte";
 import { messages } from "./messages.svelte";
 import { session } from "./session.svelte";
+import { stickers } from "./stickers.svelte";
 import { ui } from "./ui.svelte";
 
 export type EventHost = {
@@ -380,6 +381,9 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       break;
     case "marks":
       if (payload.chat === chats.selectedChat) await messages.loadMarks(payload.chat);
+      break;
+    case "stickerLibraryChanged":
+      stickers.touch();
       break;
     case "memberLabel":
       if (payload.chat === chats.selectedChat) {

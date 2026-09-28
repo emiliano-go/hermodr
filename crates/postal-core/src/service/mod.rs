@@ -31,7 +31,7 @@ use whatsapp_rust::{
 
 use crate::{
     history::HistoryPolicy,
-    store::{LinkCard, LocalState, Media, MessageHeader, MessageStore, StoreWorker, AliasWorker, Quote, DiskRetention, DiskRetentionManager, StoredMessage},
+    store::{LinkCard, LocalState, Media, MessageHeader, MessageStore, StoreWorker, AliasWorker, Quote, DiskRetention, DiskRetentionManager, StoredMessage, Sticker, StickerPack},
 };
 
 mod connection;
@@ -55,6 +55,8 @@ mod notices;
 mod polls;
 mod profile;
 mod receipts;
+mod stickers;
+pub use stickers::{StickerLibrary, StickerResyncReport};
 mod user_info;
 #[cfg(test)]
 mod tests;
@@ -72,6 +74,7 @@ use media_wire::*;
 use message_decode::*;
 use notices::*;
 use polls::*;
+use stickers::*;
 
 /// Deletes recovered view-once files no stored message points at any more. Part
 /// of the service's public surface so a caller holding only a store can run it.
@@ -184,6 +187,8 @@ pub enum ServiceEvent {
     GroupChanged { chat: String },
     /// Reactions, stars or the pinned message of a chat changed.
     Marks { chat: String },
+    /// Packs, favourites or recents in the sticker library changed.
+    StickerLibraryChanged { packs: bool, favorites: bool, recents: bool },
     /// Bytes of an outgoing file sent so far, named by the caller's token.
     UploadProgress { token: String, sent: u64, total: u64 },
 }

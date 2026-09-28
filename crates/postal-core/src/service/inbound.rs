@@ -268,6 +268,12 @@ impl Inbound {
                 }
                 let _ = events.send(ServiceEvent::ChatStateChanged { chat: jid });
             }
+            Event::FavoriteStickerUpdate(update) => {
+                self.on_sticker_favorite(&update.filehash, update.action.is_favorite.unwrap_or(false), update.timestamp.timestamp()).await;
+            }
+            Event::RemoveRecentStickerUpdate(update) => {
+                self.on_sticker_recent_removed(&update.filehash, update.timestamp.timestamp()).await;
+            }
             _ => {}
         }
     }
@@ -563,6 +569,11 @@ impl Inbound {
             // Stickers and voice notes are small and read as part
             // of the conversation, so WhatsApp always fetches them.
             let base = inbound.message.get_base_message();
+            // A shared pack is library metadata, not a chat message.
+            if base.sticker_pack_message.is_set() {
+                self.on_sticker_pack(&inbound.message).await;
+                continue;
+            }
             let small = base.sticker_message.is_set()
                 || base.audio_message.as_option().is_some_and(|a| a.ptt == Some(true));
             let auto_download = small
@@ -576,8 +587,7 @@ impl Inbound {
                     .await
             else {
                 continue;
-            };
-            // Mentions stay `@<number>` as on the wire; the UI
+            };            // Mentions stay `@<number>` as on the wire; the UI
             // resolves them when drawn, so later names apply.
             message.local.mentioned = mentions_me(&inbound.message, &own);
             if inbound.message.is_view_once() {
@@ -603,6 +613,11 @@ impl Inbound {
                 // Count backlog progress so the loading
                 // screen's bar tracks stored messages, not
                 // raw inbound events.
+                if message.media.kind.as_deref() == Some("sticker") {
+                    if let Err(e) = record_sticker(store, &message).await {
+                        log::warn!("could not record sticker {}: {e}", message.header.id);
+                    }
+                }
                 {
                     let mut p = sync_progress.lock().unwrap();
                     if p.pending > 0 && !p.offline_done {
@@ -709,6 +724,12 @@ impl Inbound {
             let directory = media_dir.clone();
             if let Err(e) = store.run(move |store| prune_quote_files(directory.as_deref(), store)).await {
                 log::error!("pruning recovered view-once files failed: {e}");
+            }
+            // The rows are gone; their files must not linger either.
+            if let Ok(referenced) = store.referenced_media_paths().await {
+                for path in orphaned_media_files(media_dir.as_deref(), &referenced) {
+                    let _ = std::fs::remove_file(path);
+                }
             }
         }
         batch_guard.finish().await.logged();

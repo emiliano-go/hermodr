@@ -46,6 +46,21 @@ impl MessageStore {
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
     }
 
+    /// Every file path a stored row still points at, so a sweep never deletes
+    /// one that is in use. Inline `data:` thumbnails are not files.
+    pub fn referenced_media_paths(&self) -> Result<std::collections::HashSet<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT media_path FROM messages WHERE media_path IS NOT NULL AND media_path NOT LIKE 'data:%'
+             UNION SELECT media_thumb FROM messages WHERE media_thumb IS NOT NULL AND media_thumb NOT LIKE 'data:%'
+             UNION SELECT reply_to_path FROM messages WHERE reply_to_path IS NOT NULL AND reply_to_path NOT LIKE 'data:%'
+             UNION SELECT reply_to_thumb FROM messages WHERE reply_to_thumb IS NOT NULL AND reply_to_thumb NOT LIKE 'data:%'
+             UNION SELECT preview_thumb FROM messages WHERE preview_thumb IS NOT NULL AND preview_thumb NOT LIKE 'data:%'",
+        )?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
     /// Where a reply's recovered view-once copy was written.
     pub fn quote_media_path(&self, chat: &str, id: &str) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
@@ -380,6 +395,10 @@ impl MessageStore {
 impl StoreWorker {
     pub(crate) async fn media_paths(&self) -> Result<Vec<String>> {
         self.run(move |store| store.media_paths()).await
+    }
+
+    pub(crate) async fn referenced_media_paths(&self) -> Result<std::collections::HashSet<String>> {
+        self.run(move |store| store.referenced_media_paths()).await
     }
 
     pub(crate) async fn set_quote_media_path(&self, chat: &str, id: &str, path: &str) -> Result<()> {

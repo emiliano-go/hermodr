@@ -497,6 +497,8 @@ impl WhatsAppService {
                     EventKind::Presence,
                     EventKind::GroupUpdate,
                     EventKind::MissedCall,
+                    EventKind::FavoriteStickerUpdate,
+                    EventKind::RemoveRecentStickerUpdate,
                 ],
                 move |event, _client| {
                     let inbound = inbound.clone();

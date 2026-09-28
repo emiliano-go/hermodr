@@ -26,6 +26,8 @@ buffa = "0.9"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 # Received thumbnails are kept in the row as `data:` URIs.
 base64 = "0.22"
+# Sticker files are addressed by the SHA-256 of their bytes (app-state filehash).
+sha2 = "0.11"
 
 [dev-dependencies]
 flate2 = "1"

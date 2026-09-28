@@ -53,6 +53,14 @@ fn export_path(directory: &Path, source: &str) -> Result<PathBuf, String> {
 }
 
 fn clipboard_image(path: &Path) -> Result<tauri::image::Image<'static>, String> {
+    let rgba = decode_first_frame(path)?.into_rgba8();
+    let (width, height) = rgba.dimensions();
+    Ok(tauri::image::Image::new_owned(rgba.into_raw(), width, height))
+}
+
+/// A still image from `path`: the `image` crate first, and for an animated WebP
+/// it may refuse, the first frame decoded by ffmpeg.
+fn decode_first_frame(path: &Path) -> Result<image::DynamicImage, String> {
     let mut reader = image::ImageReader::open(path).map_err(|e| e.to_string())?
         .with_guessed_format().map_err(|e| e.to_string())?;
     let mut limits = image::Limits::default();
@@ -60,9 +68,22 @@ fn clipboard_image(path: &Path) -> Result<tauri::image::Image<'static>, String> 
     limits.max_image_height = Some(8192);
     limits.max_alloc = Some(128 * 1024 * 1024);
     reader.limits(limits);
-    let rgba = reader.decode().map_err(|e| e.to_string())?.into_rgba8();
-    let (width, height) = rgba.dimensions();
-    Ok(tauri::image::Image::new_owned(rgba.into_raw(), width, height))
+    if let Ok(decoded) = reader.decode() {
+        return Ok(decoded);
+    }
+    let frame = first_frame(path).ok_or("could not decode the image")?;
+    image::load_from_memory(&frame).map_err(|e| e.to_string())
+}
+
+/// The first frame of a video or animated WebP as PNG, via ffmpeg when present.
+fn first_frame(path: &Path) -> Option<Vec<u8>> {
+    let output = std::process::Command::new("ffmpeg")
+        .args(["-loglevel", "error", "-i"])
+        .arg(path)
+        .args(["-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "pipe:1"])
+        .output()
+        .ok()?;
+    (output.status.success() && !output.stdout.is_empty()).then_some(output.stdout)
 }
 
 #[cfg(test)]

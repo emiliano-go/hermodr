@@ -35,6 +35,16 @@ fn document_extension(document: &wa::message::DocumentMessage) -> Option<String>
 }
 
 pub(super) fn detect_media(message: &wa::Message) -> Option<MediaInfo> {
+    // A Lottie sticker arrives in a future-proof envelope whose inner media is
+    // what downloads. It is kept as a sticker; the UI draws a placeholder when
+    // the file is not a raster image it can show.
+    if let Some(wrapper) = message.lottie_sticker_message.as_option() {
+        if let Some(inner) = wrapper.message.as_option() {
+            if let Some(media) = detect_media(inner) {
+                return Some(media);
+            }
+        }
+    }
     if let Some(image) = message.image_message.as_option() {
         return Some(MediaInfo {
             kind: "image",
@@ -85,7 +95,7 @@ pub(super) fn detect_media(message: &wa::Message) -> Option<MediaInfo> {
             kind: "sticker",
             media_type: MediaType::Sticker,
             downloadable: Box::new(sticker.clone()),
-            thumb: None,
+            thumb: sticker.png_thumbnail.clone(),
             duration: None,
             ext: None,
         });

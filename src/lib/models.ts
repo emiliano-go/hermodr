@@ -199,7 +199,39 @@ export type ServiceEvent =
   | { kind: "presence"; jid: string; online: boolean; last_seen: number | null }
   | { kind: "memberLabel"; chat: string; jid: string; label: string }
   | { kind: "groupChanged"; chat: string }
-  | { kind: "marks"; chat: string };
+  | { kind: "marks"; chat: string }
+  | { kind: "stickerLibraryChanged"; packs: boolean; favorites: boolean; recents: boolean };
+
+/** A sticker in a pack, or one kept from a message. */
+export type Sticker = {
+  filehash: string;
+  pack_id: string | null;
+  path: string | null;
+  animated: boolean;
+  lottie: boolean;
+  emojis: string[];
+  favorite: boolean;
+  recent_at: number | null;
+  updated_at: number;
+};
+
+/** A sticker pack received from the phone or fetched by id. */
+export type StickerPack = {
+  pack_id: string;
+  name: string | null;
+  publisher: string | null;
+  tray_path: string | null;
+  origin: string | null;
+  updated_at: number;
+};
+
+export type StickerLibrary = {
+  packs: StickerPack[];
+  favorites: Sticker[];
+  recent: Sticker[];
+};
+
+export type StickerResyncReport = { packs: number; stickers: number };
 
 /** Group members for the @ autocomplete. */
 export type Member = {

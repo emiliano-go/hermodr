@@ -13,8 +13,10 @@ export function bare(jid: string) {
 
 export function replyIcon(kind: string | null) {
   if (kind === "audio") return "\u{1F3B5}";
-  if (kind === "video") return "\u{1F3AC}";
+  if (kind === "video" || kind === "gif") return "\u{1F3AC}";
   if (kind === "document") return "\u{1F4C4}";
+  if (kind === "sticker") return "\u{1F600}";
+  if (kind === "image") return "\u{1F5BC}";
   return "\u{1F4CE}";
 }
 
@@ -91,10 +93,13 @@ export const CARD_LABELS: Record<string, string> = {
   location: "📍 Location",
   live_location: "📍 Live location",
   contact: "👤 Contact",
+  music: "🎵 Music",
 };
 
 export const VIEW_ONCE_LABEL: Record<string, string> = {
   image: "Photo",
   video: "Video",
   audio: "Voice message",
+  gif: "GIF",
+  sticker: "Sticker",
 };

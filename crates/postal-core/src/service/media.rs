@@ -87,6 +87,20 @@ impl WhatsAppService {
         self.store.run(move |store| prune_quote_files(directory.as_deref(), store)).await
     }
 
+    /// Deletes media files no stored message points at any more, so a retention
+    /// prune does not leave the disk growing with orphans.
+    pub async fn prune_orphaned_media(&self) -> Result<usize> {
+        let Some(directory) = self.media_dir.clone() else { return Ok(0) };
+        let referenced = self.store.referenced_media_paths().await?;
+        let mut removed = 0;
+        for path in orphaned_media_files(Some(&directory), &referenced) {
+            if std::fs::remove_file(&path).is_ok() {
+                removed += 1;
+            }
+        }
+        Ok(removed)
+    }
+
     /// Deletes downloaded media and forgets the paths, keeping the messages.
     pub async fn flush_media(&self) -> Result<usize> {
         let directory = self.media_dir.clone();
@@ -420,7 +434,11 @@ impl WhatsAppService {
             .ok_or_else(|| anyhow::anyhow!("no media folder is configured"))?
             .join("stickers");
         std::fs::create_dir_all(&dir)?;
-        let path = dir.join(format!("saved-{}.webp", unix_now()));
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let path = dir.join(format!("saved-{nanos}.webp"));
         std::fs::write(&path, webp)?;
         Ok(path.to_string_lossy().into_owned())
     }
@@ -439,10 +457,14 @@ impl WhatsAppService {
         let to_self = self.is_self_jid(&to);
         let webp = sticker_webp(&bytes)
             .ok_or_else(|| anyhow::anyhow!("that file is not an image we can turn into a sticker"))?;
+        let (width, height) = webp_dimensions(&webp).unwrap_or((512, 512));
+        let animated = webp_is_animated(&webp);
+        let png_thumbnail = sticker_png_thumbnail(&webp);
         let upload = self
             .client
             .upload(webp.clone(), MediaType::Sticker, Default::default())
             .await?;
+        let filehash = filehash_of_hash(&upload.file_sha256);
         let message = wa::Message {
             sticker_message: buffa::MessageField::some(wa::message::StickerMessage {
                 url: Some(upload.url),
@@ -453,8 +475,11 @@ impl WhatsAppService {
                 file_length: Some(upload.file_length),
                 media_key_timestamp: Some(upload.media_key_timestamp),
                 mimetype: Some("image/webp".into()),
-                width: Some(512),
-                height: Some(512),
+                width: Some(width),
+                height: Some(height),
+                is_animated: animated.then_some(true),
+                png_thumbnail,
+                sticker_sent_ts: Some(unix_now() * 1000),
                 context_info: context.map(|c| MessageField::some(*c)).unwrap_or_else(MessageField::none),
                 ..Default::default()
             }),
@@ -479,6 +504,11 @@ impl WhatsAppService {
             stored.quote = self.reply_quote(chat, reply).await?;
         }
         self.store.insert_message(&stored).await?;
+        if let Err(e) = record_sticker(&self.store, &stored).await {
+            log::warn!("could not record a sent sticker: {e}");
+        }
+        let now = unix_now();
+        let _ = self.store.set_sticker_recent(filehash, Some(now), now).await;
         let _ = self.events.send(ServiceEvent::hint(&stored, true));
         Ok(())
     }
@@ -496,12 +526,27 @@ impl WhatsAppService {
             dir.as_ref()
                 .is_some_and(|d| std::fs::canonicalize(p).is_ok_and(|f| f.starts_with(d)))
         });
+        // Stickers saved here are files, not messages, so nothing in the store
+        // names them; list the folder so they do not vanish when unfavourited.
+        let saved: Vec<String> = if kind == "sticker" {
+            self.media_dir()
+                .map(|d| d.join("stickers"))
+                .and_then(|d| std::fs::read_dir(d).ok())
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|entry| entry.path().to_string_lossy().into_owned())
+                .collect()
+        } else {
+            Vec::new()
+        };
         // The same sticker sent or received again is a new file; show it once.
         // Length plus the first 64 KiB identifies it without reading whole videos.
         let mut seen = std::collections::HashSet::new();
         let mut listed = std::collections::HashSet::new();
         Ok(preferred
             .cloned()
+            .chain(saved)
             .chain(recent)
             .filter(|p| listed.insert(p.clone()))
             .filter(|p| {

@@ -1,5 +1,6 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use postal_core::{SendOptions, VoiceNote};
+use postal_core::{Sticker, StickerLibrary, StickerResyncReport};
 use tauri::State;
 use crate::AppState;
 
@@ -153,6 +154,54 @@ pub(crate) async fn send_from_library(
         .send_from_library(&chat, &path, &kind, reply_of(reply_to_id, reply_to_sender, reply_to_text))
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Packs, favourites and recents of the sticker library.
+#[tauri::command(async)]
+pub(crate) async fn sticker_library(state: State<'_, AppState>) -> Result<StickerLibrary, String> {
+    state.service()?.sticker_library().await.map_err(|e| e.to_string())
+}
+
+/// The stickers in one pack, favourite-first.
+#[tauri::command(async)]
+pub(crate) async fn sticker_pack(state: State<'_, AppState>, pack: String) -> Result<Vec<Sticker>, String> {
+    state.service()?.stickers_in_pack(&pack).await.map_err(|e| e.to_string())
+}
+
+/// Favourites or unfavourites a sticker by its filehash.
+#[tauri::command(async)]
+pub(crate) async fn favorite_sticker(state: State<'_, AppState>, filehash: String, favorite: bool) -> Result<(), String> {
+    state.service()?.set_sticker_favorite(&filehash, favorite).await.map_err(|e| e.to_string())
+}
+
+/// Favourites or unfavourites a sticker that only exists as a file path.
+#[tauri::command(async)]
+pub(crate) async fn favorite_sticker_path(state: State<'_, AppState>, path: String, favorite: bool) -> Result<(), String> {
+    state.service()?.favorite_sticker_path(&path, favorite).await.map_err(|e| e.to_string())
+}
+
+/// Marks a sticker recently sent, or removes it from recents.
+#[tauri::command(async)]
+pub(crate) async fn sticker_recent(state: State<'_, AppState>, filehash: String, recent: bool) -> Result<(), String> {
+    state.service()?.set_sticker_recent(&filehash, recent).await.map_err(|e| e.to_string())
+}
+
+/// Fetches a received pack's contents and records them.
+#[tauri::command(async)]
+pub(crate) async fn fetch_sticker_pack(state: State<'_, AppState>, pack: String) -> Result<usize, String> {
+    state.service()?.fetch_sticker_pack(&pack).await.map_err(|e| e.to_string())
+}
+
+/// Downloads a pack sticker, returning its local path.
+#[tauri::command(async)]
+pub(crate) async fn download_sticker(state: State<'_, AppState>, filehash: String) -> Result<String, String> {
+    state.service()?.download_sticker(&filehash).await.map_err(|e| e.to_string())
+}
+
+/// Re-fetches known packs and resyncs sticker app-state; upsert-only.
+#[tauri::command(async)]
+pub(crate) async fn resync_stickers(state: State<'_, AppState>) -> Result<StickerResyncReport, String> {
+    state.service()?.resync_stickers().await.map_err(|e| e.to_string())
 }
 
 /// Media extensions the renderer may read.

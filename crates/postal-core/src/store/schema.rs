@@ -310,6 +310,7 @@ const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
     migrate_v6_explicit_limits,
     migrate_v7_media_paths,
     migrate_v8_page_cursor,
+    migrate_v9_stickers,
 ];
 
 pub(super) fn migrate(conn: &Connection) -> Result<()> {
@@ -687,5 +688,36 @@ fn migrate_v7_media_paths(conn: &Connection) -> Result<()> {
 fn migrate_v8_page_cursor(conn: &Connection) -> Result<()> {
     conn.execute_batch("DROP INDEX IF EXISTS idx_messages_chat_time;
         CREATE INDEX idx_messages_chat_time ON messages(chat, timestamp DESC, id DESC);")?;
+    Ok(())
+}
+
+/// Sticker packs and their stickers, keyed the way app-state sync addresses them:
+/// pack id and the base64 file hash. Strictly upsert-only; a remote removal
+/// clears a flag rather than dropping a row, so nothing is ever deleted here.
+fn migrate_v9_stickers(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS sticker_packs (
+             pack_id TEXT PRIMARY KEY,
+             name TEXT,
+             publisher TEXT,
+             tray_path TEXT,
+             origin TEXT,
+             updated_at INTEGER NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS stickers (
+             filehash TEXT PRIMARY KEY,
+             pack_id TEXT,
+             path TEXT,
+             animated INTEGER NOT NULL DEFAULT 0,
+             lottie INTEGER NOT NULL DEFAULT 0,
+             emojis TEXT,
+             favorite INTEGER NOT NULL DEFAULT 0,
+             recent_at INTEGER,
+             updated_at INTEGER NOT NULL,
+             media_ref BLOB
+         );
+         CREATE INDEX IF NOT EXISTS idx_stickers_pack ON stickers(pack_id);
+         CREATE INDEX IF NOT EXISTS idx_stickers_recent ON stickers(recent_at DESC);",
+    )?;
     Ok(())
 }

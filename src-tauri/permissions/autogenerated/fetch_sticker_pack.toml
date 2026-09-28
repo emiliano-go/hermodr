@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-fetch-sticker-pack"
+description = "Enables the fetch_sticker_pack command without any pre-configured scope."
+commands.allow = ["fetch_sticker_pack"]
+
+[[permission]]
+identifier = "deny-fetch-sticker-pack"
+description = "Denies the fetch_sticker_pack command without any pre-configured scope."
+commands.deny = ["fetch_sticker_pack"]

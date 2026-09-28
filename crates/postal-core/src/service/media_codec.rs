@@ -15,6 +15,56 @@ pub(super) fn sticker_webp(bytes: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// Whether a WebP carries an animation (`ANIM`/`ANMF` chunks).
+pub(super) fn webp_is_animated(bytes: &[u8]) -> bool {
+    bytes.len() >= 12
+        && &bytes[0..4] == b"RIFF"
+        && &bytes[8..12] == b"WEBP"
+        && bytes.windows(4).any(|w| w == b"ANIM")
+}
+
+/// The pixel dimensions in a WebP container, from whichever chunk carries them.
+pub(super) fn webp_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    if bytes.len() < 16 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WEBP" {
+        return None;
+    }
+    let mut at = 12usize;
+    while at + 8 <= bytes.len() {
+        let fourcc = &bytes[at..at + 4];
+        let size = u32::from_le_bytes([bytes[at + 4], bytes[at + 5], bytes[at + 6], bytes[at + 7]]) as usize;
+        let data = at + 8;
+        let Some(end) = data.checked_add(size).filter(|end| *end <= bytes.len()) else { break };
+        match fourcc {
+            b"VP8X" if end - data >= 10 => {
+                let w = 1 + u32::from_le_bytes([bytes[data + 4], bytes[data + 5], bytes[data + 6], 0]);
+                let h = 1 + u32::from_le_bytes([bytes[data + 7], bytes[data + 8], bytes[data + 9], 0]);
+                return Some((w, h));
+            }
+            b"VP8 " if end - data >= 10 && bytes[data + 3..data + 6] == [0x9d, 0x01, 0x2a] => {
+                let w = u16::from_le_bytes([bytes[data + 6], bytes[data + 7]]) as u32 & 0x3fff;
+                let h = u16::from_le_bytes([bytes[data + 8], bytes[data + 9]]) as u32 & 0x3fff;
+                return Some((w, h));
+            }
+            b"VP8L" if end - data >= 5 && bytes[data] == 0x2f => {
+                let bits = u32::from_le_bytes([bytes[data + 1], bytes[data + 2], bytes[data + 3], bytes[data + 4]]);
+                return Some(((bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1));
+            }
+            _ => {}
+        }
+        at = data + size + (size & 1);
+    }
+    None
+}
+
+/// A PNG preview for a sticker, or `None` when the first frame cannot be decoded
+/// (as with an animated WebP the `image` crate does not read).
+pub(super) fn sticker_png_thumbnail(bytes: &[u8]) -> Option<Vec<u8>> {
+    let image = image::load_from_memory(bytes).ok()?.thumbnail(256, 256);
+    let mut out = Vec::new();
+    image.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).ok()?;
+    Some(out)
+}
+
 /// A small JPEG preview for an outgoing attachment.
 ///
 /// Images are downscaled locally. Video needs a decoder, so it is best effort:

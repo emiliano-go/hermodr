@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sticker-pack"
+description = "Enables the sticker_pack command without any pre-configured scope."
+commands.allow = ["sticker_pack"]
+
+[[permission]]
+identifier = "deny-sticker-pack"
+description = "Denies the sticker_pack command without any pre-configured scope."
+commands.deny = ["sticker_pack"]

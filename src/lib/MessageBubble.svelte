@@ -27,6 +27,9 @@ import VideoPlayer from "$lib/VideoPlayer.svelte";
 
   let { message, vm, api }: { message: StoredMessage; vm: BubbleVm; api: BubbleApi } = $props();
 
+  /** A sticker file the renderer cannot draw, such as a Lottie sticker. */
+  let stickerBroken = $state(false);
+
   /** The media kind a downloaded file's extension implies. */
   function kindOfFile(path: string) {
     if (/\.(ogg|opus|mp3|m4a|aac|wav)$/i.test(path)) return "audio";
@@ -117,7 +120,7 @@ import VideoPlayer from "$lib/VideoPlayer.svelte";
               : "Go to message"}
         label={vm.quoteAuthor}
         text={vm.quoteText}
-        image={message.reply_to_kind === "image" && message.reply_to_thumb
+        image={message.reply_to_thumb && ["image", "sticker", "gif"].includes(message.reply_to_kind ?? "")
           ? mediaSrc(message.reply_to_thumb)
           : null}
         icon={message.reply_to_kind ? replyIcon(message.reply_to_kind) : null}
@@ -179,12 +182,20 @@ import VideoPlayer from "$lib/VideoPlayer.svelte";
           title={message.from_me ? "You" : vm.senderText}
           initials={initials(message.from_me ? "You" : vm.senderText)} />
       {:else if onceKind === "sticker"}
-        <img class="sticker" src={convertFileSrc(message.media_path)} alt="Sticker" />
+        {#if stickerBroken}
+          <span class="sticker sticker-unsupported" title="Unsupported sticker">Unsupported sticker</span>
+        {:else}
+          <img class="sticker" src={convertFileSrc(message.media_path)} alt="Sticker" onerror={() => (stickerBroken = true)} />
+        {/if}
       {:else}
         <img class="media" src={convertFileSrc(message.media_path)} alt={message.text} />
       {/if}
     {:else if message.media_kind === "sticker" && message.media_path}
-      <img class="sticker" src={convertFileSrc(message.media_path)} alt="Sticker" />
+      {#if stickerBroken}
+        <span class="sticker sticker-unsupported" title="Unsupported sticker">Unsupported sticker</span>
+      {:else}
+        <img class="sticker" src={convertFileSrc(message.media_path)} alt="Sticker" onerror={() => (stickerBroken = true)} />
+      {/if}
     {:else if message.media_kind === "sticker"}
       <!-- Fetched on its own when shown; the placeholder keeps the sticker's space. -->
       <button
@@ -918,6 +929,20 @@ import VideoPlayer from "$lib/VideoPlayer.svelte";
     height: 160px;
     object-fit: contain;
     display: block;
+  }
+  /* A sticker file the renderer cannot draw, drawn as a static stand-in. */
+  .sticker-unsupported {
+    display: grid;
+    place-items: center;
+    padding: 8px;
+    box-sizing: border-box;
+    border-radius: 18px;
+    border: 2px dashed var(--faint);
+    background: var(--surface);
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 600;
+    text-align: center;
   }
   .sticker-pending {
     display: grid;

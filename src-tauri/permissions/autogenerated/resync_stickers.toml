@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-resync-stickers"
+description = "Enables the resync_stickers command without any pre-configured scope."
+commands.allow = ["resync_stickers"]
+
+[[permission]]
+identifier = "deny-resync-stickers"
+description = "Denies the resync_stickers command without any pre-configured scope."
+commands.deny = ["resync_stickers"]

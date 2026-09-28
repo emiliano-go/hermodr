@@ -11,6 +11,8 @@
   import { base64Of as toBase64 } from "$lib/files";
   import Icon from "$lib/Icon.svelte";
   import ImageCropper from "$lib/ImageCropper.svelte";
+  import { stickers as stickerEvents } from "$lib/state/stickers.svelte";
+  import type { Sticker, StickerLibrary, StickerPack } from "$lib/models";
   import {
     GROUPS,
     loadEmojis,
@@ -48,6 +50,11 @@
   let library = $state<Record<"gif" | "sticker", string[]>>({ gif: [], sticker: [] });
   let grid: HTMLDivElement | undefined = $state();
   let fileInput: HTMLInputElement | undefined = $state();
+  /** Sticker files the renderer cannot draw (Lottie). */
+  let broken = $state<Record<string, true>>({});
+  /** The synced sticker library: packs, favourites and recents. */
+  let lib = $state<StickerLibrary>({ packs: [], favorites: [], recent: [] });
+  let openPack = $state<{ pack: StickerPack; stickers: Sticker[] } | null>(null);
 
   const FAV_KEY = "postal.favStickers";
   let favourites = $state<string[]>(
@@ -100,11 +107,18 @@
   }
 
   $effect(() => {
+    const changed = stickerEvents.version;
     if (tab === "emoji") return;
+    void changed;
     const kind = tab;
     invoke<string[]>("media_library", { kind, prefer: kind === "sticker" ? untrack(() => favourites) : [] })
       .then((paths) => (library[kind] = paths))
       .catch(() => {});
+    if (kind === "sticker") {
+      invoke<StickerLibrary>("sticker_library")
+        .then((value) => (lib = value))
+        .catch(() => {});
+    }
   });
 
   const results = $derived(query.trim() ? searchEmojis(emojis, query, 120) : []);
@@ -116,13 +130,42 @@
   }
 
   function toggleFavourite(path: string) {
-    favourites = favourites.includes(path)
-      ? favourites.filter((p) => p !== path)
-      : [path, ...favourites];
+    const on = favourites.includes(path);
+    favourites = on ? favourites.filter((p) => p !== path) : [path, ...favourites];
     try {
       localStorage.setItem(FAV_KEY, JSON.stringify(favourites));
     } catch {
       // Favourites only last this session then.
+    }
+    // Keep the phone's own favourites in step; a failure only loses the sync.
+    invoke("favorite_sticker_path", { path, favorite: !on }).catch(() => {});
+  }
+
+  async function openPackView(pack: StickerPack) {
+    try {
+      await invoke("fetch_sticker_pack", { pack: pack.pack_id });
+      const list = await invoke<Sticker[]>("sticker_pack", { pack: pack.pack_id });
+      openPack = { pack, stickers: list };
+    } catch (e) {
+      onerror(String(e));
+    }
+  }
+
+  async function sendPackSticker(sticker: Sticker) {
+    try {
+      const path = sticker.path ?? (await invoke<string>("download_sticker", { filehash: sticker.filehash }));
+      sendFromLibrary(path, "sticker");
+    } catch (e) {
+      onerror(String(e));
+    }
+  }
+
+  async function resyncLibrary() {
+    try {
+      await invoke("resync_stickers");
+      stickerEvents.touch();
+    } catch (e) {
+      onerror(String(e));
     }
   }
 
@@ -275,23 +318,57 @@
           e.currentTarget.value = "";
         }} />
       {#if tab === "sticker"}
-        <div class="tiles stickers">
-          {#each stickers as path (path)}
-            <div class="tile">
-              <button class="tile-send" title="Send sticker" onclick={() => sendFromLibrary(path, "sticker")}>
-                <img src={convertFileSrc(path)} alt="" loading="lazy" />
+        {#if openPack}
+          <div class="pack-head">
+            <button class="pack-back" title="All packs" onclick={() => (openPack = null)}><Icon name="chevronLeft" size={15} /></button>
+            <span class="pack-name">{openPack.pack.name ?? openPack.pack.publisher ?? "Sticker pack"}</span>
+          </div>
+          <div class="tiles stickers">
+            {#each openPack.stickers as sticker (sticker.filehash)}
+              <button class="tile-send" title="Send sticker" onclick={() => sendPackSticker(sticker)}>
+                {#if sticker.path && !broken[sticker.path]}
+                  <img src={convertFileSrc(sticker.path!)} alt="" loading="lazy" onerror={() => (broken[sticker.path!] = true)} />
+                {:else}
+                  <span class="tile-unsupported">{sticker.lottie ? "Lottie sticker" : "Tap to fetch"}</span>
+                {/if}
               </button>
-              <button
-                class="fav"
-                class:on={favourites.includes(path)}
-                title={favourites.includes(path) ? "Remove from favourites" : "Add to favourites"}
-                aria-label="Favourite"
-                onclick={() => toggleFavourite(path)}><Icon name="star" size={14} /></button>
+            {/each}
+          </div>
+          {#if openPack.stickers.length === 0}<p class="empty">This pack has no stickers to show.</p>{/if}
+        {:else}
+          {#if lib.packs.length > 0}
+            <div class="pack-bar">
+              {#each lib.packs as pack (pack.pack_id)}
+                <button class="pack-chip" title={pack.publisher ?? "Pack"} onclick={() => openPackView(pack)}>
+                  {#if pack.tray_path}<img src={convertFileSrc(pack.tray_path)} alt="" />{/if}
+                  <span>{pack.name ?? pack.pack_id.slice(0, 8)}</span>
+                </button>
+              {/each}
             </div>
-          {/each}
-        </div>
-        {#if stickers.length === 0}
-          <p class="empty">Stickers you receive show up here, ready to send back.</p>
+          {/if}
+          <button class="resync" onclick={resyncLibrary}><Icon name="repeat" size={14} /> Sync with phone</button>
+          <div class="tiles stickers">
+            {#each stickers as path (path)}
+              <div class="tile">
+                <button class="tile-send" title="Send sticker" onclick={() => sendFromLibrary(path, "sticker")}>
+                  {#if broken[path]}
+                    <span class="tile-unsupported">Unsupported sticker</span>
+                  {:else}
+                    <img src={convertFileSrc(path)} alt="" loading="lazy" onerror={() => (broken[path] = true)} />
+                  {/if}
+                </button>
+                <button
+                  class="fav"
+                  class:on={favourites.includes(path)}
+                  title={favourites.includes(path) ? "Remove from favourites" : "Add to favourites"}
+                  aria-label="Favourite"
+                  onclick={() => toggleFavourite(path)}><Icon name="star" size={14} /></button>
+              </div>
+            {/each}
+          </div>
+          {#if stickers.length === 0}
+            <p class="empty">Stickers you receive show up here, ready to send back.</p>
+          {/if}
         {/if}
       {:else}
         <div class="tiles gifs">
@@ -498,6 +575,77 @@
     display: grid;
     gap: 6px;
   }
+  .pack-bar {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 8px;
+  }
+  .pack-chip {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 140px;
+    padding: 4px 8px 4px 4px;
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    background: var(--raised);
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .pack-chip img {
+    width: 24px;
+    height: 24px;
+    object-fit: contain;
+  }
+  .pack-chip span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .pack-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  .pack-back {
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    border: 0;
+    border-radius: 6px;
+    background: var(--raised);
+    color: var(--text);
+    cursor: pointer;
+  }
+  .pack-name {
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .resync {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    margin-bottom: 8px;
+    padding: 7px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--raised);
+    color: var(--muted);
+    font: inherit;
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  .resync:hover {
+    color: var(--text);
+  }
   .stickers {
     grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
   }
@@ -524,6 +672,17 @@
     aspect-ratio: 1;
     object-fit: contain;
     display: block;
+  }
+  .tile-unsupported {
+    display: grid;
+    place-items: center;
+    aspect-ratio: 1;
+    border-radius: 8px;
+    border: 2px dashed var(--faint);
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+    text-align: center;
   }
   .tile-send video {
     width: 100%;
