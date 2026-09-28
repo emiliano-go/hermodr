@@ -1,7 +1,27 @@
 # Refactoring ledger
 
-Base: `4754994` (`origin/master`, pulled 2026-09-27).
+Initial base: `4754994` (`origin/master`, pulled 2026-09-27).
 Work happens on `codex/refactor-backend` in an isolated worktree.
+
+## Completed follow-up work
+
+- Storage policies now distinguish RAM windows from explicit disk retention.
+  Independent history opt-in, typed limit modes, retained empty-chat metadata,
+  indexed cursor paging and a Storage Manager have regression coverage.
+- SQLite operations cross an async worker boundary. Batch leases preserve
+  ordering and cancellation cleanup without blocking the async executor.
+- LID/phone mappings fold existing rows immediately and atomically. Media retry,
+  account cancellation, page races, receipt ordering and encrypted-reaction
+  handling have synthetic regression tests.
+- Local backups contain application tables and referenced attachments, exclude
+  sessions, and restore into a separate account. Account-list saves are atomic.
+- Large attachments use bounded renderer chunks and file-backed encryption,
+  upload and download. Playback/conversion paths have not all been converted.
+- The independent postal-plugins crate provides read-only sidecars, explicit
+  consent, acknowledged events, eager/lazy lifecycle, bounded queues and crash
+  handling. Synthetic child processes and a browser fixture verify this surface.
+
+The counts below record earlier checkpoints, not the latest integrated suite.
 
 ## Scope
 
@@ -55,9 +75,10 @@ Keep structural changes separate from issue fixes.
 
 ## Current issue work (2026-09-27)
 
-- Pairing: Android / `ANDROID_TABLET`, version `2.26.32.84`, shipped in
-  `54ab4c7`. Existing links require re-pairing. #154 remains open until a live
-  pairing/history check establishes which compatibility flags can be removed.
+- Initial pairing changes advertised Android / `ANDROID_TABLET`, version
+  `2.26.32.84`, in `54ab4c7`. Subsequent upstream work uses an External main
+  companion plus an optional Android tablet companion for one-time media.
+  Existing links require re-pairing to change their advertised device identity.
 - Incoming media captions: shared decoding preserves caption text and wire
   mention tokens. Schema migration 3 restores lost placeholders from retained
   protocol references, without overwriting edits, revocations or view-once rows.
@@ -69,17 +90,15 @@ Keep structural changes separate from issue fixes.
   live clipboard, save-dialog and new-pairing checks remain unverified.
 - Validation: 90 core unit tests, 10 integration tests, 7 shell tests, frontend
   self-checks, Svelte check (0 errors/warnings) and production build pass.
-- Assigned backlog: 55 open issues were found. Operator approved separate RAM
-  limits and explicit disk retention for #131/#132/#161; preserve existing disk
-  settings during migration. Implementation remains pending. Do not treat the
-  earlier extraction or these media fixes as completion of that storage work.
+- Operator-approved RAM limits and explicit disk retention for #131/#132/#161
+  are implemented, preserving existing disk settings during migration.
 
 ## Remaining boundaries
 
-- Handshake profile now selects Android/Tablet/Android 13 before the bot starts,
-  for registration and reconnect payloads. WebInfo is omitted. Native Android
-  transport and four-part handshake versions remain outside the library's
-  current support; operator chose supported metadata first.
+- Android companion handshake metadata applies before registration and reconnect.
+  Native Android transport and four-part handshake versions remain outside the
+  library's support; operator chose supported metadata first. The main companion
+  retains the External profile introduced by the dual-connection changes.
 - Retention benchmark: 150,000 messages across 1,000 chats, identical 149,000
   deletions, 10.229 s before and 0.516 s after replacing composite NOT IN with
   indexed newest-message lookups. Disk-retention behavior is unchanged.
@@ -91,15 +110,15 @@ Keep structural changes separate from issue fixes.
   preview IP filtering covers reserved ranges and translated IPv4, redirects
   use the HTTP library with the same resolver, and configured proxies skip
   preview fetching. Six synthetic network tests cover policy/redirect behavior.
-- Duplicate-chat investigation: history stores raw conversation IDs, while live
-  messages canonicalize them. Learned mappings do not immediately reconcile
-  existing rows; restart does. UI replaces chat snapshots and keys rows by JID,
-  so merging by display name would incorrectly combine different contacts.
+- Duplicate-chat fix: history resolves conversation IDs, newly learned mappings
+  fold existing rows immediately, and repository access canonicalizes stale LIDs.
+  Atomic merge tests cover collisions, replay and rollback. UI rows remain keyed
+  by JID; merging by display name would incorrectly combine different contacts.
 
-Account-generation guards, queued-send lifetime/order, stale chat responses,
-frontend resource teardown, history-navigation convergence, atomic account-file
-saves and media streaming need behavior-specific regression
-proof. Extraction alone does not resolve those audit findings.
+Account-generation guards, queued-send cancellation/order, stale history pages,
+local-first history navigation, atomic account saves and file-backed transfers
+now have focused regression coverage. Remaining high-risk protocol scenarios
+still belong to #156; these tests do not establish live-device parity.
 
 Large presentation files are not split merely to reduce line counts. Their
 CSS and markup stay with their components unless there is a real shared view.
