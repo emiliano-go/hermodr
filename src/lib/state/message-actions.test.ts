@@ -21,7 +21,7 @@ async function withApp(run: (app: {
     __TAURI_INTERNALS__: { invoke: async (command: string, args: unknown) => { calls.push({ command, args }); } },
   } });
   Object.defineProperty(globalThis, "document", { configurable: true, value: { addEventListener() {} } });
-  const server = await createServer({ server: { middlewareMode: true, hmr: false } });
+  const server = await createServer({ server: { middlewareMode: true, ws: false } });
   try {
     const { menuItems } = await server.ssrLoadModule("/src/lib/state/message-actions.ts");
     const { messages } = await server.ssrLoadModule("/src/lib/state/messages.svelte.ts");
