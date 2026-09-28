@@ -170,110 +170,37 @@ const ONCE_DORMANT_TICK: std::time::Duration = std::time::Duration::from_secs(60
 const ONCE_PAIR_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
 /// Runs the Android companion on demand instead of around the clock. The main
-/// -link side detects a one-time message and wakes it; it fetches what it can
+/// link side detects a one-time message and wakes it; it fetches what it can
 /// and goes dormant again. Enabling it needs an existing link, so pairing is
 /// its own short session that ends at the scan.
 pub(crate) fn spawn_once_manager(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        // One-time messages the running companion is expected to fetch, and
-        // the ones it already failed on this run.
-        let mut expecting: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
-        let mut ignored: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
-        let mut last_progress = std::time::Instant::now();
-        let mut pairing_since: Option<std::time::Instant> = None;
-
+        let mut companion = CompanionState::new();
         loop {
             let state = app.state::<AppState>();
-            let enabled = state.settings.lock().unwrap().android_instance;
-            let pairing = state.once_pairing.load(Ordering::SeqCst);
-            let account = active_account(&state);
-            let paired = account.as_deref().is_some_and(|id| once_paired(&state, id));
-            let running = state.once_service.lock().unwrap().is_some();
-
-            if account.is_none() || (!enabled && !pairing) {
-                // Off, or nothing to attach to: stop at once, no grace.
-                if running {
+            let view = observe_companion(&state).await;
+            let step = companion.step(&view, std::time::Instant::now());
+            if step.cancel_pairing {
+                state.once_pairing.store(false, Ordering::SeqCst);
+            }
+            match step.action {
+                CompanionAction::Start => {
+                    log::info!("waking the Android companion ({})", step.reason);
+                    if let Err(e) = start_once(&app, &state).await {
+                        log::warn!("could not wake the Android companion: {e}");
+                    }
+                }
+                CompanionAction::Stop => {
+                    log::info!("putting the Android companion to sleep ({})", step.reason);
                     if let Err(e) = stop_once(&app, &state).await {
                         log::warn!("could not put the Android companion to sleep: {e}");
                     }
                 }
-                expecting.clear();
-                if account.is_none() {
-                    ignored.clear();
-                }
-                pairing_since = None;
-                last_progress = std::time::Instant::now();
-            } else if pairing && !paired {
-                // Pairing: stay up only long enough for the QR to be scanned.
-                let started = *pairing_since.get_or_insert_with(std::time::Instant::now);
-                if started.elapsed() >= ONCE_PAIR_TIMEOUT {
-                    log::info!("Android companion pairing timed out; start it again to retry");
-                    state.once_pairing.store(false, Ordering::SeqCst);
-                    pairing_since = None;
-                    if running {
-                        let _ = stop_once(&app, &state).await;
-                    }
-                } else if !running {
-                    if let Err(e) = start_once(&app, &state).await {
-                        log::warn!("could not start the Android companion for pairing: {e}");
-                    }
-                }
-            } else {
-                if pairing && paired {
-                    // The scan landed: the pairing session is done with.
-                    state.once_pairing.store(false, Ordering::SeqCst);
-                }
-                pairing_since = None;
-                if !enabled || !paired {
-                    // Enabling requires a link; a revoked one stops the session.
-                    if running {
-                        if let Err(e) = stop_once(&app, &state).await {
-                            log::warn!("could not put the Android companion to sleep: {e}");
-                        }
-                    }
-                } else {
-                    let service = state.service.lock().unwrap().clone();
-                    let pending = match service {
-                        Some(service) => service.pending_view_once(ONCE_RECOVERY_WINDOW).await,
-                        None => Vec::new(),
-                    };
-                    let pending: std::collections::HashSet<(String, String)> = pending
-                        .into_iter()
-                        .filter(|id| !ignored.contains(id))
-                        .collect();
-                    if pending != expecting {
-                        last_progress = std::time::Instant::now();
-                        expecting = pending.clone();
-                    }
-                    if !pending.is_empty() {
-                        if !running {
-                            log::info!(
-                                "waking the Android companion for {} one-time message(s)",
-                                pending.len()
-                            );
-                            if let Err(e) = start_once(&app, &state).await {
-                                log::warn!("could not wake the Android companion: {e}");
-                            }
-                        } else if last_progress.elapsed() >= ONCE_GIVE_UP {
-                            log::warn!(
-                                "Android companion could not fetch {} one-time message(s); going dormant",
-                                pending.len()
-                            );
-                            ignored.extend(pending.iter().cloned());
-                            expecting.clear();
-                            let _ = stop_once(&app, &state).await;
-                            last_progress = std::time::Instant::now();
-                        }
-                    } else if running && last_progress.elapsed() >= ONCE_STOP_GRACE {
-                        log::info!("Android companion is done fetching; going dormant");
-                        let _ = stop_once(&app, &state).await;
-                    }
-                }
+                CompanionAction::None => {}
             }
             let running = state.once_service.lock().unwrap().is_some();
             drop(state);
-
             let tick = if running { ONCE_RUNNING_TICK } else { ONCE_DORMANT_TICK };
             tokio::time::timeout(tick, app.state::<AppState>().once_wake.notified())
                 .await
@@ -281,6 +208,154 @@ pub(crate) fn spawn_once_manager(app: &AppHandle) {
         }
     });
 }
+
+/// What the companion manager needs to know this tick.
+struct CompanionView {
+    enabled: bool,
+    pairing: bool,
+    has_account: bool,
+    paired: bool,
+    running: bool,
+    /// Pending one-time messages, before the state machine drops given-up ids.
+    pending: Vec<(String, String)>,
+}
+
+/// The one thing to do with the instance after a tick.
+#[derive(Debug, PartialEq, Eq)]
+enum CompanionAction {
+    None,
+    Start,
+    Stop,
+}
+
+struct CompanionStep {
+    action: CompanionAction,
+    /// Forget a pairing session that timed out.
+    cancel_pairing: bool,
+    /// Why, for the log line.
+    reason: &'static str,
+}
+
+/// The companion manager's decision state: what it is still expecting to
+/// fetch, what it already failed on this run, and the timers behind the
+/// dormancy and give-up rules.
+struct CompanionState {
+    expecting: std::collections::HashSet<(String, String)>,
+    ignored: std::collections::HashSet<(String, String)>,
+    last_progress: std::time::Instant,
+    pairing_since: Option<std::time::Instant>,
+}
+
+impl CompanionState {
+    fn new() -> Self {
+        Self {
+            expecting: std::collections::HashSet::new(),
+            ignored: std::collections::HashSet::new(),
+            last_progress: std::time::Instant::now(),
+            pairing_since: None,
+        }
+    }
+
+    fn step(&mut self, view: &CompanionView, now: std::time::Instant) -> CompanionStep {
+        if !view.has_account || (!view.enabled && !view.pairing) {
+            // Off, or nothing to attach to: stop at once, no grace.
+            self.expecting.clear();
+            if !view.has_account {
+                self.ignored.clear();
+            }
+            self.pairing_since = None;
+            self.last_progress = now;
+            let reason = if view.has_account { "disabled" } else { "no account" };
+            return CompanionStep { action: stop_if_running(view), cancel_pairing: false, reason };
+        }
+        if view.pairing && !view.paired {
+            // Pairing: stay up only long enough for the QR to be scanned.
+            let started = *self.pairing_since.get_or_insert(now);
+            if now.saturating_duration_since(started) >= ONCE_PAIR_TIMEOUT {
+                self.pairing_since = None;
+                return CompanionStep {
+                    action: stop_if_running(view),
+                    cancel_pairing: true,
+                    reason: "pairing timed out",
+                };
+            }
+            return CompanionStep { action: start_if_stopped(view), cancel_pairing: false, reason: "pairing" };
+        }
+        self.pairing_since = None;
+        if !view.enabled || !view.paired {
+            // Enabling requires a link; a revoked one stops the session.
+            let reason = if view.pairing { "linking finished" } else { "link needed" };
+            return CompanionStep { action: stop_if_running(view), cancel_pairing: view.pairing, reason };
+        }
+        // A scan that landed clears the pairing flag with the demand rules.
+        let mut step = self.demand(view, now);
+        step.cancel_pairing = view.pairing;
+        step
+    }
+
+    /// Wake for pending one-time media, sleep once nothing is left, and give
+    /// up on messages that never arrive.
+    fn demand(&mut self, view: &CompanionView, now: std::time::Instant) -> CompanionStep {
+        let pending: std::collections::HashSet<(String, String)> = view
+            .pending
+            .iter()
+            .filter(|id| !self.ignored.contains(id))
+            .cloned()
+            .collect();
+        if pending != self.expecting {
+            self.last_progress = now;
+            self.expecting = pending.clone();
+        }
+        if pending.is_empty() {
+            if view.running && now.saturating_duration_since(self.last_progress) >= ONCE_STOP_GRACE {
+                return CompanionStep { action: CompanionAction::Stop, cancel_pairing: false, reason: "done fetching" };
+            }
+            return CompanionStep { action: CompanionAction::None, cancel_pairing: false, reason: "dormant" };
+        }
+        if !view.running {
+            return CompanionStep {
+                action: CompanionAction::Start,
+                cancel_pairing: false,
+                reason: "one-time media waiting",
+            };
+        }
+        if now.saturating_duration_since(self.last_progress) >= ONCE_GIVE_UP {
+            log::warn!(
+                "Android companion could not fetch {} one-time message(s); going dormant",
+                pending.len()
+            );
+            self.ignored.extend(pending);
+            self.expecting.clear();
+            self.last_progress = now;
+            return CompanionStep { action: CompanionAction::Stop, cancel_pairing: false, reason: "gave up" };
+        }
+        CompanionStep { action: CompanionAction::None, cancel_pairing: false, reason: "fetching" }
+    }
+}
+
+fn start_if_stopped(view: &CompanionView) -> CompanionAction {
+    if view.running { CompanionAction::None } else { CompanionAction::Start }
+}
+
+fn stop_if_running(view: &CompanionView) -> CompanionAction {
+    if view.running { CompanionAction::Stop } else { CompanionAction::None }
+}
+
+/// Reads the current companion inputs, including the pending one-time media.
+async fn observe_companion(state: &AppState) -> CompanionView {
+    let enabled = state.settings.lock().unwrap().android_instance;
+    let pairing = state.once_pairing.load(Ordering::SeqCst);
+    let account = active_account(state);
+    let paired = account.as_deref().is_some_and(|id| once_paired(state, id));
+    let running = state.once_service.lock().unwrap().is_some();
+    let service = state.service.lock().unwrap().clone();
+    let pending = match service {
+        Some(service) => service.pending_view_once(ONCE_RECOVERY_WINDOW).await,
+        None => Vec::new(),
+    };
+    CompanionView { enabled, pairing, has_account: account.is_some(), paired, running, pending }
+}
+
 
 fn emit_service_event(app: &AppHandle, event: &ServiceEvent) {
     crate::plugins::publish(&app.state::<AppState>().plugins, event);
@@ -520,4 +595,101 @@ pub(crate) async fn connect(app: AppHandle, state: State<'_, AppState>) -> Resul
         }
     };
     start_service(&app, &state, &account).await
+}
+
+#[cfg(test)]
+mod companion_tests {
+    use super::*;
+
+    fn view(running: bool, pending: &[(&str, &str)]) -> CompanionView {
+        CompanionView {
+            enabled: true,
+            pairing: false,
+            has_account: true,
+            paired: true,
+            running,
+            pending: pending.iter().map(|(chat, id)| (chat.to_string(), id.to_string())).collect(),
+        }
+    }
+
+    fn secs(n: u64) -> std::time::Duration {
+        std::time::Duration::from_secs(n)
+    }
+
+    #[test]
+    fn sleeping_companion_wakes_for_one_time_media_and_dozes_after_grace() {
+        let mut state = CompanionState::new();
+        let base = std::time::Instant::now();
+        assert_eq!(state.step(&view(false, &[("a", "1")]), base).action, CompanionAction::Start);
+
+        let idle = state.step(&view(true, &[]), base + secs(5));
+        assert_eq!(idle.action, CompanionAction::None);
+        let stop = state.step(&view(true, &[]), base + secs(5) + ONCE_STOP_GRACE + secs(1));
+        assert_eq!(stop.action, CompanionAction::Stop);
+    }
+
+    #[test]
+    fn companion_gives_up_on_media_it_never_receives() {
+        let mut state = CompanionState::new();
+        let base = std::time::Instant::now();
+        assert_eq!(state.step(&view(false, &[("a", "1")]), base).action, CompanionAction::Start);
+
+        let waiting = state.step(&view(true, &[("a", "1")]), base + secs(10));
+        assert_eq!(waiting.action, CompanionAction::None);
+        let gave_up = state.step(&view(true, &[("a", "1")]), base + ONCE_GIVE_UP + secs(1));
+        assert_eq!(gave_up.action, CompanionAction::Stop);
+        assert_eq!(gave_up.reason, "gave up");
+
+        // The same message is ignored for the rest of the run...
+        let ignored = state.step(&view(false, &[("a", "1")]), base + ONCE_GIVE_UP + secs(2));
+        assert_eq!(ignored.action, CompanionAction::None);
+        // ...but a new one wakes it again.
+        let fresh = state.step(&view(false, &[("a", "1"), ("b", "2")]), base + ONCE_GIVE_UP + secs(3));
+        assert_eq!(fresh.action, CompanionAction::Start);
+    }
+
+    #[test]
+    fn new_one_time_media_resets_the_give_up_timer() {
+        let mut state = CompanionState::new();
+        let base = std::time::Instant::now();
+        assert_eq!(state.step(&view(false, &[("a", "1")]), base).action, CompanionAction::Start);
+        assert_eq!(state.step(&view(true, &[("a", "1"), ("b", "2")]), base + secs(60)).action, CompanionAction::None);
+
+        // 90s after the newest demand, not after the wake.
+        assert_eq!(state.step(&view(true, &[("a", "1"), ("b", "2")]), base + secs(140)).action, CompanionAction::None);
+        assert_eq!(state.step(&view(true, &[("a", "1"), ("b", "2")]), base + secs(152)).action, CompanionAction::Stop);
+    }
+
+    #[test]
+    fn pairing_runs_until_scanned_or_timed_out() {
+        let mut state = CompanionState::new();
+        let base = std::time::Instant::now();
+        let mut pairing = view(false, &[]);
+        pairing.pairing = true;
+        pairing.paired = false;
+        assert_eq!(state.step(&pairing, base).action, CompanionAction::Start);
+
+        pairing.running = true;
+        assert_eq!(state.step(&pairing, base + secs(60)).action, CompanionAction::None);
+        let timed_out = state.step(&pairing, base + ONCE_PAIR_TIMEOUT + secs(1));
+        assert!(timed_out.cancel_pairing);
+        assert_eq!(timed_out.action, CompanionAction::Stop);
+
+        // A scan that landed clears the pairing flag and winds the session down.
+        let mut paired = view(true, &[]);
+        paired.pairing = true;
+        let step = state.step(&paired, base + ONCE_PAIR_TIMEOUT + secs(2));
+        assert!(step.cancel_pairing);
+        assert_eq!(step.action, CompanionAction::Stop);
+    }
+
+    #[test]
+    fn turning_the_companion_off_sleeps_it_immediately() {
+        let mut state = CompanionState::new();
+        let mut off = view(true, &[("a", "1")]);
+        off.enabled = false;
+        let step = state.step(&off, std::time::Instant::now());
+        assert_eq!(step.action, CompanionAction::Stop);
+        assert_eq!(step.reason, "disabled");
+    }
 }
