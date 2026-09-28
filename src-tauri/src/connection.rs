@@ -425,6 +425,16 @@ pub(crate) fn once_state(state: State<'_, AppState>) -> OnceState {
 /// enough for the QR to be scanned.
 #[tauri::command]
 pub(crate) fn set_pairing(app: AppHandle, state: State<'_, AppState>, pairing: bool) -> Result<(), String> {
+    if pairing {
+        // Fail here, where the UI can show it, instead of leaving the pairing
+        // screen without a QR until the session times out.
+        if !state.settings.lock().unwrap().keep_history {
+            return Err("Pairing the Android companion needs \"Download and keep history\" turned on".into());
+        }
+        if active_account(&state).is_none() {
+            return Err("no account to pair the Android companion with".into());
+        }
+    }
     state.once_pairing.store(pairing, Ordering::SeqCst);
     wake_once(&app);
     Ok(())
@@ -452,6 +462,7 @@ pub(crate) fn forget_session(app: &AppHandle, account: &str, service: &Arc<Whats
     }
     *state.once_qr.lock().unwrap() = None;
     state.once_connected.store(false, Ordering::SeqCst);
+    state.once_pairing.store(false, Ordering::SeqCst);
     let mut file = state.accounts.lock().unwrap();
     if let Some(entry) = file.accounts.iter_mut().find(|a| a.id == account) {
         entry.jid = None;

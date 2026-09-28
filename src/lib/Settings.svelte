@@ -732,7 +732,14 @@
                 <button class="button" onclick={() => once.cancelPair()}>Cancel</button>
               </div>
             {:else}
-              <button class="button" onclick={() => once.pair()}>Pair Android companion</button>
+              <button class="button" onclick={() => once.pair()} disabled={!draft.keep_history}>
+                Pair Android companion
+              </button>
+              {#if !draft.keep_history}
+                <p class="muted setting-desc">
+                  Turn on "Download and keep history" first: both links share one message store.
+                </p>
+              {/if}
             {/if}
           {:else}
             <label class="setting">

@@ -150,6 +150,10 @@ export async function invoke<T>(command: string, args?: Record<string, unknown>)
     fixture.savedRetention = JSON.parse(JSON.stringify(args?.retention));
     return undefined as T;
   }
+  if (command === "once_state") return {
+    paired: false, pairing: false, running: false, connected: false, qr: null,
+  } as T;
+  if (command === "set_pairing") return undefined as T;
   if (command !== "boolean_props") throw new Error(`No synthetic response for ${command}`);
   fixture.calls++;
   if (fixture.failure) throw new Error("Synthetic disconnected account");
