@@ -437,6 +437,13 @@ fn create_base_tables(conn: &Connection) -> Result<()> {
 
 /// Everything that hangs off a message or a chat.
 fn create_state_tables(conn: &Connection) -> Result<()> {
+    create_mark_tables(conn)?;
+    create_chat_tables(conn)?;
+    Ok(())
+}
+
+/// The tables holding per-message state.
+fn create_mark_tables(conn: &Connection) -> Result<()> {
     // Chat pins, mirrored from the account so they match the phone.
     conn.execute("CREATE TABLE IF NOT EXISTS pins (jid TEXT PRIMARY KEY)", [])?;
     // Archive, mute and mark-unread, mirrored from the account like pins.
@@ -490,6 +497,11 @@ fn create_state_tables(conn: &Connection) -> Result<()> {
          CREATE INDEX IF NOT EXISTS lid_pn_by_pn ON lid_pn (pn);
          CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);",
     )?;
+    Ok(())
+}
+
+/// The tables holding per-chat settings and list state.
+fn create_chat_tables(conn: &Connection) -> Result<()> {
     // Per chat overrides. Absent means the global setting applies.
     conn.execute(
         "CREATE TABLE IF NOT EXISTS chat_settings (
