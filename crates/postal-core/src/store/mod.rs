@@ -21,6 +21,7 @@ mod retention;
 pub use retention::{DiskRetention, DiskRetentionManager};
 mod limits;
 mod storage;
+pub mod archive;
 mod worker;
 pub(crate) use worker::{StoreWorker, AliasWorker};
 pub use limits::RetentionLimit;

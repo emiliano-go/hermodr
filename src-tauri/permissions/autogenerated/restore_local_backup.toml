@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-restore-local-backup"
+description = "Enables the restore_local_backup command without any pre-configured scope."
+commands.allow = ["restore_local_backup"]
+
+[[permission]]
+identifier = "deny-restore-local-backup"
+description = "Denies the restore_local_backup command without any pre-configured scope."
+commands.deny = ["restore_local_backup"]

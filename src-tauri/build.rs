@@ -78,6 +78,8 @@ const COMMANDS: &[&str] = &[
     "backfill_history",
     "flush_media",
     "storage_report",
+    "export_archive",
+    "restore_local_backup",
     "storage_cleanup",
     "clear_history",
     "clear_chat",

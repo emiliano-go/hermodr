@@ -5,6 +5,9 @@
   import StorageManager from "$lib/StorageManager.svelte";
   import MessageWindow from "./MessageWindow.svelte";
   import MediaRetry from "./MediaRetry.svelte";
+  import ArchiveManager from "$lib/ArchiveManager.svelte";
+  import { archiveFixture } from "./ipc";
+  import { session } from "$lib/state/session.svelte";
   import { fixture } from "./ipc";
   let mounted = $state(true);
   let calls = $state(0);
@@ -27,6 +30,12 @@
 <StorageManager />
 <MessageWindow />
 <MediaRetry />
+<button onclick={() => { archiveFixture.failure = !archiveFixture.failure; }}>Toggle archive failure</button>
+<button onclick={() => { archiveFixture.cancelled = !archiveFixture.cancelled; }}>Toggle archive cancellation</button>
+<button onclick={() => { archiveFixture.deferNext = true; }}>Delay next archive operation</button>
+<button onclick={() => { archiveFixture.pending.shift()?.(); }}>Release archive operation</button>
+<ArchiveManager />
+<p aria-label="Account fixture status">Active: {session.activeAccount ?? "unloaded"}; accounts: {session.accountList.map((account) => account.id).join(", ")}</p>
 
 <style>
   :global(:root) { --raised: #233138; --text: #eee; --border: #53616a; --muted: #b5c5cd; }

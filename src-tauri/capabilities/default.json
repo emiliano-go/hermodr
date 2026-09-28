@@ -90,6 +90,8 @@
     "allow-backfill-history",
     "allow-flush-media",
     "allow-storage-report",
+    "allow-export-archive",
+    "allow-restore-local-backup",
     "allow-storage-cleanup",
     "allow-clear-history",
     "allow-clear-chat",

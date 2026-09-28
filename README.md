@@ -110,6 +110,23 @@ SQLite coordinates those connections through WAL and its busy timeout. Synchrono
 `MessageStore` remains available for startup migrations, CLI tools and tests;
 async callers must use the worker boundary.
 
+Settings → Storage & history → Export and local backup writes a new folder under
+the chosen destination. Conversation exports contain JSON pages of up to 500
+messages with their marks and downloaded attachments. Full backups contain a
+snapshot of the message database, local aliases, referenced attachment files and
+a versioned manifest. Shared files are copied once; missing downloads are counted
+and retain their media locators for later recovery. Session credentials and
+unreferenced cache files are excluded. Backups contain private content and are
+not encrypted.
+
+Restore creates a separate account and media folder; it never replaces an active
+account or imports a linked session. Enable history storage, then select “Restored
+backup” in Accounts and link the same WhatsApp account again. Current disk
+retention applies once that account receives messages. Version 1 backups migrate
+older supported schemas; newer schemas, unsupported formats, corrupt databases and unsafe
+attachment paths fail explicitly. Incomplete imports are removed before the
+account is registered. Backups can be moved between folders on the same machine.
+
 ## Installing
 
 Releases ship an AppImage. Download it from the releases page, or run:

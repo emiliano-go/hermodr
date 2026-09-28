@@ -313,6 +313,11 @@ const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
 ];
 
 pub(super) fn migrate(conn: &Connection) -> Result<()> {
+    migrate_to(conn, MIGRATIONS.len())
+}
+
+pub(super) fn migrate_to(conn: &Connection, target: usize) -> Result<()> {
+    anyhow::ensure!(target <= MIGRATIONS.len(), "unsupported message schema version {target}");
     loop {
         let tx =
             rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
@@ -321,10 +326,12 @@ pub(super) fn migrate(conn: &Connection) -> Result<()> {
             (0..=MIGRATIONS.len() as i64).contains(&version),
             "unsupported message schema version {version}"
         );
-        let Some(step) = MIGRATIONS.get(version as usize) else {
+        if version as usize == target {
             tx.commit()?;
             return Ok(());
-        };
+        }
+        anyhow::ensure!((version as usize) < target, "cannot downgrade message schema");
+        let step = MIGRATIONS[version as usize];
         let next = version + 1;
         step(&tx).with_context(|| format!("applying message schema migration {next}"))?;
         tx.pragma_update(None, "user_version", next)?;

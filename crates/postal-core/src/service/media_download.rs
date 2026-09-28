@@ -73,7 +73,7 @@ where
     let path = dir.join(format!("{id}.{extension}"));
     tokio::fs::write(&path, &data).await?;
     store.set_media_path(chat, id, &path.to_string_lossy()).await?;
-    record_thumb(store, chat, id, media.kind, &data).await?;
+    record_thumb(store, chat, id, kind, &data).await?;
     store.message(chat, id).await
 }
 

@@ -6,6 +6,8 @@ export const windowFixture = {
   phoneRequests: 0, failure: false, deferNext: false, pending: [] as (() => void)[],
 };
 export const mediaFixture = { calls: 0, failure: true, deferNext: false, pending: [] as (() => void)[] };
+export const archiveFixture = { failure: false, cancelled: false, deferNext: false, pending: [] as (() => void)[],
+  calls: [] as string[], accounts: [{ id: "existing", label: "Existing account" }] as { id: string; label: string }[] };
 export const fixture = { updated: false, failure: false, calls: 0, savedRetention: null as unknown,
   storageFailure: false, storageCalls: 0, cacheBytes: 512,
   media: [
@@ -16,6 +18,24 @@ export const fixture = { updated: false, failure: false, calls: 0, savedRetentio
 };
 
 export async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  if (command === "chats") return [{ chat: "archive@s", display_name: "Synthetic conversation" }] as T;
+  if (command === "accounts") return { accounts: archiveFixture.accounts, active: "existing" } as T;
+  if (command === "export_archive" || command === "restore_local_backup") {
+    archiveFixture.calls.push(`${command}:${args?.chat ?? "all"}`);
+    const complete = () => {
+      if (archiveFixture.cancelled) return null as T;
+      if (archiveFixture.failure) throw new Error("Synthetic archive write failure");
+      if (command === "restore_local_backup") archiveFixture.accounts.push({ id: "restored", label: "Restored backup" });
+      return { directory: "synthetic-output", messages: args?.chat ? 2 : 1003, attachments: 1, missing_attachments: 1 } as T;
+    };
+    if (archiveFixture.deferNext) {
+      archiveFixture.deferNext = false;
+      return new Promise<T>((resolve, reject) => archiveFixture.pending.push(() => {
+        try { resolve(complete()); } catch (error) { reject(error); }
+      }));
+    }
+    return complete();
+  }
   if (command === "download_media") {
     mediaFixture.calls++;
     const complete = () => {

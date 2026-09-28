@@ -86,13 +86,25 @@ pub(crate) fn accounts_path(app: &AppHandle) -> PathBuf {
 }
 
 pub(crate) fn save_accounts(app: &AppHandle, file: &AccountsFile) {
-    let path = accounts_path(app);
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+    if let Err(error) = save_accounts_checked(app, file) {
+        log::error!("could not save account list: {error}");
     }
-    if let Ok(json) = serde_json::to_string_pretty(file) {
-        let _ = std::fs::write(path, json);
-    }
+}
+
+pub(crate) fn save_accounts_checked(app: &AppHandle, file: &AccountsFile) -> Result<(), String> {
+    persist_accounts(&accounts_path(app), file).map_err(|error| error.to_string())
+}
+
+fn persist_accounts(path: &std::path::Path, file: &AccountsFile) -> std::io::Result<()> {
+    use std::io::Write;
+    if let Some(parent) = path.parent() { std::fs::create_dir_all(parent)?; }
+    let temporary = path.with_extension(format!("{}.tmp", now_millis()));
+    let mut output = std::fs::File::create_new(&temporary)?;
+    serde_json::to_writer_pretty(&mut output, file).map_err(std::io::Error::other)?;
+    output.flush()?;
+    output.sync_all()?;
+    drop(output);
+    std::fs::rename(temporary, path)
 }
 
 /// Loads the account list, adopting an existing single-account install the
@@ -235,4 +247,26 @@ pub(crate) fn is_stale_session(name: &str, keep: &[String]) -> bool {
         .find_map(|suffix| name.strip_suffix(suffix))
         .unwrap_or(name);
     db.starts_with("session") && db.ends_with(".db") && !keep.iter().any(|k| k == db)
+}
+
+#[cfg(test)]
+mod persistence_tests {
+    use super::*;
+
+    #[test]
+    fn account_list_replacement_preserves_active_account() {
+        let root = std::env::temp_dir().join(format!("postal-accounts-{}-{}", std::process::id(), now_millis()));
+        let path = root.join("accounts.json");
+        let mut accounts = AccountsFile { accounts: vec![], active: Some("existing".into()) };
+        persist_accounts(&path, &accounts).unwrap();
+        accounts.accounts.push(Account { id: "restored".into(), label: "Restored backup".into(), jid: None, once_paired: false });
+        persist_accounts(&path, &accounts).unwrap();
+        let loaded: AccountsFile = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(loaded.active.as_deref(), Some("existing"));
+        assert_eq!(loaded.accounts.len(), 1);
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+        assert!(persist_accounts(&path.join("invalid-parent"), &accounts).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), serde_json::to_vec_pretty(&accounts).unwrap());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

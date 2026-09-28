@@ -38,6 +38,7 @@ mod connection;
 mod contacts;
 mod diagnostics;
 mod storage;
+mod archive;
 pub use storage::{StorageReport, StorageCleanup, CleanupResult, StorageOrder};
 mod groups;
 mod history;

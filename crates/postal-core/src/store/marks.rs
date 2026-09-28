@@ -56,9 +56,12 @@ impl MessageStore {
     }
 
     pub fn marks_for(&self, chat: &str, message_ids: Option<&[String]>) -> Result<ChatMarks> {
+        Self::marks_on(&self.conn.lock().unwrap(), chat, message_ids)
+    }
+
+    pub(super) fn marks_on(conn: &Connection, chat: &str, message_ids: Option<&[String]>) -> Result<ChatMarks> {
         anyhow::ensure!(message_ids.is_none_or(|ids| ids.len() <= MAX_MESSAGE_PAGE as usize), "too many message IDs");
         let window = message_ids.map(serde_json::to_string).transpose()?;
-        let conn = self.conn.lock().unwrap();
         let chat = &*names::canonical_chat(&conn, chat)?;
         let reactions = conn
             .prepare("SELECT target, sender, emoji FROM reactions WHERE chat = ?1 AND (?2 IS NULL OR target IN (SELECT value FROM json_each(?2)))")?

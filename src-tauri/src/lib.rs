@@ -15,6 +15,7 @@ pub use connection::ConnectionState;
 
 mod account_store;
 mod accounts;
+mod archive;
 mod connection;
 mod settings;
 mod chats;
@@ -211,6 +212,8 @@ pub fn run() {
             messages::backfill_history,
             media::flush_media,
             media::storage_report,
+            archive::export_archive,
+            archive::restore_local_backup,
             media::storage_cleanup,
             chats::clear_history,
             chats::clear_chat,
