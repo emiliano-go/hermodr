@@ -88,8 +88,13 @@ function queueReloadMessages(
   setTimeout(async () => {
     if (messagesQueued === queued) messagesQueued = null;
     if (chats.selectedChat !== queued.chat) return;
-    await messages.reloadMessages(queued.chat);
-    if (queued.follow && messages.atLatest) host.scrollToBottom();
+    // Anchor the view across the reload: appended messages must not shift what
+    // a scrolled-up reader is looking at. The follow below re-pins to the
+    // bottom afterwards when the reader is there.
+    await messages.reloadMessages(queued.chat, true, host.getScroller());
+    // Decide the follow at fire time: the reader may have scrolled up while
+    // the reload was in flight, and must not be yanked back down.
+    if (queued.follow && messages.atLatest && !ui.scrolledUp) host.scrollToBottom();
     if (queued.markRead && !ui.scrolledUp && document.hasFocus()) {
       await invoke("mark_read", { chat: queued.chat }).catch(() => {});
       queueRefreshChats();
