@@ -16,7 +16,7 @@ struct Fixture {
 impl Fixture {
     fn new(activation: &str, idle: Option<u64>, mode: &str) -> Self {
         let root = std::env::temp_dir().join(format!(
-            "postal-plugin-{}-{}",
+            "postal-plugin café 📨-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -192,6 +192,37 @@ async fn shutdown_kills_uncooperative_process() {
     host.shutdown().await;
     assert!(started.elapsed() >= Duration::from_secs(2));
     assert!(started.elapsed() < Duration::from_secs(5));
+}
+
+#[tokio::test]
+async fn shutdown_releases_executable_for_replacement_and_restart() {
+    let fixture = Fixture::new("eager", None, "");
+    let host = fixture.host();
+    enable(&host).await;
+    host.send_event(ID, json!({})).await.unwrap();
+    host.shutdown().await;
+    let executable = fixture.plugin.join(if cfg!(windows) { "fixture.exe" } else { "fixture" });
+    std::fs::remove_file(&executable).unwrap();
+    std::fs::copy(env!("CARGO_BIN_EXE_postal-fake-plugin"), &executable).unwrap();
+    let restarted = fixture.host();
+    restarted.start_enabled().await.unwrap();
+    restarted.send_event(ID, json!({})).await.unwrap();
+    restarted.shutdown().await;
+    assert_eq!(fixture.trace().matches("start\n").count(), 2);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn missing_execute_permission_reports_failure_without_starting_plugin() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = Fixture::new("lazy", None, "");
+    std::fs::set_permissions(fixture.plugin.join("fixture"), std::fs::Permissions::from_mode(0o600)).unwrap();
+    let host = fixture.host();
+    enable(&host).await;
+    assert!(host.send_event(ID, json!({})).await.unwrap_err().to_string().contains("spawn plugin"));
+    wait(|| host.list()[0].error.is_some()).await;
+    host.shutdown().await;
+    assert!(fixture.trace().is_empty());
 }
 
 #[test]

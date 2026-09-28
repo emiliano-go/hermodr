@@ -262,11 +262,22 @@ files.
 ## Testing
 
 ```console
-cargo test -p postal-core
+cargo test --locked --workspace
 pnpm check
+pnpm test
 node --experimental-strip-types src/lib/format.ts
 node --experimental-strip-types src/lib/phone.ts
+pnpm build
+cargo test --locked --manifest-path src-tauri/Cargo.toml
 ```
+
+CI runs frontend, core/plugin, and Tauri shell tests on Linux, Windows, and
+macOS. Linux and macOS core tests require `ffmpeg` on `PATH`; Windows uses
+Media Foundation. Video tests require both portrait and landscape decoding,
+including extensionless files and paths with spaces and Unicode. Filesystem
+and plugin tests use synthetic data and subprocesses, without opening Postal
+or reading application accounts. Native dialogs, desktop portals, keychains,
+notifications, and playback still require interactive platform verification.
 
 ## Status
 

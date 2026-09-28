@@ -94,17 +94,32 @@ mod tests {
     fn exports_stay_in_media_folder_and_copy_decodes_pixels() {
         let root = std::env::temp_dir().join(format!("postal-export-{}-{}", std::process::id(),
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
-        let media = root.join("media");
+        let media = root.join("media café 📨");
         std::fs::create_dir_all(&media).unwrap();
-        let source = media.join("image.png");
+        let source = media.join("写真 e\u{301}.png");
         image::RgbaImage::from_pixel(2, 1, image::Rgba([12, 34, 56, 255])).save(&source).unwrap();
         let image = clipboard_image(&source).unwrap();
         assert_eq!((image.width(), image.height()), (2, 1));
         assert_eq!(image.rgba(), &[12, 34, 56, 255, 12, 34, 56, 255]);
         assert_eq!(export_path(&media, source.to_str().unwrap()).unwrap(), dunce::canonicalize(&source).unwrap());
+        assert_eq!(export_path(&media, source.canonicalize().unwrap().to_str().unwrap()).unwrap(), dunce::canonicalize(&source).unwrap());
         let outside = root.join("outside.png");
         std::fs::copy(&source, &outside).unwrap();
         assert!(export_path(&media, outside.to_str().unwrap()).is_err());
+        assert!(export_path(&media, media.join("..").join("outside.png").to_str().unwrap()).is_err());
+        let sibling = root.join("media café 📨-outside");
+        std::fs::create_dir(&sibling).unwrap();
+        std::fs::copy(&source, sibling.join("image.png")).unwrap();
+        assert!(export_path(&media, sibling.join("image.png").to_str().unwrap()).is_err());
+        #[cfg(unix)]
+        {
+            let escape = media.join("escape.png");
+            std::os::unix::fs::symlink(&outside, &escape).unwrap();
+            assert!(export_path(&media, escape.to_str().unwrap()).is_err());
+            let inside = media.join("inside.png");
+            std::os::unix::fs::symlink(&source, &inside).unwrap();
+            assert_eq!(export_path(&media, inside.to_str().unwrap()).unwrap(), dunce::canonicalize(&source).unwrap());
+        }
         assert!(export_path(&media, media.to_str().unwrap()).is_err());
         assert!(export_path(&media, media.join("missing.png").to_str().unwrap()).is_err());
         std::fs::write(&source, b"not an image").unwrap();

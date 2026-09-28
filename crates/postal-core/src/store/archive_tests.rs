@@ -10,7 +10,7 @@ fn root() -> PathBuf {
 #[test]
 fn backup_roundtrip_preserves_archive_but_excludes_session_credentials() {
     let root = root();
-    let media = root.join("original-media");
+    let media = root.join("original media café 📨");
     fs::create_dir(&media).unwrap();
     fs::write(media.join("photo.jpg"), b"synthetic attachment").unwrap();
     fs::write(root.join("session.db"), b"NEVER_EXPORT_LOGIN_SECRET").unwrap();
@@ -45,6 +45,11 @@ fn backup_roundtrip_preserves_archive_but_excludes_session_credentials() {
     let connection = Connection::open(&backup.join("messages.db")).unwrap();
     assert_eq!(connection.pragma_query_value(None, "journal_mode", |row| row.get::<_, String>(0)).unwrap(), "delete");
     assert_eq!(connection.query_row("SELECT COUNT(*) FROM sqlite_master WHERE name='session_credentials'", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+    for path in attachment_paths(&connection).unwrap() {
+        assert!(path.starts_with("media/") && !path.contains('\\'), "nonportable backup path: {path}");
+        assert_eq!(path.split('/').count(), 2);
+        assert!(backup.join(path).is_file());
+    }
     connection.close().unwrap();
     assert!(!backup.join("messages.db-wal").exists());
     assert!(!backup.join("messages.db-shm").exists());
@@ -59,8 +64,8 @@ fn backup_roundtrip_preserves_archive_but_excludes_session_credentials() {
     assert_eq!(pages[0]["marks"]["starred"][0], "m0000");
     assert_eq!(pages[0]["marks"]["polls"][0]["name"], "Question");
 
-    let account = root.join("restored-account");
-    let restored_media = root.join("restored-media");
+    let account = root.join("restored account 日本語");
+    let restored_media = root.join("restored media e\u{301}");
     let moved = root.join("moved-backup");
     fs::rename(backup, &moved).unwrap();
     let backup = moved;
@@ -106,9 +111,14 @@ fn restore_rejects_existing_targets_unsafe_paths_and_bad_manifests() {
     malformed.execute("INSERT INTO messages (chat,id,sender,timestamp,from_me,text,media_path) VALUES ('test@s','escape','sender@s',1,0,'x','../session.db')", []).unwrap();
     drop(malformed);
     fs::write(backup.join("manifest.json"), br#"{"format":"postal-local-backup","version":1,"messages":1,"attachments":1,"missing_attachments":0}"#).unwrap();
-    assert!(restore_backup(&backup, &root.join("rejected"), &root.join("rejected-media")).unwrap_err().to_string().contains("attachment path"));
-    assert!(!root.join("rejected").exists());
-    assert!(!root.join("rejected-media").exists());
+    for path in ["../session.db", "..\\session.db", "/etc/passwd", "C:\\session.db", "\\\\server\\share\\session.db", "media/../../session.db", "media\\..\\..\\session.db"] {
+        let malformed = Connection::open(backup.join("messages.db")).unwrap();
+        malformed.execute("UPDATE messages SET media_path=?1", [path]).unwrap();
+        drop(malformed);
+        assert!(restore_backup(&backup, &root.join("rejected"), &root.join("rejected-media")).unwrap_err().to_string().contains("attachment path"), "accepted {path}");
+        assert!(!root.join("rejected").exists());
+        assert!(!root.join("rejected-media").exists());
+    }
     fs::write(backup.join("manifest.json"), br#"{"format":"unknown","version":99,"messages":0,"attachments":0,"missing_attachments":0}"#).unwrap();
     assert!(restore_backup(&backup, &root.join("bad-format"), &root.join("bad-format-media")).is_err());
     assert!(!root.join("bad-format").exists());

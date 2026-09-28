@@ -130,6 +130,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn attachment_names_never_become_local_paths() {
+        let root = std::env::temp_dir().join(format!("postal-staging café 📨-{}-{}", std::process::id(), crate::account_store::now_millis()));
+        let uploads = Uploads::default();
+        for name in ["../outside.png", "..\\outside.png", "C:\\temp\\photo.png", "\\\\server\\share\\photo.png", "CON", "photo:stream", "写真 e\u{301}.png"] {
+            let token = uploads.begin(&root, "one".into(), name.into(), 3).unwrap();
+            uploads.append("one", &token, 0, b"abc").unwrap();
+            let file = uploads.take("one", &token).unwrap();
+            assert_eq!(file.name, name);
+            assert_eq!(file.path.parent(), Some(root.canonicalize().unwrap().as_path()));
+            assert_eq!(fs::read(&file.path).unwrap(), b"abc");
+            let path = file.path.clone();
+            drop(file);
+            assert!(!path.exists());
+        }
+        drop(uploads);
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
     fn chunks_are_ordered_owned_bounded_and_cleaned() {
         let root = std::env::temp_dir().join(format!("postal-staging-{}-{}", std::process::id(), crate::account_store::now_millis()));
         let uploads = Uploads::default();

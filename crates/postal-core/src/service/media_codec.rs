@@ -272,7 +272,7 @@ fn video_thumbnail(bytes: &[u8]) -> Option<Vec<u8>> {
             "-loglevel", "error",
             "-i", "pipe:0",
             "-frames:v", "1",
-            "-vf", "scale=256:-2",
+            "-vf", "scale=256:256:force_original_aspect_ratio=decrease",
             "-f", "mjpeg",
             "pipe:1",
         ])

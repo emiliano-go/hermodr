@@ -59,30 +59,27 @@ mod tests {
 
     #[test]
     fn file_previews_decode_staged_video_without_loading_its_bytes() {
-        let root = std::env::temp_dir().join(format!("postal-preview-{}-{}", std::process::id(),
+        let root = std::env::temp_dir().join(format!("postal-preview café 📨-{}-{}", std::process::id(),
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
         std::fs::create_dir(&root).unwrap();
         let file = root.join("staged.part");
-        let bytes = include_bytes!("../../tests/fixtures/tiny-video.mp4");
-        std::fs::write(&file, bytes).unwrap();
         let named = root.join("named.mp4");
-        std::fs::write(&named, bytes).unwrap();
-        #[cfg(windows)]
-        {
-            assert!(super::super::media_codec::media_thumbnail("video", bytes).is_some());
-            assert!(super::super::media_codec::media_thumbnail_file("video", &named).is_some());
-            assert!(super::super::media_codec::media_thumbnail_file("video", &file).is_some());
-        }
-        let preview = super::super::media_codec::media_thumbnail_file("video", &file.canonicalize().unwrap());
-        #[cfg(windows)]
-        {
-            let image = image::load_from_memory(&preview.expect("Media Foundation decodes the synthetic fixture")).unwrap();
-            assert_eq!((image.width(), image.height()), (256, 192));
-        }
-        #[cfg(not(windows))]
-        if let Some(preview) = preview {
-            let image = image::load_from_memory(&preview).unwrap();
-            assert!(image.width() <= 256 && image.height() <= 256);
+        for (bytes, dimensions) in [
+            (include_bytes!("../../tests/fixtures/tiny-video.mp4").as_slice(), (256, 192)),
+            (include_bytes!("../../tests/fixtures/portrait-video.mp4").as_slice(), (192, 256)),
+        ] {
+            std::fs::write(&file, bytes).unwrap();
+            std::fs::write(&named, bytes).unwrap();
+            for preview in [
+                super::super::media_codec::media_thumbnail("video", bytes),
+                super::super::media_codec::media_thumbnail_file("video", &named),
+                super::super::media_codec::media_thumbnail_file("video", &file),
+                super::super::media_codec::media_thumbnail_file("video", &file.canonicalize().unwrap()),
+            ] {
+                let preview = preview.expect("synthetic video must decode; Linux/macOS tests require ffmpeg on PATH");
+                let image = image::load_from_memory(&preview).unwrap();
+                assert_eq!((image.width(), image.height()), dimensions);
+            }
         }
         std::fs::remove_dir_all(root).unwrap();
     }

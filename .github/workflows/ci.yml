@@ -18,8 +18,12 @@ env:
 
 jobs:
   frontend:
-    name: Frontend
-    runs-on: ubuntu-latest
+    name: Frontend (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -31,25 +35,16 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
-      - name: Self-checks
-        run: |
-          node --experimental-strip-types src/lib/phone.ts
-          node --experimental-strip-types src/lib/format.ts
-          node --experimental-strip-types --test src/lib/files.test.ts
-          node --experimental-strip-types --test src/lib/state/message-actions.test.ts
-          node --experimental-strip-types --test src/lib/notices.test.ts
-          node --experimental-strip-types --test src/lib/retention.test.ts
-          node --experimental-strip-types --test src/lib/message-window.test.ts
-          node --experimental-strip-types --test src/lib/media-retry.test.ts
-          node --experimental-strip-types --test src/lib/upload.test.ts
-          node --experimental-strip-types --test src/lib/send-order.test.ts
+      - run: node --experimental-strip-types src/lib/phone.ts
+      - run: node --experimental-strip-types src/lib/format.ts
+      - run: pnpm test
 
   core:
     name: Core (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -57,19 +52,25 @@ jobs:
       - uses: mozilla-actions/sccache-action@v0.0.9
       # .cargo/config.toml links with lld on Linux.
       - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y lld
-      - run: cargo test --locked --manifest-path crates/postal-core/Cargo.toml
-      - run: cargo test --locked -p postal-plugins
+        run: sudo apt-get update && sudo apt-get install -y lld ffmpeg
+      - if: runner.os == 'macOS'
+        run: command -v ffmpeg >/dev/null || brew install ffmpeg
+      - run: cargo test --locked --workspace
       - run: sccache --show-stats
 
   tauri:
-    name: Tauri shell
-    runs-on: ubuntu-latest
+    name: Tauri shell (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: mozilla-actions/sccache-action@v0.0.9
       - name: System libraries
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y lld libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
