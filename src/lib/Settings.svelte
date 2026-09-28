@@ -524,6 +524,21 @@
             </div>
             <input class="switch" type="checkbox" bind:checked={draft.keep_history} />
           </label>
+          <div class="setting stack">
+            <div>
+              <span class="setting-title">History folder (cold storage)</span>
+              <span class="setting-desc">
+                Where the full message archive is kept. Empty uses the app data folder. Applies the
+                next time Postal starts: the existing archive is moved there. Leave both disk limits
+                below blank to keep everything.
+              </span>
+            </div>
+            <input
+              class="field wide"
+              placeholder="App data folder"
+              value={draft.history_dir ?? ""}
+              oninput={(e) => (draft.history_dir = e.currentTarget.value || null)} />
+          </div>
           <div class="setting">
             <div>
               <span class="setting-title">Keep messages on disk for</span>

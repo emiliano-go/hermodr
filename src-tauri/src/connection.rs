@@ -77,6 +77,8 @@ pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &s
     }
 
     let settings = state.settings.lock().unwrap().clone();
+    // A change of cold storage moves the archive before it is opened.
+    crate::account_store::migrate_history(app, &settings, account);
     let config = config_for(app, &settings, account);
 
     let base = account_base(app, account);
@@ -318,6 +320,7 @@ pub(crate) async fn start_once(app: &AppHandle, state: &AppState) -> Result<(), 
         return Err("no account yet".to_string());
     };
     let settings = state.settings.lock().unwrap().clone();
+    crate::account_store::migrate_history(app, &settings, &account);
     let config = once_config_for(app, &settings, &account)?;
     remove_stale_sessions(&account_base(app, &account), &current_sessions(&account_base(app, &account)));
 

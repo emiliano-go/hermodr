@@ -14,6 +14,10 @@ pub struct UiSettings {
     pub request_full_history: bool,
     /// Where downloaded media is stored. Empty disables downloads.
     pub media_dir: Option<String>,
+    /// Cold storage for the message archive. Empty keeps it inside the app
+    /// data folder. Changing it moves the existing archive on the next start.
+    #[serde(default)]
+    pub history_dir: Option<String>,
     /// Whether to download incoming media automatically.
     #[serde(default = "default_true")]
     pub auto_download_media: bool,
@@ -66,6 +70,7 @@ impl Default for UiSettings {
             request_full_history: false,
             auto_download_media: true,
             media_dir: None,
+            history_dir: None,
             warn_missing_video_preview: true,
             send_typing: true,
             send_receipts: true,
@@ -136,6 +141,12 @@ pub(crate) async fn set_settings(app: AppHandle, state: State<'_, AppState>, set
         return Err("The RAM window must contain 50–2,000 messages".into());
     }
     let instance_changed = state.settings.lock().unwrap().android_instance != settings.android_instance;
+    // A folder the app cannot write would only fail the next start.
+    if settings.keep_history {
+        if let Some(dir) = settings.history_dir.as_deref().map(str::trim).filter(|dir| !dir.is_empty()) {
+            std::fs::create_dir_all(dir).map_err(|e| format!("The history folder cannot be created: {e}"))?;
+        }
+    }
     // Both links share one store, so the instance cannot run without history;
     // and it is only useful once its own link exists, which pairing creates.
     if instance_changed && settings.android_instance {

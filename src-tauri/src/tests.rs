@@ -177,3 +177,14 @@ fn migration_adopts_the_old_directory_once() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn cold_storage_keeps_each_account_in_its_own_folder() {
+    use crate::account_store::history_base_for;
+    use std::path::{Path, PathBuf};
+    let base = Path::new("/data/account");
+    assert_eq!(history_base_for(base, None, "default"), PathBuf::from("/data/account"));
+    assert_eq!(history_base_for(base, Some("  "), "acct-1"), PathBuf::from("/data/account"));
+    assert_eq!(history_base_for(base, Some("/cold"), "default"), PathBuf::from("/cold"));
+    assert_eq!(history_base_for(base, Some("/cold"), "acct-1"), PathBuf::from("/cold/accounts/acct-1"));
+}

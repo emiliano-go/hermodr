@@ -74,6 +74,7 @@ export class SessionState {
     auto_download_media: true,
     warn_missing_video_preview: true,
     media_dir: null,
+    history_dir: null,
     send_typing: true,
     send_receipts: true,
     keep_history: true,

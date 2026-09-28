@@ -101,6 +101,7 @@ pub(crate) async fn remove_account(app: AppHandle, state: State<'_, AppState>, i
         existing.shutdown();
     }
     let base = account_base(&app, &id);
+    crate::account_store::remove_history(&app, &state.settings.lock().unwrap().clone(), &id);
     if id == "default" {
         // The default account lives in the data root beside the other accounts' folder.
         for entry in std::fs::read_dir(&base).into_iter().flatten().flatten() {

@@ -156,7 +156,7 @@ pub(crate) fn config_for(app: &AppHandle, settings: &UiSettings, account: &str) 
     ServiceConfig {
         session_path: session_path(&base, false),
         messages_path: if settings.keep_history {
-            base.join("messages.db")
+            history_base(app, settings, account).join("messages.db")
         } else {
             PathBuf::from(":memory:")
         },
@@ -199,10 +199,98 @@ pub(crate) fn once_config_for(app: &AppHandle, settings: &UiSettings, account: &
     Ok(config)
 }
 
+/// Removes an account's message archive wherever cold storage put it, so a
+/// removed account leaves no history behind outside its own folder.
+pub(crate) fn remove_history(app: &AppHandle, settings: &UiSettings, account: &str) {
+    let base = account_base(app, account);
+    let folder = history_base(app, settings, account);
+    for suffix in ["", "-wal", "-shm", "-journal"] {
+        let _ = std::fs::remove_file(folder.join(format!("messages.db{suffix}")));
+    }
+    if folder != base {
+        // Only succeeds once empty, so another account's files stay.
+        let _ = std::fs::remove_dir(&folder);
+    }
+    let _ = std::fs::remove_file(base.join(HISTORY_POINTER));
+}
+
 /// Names the account's current session file; absent means the default below.
 /// Each device mode keeps its own link, so switching modes never unlinks.
 pub(crate) const SESSION_POINTER: &str = "session_name";
 pub(crate) const SESSION_POINTER_ANDROID: &str = "session_name_android";
+/// Folder the message archive was last opened from, so a change of the
+/// cold-storage setting can move the database exactly once.
+pub(crate) const HISTORY_POINTER: &str = "history_dir";
+
+/// Where an account's message archive lives: the configured cold-storage
+/// folder when one is set, else beside the rest of the account's files. Each
+/// account gets its own subfolder there, so several accounts never share one
+/// messages.db.
+pub(crate) fn history_base(app: &AppHandle, settings: &UiSettings, account: &str) -> PathBuf {
+    history_base_for(&account_base(app, account), settings.history_dir.as_deref(), account)
+}
+
+/// [`history_base`] without the app handle, so the layout rule is testable.
+pub(crate) fn history_base_for(base: &std::path::Path, configured: Option<&str>, account: &str) -> PathBuf {
+    let configured = configured
+        .map(str::trim)
+        .filter(|dir| !dir.is_empty())
+        .map(PathBuf::from);
+    match configured {
+        Some(dir) if account == "default" => dir,
+        Some(dir) => dir.join("accounts").join(account),
+        None => base.to_path_buf(),
+    }
+}
+
+/// Moves the archive to where the cold-storage setting now points, once, before
+/// it is opened. The `-wal`, `-shm` and `-journal` sidecars travel with it, so
+/// no committed page is left behind; a rename that fails across filesystems
+/// falls back to a copy. The pointer only moves after every file did.
+pub(crate) fn migrate_history(app: &AppHandle, settings: &UiSettings, account: &str) {
+    let base = account_base(app, account);
+    let wanted = history_base(app, settings, account);
+    let remember = || {
+        if let Err(error) = std::fs::write(base.join(HISTORY_POINTER), wanted.to_string_lossy().as_bytes()) {
+            log::warn!("could not remember the history folder: {error}");
+        }
+    };
+    let last = std::fs::read_to_string(base.join(HISTORY_POINTER))
+        .ok()
+        .map(|path| PathBuf::from(path.trim()))
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| base.clone());
+    // Nothing to do when it already lives there, or there is no archive yet.
+    if wanted == last || !last.join("messages.db").exists() || wanted.join("messages.db").exists() {
+        remember();
+        return;
+    }
+    if let Err(error) = std::fs::create_dir_all(&wanted) {
+        log::error!("could not create the history folder {}: {error}", wanted.display());
+        return;
+    }
+    for suffix in ["", "-wal", "-shm", "-journal"] {
+        let from = last.join(format!("messages.db{suffix}"));
+        if !from.exists() {
+            continue;
+        }
+        let to = wanted.join(format!("messages.db{suffix}"));
+        if std::fs::rename(&from, &to).is_ok() {
+            continue;
+        }
+        match std::fs::copy(&from, &to) {
+            Ok(_) => {
+                let _ = std::fs::remove_file(&from);
+            }
+            Err(error) => {
+                log::error!("could not move {} to {}: {error}", from.display(), to.display());
+                return;
+            }
+        }
+    }
+    log::info!("moved the message archive to {}", wanted.display());
+    remember();
+}
 
 pub(crate) fn session_path(base: &std::path::Path, android: bool) -> PathBuf {
     let (pointer, default) = if android {

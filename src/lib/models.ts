@@ -155,6 +155,8 @@ export type UiSettings = {
   auto_download_media: boolean;
   warn_missing_video_preview: boolean;
   media_dir: string | null;
+  /** Cold storage for the message archive; empty keeps it in the app data folder. */
+  history_dir: string | null;
   send_typing: boolean;
   send_receipts: boolean;
   keep_history: boolean;

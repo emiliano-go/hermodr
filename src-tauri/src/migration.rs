@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
-use crate::account_store::{AccountsFile, account_base, data_dir, media_cache_dir};
+use crate::account_store::{AccountsFile, data_dir, media_cache_dir};
 
 /// Moves media out of the folders earlier versions used: next to the session,
 /// then the shared cache root (`~/.cache/media`, `%LOCALAPPDATA%\media`).
@@ -15,8 +15,9 @@ pub(crate) fn migrate_media(app: &AppHandle, accounts: &AccountsFile) {
     }
     let from: Vec<&std::path::Path> = legacy.iter().map(PathBuf::as_path).collect();
     let to = media_cache_dir(app);
+    let settings = crate::settings::load_settings(app);
     for account in &accounts.accounts {
-        let db = account_base(app, &account.id).join("messages.db");
+        let db = crate::account_store::history_base(app, &settings, &account.id).join("messages.db");
         if !db.exists() {
             continue;
         }
