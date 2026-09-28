@@ -507,6 +507,12 @@ impl Inbound {
             self.apply_revoke(ctx, &incoming.chat, &target).await;
             return true;
         }
+        if let Some((target, update)) =
+            live_location_edit_of(&inbound.message, inbound.info.timestamp.timestamp())
+        {
+            self.apply_live_location_edit(ctx, &incoming.chat, &target, update).await;
+            return true;
+        }
         if let Some((target, text)) = edit_of(&inbound.message) {
             self.apply_edit(ctx, &incoming.chat, &target, &text).await;
             return true;
@@ -644,9 +650,66 @@ impl Inbound {
 
     /// A revoke is a protocol message naming the original; mark it deleted
     /// rather than dropping the notice, so the chat shows that something was
-    /// removed.
+    /// removed. Stopping a live location arrives this way, and keeps its last
+    /// position instead.
     async fn apply_revoke(&self, ctx: &BatchCtx<'_>, chat: &str, target: &str) {
+        if let Some(existing) = ctx.store.message(chat, target).await.observed() {
+            if existing.media.kind.as_deref() == Some("live_location") {
+                if ctx.store.end_live_location(chat, target).await.observed() == Some(true) {
+                    if let Some(updated) = ctx.store.message(chat, target).await.observed() {
+                        let _ = self.events.send(ServiceEvent::hint(&updated, false));
+                    }
+                }
+                return;
+            }
+        }
         if let Some(true) = ctx.store.revoke_message(chat, target).await.observed() {
+            if let Some(updated) = ctx.store.message(chat, target).await.observed() {
+                let _ = self.events.send(ServiceEvent::hint(&updated, false));
+            }
+        }
+    }
+
+    /// A live location edit moves the share in place. Late or replayed updates
+    /// are dropped by sequence; an edit with no position marks it stopped.
+    async fn apply_live_location_edit(
+        &self,
+        ctx: &BatchCtx<'_>,
+        chat: &str,
+        target: &str,
+        update: LiveLocationUpdate,
+    ) {
+        let Some(existing) = ctx.store.message(chat, target).await.observed() else { return };
+        if existing.media.kind.as_deref() != Some("live_location") {
+            return;
+        }
+        let Some(stored) = existing.live_location else { return };
+        let changed = match update {
+            LiveLocationUpdate::Ended => {
+                if stored.ended {
+                    return;
+                }
+                ctx.store.end_live_location(chat, target).await.observed().unwrap_or(false)
+            }
+            LiveLocationUpdate::Moved { mut live, thumb } => {
+                if let (Some(old), Some(new)) = (stored.sequence, live.sequence) {
+                    if new <= old {
+                        log::debug!("live location update {target} out of order ({new} <= {old}); ignored");
+                        return;
+                    }
+                }
+                // The share's own clock and expiry survive updates that omit them.
+                live.started_at = stored.started_at;
+                live.expires_at = live.expires_at.or(stored.expires_at);
+                let thumb = thumb.as_deref().map(thumb_uri);
+                ctx.store
+                    .update_live_location(chat, target, &live, thumb)
+                    .await
+                    .observed()
+                    .unwrap_or(false)
+            }
+        };
+        if changed {
             if let Some(updated) = ctx.store.message(chat, target).await.observed() {
                 let _ = self.events.send(ServiceEvent::hint(&updated, false));
             }

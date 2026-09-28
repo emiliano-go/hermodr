@@ -31,7 +31,7 @@ use whatsapp_rust::{
 
 use crate::{
     history::HistoryPolicy,
-    store::{LinkCard, LocalState, Media, MessageHeader, MessageStore, StoreWorker, AliasWorker, Quote, DiskRetention, DiskRetentionManager, StoredMessage, Sticker, StickerPack},
+    store::{LinkCard, LiveLocation, LocalState, Media, MessageHeader, MessageStore, StoreWorker, AliasWorker, Quote, DiskRetention, DiskRetentionManager, StoredMessage, Sticker, StickerPack},
 };
 
 mod connection;

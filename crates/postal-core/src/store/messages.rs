@@ -12,10 +12,10 @@ const INSERT_MESSAGE_SQL: &str = "INSERT INTO messages
       reply_to_kind, reply_to_thumb, media_thumb, media_ref, reply_to_chat,
       preview_site, preview_color, media_duration, system_kind, system_params,
       reply_to_view_once, reply_to_recoverable, reply_to_path, reply_to_locator,
-      media_once_kind, sort_order)
+      media_once_kind, sort_order, live_location)
  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
          ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?29, ?30,
-         ?31, ?32, ?33, ?34, ?35, ?36)
+         ?31, ?32, ?33, ?34, ?35, ?36, ?37)
  ON CONFLICT(chat, id) DO UPDATE SET
      sort_order = CASE WHEN excluded.sort_order > 0 THEN MIN(messages.sort_order, excluded.sort_order) ELSE messages.sort_order END,
      sender = excluded.sender,
@@ -56,7 +56,8 @@ const INSERT_MESSAGE_SQL: &str = "INSERT INTO messages
       reply_to_recoverable = MAX(reply_to_recoverable, excluded.reply_to_recoverable),
       reply_to_path = COALESCE(reply_to_path, excluded.reply_to_path),
       reply_to_locator = COALESCE(excluded.reply_to_locator, reply_to_locator),
-      media_once_kind = COALESCE(excluded.media_once_kind, media_once_kind)
+      media_once_kind = COALESCE(excluded.media_once_kind, media_once_kind),
+      live_location = COALESCE(excluded.live_location, live_location)
   WHERE revoked = 0";
 
 impl MessageStore {
@@ -122,6 +123,7 @@ impl MessageStore {
                 message.quote.locator,
                 message.media.once_kind,
                 message.local.sort_order,
+                message.live_location.as_ref().map(serde_json::to_string).transpose()?,
             ],
         )?;
         Ok(())
@@ -255,6 +257,51 @@ impl MessageStore {
         Ok(changed > 0)
     }
 
+    /// Records a live location's last position, and its new map snapshot when
+    /// one came with the update. Returns whether the row changed.
+    pub fn update_live_location(
+        &self,
+        chat: &str,
+        id: &str,
+        live: &LiveLocation,
+        thumb: Option<&str>,
+    ) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
+        let changed = conn.execute(
+            "UPDATE messages SET live_location = ?3, media_thumb = COALESCE(?4, media_thumb)
+             WHERE chat = ?1 AND id = ?2",
+            params![chat, id, serde_json::to_string(live)?, thumb],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Marks a live location stopped, keeping its last position. Returns
+    /// whether the row changed; an already-ended share is left alone.
+    pub fn end_live_location(&self, chat: &str, id: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
+        let json: Option<String> = conn
+            .query_row(
+                "SELECT live_location FROM messages WHERE chat = ?1 AND id = ?2",
+                params![chat, id],
+                |r| r.get(0),
+            )
+            .optional()?
+            .flatten();
+        let Some(json) = json else { return Ok(false) };
+        let Ok(mut live) = serde_json::from_str::<LiveLocation>(&json) else { return Ok(false) };
+        if live.ended {
+            return Ok(false);
+        }
+        live.ended = true;
+        conn.execute(
+            "UPDATE messages SET live_location = ?3 WHERE chat = ?1 AND id = ?2",
+            params![chat, id, serde_json::to_string(&live)?],
+        )?;
+        Ok(true)
+    }
+
     /// Marks a message deleted on this device only. The row and its marks are
     /// kept, so the chat can still show it greyed out and nothing on WhatsApp
     /// changes.
@@ -369,6 +416,25 @@ impl StoreWorker {
         let id = id.to_owned();
         let text = text.to_owned();
         self.run(move |store| store.update_message_content(&chat, &id, &text)).await
+    }
+
+    pub(crate) async fn update_live_location(
+        &self,
+        chat: &str,
+        id: &str,
+        live: &LiveLocation,
+        thumb: Option<String>,
+    ) -> Result<bool> {
+        let chat = chat.to_owned();
+        let id = id.to_owned();
+        let live = live.clone();
+        self.run(move |store| store.update_live_location(&chat, &id, &live, thumb.as_deref())).await
+    }
+
+    pub(crate) async fn end_live_location(&self, chat: &str, id: &str) -> Result<bool> {
+        let chat = chat.to_owned();
+        let id = id.to_owned();
+        self.run(move |store| store.end_live_location(&chat, &id)).await
     }
 
     pub(crate) async fn set_message_deleted(&self, chat: &str, id: &str, deleted: bool) -> Result<()> {

@@ -128,7 +128,7 @@ mod tests {
             migrate(&conn).unwrap();
             assert_eq!(version(&conn), MIGRATIONS.len() as i64);
             conn.prepare(
-                "SELECT media_ref, reply_to_locator, media_duration, status, deleted FROM messages",
+                "SELECT media_ref, reply_to_locator, media_duration, status, deleted, live_location FROM messages",
             )
             .unwrap();
             conn.prepare("SELECT secret FROM polls").unwrap();
@@ -170,6 +170,31 @@ mod tests {
         // Both of these select `m.deleted`; they must work and read false.
         assert!(store.chats().is_ok());
         assert!(!store.message("a@s", "1").unwrap().local.deleted);
+        drop(store);
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[test]
+    fn a_v11_database_gains_the_live_location_column_on_open() {
+        use crate::store::MessageStore;
+        let path = std::env::temp_dir().join(format!(
+            "postal-livelocation-{}-{}.db",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        {
+            // The schema as released before live locations were stored.
+            let conn = Connection::open(&path).unwrap();
+            migrate_to(&conn, MIGRATIONS.len() - 1).unwrap();
+            conn.execute_batch(
+                "INSERT INTO messages (chat, id, sender, timestamp, from_me, text)
+                     VALUES ('a@s', '1', 'them', 1, 0, 'hi');",
+            ).unwrap();
+        }
+        let store = MessageStore::open(&path).unwrap();
+        assert!(store.message("a@s", "1").unwrap().live_location.is_none());
         drop(store);
         for suffix in ["", "-wal", "-shm", "-journal"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -340,6 +365,7 @@ const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
     migrate_v9_stickers,
     migrate_v10_message_order,
     migrate_v11_soft_delete,
+    migrate_v12_live_location,
 ];
 
 pub(super) fn migrate(conn: &Connection) -> Result<()> {
@@ -757,6 +783,15 @@ fn migrate_v10_message_order(conn: &Connection) -> Result<()> {
         END;
         DROP INDEX IF EXISTS idx_messages_chat_time;
         CREATE INDEX idx_messages_chat_time ON messages(chat, timestamp DESC, sort_order DESC, id DESC);")?;
+    Ok(())
+}
+
+/// The last position of a live location, as a JSON blob on the row.
+fn migrate_v12_live_location(conn: &Connection) -> Result<()> {
+    let columns = table_columns(conn, "messages")?;
+    if !columns.iter().any(|column| column == "live_location") {
+        conn.execute_batch("ALTER TABLE messages ADD COLUMN live_location TEXT;")?;
+    }
     Ok(())
 }
 

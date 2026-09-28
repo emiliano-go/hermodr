@@ -45,7 +45,7 @@ const PLACEHOLDER_SQL: &str = "(name NOT GLOB '*[^0-9+]*' OR (name GLOB '+*' AND
 ///
 /// Each concern is its own type; they serialize flattened, so the IPC shape
 /// stays one flat object with the column names as keys.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct StoredMessage {
     #[serde(flatten)]
     pub header: MessageHeader,
@@ -62,6 +62,32 @@ pub struct StoredMessage {
     pub local: LocalState,
     #[serde(flatten)]
     pub system: SystemNotice,
+    /// The last position of a live location, updated in place as edits arrive.
+    pub live_location: Option<LiveLocation>,
+}
+
+/// A live location share as last seen: the position, its accuracy and the
+/// update order, so late or replayed updates never move it backwards.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct LiveLocation {
+    pub lat: f64,
+    pub lng: f64,
+    /// The sender's own accuracy estimate, in metres.
+    pub accuracy: Option<u32>,
+    /// Movement speed in metres per second.
+    pub speed: Option<f32>,
+    /// Travel direction, degrees clockwise from magnetic north.
+    pub heading: Option<u32>,
+    /// The sender's update counter; higher is newer.
+    pub sequence: Option<i64>,
+    /// When the share started (the first message's timestamp).
+    pub started_at: i64,
+    /// When the last position was received.
+    pub updated_at: i64,
+    /// When the share is expected to end, when the message carried one.
+    pub expires_at: Option<i64>,
+    /// Stopped by the sender or expired; the last position is kept.
+    pub ended: bool,
 }
 
 /// A system line (group change, security notice, …) instead of a message; empty for messages.
@@ -232,7 +258,7 @@ const MESSAGE_COLUMNS: &str = "m.chat, m.id, m.sender, m.timestamp, m.from_me, m
     m.reply_to_kind, m.reply_to_thumb, m.media_thumb, m.media_ref, m.reply_to_chat,
     m.preview_site, m.preview_color, m.media_duration, m.system_kind, m.system_params,
     m.reply_to_view_once, m.reply_to_recoverable, m.reply_to_path, m.reply_to_locator,
-  m.media_once_kind, m.sort_order, m.deleted";
+  m.media_once_kind, m.sort_order, m.deleted, m.live_location";
 
 fn message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
     Ok(StoredMessage {
@@ -288,6 +314,9 @@ fn message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
                 .and_then(|json| serde_json::from_str(&json).ok())
                 .unwrap_or_default(),
         },
+        live_location: row
+            .get::<_, Option<String>>(37)?
+            .and_then(|json| serde_json::from_str(&json).ok()),
     })
 }
 

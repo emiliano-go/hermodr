@@ -82,7 +82,7 @@ fn new_mappings_merge_immediately_and_survive_reopen() {
         let store = MessageStore::open(&path).unwrap();
         let conn = store.conn.lock().unwrap();
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
-        assert_eq!(version, 11);
+        assert_eq!(version, 12);
         drop(conn);
         let messages = store.messages_for("5989@s.whatsapp.net", 10).unwrap();
         assert_eq!(messages.len(), 1);
@@ -913,4 +913,40 @@ fn pending_view_once_lists_only_unopened_incoming_stubs() {
     s.set_media_path("a@s", "4", "/tmp/kept.jpg").unwrap();
     s.keep_view_once("a@s", "4").unwrap();
     assert!(s.pending_view_once(window).unwrap().is_empty());
+}
+
+#[test]
+fn live_location_updates_and_ends_survive_a_reload() {
+    let s = store(DiskRetention::unlimited());
+    let mut message = msg("a", "1", 0, "");
+    message.media.kind = Some("live_location".into());
+    message.live_location = Some(LiveLocation {
+        lat: 1.0,
+        lng: 2.0,
+        sequence: Some(1),
+        started_at: 10,
+        updated_at: 10,
+        ..Default::default()
+    });
+    s.insert_message(&message).unwrap();
+
+    let moved = LiveLocation {
+        lat: 3.0,
+        lng: 4.0,
+        accuracy: Some(20),
+        sequence: Some(2),
+        started_at: 10,
+        updated_at: 20,
+        ..Default::default()
+    };
+    assert!(s.update_live_location("a", "1", &moved, Some("data:image/jpeg;base64,eA==")).unwrap());
+    let stored = s.message("a", "1").unwrap();
+    let live = stored.live_location.clone().unwrap();
+    assert_eq!((live.lat, live.lng, live.sequence), (3.0, 4.0, Some(2)));
+    assert_eq!(stored.media.thumb.as_deref(), Some("data:image/jpeg;base64,eA=="));
+
+    assert!(s.end_live_location("a", "1").unwrap());
+    assert!(s.message("a", "1").unwrap().live_location.unwrap().ended);
+    // Already ended: nothing left to change.
+    assert!(!s.end_live_location("a", "1").unwrap());
 }

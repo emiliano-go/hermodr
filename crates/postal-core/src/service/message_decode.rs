@@ -36,6 +36,40 @@ pub(super) fn edit_of(message: &wa::Message) -> Option<(String, String)> {
     Some((target, text))
 }
 
+/// A live location update, as carried by an edit of the original message.
+pub(super) enum LiveLocationUpdate {
+    /// A new position and its fresh map snapshot.
+    Moved { live: LiveLocation, thumb: Option<Vec<u8>> },
+    /// The share was stopped; the last position stays.
+    Ended,
+}
+
+/// The target and update of a message that edits a live location, if it is
+/// one. An edit with no coordinates means the share stopped.
+pub(super) fn live_location_edit_of(message: &wa::Message, timestamp: i64) -> Option<(String, LiveLocationUpdate)> {
+    use wa::message::protocol_message::Type;
+    let protocol = message.get_base_message().protocol_message.as_option()?;
+    if protocol.r#type != Some(Type::MESSAGE_EDIT) {
+        return None;
+    }
+    let target = protocol.key.as_option()?.id.clone().filter(|id| !id.is_empty())?;
+    let edited = protocol.edited_message.as_option()?;
+    let at = edited.get_base_message().live_location_message.as_option()?;
+    // Frequent while moving; the shape (sequence, offset, whether a position
+    // came) is what tells a stop apart from an update if the card ever stalls.
+    log::debug!(
+        "live location edit: sequence={:?} offset={:?} has_position={} expiration={:?}",
+        at.sequence_number,
+        at.time_offset,
+        at.degrees_latitude.is_some() && at.degrees_longitude.is_some(),
+        at.context_info.as_option().and_then(|c| c.expiration),
+    );
+    let Some(live) = live_from_proto(at, timestamp, live_expiry(at, timestamp)) else {
+        return Some((target, LiveLocationUpdate::Ended));
+    };
+    Some((target, LiveLocationUpdate::Moved { live, thumb: at.jpeg_thumbnail.clone() }))
+}
+
 /// The id of the message a revoke refers to, if this message is a revoke.
 pub(super) fn revoke_target(message: &wa::Message) -> Option<String> {
     use wa::message::protocol_message::Type;
@@ -294,6 +328,7 @@ pub(super) async fn stored_message(
     let mut media_thumb = None;
     let mut media_ref = None;
     let mut media_duration = None;
+    let mut live_location = None;
 
     if let Some(media) = detect_media(message) {
         media_kind = Some(media.kind.to_string());
@@ -363,10 +398,11 @@ pub(super) async fn stored_message(
 
     // Kinds without a dedicated view still arrive as readable cards.
     if text.is_empty() && media_kind.is_none() {
-        if let Some((kind, card, thumb)) = card_of(message) {
-            text = card;
-            media_kind = Some(kind.to_string());
-            media_thumb = thumb.as_deref().map(thumb_uri);
+        if let Some(card) = card_of(message, header.timestamp) {
+            text = card.text;
+            media_kind = Some(card.kind.to_string());
+            media_thumb = card.thumb.as_deref().map(thumb_uri);
+            live_location = card.live;
         }
     }
 
@@ -393,13 +429,53 @@ pub(super) async fn stored_message(
         },
         quote,
         link: link_preview(message),
+        live_location,
         ..Default::default()
     })
 }
 
+/// A kind without a view of its own, as a card: a label, readable text, the
+/// map thumbnail when one was sent, and live-location state when it is one.
+struct Card {
+    kind: &'static str,
+    text: String,
+    thumb: Option<Vec<u8>>,
+    live: Option<LiveLocation>,
+}
+
+/// The live-location state a proto carries. `None` when it holds no position,
+/// which is how a stopped share can arrive.
+fn live_from_proto(
+    at: &wa::message::LiveLocationMessage,
+    timestamp: i64,
+    expires_at: Option<i64>,
+) -> Option<LiveLocation> {
+    Some(LiveLocation {
+        lat: at.degrees_latitude?,
+        lng: at.degrees_longitude?,
+        accuracy: at.accuracy_in_meters,
+        speed: at.speed_in_mps,
+        heading: at.degrees_clockwise_from_magnetic_north,
+        sequence: at.sequence_number,
+        started_at: timestamp,
+        updated_at: timestamp,
+        expires_at,
+        ended: false,
+    })
+}
+
+/// The share's own expiry, when the message carries one.
+fn live_expiry(at: &wa::message::LiveLocationMessage, timestamp: i64) -> Option<i64> {
+    at.context_info
+        .as_option()
+        .and_then(|c| c.expiration)
+        .filter(|seconds| *seconds > 0)
+        .map(|seconds| timestamp + i64::from(seconds))
+}
+
 /// Location and contact messages as a kind, readable text and the map
 /// thumbnail when one was sent; `None` for anything else.
-fn card_of(message: &wa::Message) -> Option<(&'static str, String, Option<Vec<u8>>)> {
+fn card_of(message: &wa::Message, timestamp: i64) -> Option<Card> {
     use whatsapp_rust::wacore::proto_helpers::MessageExt;
     let base = message.get_base_message();
     let lines = |parts: Vec<Option<String>>| {
@@ -408,11 +484,13 @@ fn card_of(message: &wa::Message) -> Option<(&'static str, String, Option<Vec<u8
     let map = |lat: Option<f64>, lng: Option<f64>| Some(format!("https://maps.google.com/?q={},{}", lat?, lng?));
     if let Some(at) = base.location_message.as_option() {
         let text = lines(vec![at.name.clone(), at.address.clone(), map(at.degrees_latitude, at.degrees_longitude)]);
-        return Some(("location", text, at.jpeg_thumbnail.clone()));
+        return Some(Card { kind: "location", text, thumb: at.jpeg_thumbnail.clone(), live: None });
     }
     if let Some(at) = base.live_location_message.as_option() {
-        let text = lines(vec![at.caption.clone(), map(at.degrees_latitude, at.degrees_longitude)]);
-        return Some(("live_location", text, at.jpeg_thumbnail.clone()));
+        // The position lives in the structured state; the text is only the
+        // sender's caption.
+        let live = live_from_proto(at, timestamp, live_expiry(at, timestamp));
+        return Some(Card { kind: "live_location", text: at.caption.clone().unwrap_or_default(), thumb: at.jpeg_thumbnail.clone(), live });
     }
     // A vCard's TEL lines carry the numbers.
     let phones = |vcard: &Option<String>| {
@@ -426,7 +504,7 @@ fn card_of(message: &wa::Message) -> Option<(&'static str, String, Option<Vec<u8
     };
     if let Some(contact) = base.contact_message.as_option() {
         let text = lines(vec![contact.display_name.clone(), Some(phones(&contact.vcard))]);
-        return Some(("contact", text, None));
+        return Some(Card { kind: "contact", text, thumb: None, live: None });
     }
     if let Some(list) = base.contacts_array_message.as_option() {
         let people = list
@@ -434,7 +512,7 @@ fn card_of(message: &wa::Message) -> Option<(&'static str, String, Option<Vec<u8
             .iter()
             .map(|c| lines(vec![c.display_name.clone(), Some(phones(&c.vcard))]).replace('\n', " · "))
             .collect::<Vec<_>>();
-        return Some(("contact", lines(vec![list.display_name.clone(), Some(people.join("\n"))]), None));
+        return Some(Card { kind: "contact", text: lines(vec![list.display_name.clone(), Some(people.join("\n"))]), thumb: None, live: None });
     }
     None
 }
@@ -543,4 +621,104 @@ pub(super) fn mentions_me(message: &wa::Message, own: &[String]) -> bool {
         let bare = mention.split(':').next().unwrap_or(mention);
         own.iter().any(|me| me == mention || me == bare)
     })
+}
+
+#[cfg(test)]
+mod live_location_tests {
+    use super::*;
+    use buffa::MessageField;
+
+    fn live_message(
+        lat: Option<f64>,
+        lng: Option<f64>,
+        sequence: i64,
+    ) -> wa::message::LiveLocationMessage {
+        wa::message::LiveLocationMessage {
+            degrees_latitude: lat,
+            degrees_longitude: lng,
+            accuracy_in_meters: Some(12),
+            speed_in_mps: Some(3.5),
+            degrees_clockwise_from_magnetic_north: Some(90),
+            sequence_number: Some(sequence),
+            time_offset: Some(60),
+            jpeg_thumbnail: Some(vec![1, 2, 3]),
+            ..Default::default()
+        }
+    }
+
+    fn edit_of(target: &str, live: wa::message::LiveLocationMessage) -> wa::Message {
+        wa::Message {
+            protocol_message: MessageField::some(wa::message::ProtocolMessage {
+                r#type: Some(wa::message::protocol_message::Type::MESSAGE_EDIT),
+                key: MessageField::some(wa::MessageKey { id: Some(target.into()), ..Default::default() }),
+                edited_message: MessageField::some(wa::Message {
+                    live_location_message: MessageField::some(live),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_live_location_decodes_into_structured_state() {
+        let message = wa::Message {
+            live_location_message: MessageField::some(live_message(Some(1.5), Some(-2.5), 4)),
+            ..Default::default()
+        };
+        let header = MessageHeader {
+            chat: "a@s".into(),
+            id: "1".into(),
+            sender: "them@s".into(),
+            timestamp: 1000,
+            from_me: false,
+        };
+        let stored = stored_message(&message, header, None, None, false).await.unwrap();
+        assert_eq!(stored.media.kind.as_deref(), Some("live_location"));
+        assert_eq!(stored.text, "", "the caption alone is text; no maps URL");
+        let live = stored.live_location.unwrap();
+        assert_eq!((live.lat, live.lng), (1.5, -2.5));
+        assert_eq!(live.accuracy, Some(12));
+        assert_eq!(live.speed, Some(3.5));
+        assert_eq!(live.heading, Some(90));
+        assert_eq!(live.sequence, Some(4));
+        assert_eq!(live.started_at, 1000);
+        assert_eq!(live.updated_at, 1000);
+        assert!(!live.ended);
+        assert!(stored.media.thumb.is_some(), "the map snapshot is kept");
+    }
+
+    #[test]
+    fn edits_carry_moves_and_stops() {
+        let moved = edit_of("1", live_message(Some(2.5), Some(3.5), 5));
+        let Some((target, LiveLocationUpdate::Moved { live, thumb })) =
+            live_location_edit_of(&moved, 2000)
+        else {
+            panic!("expected a moved update");
+        };
+        assert_eq!(target, "1");
+        assert_eq!((live.lat, live.lng, live.sequence), (2.5, 3.5, Some(5)));
+        assert_eq!(live.updated_at, 2000);
+        assert_eq!(thumb, Some(vec![1, 2, 3]));
+
+        // No position in an edit means the share stopped.
+        let stopped = edit_of("1", live_message(None, None, 6));
+        assert!(matches!(
+            live_location_edit_of(&stopped, 3000),
+            Some((_, LiveLocationUpdate::Ended))
+        ));
+
+        // A normal text edit is not a live location update.
+        let text_edit = wa::Message {
+            protocol_message: MessageField::some(wa::message::ProtocolMessage {
+                r#type: Some(wa::message::protocol_message::Type::MESSAGE_EDIT),
+                key: MessageField::some(wa::MessageKey { id: Some("1".into()), ..Default::default() }),
+                edited_message: MessageField::some(wa::Message::text("fixed")),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(live_location_edit_of(&text_edit, 3000).is_none());
+    }
 }
