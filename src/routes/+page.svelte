@@ -167,12 +167,14 @@
       // than at the newest message. The unread flags are still intact here
       // because marking is now driven by scrolling, not by opening.
       const oldestUnread = [...loaded].reverse().find((m) => !m.read && !m.from_me);
+      const newestUnread = loaded.find((m) => !m.read && !m.from_me);
       messages.firstUnreadId = oldestUnread?.id ?? null;
+      messages.lastUnreadId = newestUnread?.id ?? null;
       messages.lastMarkedId = null;
       if (oldestUnread) {
         ui.scrolledUp = true;
         await tick();
-        positionAtUnread(oldestUnread.id);
+        pinUnreadDivider(chat);
       } else {
         scrollToBottom();
       }
@@ -254,6 +256,7 @@
       composer.replyingTo = null;
       composer.editing = null;
       messages.firstUnreadId = null;
+      messages.lastUnreadId = null;
       messages.mentionQueue = [];
       messages.mentionCursor = 0;
       await messages.reloadMessages(chat);
@@ -274,6 +277,7 @@
       messages.mentionQueue = [];
       messages.mentionCursor = 0;
       messages.firstUnreadId = null;
+      messages.lastUnreadId = null;
       composer.replyingTo = null;
       composer.editing = null;
       delete composer.drafts[chat];
@@ -309,15 +313,43 @@
     }, 1600);
   }
 
-  /** Puts a message near the top of the viewport, for entering at the divider. */
-  function positionAtUnread(id: string) {
-    requestAnimationFrame(() => {
-      if (!scroller) return;
-      const element = scroller.querySelector(`[data-id="${id}"]`) as HTMLElement | null;
-      if (!element) return;
-      const top = element.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
-      scroller.scrollTop = Math.max(0, scroller.scrollTop + top - 12);
-    });
+  /**
+   * Pins the unread divider to the top while the rows above it settle their
+   * height. Images have no size until they load, and WebKitGTK has no scroll
+   * anchoring, so a single scroll lands above the divider and drifts as media
+   * loads. Runs only until the height holds still, or the user scrolls.
+   */
+  function pinUnreadDivider(chat: string) {
+    let frames = 0;
+    let settled = 0;
+    let lastHeight = -1;
+    let cancelled = false;
+    const cancel = () => (cancelled = true);
+    const el = scroller;
+    el?.addEventListener("wheel", cancel, { passive: true });
+    el?.addEventListener("touchstart", cancel, { passive: true });
+    const finish = () => {
+      el?.removeEventListener("wheel", cancel);
+      el?.removeEventListener("touchstart", cancel);
+    };
+    const pin = () => {
+      if (cancelled || chats.selectedChat !== chat || !scroller) return finish();
+      const divider = scroller.querySelector("[data-unread-divider]") as HTMLElement | null;
+      if (!divider) return finish();
+      const offset = divider.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+      const height = scroller.scrollHeight;
+      const furthest = height - scroller.clientHeight;
+      const next = Math.min(Math.max(0, scroller.scrollTop + offset), furthest);
+      const moved = Math.abs(next - scroller.scrollTop) > 0.5;
+      if (moved) scroller.scrollTop = next;
+      // Any height change above the divider invalidates the position.
+      settled = !moved && height === lastHeight ? settled + 1 : 0;
+      lastHeight = height;
+      // Three quarters of a second of stillness is enough for local media.
+      if (settled >= 45 || ++frames >= 300) return finish();
+      requestAnimationFrame(pin);
+    };
+    requestAnimationFrame(pin);
   }
 
   /** Jumps to the next unread mention, oldest to newest, wrapping around. */
@@ -463,12 +495,21 @@
       const firstIdx = messages.firstUnreadId
         ? messages.ordered.findIndex((m) => m.id === messages.firstUnreadId)
         : -1;
+      // Without a recorded newest unread, fall back to the first.
+      const lastIdx = messages.lastUnreadId
+        ? messages.ordered.findIndex((m) => m.id === messages.lastUnreadId)
+        : -1;
+      const targetIdx = lastIdx >= 0 ? lastIdx : firstIdx;
       const markedIdx = messages.ordered.findIndex((m) => m.id === candidate.id);
       invoke<number>("mark_read_until", { chat, id: candidate.id })
         .then((changed) => {
           if (changed > 0) queueRefreshChats();
-          // The divider is gone once the first unread has been read.
-          if (firstIdx >= 0 && markedIdx >= firstIdx) messages.firstUnreadId = null;
+          // The divider stays until the newest unread is read too, so it does
+          // not vanish the moment the first unread scrolls into view.
+          if (firstIdx >= 0 && markedIdx >= targetIdx) {
+            messages.firstUnreadId = null;
+            messages.lastUnreadId = null;
+          }
         })
         .catch(() => {});
     }, 200);
@@ -906,7 +947,14 @@
       onclearchat={(chat) => (ui.chatConfirm = { kind: "clear", chat: chat.chat })}
       ondeletechat={(chat) => (ui.chatConfirm = { kind: "delete", chat: chat.chat })}
       onchataction={(command, args) => chats.chatAction(command, args)}
-      onmarkread={(chat) => chats.chatAction("mark_read", { chat: chat.chat })}
+      onmarkread={(chat) => {
+        // Reading the whole chat from the list clears the divider with it.
+        if (chat.chat === chats.selectedChat) {
+          messages.firstUnreadId = null;
+          messages.lastUnreadId = null;
+        }
+        return chats.chatAction("mark_read", { chat: chat.chat });
+      }}
       archivedChats={chats.archivedChats}
       freezeOnHover={session.settings.freeze_chat_list_on_hover ?? true}
       onresize={startResize} />

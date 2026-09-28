@@ -286,7 +286,7 @@
       <div class="day"><span>{dayLabel(message.timestamp)}</span></div>
     {/if}
     {#if firstUnreadId === message.id}
-      <button class="unread-divider" onclick={() => onjumpunread(message.id)}>
+      <button class="unread-divider" data-unread-divider onclick={() => onjumpunread(message.id)}>
         <span>Unread messages</span>
       </button>
     {/if}

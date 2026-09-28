@@ -114,6 +114,12 @@ export class MessagesState {
 
   /** Oldest unread incoming message when the open chat was entered; shows the divider. */
   firstUnreadId = $state<string | null>(null);
+  /**
+   * Newest unread at that same moment. The divider stays until this one is
+   * read too, so it survives scrolling through the run instead of vanishing
+   * with the first message.
+   */
+  lastUnreadId = $state<string | null>(null);
   /** Last message marked read while scrolling, so marking only happens on change. */
   lastMarkedId: string | null = null;
   readMarkTimer: ReturnType<typeof setTimeout> | undefined = undefined;
@@ -146,6 +152,9 @@ export class MessagesState {
     // The divider only makes sense while its message is still loaded.
     if (this.firstUnreadId && !loaded.some((m) => m.id === this.firstUnreadId)) {
       this.firstUnreadId = null;
+    }
+    if (this.lastUnreadId && !loaded.some((m) => m.id === this.lastUnreadId)) {
+      this.lastUnreadId = null;
     }
     return true;
   }
@@ -434,6 +443,9 @@ export class MessagesState {
     this.loadOnScroll = true;
     this.autoplayId = null;
     this.revealedOnce = {};
+    // The previous chat's divider must not flash over the new rows.
+    this.firstUnreadId = null;
+    this.lastUnreadId = null;
   }
 
   /** Mirrors resetUi: the list and the mention queue are dropped. */
