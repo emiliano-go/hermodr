@@ -8,6 +8,7 @@
     | "whatsapp"
     | "privacy"
     | "chats"
+    | "notifications"
     | "device"
     | "media"
     | "startup"
@@ -142,6 +143,7 @@
     ...(me ? [{ id: "whatsapp" as Section, label: "WhatsApp privacy", group: "User settings" }] : []),
     { id: "privacy", label: "Storage & history", group: "App settings" },
     { id: "chats", label: "Chats", group: "App settings" },
+    { id: "notifications", label: "Notifications", group: "App settings" },
     { id: "device", label: "Device", group: "App settings" },
     { id: "media", label: "Media", group: "App settings" },
     { id: "startup", label: "Startup", group: "App settings" },
@@ -210,6 +212,31 @@
   }
   let clearingHistory = $state(false);
   let backfillError = $state<string | null>(null);
+
+  // Desktop notifications use the Web Notification API; the permission lives
+  // with the OS/browser, not in our settings, so it is shown, not edited.
+  let notifPermission = $state(
+    typeof Notification === "undefined" ? "unsupported" : Notification.permission,
+  );
+  function refreshNotifPermission() {
+    if (typeof Notification !== "undefined") notifPermission = Notification.permission;
+  }
+  async function requestNotifPermission() {
+    if (typeof Notification === "undefined") return;
+    try {
+      notifPermission = await Notification.requestPermission();
+    } catch {
+      notifPermission = Notification.permission;
+    }
+  }
+  function sendTestNotification() {
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    try {
+      new Notification("Postal", { body: "Notifications are on.", tag: "postal-test" });
+    } catch {
+      // Best-effort only.
+    }
+  }
 
   // The account's profile lives on WhatsApp's servers, so it is fetched when a
   // section that shows it opens and written back field by field.
@@ -591,6 +618,53 @@
             </div>
             <input class="switch" type="checkbox" bind:checked={draft.keep_archived} />
           </label>
+        {:else if section === "notifications"}
+          <h2>Notifications</h2>
+          <p class="lede">Desktop notifications for new direct messages and group messages.</p>
+          <label class="setting">
+            <div>
+              <span class="setting-title">Enable notifications</span>
+              <span class="setting-desc">
+                Off silences every chat, immediately. Muted chats never notify, whether this is
+                on or off; unmute one from its menu in the chat list.
+              </span>
+            </div>
+            <input
+              class="switch"
+              type="checkbox"
+              checked={draft.notifications_enabled}
+              onchange={(e) => {
+                draft.notifications_enabled = e.currentTarget.checked;
+                // A kill switch must take effect at once, not sit behind Save.
+                void save();
+              }} />
+          </label>
+          <div class="setting">
+            <div>
+              <span class="setting-title">System permission</span>
+              <span class="setting-desc">
+                {#if notifPermission === "unsupported"}
+                  This system does not support desktop notifications.
+                {:else if notifPermission === "granted"}
+                  Allowed. Notifications appear when a new message arrives in another chat.
+                {:else if notifPermission === "denied"}
+                  Blocked. Allow notifications in the system settings to see them.
+                {:else}
+                  Not decided yet. The browser asks the first time a message arrives.
+                {/if}
+              </span>
+            </div>
+            {#if notifPermission !== "unsupported" && notifPermission !== "granted"}
+              <button class="button" onclick={requestNotifPermission}>Allow</button>
+            {:else if notifPermission === "granted"}
+              <button
+                class="button"
+                onclick={() => {
+                  refreshNotifPermission();
+                  sendTestNotification();
+                }}>Test</button>
+            {/if}
+          </div>
         {:else if section === "device"}
           <h2>Android companion</h2>
           <p class="lede">

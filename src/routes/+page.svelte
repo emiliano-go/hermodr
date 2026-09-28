@@ -53,6 +53,7 @@
   import CreateDialog from "$lib/CreateDialog.svelte";
   import { plain } from "$lib/format";
   import { customization, lensMap } from "$lib/theme.svelte";
+  import { ensureNotificationPermission } from "$lib/notifications";
 
   import type {
     ChatPrivacy,
@@ -684,6 +685,13 @@
     window.addEventListener("error", onError);
     window.addEventListener("unhandledrejection", onRejection);
 
+    // Clicking a desktop notification opens its chat.
+    const onOpenChat = (event: Event) => {
+      const chat = (event as CustomEvent<string>).detail;
+      if (chat) void openChat(chat);
+    };
+    window.addEventListener("postal:open-chat", onOpenChat);
+
     // Typing anywhere lands in the composer, so a chat can be answered without
     // clicking the field first.
     const onAnyKey = (event: KeyboardEvent) => {
@@ -747,6 +755,8 @@
     async function setup() {
       await session.loadSettings();
       await once.refresh();
+      // Ask once, up front, so the first live message can ping.
+      if (session.settings.notifications_enabled ?? true) void ensureNotificationPermission();
 
       // The listener is attached before connecting so no event can be missed.
       unlisten = await listen<ServiceEvent>("service-event", (event) =>
@@ -775,6 +785,7 @@
       window.removeEventListener("error", onError);
       window.removeEventListener("unhandledrejection", onRejection);
       window.removeEventListener("keydown", onAnyKey);
+      window.removeEventListener("postal:open-chat", onOpenChat);
     };
   });
 </script>

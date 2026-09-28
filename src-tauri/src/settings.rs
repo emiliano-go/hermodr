@@ -43,6 +43,10 @@ pub struct UiSettings {
     /// without unlinking; the link stays paired for next time.
     #[serde(default)]
     pub android_instance: bool,
+    /// Global kill switch for desktop notifications. Muted chats never
+    /// notify, whatever this is set to.
+    #[serde(default = "default_true")]
+    pub notifications_enabled: bool,
 }
 
 pub(crate) fn default_true() -> bool {
@@ -64,6 +68,7 @@ impl Default for UiSettings {
             skip_loading_screen: false,
             keep_archived: true,
             android_instance: false,
+            notifications_enabled: true,
         }
     }
 }
@@ -183,6 +188,10 @@ mod tests {
         assert_eq!(explicit.retention.max_age_hours, RetentionLimit::Limited(24));
         assert!(!parse_settings("{}").unwrap().request_full_history);
         assert_eq!(parse_settings("{}").unwrap().retention, DiskRetention::unlimited());
+        // Notifications default to on, including for settings saved before the toggle existed.
+        assert!(parse_settings("{}").unwrap().notifications_enabled);
+        assert!(parse_settings(legacy).unwrap().notifications_enabled);
+        assert!(!parse_settings(r#"{"notifications_enabled":false}"#).unwrap().notifications_enabled);
         assert_eq!(bounded.message_window_size, 500);
     }
 }

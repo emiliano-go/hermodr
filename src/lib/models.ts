@@ -160,6 +160,8 @@ export type UiSettings = {
   skip_loading_screen: boolean;
   keep_archived: boolean;
   android_instance: boolean;
+  /** Global kill switch for desktop notifications; muted chats never notify. */
+  notifications_enabled: boolean;
 };
 export type ConnectionState = { started: boolean; connected: boolean; qr: string | null };
 export type OnceState = { paired: boolean; pairing: boolean; running: boolean; connected: boolean; qr: string | null };

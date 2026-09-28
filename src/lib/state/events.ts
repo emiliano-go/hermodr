@@ -5,7 +5,17 @@
 import { tick } from "svelte";
 import { invoke } from "$lib/ipc";
 import { bare } from "$lib/message";
-import type { ServiceEvent } from "$lib/models";
+import type { MessagePage } from "$lib/message-window";
+import type { ServiceEvent, StoredMessage } from "$lib/models";
+import {
+  groupNotificationBody,
+  isChatMuted,
+  notificationBody,
+  notificationTitle,
+  shouldNotify,
+  showChatNotification,
+} from "$lib/notifications";
+import { isPlaceholder } from "$lib/phone";
 import { chats } from "./chats.svelte";
 import { composer } from "./composer.svelte";
 import { members } from "./members.svelte";
@@ -91,6 +101,97 @@ export async function refreshResolvedNames() {
   if ((await members.resolveNames()) > 0) await chats.refreshChats();
 }
 
+/** Whether the chat is currently open: its messages are on screen, so it never pings. */
+function isOpenChat(chat: string): boolean {
+  return chat === chats.selectedChat;
+}
+
+/** The chat's mute state from the cached list; unknown chats read as unmuted. */
+function mutedUntilOf(chat: string): number {
+  return chats.chats.find((c) => c.chat === chat)?.muted_until ?? 0;
+}
+
+function notificationsOn(): boolean {
+  return session.settings.notifications_enabled ?? true;
+}
+
+/** Sender name for a notification, preferring the stored push name. */
+function notifySenderName(message: StoredMessage): string {
+  const push = message.sender_name;
+  if (push && !isPlaceholder(push)) return members.displayName(push, message.sender);
+  return members.senderName(message.sender);
+}
+
+/** Chat name for a notification, from the list or the address. */
+function notifyChatName(chat: string): string {
+  const known = chats.chats.find((c) => c.chat === chat);
+  if (known) return chats.chatLabel(known);
+  return members.displayName(null, chat);
+}
+
+/** Shows a notification for a fully loaded message, when the gate allows it. */
+function notifyForMessage(message: StoredMessage, fresh: boolean) {
+  const chat = message.chat;
+  if (
+    !shouldNotify(
+      {
+        fromMe: message.from_me,
+        systemKind: message.system_kind,
+        revoked: message.revoked,
+        mutedUntil: mutedUntilOf(chat),
+        notificationsEnabled: notificationsOn(),
+        fresh,
+        isOpenChat: isOpenChat(chat),
+      },
+    )
+  ) {
+    return;
+  }
+  const isGroup = chat.endsWith("@g.us");
+  const chatName = notifyChatName(chat);
+  const senderName = message.from_me ? "You" : notifySenderName(message);
+  const body = notificationBody(message, (user) => members.mentionName(user));
+  showChatNotification(
+    notificationTitle({ isGroup, chatName, senderName }),
+    isGroup ? groupNotificationBody(senderName, body) : body,
+    chat,
+  );
+}
+
+/**
+ * Live arrivals come as hints without a body, so the row is fetched for the
+ * notification text. Best-effort: a failed fetch falls back to a generic
+ * ping, and a muted or globally silenced chat stays silent either way.
+ */
+async function notifyForHint(chat: string, id: string, fresh: boolean) {
+  if (!fresh || !notificationsOn()) return;
+  if (isOpenChat(chat)) return;
+  if (isChatMuted(mutedUntilOf(chat))) return;
+  let message: StoredMessage | null = null;
+  try {
+    const page = await invoke<MessagePage>("message_page", {
+      chat,
+      limit: 1,
+      anchorId: id,
+      direction: "through",
+    });
+    message = page.messages.find((m) => m.id === id) ?? null;
+  } catch {
+    message = null;
+  }
+  if (message) {
+    notifyForMessage(message, true);
+    return;
+  }
+  // Re-check after the fetch: the chat may have been opened, muted or
+  // silenced while it was in flight.
+  if (!notificationsOn() || isOpenChat(chat) || isChatMuted(mutedUntilOf(chat))) return;
+  // The row is not on this device yet; still ping with the chat name.
+  const isGroup = chat.endsWith("@g.us");
+  const chatName = notifyChatName(chat);
+  showChatNotification(chatName, isGroup ? "New message" : `New message from ${chatName}`, chat);
+}
+
 /** When each unnamed group's subject was last asked for; the core backs off failed ones. */
 const askedSubjects = new Map<string, number>();
 
@@ -157,6 +258,13 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       ) {
         askedSubjects.set(chat, Date.now());
         void refreshResolvedNames();
+      }
+      // Desktop notification for a live incoming message. History catch-up
+      // took the deferred path above, so it never pings; muted chats and
+      // the global toggle are gated inside the helpers.
+      if (fresh && !fromMe) {
+        if (payload.kind === "message") notifyForMessage(payload.message, true);
+        else void notifyForHint(chat, payload.id, true);
       }
       break;
     }
