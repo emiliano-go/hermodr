@@ -47,7 +47,7 @@ function message(id: number, author: string, text: string, extra: Partial<Stored
     read: true, revoked: false, deleted: false, mentioned: false, preview_url: null, preview_title: null,
     preview_desc: null, preview_thumb: null, preview_site: null, preview_color: null,
     status: author === "You" ? "read" : null, system_kind: null, system_params: [],
-    ...extra,
+    live_location: null, ...extra,
   };
 }
 

@@ -5,6 +5,7 @@
   import { convertFileSrc } from "@tauri-apps/api/core";
   import AudioPlayer from "$lib/AudioPlayer.svelte";
   import Embed from "$lib/Embed.svelte";
+  import LocationCard from "$lib/LocationCard.svelte";
   import EventCard from "$lib/EventCard.svelte";
   import Icon from "$lib/Icon.svelte";
   import InviteCard, { inviteLink } from "$lib/InviteCard.svelte";
@@ -352,6 +353,8 @@ import VideoPlayer from "$lib/VideoPlayer.svelte";
       <span class="svg-file">
         <img class="media" src={convertFileSrc(message.media_path)} alt={message.text} />
       </span>
+    {:else if message.media_kind === "live_location" && message.live_location}
+      <LocationCard {message} {api} />
     {:else if message.media_kind && !DRAWN_KINDS.has(message.media_kind)}
       <!-- Kinds without a view of their own: a card with what the core could read. -->
       {@const link = message.text.match(/https?:\/\/\S+/)?.[0]}

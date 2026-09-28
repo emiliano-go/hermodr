@@ -90,6 +90,30 @@ export type StoredMessage = {
   /** Set on a system line (group change, security notice) instead of a message. */
   system_kind: string | null;
   system_params: string[];
+  /** The last position of a live location, updated in place as edits arrive. */
+  live_location: LiveLocation | null;
+};
+
+/** A live location share as last seen by this device. */
+export type LiveLocation = {
+  lat: number;
+  lng: number;
+  /** The sender's accuracy estimate, in metres. */
+  accuracy: number | null;
+  /** Movement speed in metres per second. */
+  speed: number | null;
+  /** Travel direction, degrees clockwise from magnetic north. */
+  heading: number | null;
+  /** The sender's update counter; higher is newer. */
+  sequence: number | null;
+  /** When the share started, Unix seconds. */
+  started_at: number;
+  /** When the last position arrived, Unix seconds. */
+  updated_at: number;
+  /** When the share is expected to end, when the message carried one. */
+  expires_at: number | null;
+  /** Stopped by the sender or expired; the last position is kept. */
+  ended: boolean;
 };
 export type ChatSummary = {
   chat: string;

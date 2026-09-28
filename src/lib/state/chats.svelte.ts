@@ -104,6 +104,7 @@ export class ChatsState {
     if (kind === "video" || kind === "gif") return "video";
     if (kind === "audio") return "mic";
     if (kind === "document") return "file";
+    if (kind === "location" || kind === "live_location") return "pin";
     return null;
   }
 

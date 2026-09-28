@@ -298,6 +298,8 @@ Working:
   optional Android companion
 - Polls and events, including voting and RSVPs
 - Link previews as Discord-style embeds; locations and contacts as cards
+- Live locations update in place with their map snapshot, accuracy, speed and heading,
+  show how fresh the last position is, and keep it as ended once the share stops
 - Delivery and read receipts, message info, typing and presence
 - Group info with member tags and admin reports, profiles, privacy settings
 - A mentions inbox, starred messages and search within a chat
