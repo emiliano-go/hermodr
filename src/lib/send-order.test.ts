@@ -9,7 +9,7 @@ function gate() {
   return { promise, release };
 }
 
-test("composer reserves attachment batches and voice preparation before later sends", async () => {
+test("composer serializes rapid text, attachment batches, and voice preparation", async () => {
   const server = await createServer({ configFile: fileURLToPath(new URL("../../tests/browser/vite.config.ts", import.meta.url)),
     cacheDir: fileURLToPath(new URL("../../node_modules/.vite-tests/send-order", import.meta.url)),
     ssr: { optimizeDeps: { noDiscovery: true, include: [] } }, server: { middlewareMode: true, ws: false } });
@@ -33,9 +33,19 @@ test("composer reserves attachment batches and voice preparation before later se
       if (command === "send_media") {
         sends.push(String(args?.name));
         if (args?.name === "first.png") { started.release(); await blocked.promise; }
-      } else if (command === "send_text") sends.push(String(args?.text));
-      else if (command === "send_voice") sends.push("voice");
+      } else if (command === "send_text") {
+        sends.push(String(args?.text));
+        if (args?.text === "1") { started.release(); await blocked.promise; }
+      } else if (command === "send_voice") sends.push("voice");
     };
+    const numbers = ["1", "2", "3", "4", "5", "6"];
+    const rapid = numbers.map((text) => { composer.draft = text; return composer.send(); });
+    await started.promise;
+    assert.deepEqual(sends, ["1"]);
+    blocked.release();
+    await Promise.all(rapid);
+    assert.deepEqual(sends, numbers);
+    sends.length = 0; blocked = gate(); started = gate();
     const item = (id: number, name: string) => ({ id, file: new File(["synthetic"], name), url: "", kind: "image", caption: "", once: false });
     composer.pending = [item(1, "first.png"), item(2, "second.png")];
     const batch = composer.sendPending();
