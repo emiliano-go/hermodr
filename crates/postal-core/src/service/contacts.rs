@@ -334,112 +334,110 @@ impl WhatsAppService {
     }
 
     /// Chats, contacts and groups matching a query.
+    /// Chats, contacts and groups matching a query.
     pub async fn search(&self, query: &str) -> Result<Vec<SearchResult>> {
-        use std::collections::HashSet;
-
         let needle = query.trim().to_lowercase();
         if needle.is_empty() {
             return Ok(Vec::new());
         }
-
         let local = self.store.chats().await?;
-        let local_counts: std::collections::HashMap<&str, i64> =
-            local.iter().map(|c| (c.chat.as_str(), c.message_count)).collect();
-        let has_local_messages = |jid: &str| local_counts.get(jid).is_some_and(|&n| n > 0);
-        // A local alias is the one thing that can find a contact whose name and
-        // number say nothing about the query, so it is matched alongside them.
-        // Read once up front: an account holds a handful of aliases.
-        let aliases = self.all_aliases().await?;
-        let of = |jid: &str| -> Vec<String> { aliases.get(jid).cloned().unwrap_or_default() };
-        let mut results: Vec<SearchResult> = Vec::new();
-        let mut seen: HashSet<String> = HashSet::new();
+        let mut index = SearchIndex::new(needle, &local, self.all_aliases().await?);
+        self.search_local_chats(&local, &mut index).await;
+        self.search_stored_names(&mut index).await?;
+        self.search_alias_matches(&mut index).await?;
+        self.search_group_overviews(&mut index).await;
+        index.results.truncate(50);
+        Ok(index.results)
+    }
 
-        // Local chats first: they have history and are what a search usually
-        // means. A cleared chat stays local but reports no messages.
-        for chat in &local {
+    /// Local chats first: they have history and are what a search usually
+    /// means. A cleared chat stays local but reports no messages.
+    async fn search_local_chats(&self, local: &[crate::store::ChatSummary], index: &mut SearchIndex) {
+        for chat in local {
             let number = user_part(&chat.chat);
             let name = chat.display_name.clone().unwrap_or_else(|| number.clone());
-            if name.to_lowercase().contains(&needle) || number.contains(&needle) {
-                seen.insert(chat.chat.clone());
-                results.push(SearchResult {
+            if name.to_lowercase().contains(&index.needle) || number.contains(&index.needle) {
+                index.seen.insert(chat.chat.clone());
+                index.results.push(SearchResult {
                     kind: if chat.chat.ends_with("@g.us") { "group".to_string() } else { "contact".to_string() },
                     saved: self.store.name_is_saved(&chat.chat).await.observed().unwrap_or(false),
                     jid: chat.chat.clone(),
                     name,
                     number,
                     has_messages: chat.message_count > 0,
-                    aliases: of(&chat.chat),
+                    aliases: index.aliases_of(&chat.chat),
                 });
             }
         }
+    }
 
-        // Address book and learned names.
-        for (jid, name, saved) in self.store.search_names(&needle, 50).await? {
-            if !seen.insert(jid.clone()) {
+    /// Address book and learned names.
+    async fn search_stored_names(&self, index: &mut SearchIndex) -> Result<()> {
+        for (jid, name, saved) in self.store.search_names(&index.needle, 50).await? {
+            if !index.seen.insert(jid.clone()) {
                 continue;
             }
-            results.push(SearchResult {
+            index.results.push(SearchResult {
                 kind: if jid.ends_with("@g.us") { "group".to_string() } else { "contact".to_string() },
                 saved,
-                jid: jid.clone(),
-                name,
                 number: user_part(&jid),
-                has_messages: has_local_messages(&jid),
-                aliases: of(&jid),
+                has_messages: index.has_messages(&jid),
+                aliases: index.aliases_of(&jid),
+                jid,
+                name,
             });
         }
+        Ok(())
+    }
 
-        // Contacts found by nothing but an alias. One row is one contact, so
-        // this runs per alias rather than per address form; the form a name is
-        // known under is preferred, since a phone number reads better than a
-        // bare LID.
+    /// Contacts found by nothing but an alias. One row is one contact, so this
+    /// runs per alias rather than per address form; the form a name is known
+    /// under is preferred, since a phone number reads better than a bare LID.
+    async fn search_alias_matches(&self, index: &mut SearchIndex) -> Result<()> {
         for (jid, alias) in self.aliases.all().await? {
-            if !alias.to_lowercase().contains(&needle) {
+            if !alias.to_lowercase().contains(&index.needle) {
                 continue;
             }
             let forms = contact_forms(&self.store, &jid).await;
-            if forms.iter().any(|form| seen.contains(form)) {
+            if forms.iter().any(|form| index.seen.contains(form)) {
                 continue;
             }
-            // A form the contact has a name under beats the one the alias was
-            // stored against, and a phone number beats a bare LID, which is a
-            // number nobody recognises.
             let named = first_stored_name(&self.store, &forms).await.map(|(form, _)| form)
                 .or_else(|| forms.iter().find(|f| f.ends_with("@s.whatsapp.net")).cloned())
                 .unwrap_or_else(|| jid.clone());
             let number = user_part(&named);
             let name = self.store.name_for(&named).await.observed().flatten().unwrap_or_else(|| number.clone());
             for form in &forms {
-                seen.insert(form.clone());
+                index.seen.insert(form.clone());
             }
-            results.push(SearchResult {
+            index.results.push(SearchResult {
                 kind: "contact".to_string(),
                 saved: self.store.name_is_saved(&named).await.observed().unwrap_or(false),
                 jid: named.clone(),
                 name,
                 number,
-                has_messages: forms.iter().any(|form| has_local_messages(form)),
-                aliases: of(&named),
+                has_messages: forms.iter().any(|form| index.has_messages(form)),
+                aliases: index.aliases_of(&named),
             });
         }
+        Ok(())
+    }
 
-        // Groups from the account, including ones with no local history.
+    /// Groups from the account, including ones with no local history.
+    async fn search_group_overviews(&self, index: &mut SearchIndex) {
         for (jid, subject) in self.group_overviews().await {
-            if subject.to_lowercase().contains(&needle) && seen.insert(jid.clone()) {
-                results.push(SearchResult {
+            if subject.to_lowercase().contains(&index.needle) && index.seen.insert(jid.clone()) {
+                index.results.push(SearchResult {
                     jid: jid.clone(),
                     name: subject,
                     number: String::new(),
                     kind: "group".into(),
                     saved: false,
-                    has_messages: has_local_messages(&jid),
-                    aliases: of(&jid),
+                    has_messages: index.has_messages(&jid),
+                    aliases: index.aliases_of(&jid),
                 });
             }
         }
-
-        results.truncate(50);
-        Ok(results)
     }
 
     /// Every alias in the account, keyed by each address form of its contact.
@@ -471,5 +469,42 @@ impl WhatsAppService {
             self.aliases.remove(&form, alias).await?;
         }
         Ok(())
+    }
+}
+
+
+/// The running state of the four-pass contact search: the needle, the local
+/// alias map and message counts, and what has been found and already seen.
+struct SearchIndex {
+    needle: String,
+    aliases: std::collections::HashMap<String, Vec<String>>,
+    local_counts: std::collections::HashMap<String, i64>,
+    seen: std::collections::HashSet<String>,
+    results: Vec<SearchResult>,
+}
+
+impl SearchIndex {
+    fn new(
+        needle: String,
+        local: &[crate::store::ChatSummary],
+        aliases: std::collections::HashMap<String, Vec<String>>,
+    ) -> Self {
+        SearchIndex {
+            needle,
+            aliases,
+            local_counts: local.iter().map(|chat| (chat.chat.clone(), chat.message_count)).collect(),
+            seen: std::collections::HashSet::new(),
+            results: Vec::new(),
+        }
+    }
+
+    fn has_messages(&self, jid: &str) -> bool {
+        self.local_counts.get(jid).is_some_and(|count| *count > 0)
+    }
+
+    /// A local alias is the one thing that can find a contact whose name and
+    /// number say nothing about the query, so it is matched alongside them.
+    fn aliases_of(&self, jid: &str) -> Vec<String> {
+        self.aliases.get(jid).cloned().unwrap_or_default()
     }
 }
