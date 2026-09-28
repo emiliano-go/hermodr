@@ -58,6 +58,7 @@ jobs:
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y lld
       - run: cargo test --locked --manifest-path crates/postal-core/Cargo.toml
+      - run: cargo test --locked -p postal-plugins
       - run: sccache --show-stats
 
   tauri:

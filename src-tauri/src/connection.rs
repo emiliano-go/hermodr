@@ -281,6 +281,7 @@ pub(crate) fn spawn_once_manager(app: &AppHandle) {
 }
 
 fn emit_service_event(app: &AppHandle, event: &ServiceEvent) {
+    crate::plugins::publish(&app.state::<AppState>().plugins, event);
     if let Err(error) = app.emit(SERVICE_EVENT, event) {
         log::error!("could not emit service event to UI: {error}");
     }

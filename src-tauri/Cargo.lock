@@ -3415,6 +3415,7 @@ dependencies = [
  "image",
  "log",
  "postal-core",
+ "postal-plugins",
  "serde",
  "serde_json",
  "tauri",
@@ -3445,6 +3446,17 @@ dependencies = [
  "ureq",
  "whatsapp-rust",
  "windows 0.61.3",
+]
+
+[[package]]
+name = "postal-plugins"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "log",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

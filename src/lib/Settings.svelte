@@ -12,6 +12,7 @@
     | "device"
     | "media"
     | "startup"
+    | "plugins"
     | "keybinds"
     | "appearance"
     | "about";
@@ -38,6 +39,7 @@
   import BooleanProps from "$lib/BooleanProps.svelte";
   import StorageManager from "$lib/StorageManager.svelte";
   import ArchiveManager from "$lib/ArchiveManager.svelte";
+  import PluginManager from "$lib/PluginManager.svelte";
   import { limitValue, parseLimit } from "$lib/retention";
   import type { NotifPermission } from "$lib/notifications";
   import {
@@ -153,6 +155,7 @@
     { id: "device", label: "Device", group: "App settings" },
     { id: "media", label: "Media", group: "App settings" },
     { id: "startup", label: "Startup", group: "App settings" },
+    { id: "plugins", label: "Plugins", group: "App settings" },
     { id: "keybinds", label: "Keybinds", group: "App settings" },
     { id: "appearance", label: "Customization", group: "App settings" },
     { id: "about", label: "About", group: "Postal" },
@@ -805,6 +808,8 @@
           </div>
           <StorageManager />
           <ArchiveManager />
+        {:else if section === "plugins"}
+          <PluginManager />
         {:else if section === "startup"}
           <h2>Startup</h2>
           <label class="setting">

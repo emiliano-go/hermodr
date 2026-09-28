@@ -91,6 +91,8 @@ const COMMANDS: &[&str] = &[
     "begin_upload",
     "append_upload",
     "cancel_upload",
+    "list_plugins",
+    "set_plugin_enabled",
     "storage_cleanup",
     "clear_history",
     "clear_chat",

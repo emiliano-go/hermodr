@@ -6,6 +6,7 @@ export const windowFixture = {
   phoneRequests: 0, failure: false, deferNext: false, pending: [] as (() => void)[],
 };
 export const mediaFixture = { calls: 0, failure: true, deferNext: false, pending: [] as (() => void)[] };
+export const pluginFixture = { enabled: false, failure: false, crashed: false };
 export const uploadFixture = { calls: [] as string[], maxChunk: 0, size: 0, written: 0, chunks: [] as Uint8Array[],
   failChunk: false, failSend: false, afterChunk: null as (() => void) | null };
 export const archiveFixture = { failure: false, cancelled: false, deferNext: false, pending: [] as (() => void)[],
@@ -20,6 +21,16 @@ export const fixture = { updated: false, failure: false, calls: 0, savedRetentio
 };
 
 export async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  if (command === "list_plugins") return { directory: "synthetic/plugins", errors: [], plugins: [
+    { id: "com.example.fixture", name: "Synthetic Plugin", version: "1", activation: "lazy", idle_timeout_secs: 30,
+      capabilities: ["events:read"], enabled: pluginFixture.enabled, state: "idle", error: pluginFixture.crashed ? "Disabled after three synthetic crashes" : null },
+  ] } as T;
+  if (command === "set_plugin_enabled") {
+    if (pluginFixture.failure) throw new Error("Synthetic consent persistence failure");
+    if (args?.enabled && JSON.stringify(args.capabilities) !== '["events:read"]') throw new Error("Missing consent");
+    pluginFixture.enabled = Boolean(args?.enabled); pluginFixture.crashed = false;
+    return undefined as T;
+  }
   if (command === "begin_upload") {
     uploadFixture.calls.push("begin"); uploadFixture.size = Number(args?.size); uploadFixture.written = 0; uploadFixture.chunks = [];
     return "synthetic-upload" as T;

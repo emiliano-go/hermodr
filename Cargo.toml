@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/postal-core"]
+members = ["crates/postal-core", "crates/postal-plugins"]
 # The Tauri app has its own manifest that depends on a local Tauri checkout, so
 # it stays outside this workspace rather than nesting one inside the other.
 exclude = ["src-tauri"]

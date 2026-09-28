@@ -104,6 +104,8 @@
     "allow-begin-upload",
     "allow-append-upload",
     "allow-cancel-upload",
+    "allow-list-plugins",
+    "allow-set-plugin-enabled",
     "allow-storage-cleanup",
     "allow-clear-history",
     "allow-clear-chat",

@@ -22,6 +22,7 @@ mod chats;
 mod messages;
 mod media;
 mod uploads;
+mod plugins;
 mod media_actions;
 mod groups;
 mod contacts;
@@ -53,6 +54,7 @@ struct AppState {
     settings: Mutex<UiSettings>,
     accounts: Mutex<AccountsFile>,
     uploads: Arc<uploads::Uploads>,
+    plugins: plugins::Plugins,
 }
 
 impl AppState {
@@ -113,6 +115,7 @@ pub fn run() {
                 settings: Mutex::new(load_settings(app.handle())),
                 accounts: Mutex::new(accounts),
                 uploads: Arc::default(),
+                plugins: plugins::initialize(app.handle()),
             });
             connection::spawn_once_manager(app.handle());
 
@@ -229,6 +232,8 @@ pub fn run() {
             uploads::begin_upload,
             uploads::append_upload,
             uploads::cancel_upload,
+            plugins::list_plugins,
+            plugins::set_plugin_enabled,
             media::storage_cleanup,
             chats::clear_history,
             chats::clear_chat,
@@ -251,6 +256,13 @@ pub fn run() {
             connection::once_state,
             connection::set_pairing
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                if let Some(host) = &app.state::<AppState>().plugins.host {
+                    tauri::async_runtime::block_on(host.shutdown());
+                }
+            }
+        });
 }

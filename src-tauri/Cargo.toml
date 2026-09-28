@@ -17,6 +17,7 @@ tauri-build = { version = "2", features = [] }
 # The native protocol client. This is what replaced the embedded WhatsApp Web
 # webview, and with it the whole class of memory and history problems.
 postal-core = { path = "../crates/postal-core" }
+postal-plugins = { path = "../crates/postal-plugins" }
 tauri = { version = "2.11.5", features = ["tray-icon", "protocol-asset"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
