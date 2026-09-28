@@ -31,15 +31,23 @@ fn backup_roundtrip_preserves_archive_but_excludes_session_credentials() {
     }
     store.set_saved_name("sender@s", "Synthetic sender").unwrap();
     store.set_starred("test@s", "m0000", true).unwrap();
+    fs::write(media.join("library.webp"), b"synthetic sticker").unwrap();
+    store.upsert_sticker_pack(&StickerPack { pack_id: "synthetic-pack".into(),
+        tray_path: Some(media.join("photo.jpg").to_string_lossy().into_owned()), ..Default::default() }).unwrap();
+    store.upsert_sticker(&Sticker { filehash: "synthetic-hash".into(), pack_id: Some("synthetic-pack".into()),
+        path: Some(media.join("library.webp").to_string_lossy().into_owned()), favorite: true, ..Default::default() }).unwrap();
     store.save_poll("test@s", "m0001", "sender@s", "Question", &["Yes".into()], false, Some(&[7; 32])).unwrap();
     let backup = root.join("backup");
     let report = store.export_backup(&backup, &media, &[("sender@s".into(), "friend".into())]).unwrap();
-    assert_eq!((report.messages, report.attachments, report.missing_attachments), (1003, 1, 1));
+    assert_eq!((report.messages, report.attachments, report.missing_attachments), (1003, 2, 1));
     assert!(!backup.join("session.db").exists());
     assert!(!fs::read(backup.join("messages.db")).unwrap().windows(25).any(|bytes| bytes == b"NEVER_EXPORT_LOGIN_SECRET"));
     let connection = Connection::open(&backup.join("messages.db")).unwrap();
+    assert_eq!(connection.pragma_query_value(None, "journal_mode", |row| row.get::<_, String>(0)).unwrap(), "delete");
     assert_eq!(connection.query_row("SELECT COUNT(*) FROM sqlite_master WHERE name='session_credentials'", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
-    drop(connection);
+    connection.close().unwrap();
+    assert!(!backup.join("messages.db-wal").exists());
+    assert!(!backup.join("messages.db-shm").exists());
 
     let export = root.join("conversation");
     let exported = store.export_conversation("test@s", &export, &media).unwrap();
@@ -69,6 +77,12 @@ fn backup_roundtrip_preserves_archive_but_excludes_session_credentials() {
     let aliases = AliasStore::open(&account.join("aliases.db")).unwrap();
     assert_eq!(aliases.all().unwrap(), [("sender@s".into(), "friend".into())]);
     assert!(!account.join("session.db").exists());
+    for (table, column, expected) in [("stickers", "path", b"synthetic sticker".as_slice()),
+        ("sticker_packs", "tray_path", b"synthetic attachment".as_slice())] {
+        let path: String = restored.conn.lock().unwrap().query_row(&format!("SELECT {column} FROM {table}"), [], |r| r.get(0)).unwrap();
+        assert!(Path::new(&path).starts_with(restored_media.canonicalize().unwrap()));
+        assert_eq!(fs::read(path).unwrap(), expected);
+    }
     drop(aliases);
     drop(restored);
     fs::remove_dir_all(root).unwrap();

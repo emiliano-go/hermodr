@@ -87,20 +87,6 @@ impl WhatsAppService {
         self.store.run(move |store| prune_quote_files(directory.as_deref(), store)).await
     }
 
-    /// Deletes media files no stored message points at any more, so a retention
-    /// prune does not leave the disk growing with orphans.
-    pub async fn prune_orphaned_media(&self) -> Result<usize> {
-        let Some(directory) = self.media_dir.clone() else { return Ok(0) };
-        let referenced = self.store.referenced_media_paths().await?;
-        let mut removed = 0;
-        for path in orphaned_media_files(Some(&directory), &referenced) {
-            if std::fs::remove_file(&path).is_ok() {
-                removed += 1;
-            }
-        }
-        Ok(removed)
-    }
-
     /// Deletes downloaded media and forgets the paths, keeping the messages.
     pub async fn flush_media(&self) -> Result<usize> {
         let directory = self.media_dir.clone();

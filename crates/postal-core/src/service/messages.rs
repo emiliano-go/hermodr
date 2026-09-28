@@ -231,7 +231,6 @@ impl WhatsAppService {
     pub async fn clear_history(&self) -> Result<usize> {
         let removed = self.store.clear_history().await?;
         self.prune_quote_files().await?;
-        self.prune_orphaned_media().await?;
         Ok(removed)
     }
 
@@ -239,7 +238,6 @@ impl WhatsAppService {
     pub async fn clear_chat(&self, chat: &str) -> Result<usize> {
         let removed = self.store.clear_chat(chat).await?;
         self.prune_quote_files().await?;
-        self.prune_orphaned_media().await?;
         Ok(removed)
     }
 
@@ -248,7 +246,6 @@ impl WhatsAppService {
     pub async fn delete_chat(&self, chat: &str) -> Result<usize> {
         let removed = self.store.delete_chat(chat).await?;
         self.prune_quote_files().await?;
-        self.prune_orphaned_media().await?;
         Ok(removed)
     }
 
@@ -477,7 +474,6 @@ impl WhatsAppService {
         let retention = self.disk_retention.clone();
         self.store.run(move |store| retention.enforce(store)).await?;
         self.prune_quote_files().await?;
-        self.prune_orphaned_media().await?;
         Ok(())
     }
 

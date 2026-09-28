@@ -197,23 +197,6 @@ pub fn prune_quote_files(dir: Option<&Path>, store: &MessageStore) -> Result<usi
     Ok(removed)
 }
 
-/// Files in the media folder that no stored row references any more, so a
-/// retention prune can drop them. Subdirectories (avatars, saved stickers) are
-/// left alone; only the flat folder of per-message media is swept.
-pub fn orphaned_media_files(
-    dir: Option<&Path>,
-    referenced: &std::collections::HashSet<String>,
-) -> Vec<std::path::PathBuf> {
-    let Some(dir) = dir else { return Vec::new() };
-    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
-    entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.is_file())
-        .filter(|path| !referenced.contains(&path.to_string_lossy().to_string()))
-        .collect()
-}
-
 /// Downloads the view-once a reply quotes and records it on every reply quoting
 /// the same message.
 ///

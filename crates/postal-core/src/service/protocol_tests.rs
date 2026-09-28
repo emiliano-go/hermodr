@@ -25,6 +25,35 @@ fn message_event(chat: &str, sender: &str, id: &str, message: wa::Message) -> Ev
 }
 
 #[tokio::test]
+async fn retention_keeps_unowned_and_inflight_files_in_shared_media_directory() {
+    let (mut inbound, _) = inbound().await;
+    let root = std::env::temp_dir().join(format!("postal-retention-files-{}-{}", std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir(&root).unwrap();
+    for name in ["other-account.jpg", "active-download.part", "notes.txt", "favorite.webp"] {
+        std::fs::write(root.join(name), b"preserve").unwrap();
+    }
+    inbound.media_dir = Some(root.clone());
+    inbound.disk_retention = Arc::new(DiskRetentionManager::new(DiskRetention {
+        max_age_hours: crate::store::RetentionLimit::Unlimited,
+        max_messages_per_chat: crate::store::RetentionLimit::Limited(0),
+    }));
+    let path = root.join("favorite.webp").to_string_lossy().into_owned();
+    inbound.store.run(move |store| store.upsert_sticker(&crate::store::Sticker {
+        filehash: "synthetic-favorite".into(), path: Some(path), favorite: true, ..Default::default()
+    })).await.unwrap();
+    inbound.handle(&message_event("200@s.whatsapp.net", "100@s.whatsapp.net", "expired", wa::Message {
+        conversation: Some("synthetic message".into()), ..Default::default()
+    })).await;
+    assert_eq!(inbound.store.count().await.unwrap(), 0);
+    for name in ["other-account.jpg", "active-download.part", "notes.txt", "favorite.webp"] {
+        assert_eq!(std::fs::read(root.join(name)).unwrap(), b"preserve", "retention removed {name}");
+    }
+    drop(inbound);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn decrypted_community_and_plaintext_reactions_share_parent_and_removal_semantics() {
     use whatsapp_rust::wacore::reaction::{encrypt_reaction_with_secret, decrypt_reaction_with_secret};
     let (inbound, _) = inbound().await;

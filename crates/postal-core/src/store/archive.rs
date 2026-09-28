@@ -86,6 +86,27 @@ fn names(conn: &Connection) -> Result<Vec<String>> {
 
 fn quoted(identifier: &str) -> String { format!("\"{}\"", identifier.replace('"', "\"\"")) }
 
+fn attachment_columns(conn: &Connection) -> Result<Vec<(&'static str, &'static str)>> {
+    let tables = names(conn)?;
+    Ok([("messages", "media_path"), ("messages", "reply_to_path"),
+        ("stickers", "path"), ("sticker_packs", "tray_path")].into_iter()
+        .filter(|(table, _)| tables.iter().any(|name| name == table)).collect())
+}
+
+fn attachment_paths(conn: &Connection) -> Result<Vec<String>> {
+    let query = attachment_columns(conn)?.iter().map(|(table, column)|
+        format!("SELECT {column} FROM {table} WHERE {column} IS NOT NULL AND {column} NOT LIKE 'data:%'"))
+        .collect::<Vec<_>>().join(" UNION ");
+    Ok(conn.prepare(&query)?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?)
+}
+
+fn rewrite_attachment(conn: &Connection, from: &str, to: Option<&str>) -> Result<()> {
+    for (table, column) in attachment_columns(conn)? {
+        conn.execute(&format!("UPDATE {table} SET {column} = ?1 WHERE {column} = ?2"), params![to, from])?;
+    }
+    Ok(())
+}
+
 fn copy_tables(source: &Connection, destination: &mut Connection) -> Result<()> {
     let source_version: i64 = source.pragma_query_value(None, "user_version", |row| row.get(0))?;
     let destination_version: i64 = destination.pragma_query_value(None, "user_version", |row| row.get(0))?;
@@ -129,15 +150,16 @@ impl MessageStore {
             copy_tables(&snapshot, &mut backup.conn.lock().unwrap())?;
         }
         let mut files = Attachments::new(media_root, directory)?;
-        for path in backup.media_paths()? {
+        let paths = attachment_paths(&backup.conn.lock().unwrap())?;
+        for path in paths {
             let copied = files.copy(&path)?;
             let conn = backup.conn.lock().unwrap();
-            conn.execute("UPDATE messages SET media_path = ?1 WHERE media_path = ?2", params![copied, path])?;
-            conn.execute("UPDATE messages SET reply_to_path = ?1 WHERE reply_to_path = ?2", params![copied, path])?;
+            rewrite_attachment(&conn, &path, copied.as_deref())?;
         }
         let messages = backup.conn.lock().unwrap().query_row("SELECT COUNT(*) FROM messages", [], |r| r.get::<_, i64>(0))? as u64;
-        backup.conn.lock().unwrap().execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
-        drop(backup);
+        let connection = backup.conn.into_inner().unwrap();
+        connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode=DELETE;")?;
+        connection.close().map_err(|(_, error)| error)?;
         write_json(&directory.join("aliases.json"), &aliases)?;
         write_json(&directory.join("manifest.json"), &Manifest { format: "postal-local-backup".into(), version: 1,
             messages, attachments: files.count(), missing_attachments: files.missing })?;
@@ -210,8 +232,7 @@ pub fn restore_backup(source: &Path, account: &Path, media: &Path) -> Result<Arc
     let version = original.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))?;
     anyhow::ensure!(version > 0, "backup has no supported message schema");
     let source_messages = original.query_row("SELECT COUNT(*) FROM messages", [], |r| r.get::<_, i64>(0))? as u64;
-    let source_files = original.query_row("SELECT COUNT(*) FROM (SELECT media_path FROM messages WHERE media_path IS NOT NULL
-        UNION SELECT reply_to_path FROM messages WHERE reply_to_path IS NOT NULL)", [], |r| r.get::<_, i64>(0))? as usize;
+    let source_files = attachment_paths(&original)?.len();
     anyhow::ensure!(source_messages == manifest.messages && source_files == manifest.attachments, "backup counts do not match its manifest");
     let mut created = NewDirectories::default();
     created.create(account)?;
@@ -223,7 +244,8 @@ pub fn restore_backup(source: &Path, account: &Path, media: &Path) -> Result<Arc
     drop(imported);
     let restored = MessageStore::open(&database)?;
     let mut count = 0;
-    for path in restored.media_paths()? {
+    let paths = attachment_paths(&restored.conn.lock().unwrap())?;
+    for path in paths {
         let parts = Path::new(&path).components().collect::<Vec<_>>();
         anyhow::ensure!(matches!(parts.as_slice(), [Component::Normal(folder), Component::Normal(_)] if *folder == "media"), "invalid backup attachment path");
         let input = source.join(&path).canonicalize()?;
@@ -232,8 +254,7 @@ pub fn restore_backup(source: &Path, account: &Path, media: &Path) -> Result<Arc
         fs::copy(input, &target)?;
         let destination = target.canonicalize()?.to_string_lossy().into_owned();
         let conn = restored.conn.lock().unwrap();
-        conn.execute("UPDATE messages SET media_path = ?1 WHERE media_path = ?2", params![destination, path])?;
-        conn.execute("UPDATE messages SET reply_to_path = ?1 WHERE reply_to_path = ?2", params![destination, path])?;
+        rewrite_attachment(&conn, &path, Some(&destination))?;
         count += 1;
     }
     let alias_store = AliasStore::open(&account.join("aliases.db"))?;

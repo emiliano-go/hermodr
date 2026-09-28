@@ -593,7 +593,8 @@ impl Inbound {
                     .await
             else {
                 continue;
-            };            // Mentions stay `@<number>` as on the wire; the UI
+            };
+            // Mentions stay `@<number>` as on the wire; the UI
             // resolves them when drawn, so later names apply.
             message.local.mentioned = mentions_me(&inbound.message, &own);
             if inbound.message.is_view_once() {
@@ -730,12 +731,6 @@ impl Inbound {
             let directory = media_dir.clone();
             if let Err(e) = store.run(move |store| prune_quote_files(directory.as_deref(), store)).await {
                 log::error!("pruning recovered view-once files failed: {e}");
-            }
-            // The rows are gone; their files must not linger either.
-            if let Ok(referenced) = store.referenced_media_paths().await {
-                for path in orphaned_media_files(media_dir.as_deref(), &referenced) {
-                    let _ = std::fs::remove_file(path);
-                }
             }
         }
         batch_guard.finish().await.logged();
