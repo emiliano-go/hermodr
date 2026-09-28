@@ -306,6 +306,45 @@ pub(crate) fn fold_chat(conn: &Connection, from: &str, to: &str) -> Result<()> {
     if from == to {
         return Ok(());
     }
+    copy_shadowed_messages(conn, from, to)?;
+    merge_chat_row(conn, from, to)?;
+    move_chat_keyed_tables(conn, from, to, MESSAGE_STATE_TABLES, "chat")?;
+    // Messages last, so `to` knows it has history before the state below.
+    conn.execute("UPDATE OR IGNORE messages SET chat = ?1 WHERE chat = ?2", params![to, from])?;
+    conn.execute("DELETE FROM messages WHERE chat = ?1", params![from])?;
+    conn.execute(
+        "UPDATE OR IGNORE messages SET reply_to_chat = ?1 WHERE reply_to_chat = ?2",
+        params![to, from],
+    )?;
+    // Archive, mute and unread marks: keep whichever side had them set.
+    merge_chat_state(conn, from, to)?;
+    merge_pin(conn, from, to)?;
+    move_chat_keyed_tables(conn, from, to, CHAT_SETTING_TABLES, "jid")?;
+    move_list_flags(conn, from, to)?;
+    adopt_name(conn, from, to)?;
+    Ok(())
+}
+
+/// Tables whose rows are keyed by (chat, message) and travel with messages.
+const MESSAGE_STATE_TABLES: &[&str] = &[
+    "reactions",
+    "stars",
+    "message_pins",
+    "polls",
+    "poll_votes",
+    "events",
+    "event_responses",
+    "view_once",
+    "forwarded",
+    "edited",
+];
+
+/// Tables with one row per chat, carrying the chat's own settings.
+const CHAT_SETTING_TABLES: &[&str] = &["chat_privacy", "chat_settings", "chat_retention"];
+
+/// Rows a message id exists under in both chats: `INSERT OR IGNORE` would drop
+/// the incoming copy, so they are re-inserted under the surviving chat first.
+fn copy_shadowed_messages(conn: &Connection, from: &str, to: &str) -> Result<()> {
     let mut duplicates = conn.prepare(&format!(
         "SELECT {MESSAGE_COLUMNS} FROM messages m LEFT JOIN names n ON n.jid = m.sender
          WHERE m.chat = ?1 AND EXISTS (SELECT 1 FROM messages t WHERE t.chat = ?2 AND t.id = m.id)"
@@ -315,6 +354,10 @@ pub(crate) fn fold_chat(conn: &Connection, from: &str, to: &str) -> Result<()> {
         row.header.chat = to.to_string();
         MessageStore::insert_row(conn, &row)?;
     }
+    Ok(())
+}
+
+fn merge_chat_row(conn: &Connection, from: &str, to: &str) -> Result<()> {
     conn.execute(
         "INSERT INTO chats (jid, last_message_at)
          SELECT ?1, last_message_at FROM chats WHERE jid = ?2
@@ -322,34 +365,23 @@ pub(crate) fn fold_chat(conn: &Connection, from: &str, to: &str) -> Result<()> {
         params![to, from],
     )?;
     conn.execute("DELETE FROM chats WHERE jid = ?1", params![from])?;
-    // Per-message state keyed by the chat.
-    for table in [
-        "reactions",
-        "stars",
-        "message_pins",
-        "polls",
-        "poll_votes",
-        "events",
-        "event_responses",
-        "view_once",
-        "forwarded",
-        "edited",
-    ] {
+    Ok(())
+}
+
+/// Moves rows in the given chat-keyed tables, keeping the survivor's rows when
+/// both sides have one (the first UPDATE wins under `OR IGNORE`).
+fn move_chat_keyed_tables(conn: &Connection, from: &str, to: &str, tables: &[&str], column: &str) -> Result<()> {
+    for table in tables {
         conn.execute(
-            &format!("UPDATE OR IGNORE {table} SET chat = ?1 WHERE chat = ?2"),
+            &format!("UPDATE OR IGNORE {table} SET {column} = ?1 WHERE {column} = ?2"),
             params![to, from],
         )?;
-        conn.execute(&format!("DELETE FROM {table} WHERE chat = ?1"), params![from])?;
+        conn.execute(&format!("DELETE FROM {table} WHERE {column} = ?1"), params![from])?;
     }
-    // Messages last, so `to` knows it has history before the state below.
-    conn.execute("UPDATE OR IGNORE messages SET chat = ?1 WHERE chat = ?2", params![to, from])?;
-    conn.execute("DELETE FROM messages WHERE chat = ?1", params![from])?;
-    conn.execute(
-        "UPDATE OR IGNORE messages SET reply_to_chat = ?1 WHERE reply_to_chat = ?2",
-        params![to, from],
-    )?;
+    Ok(())
+}
 
-    // Archive, mute and unread marks: keep whichever side had them set.
+fn merge_chat_state(conn: &Connection, from: &str, to: &str) -> Result<()> {
     conn.execute(
         "INSERT INTO chat_state (jid, archived, muted_until, marked_unread)
          SELECT ?1, archived, muted_until, marked_unread FROM chat_state WHERE jid = ?2
@@ -360,7 +392,10 @@ pub(crate) fn fold_chat(conn: &Connection, from: &str, to: &str) -> Result<()> {
         params![to, from],
     )?;
     conn.execute("DELETE FROM chat_state WHERE jid = ?1", params![from])?;
+    Ok(())
+}
 
+fn merge_pin(conn: &Connection, from: &str, to: &str) -> Result<()> {
     if conn
         .query_row("SELECT 1 FROM pins WHERE jid = ?1", params![from], |r| r.get::<_, i64>(0))
         .optional()?
@@ -369,17 +404,12 @@ pub(crate) fn fold_chat(conn: &Connection, from: &str, to: &str) -> Result<()> {
         conn.execute("INSERT OR IGNORE INTO pins (jid) VALUES (?1)", params![to])?;
     }
     conn.execute("DELETE FROM pins WHERE jid = ?1", params![from])?;
+    Ok(())
+}
 
-    for table in ["chat_privacy", "chat_settings", "chat_retention"] {
-        conn.execute(
-            &format!("UPDATE OR IGNORE {table} SET jid = ?1 WHERE jid = ?2"),
-            params![to, from],
-        )?;
-        conn.execute(&format!("DELETE FROM {table} WHERE jid = ?1"), params![from])?;
-    }
-
-    // A cleared or deleted chat keeps its empty row or stays hidden only while
-    // it has no history; the merged chat must not be hidden.
+/// A cleared or deleted chat keeps its empty row or stays hidden only while it
+/// has no history; the merged chat must not be hidden.
+fn move_list_flags(conn: &Connection, from: &str, to: &str) -> Result<()> {
     let has_messages: Option<i64> = conn
         .query_row("SELECT 1 FROM messages WHERE chat = ?1 LIMIT 1", params![to], |r| r.get(0))
         .optional()?;
@@ -395,8 +425,11 @@ pub(crate) fn fold_chat(conn: &Connection, from: &str, to: &str) -> Result<()> {
     }
     conn.execute("DELETE FROM cleared_chats WHERE jid = ?1", params![from])?;
     conn.execute("DELETE FROM hidden_chats WHERE jid = ?1", params![from])?;
+    Ok(())
+}
 
-    // The phone-number row keeps its name; adopt the other only when it has none.
+/// The phone-number row keeps its name; adopt the other only when it has none.
+fn adopt_name(conn: &Connection, from: &str, to: &str) -> Result<()> {
     conn.execute(
         "INSERT OR IGNORE INTO names (jid, name, saved)
          SELECT ?1, name, saved FROM names WHERE jid = ?2
