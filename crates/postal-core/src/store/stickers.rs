@@ -88,7 +88,7 @@ impl MessageStore {
                  animated = MAX(animated, excluded.animated),
                  lottie = MAX(lottie, excluded.lottie),
                  emojis = COALESCE(excluded.emojis, emojis),
-                 favorite = excluded.favorite,
+                 favorite = MAX(favorite, excluded.favorite),
                  recent_at = COALESCE(excluded.recent_at, recent_at),
                  updated_at = excluded.updated_at",
             params![

@@ -225,7 +225,7 @@ impl WhatsAppService {
         .map_err(|_| anyhow::anyhow!("sticker download timed out"))?
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let dir = self.media_dir().ok_or_else(|| anyhow::anyhow!("no media folder is configured"))?;
-        let dir = dir.join("stickers");
+        let dir = dir.join("stickers").join("library");
         tokio::fs::create_dir_all(&dir).await?;
         let path = dir.join(format!("{filehash}.webp"));
         tokio::fs::write(&path, &data).await?;
@@ -285,6 +285,48 @@ fn item_to_locator(item: &whatsapp_rust::sticker_pack::StickerPackItem) -> Resul
     Ok(media_locator(&message))
 }
 
+/// A slim `StickerMessage` locator from a synced favorite action, so a sticker
+/// the desktop never received can still be downloaded.
+fn locator_from_sticker_action(action: &wa::sync_action_value::StickerAction) -> Vec<u8> {
+    let message = wa::Message {
+        sticker_message: buffa::MessageField::some(wa::message::StickerMessage {
+            url: action.url.clone(),
+            direct_path: action.direct_path.clone(),
+            media_key: action.media_key.clone(),
+            file_enc_sha256: action.file_enc_sha256.clone(),
+            file_length: action.file_length,
+            mimetype: action.mimetype.clone(),
+            width: action.width,
+            height: action.height,
+            is_lottie: action.is_lottie,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    media_locator(&message)
+}
+
+/// A slim `StickerMessage` locator from a `StickerMetadata` entry.
+fn locator_from_sticker_metadata(sticker: &wa::StickerMetadata) -> Vec<u8> {
+    let message = wa::Message {
+        sticker_message: buffa::MessageField::some(wa::message::StickerMessage {
+            url: sticker.url.clone(),
+            direct_path: sticker.direct_path.clone(),
+            media_key: sticker.media_key.clone(),
+            file_sha256: sticker.file_sha256.clone(),
+            file_enc_sha256: sticker.file_enc_sha256.clone(),
+            file_length: sticker.file_length,
+            mimetype: sticker.mimetype.clone(),
+            width: sticker.width,
+            height: sticker.height,
+            is_lottie: sticker.is_lottie,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    media_locator(&message)
+}
+
 /// A received `StickerPackMessage` as a pack row. Its listed stickers carry only
 /// file names, not hashes, so their rows wait for `fetch_sticker_pack`.
 pub(super) fn pack_from_message(message: &wa::Message) -> Option<StickerPack> {
@@ -301,8 +343,32 @@ pub(super) fn pack_from_message(message: &wa::Message) -> Option<StickerPack> {
 }
 
 impl Inbound {
-    /// A favorite change made on another linked device.
-    pub(super) async fn on_sticker_favorite(&self, filehash: &str, favorite: bool, timestamp: i64) {
+    /// A favorite change made on another linked device. Its action carries the
+    /// media fields, so the sticker can be downloaded even if never received.
+    pub(super) async fn on_sticker_favorite(
+        &self,
+        filehash: &str,
+        favorite: bool,
+        timestamp: i64,
+        action: &wa::sync_action_value::StickerAction,
+    ) {
+        let locator = locator_from_sticker_action(action);
+        if let Err(e) = self
+            .store
+            .upsert_sticker(Sticker {
+                filehash: filehash.to_string(),
+                animated: false,
+                lottie: action.is_lottie.unwrap_or(false),
+                updated_at: timestamp,
+                ..Default::default()
+            })
+            .await
+        {
+            log::warn!("could not record favorite sticker {filehash}: {e}");
+        }
+        if let Err(e) = self.store.set_sticker_locator(filehash.to_string(), locator).await {
+            log::warn!("could not record favorite sticker locator {filehash}: {e}");
+        }
         self.store
             .set_sticker_favorite(filehash.to_string(), favorite, timestamp)
             .await
@@ -316,6 +382,40 @@ impl Inbound {
             .set_sticker_recent(filehash.to_string(), None, timestamp)
             .await
             .logged();
+        let _ = self.events.send(ServiceEvent::StickerLibraryChanged { packs: false, favorites: false, recents: true });
+    }
+
+    /// The phone's recent stickers, carried by the initial history sync.
+    pub(super) async fn seed_recent_stickers(&self, recent: &[wa::StickerMetadata]) {
+        if recent.is_empty() {
+            return;
+        }
+        for sticker in recent {
+            let Some(filehash) = sticker.file_sha256.as_deref().map(filehash_of_hash) else { continue };
+            let at = sticker.last_sticker_sent_ts.map(|ms| ms / 1000).unwrap_or_else(unix_now);
+            if let Err(e) = self
+                .store
+                .upsert_sticker(Sticker {
+                    filehash: filehash.clone(),
+                    animated: false,
+                    lottie: sticker.is_lottie.unwrap_or(false),
+                    updated_at: at,
+                    recent_at: Some(at),
+                    ..Default::default()
+                })
+                .await
+            {
+                log::warn!("could not record recent sticker {filehash}: {e}");
+                continue;
+            }
+            if let Err(e) = self
+                .store
+                .set_sticker_locator(filehash, locator_from_sticker_metadata(sticker))
+                .await
+            {
+                log::warn!("could not record recent sticker locator: {e}");
+            }
+        }
         let _ = self.events.send(ServiceEvent::StickerLibraryChanged { packs: false, favorites: false, recents: true });
     }
 

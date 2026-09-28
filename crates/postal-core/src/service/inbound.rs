@@ -269,7 +269,13 @@ impl Inbound {
                 let _ = events.send(ServiceEvent::ChatStateChanged { chat: jid });
             }
             Event::FavoriteStickerUpdate(update) => {
-                self.on_sticker_favorite(&update.filehash, update.action.is_favorite.unwrap_or(false), update.timestamp.timestamp()).await;
+                self.on_sticker_favorite(
+                    &update.filehash,
+                    update.action.is_favorite.unwrap_or(false),
+                    update.timestamp.timestamp(),
+                    &update.action,
+                )
+                .await;
             }
             Event::RemoveRecentStickerUpdate(update) => {
                 self.on_sticker_recent_removed(&update.filehash, update.timestamp.timestamp()).await;

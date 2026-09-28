@@ -160,6 +160,18 @@
     }
   }
 
+  /** Downloads a synced sticker to cold storage on first use, then sends it. */
+  function sendSynced(sticker: Sticker) {
+    void sendPackSticker(sticker);
+  }
+
+  function toggleSyncedFavorite(sticker: Sticker) {
+    stickerEvents.touch();
+    invoke("favorite_sticker", { filehash: sticker.filehash, favorite: !sticker.favorite }).catch((e) =>
+      onerror(String(e)),
+    );
+  }
+
   async function resyncLibrary() {
     try {
       await invoke("resync_stickers");
@@ -224,6 +236,24 @@
 </script>
 
 <svelte:window onkeydown={(e) => e.key === "Escape" && onclose()} />
+
+{#snippet syncedTile(sticker: Sticker)}
+  <div class="tile">
+    <button class="tile-send" title="Send sticker" onclick={() => sendSynced(sticker)}>
+      {#if sticker.path && !broken[sticker.path]}
+        <img src={convertFileSrc(sticker.path!)} alt="" loading="lazy" onerror={() => (broken[sticker.path!] = true)} />
+      {:else}
+        <span class="tile-unsupported">{sticker.lottie ? "Lottie sticker" : "Tap to fetch"}</span>
+      {/if}
+    </button>
+    <button
+      class="fav"
+      class:on={sticker.favorite}
+      title={sticker.favorite ? "Remove from favourites" : "Add to favourites"}
+      aria-label="Favourite"
+      onclick={() => toggleSyncedFavorite(sticker)}><Icon name="star" size={14} /></button>
+  </div>
+{/snippet}
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <div class="catcher" role="presentation" onclick={onclose}></div>
@@ -336,7 +366,24 @@
           </div>
           {#if openPack.stickers.length === 0}<p class="empty">This pack has no stickers to show.</p>{/if}
         {:else}
+          {#if lib.favorites.length > 0}
+            <h4>Favorites</h4>
+            <div class="tiles stickers">
+              {#each lib.favorites as sticker (sticker.filehash)}
+                {@render syncedTile(sticker)}
+              {/each}
+            </div>
+          {/if}
+          {#if lib.recent.length > 0}
+            <h4>Recent</h4>
+            <div class="tiles stickers">
+              {#each lib.recent as sticker (sticker.filehash)}
+                {@render syncedTile(sticker)}
+              {/each}
+            </div>
+          {/if}
           {#if lib.packs.length > 0}
+            <h4>Categories</h4>
             <div class="pack-bar">
               {#each lib.packs as pack (pack.pack_id)}
                 <button class="pack-chip" title={pack.publisher ?? "Pack"} onclick={() => openPackView(pack)}>
@@ -346,29 +393,32 @@
               {/each}
             </div>
           {/if}
-          <button class="resync" onclick={resyncLibrary}><Icon name="repeat" size={14} /> Sync with phone</button>
-          <div class="tiles stickers">
-            {#each stickers as path (path)}
-              <div class="tile">
-                <button class="tile-send" title="Send sticker" onclick={() => sendFromLibrary(path, "sticker")}>
-                  {#if broken[path]}
-                    <span class="tile-unsupported">Unsupported sticker</span>
-                  {:else}
-                    <img src={convertFileSrc(path)} alt="" loading="lazy" onerror={() => (broken[path] = true)} />
-                  {/if}
-                </button>
-                <button
-                  class="fav"
-                  class:on={favourites.includes(path)}
-                  title={favourites.includes(path) ? "Remove from favourites" : "Add to favourites"}
-                  aria-label="Favourite"
-                  onclick={() => toggleFavourite(path)}><Icon name="star" size={14} /></button>
-              </div>
-            {/each}
-          </div>
-          {#if stickers.length === 0}
-            <p class="empty">Stickers you receive show up here, ready to send back.</p>
+          {#if lib.favorites.length === 0 && lib.recent.length === 0 && stickers.length === 0}
+            <p class="empty">Your stickers sync from your phone. Send a sticker and it appears here.</p>
           {/if}
+          {#if stickers.length > 0}
+            <h4>All received</h4>
+            <div class="tiles stickers">
+              {#each stickers as path (path)}
+                <div class="tile">
+                  <button class="tile-send" title="Send sticker" onclick={() => sendFromLibrary(path, "sticker")}>
+                    {#if broken[path]}
+                      <span class="tile-unsupported">Unsupported sticker</span>
+                    {:else}
+                      <img src={convertFileSrc(path)} alt="" loading="lazy" onerror={() => (broken[path] = true)} />
+                    {/if}
+                  </button>
+                  <button
+                    class="fav"
+                    class:on={favourites.includes(path)}
+                    title={favourites.includes(path) ? "Remove from favourites" : "Add to favourites"}
+                    aria-label="Favourite"
+                    onclick={() => toggleFavourite(path)}><Icon name="star" size={14} /></button>
+                </div>
+              {/each}
+            </div>
+          {/if}
+          <button class="resync" onclick={resyncLibrary}><Icon name="repeat" size={14} /> Sync with phone</button>
         {/if}
       {:else}
         <div class="tiles gifs">

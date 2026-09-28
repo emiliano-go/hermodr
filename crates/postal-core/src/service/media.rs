@@ -535,7 +535,9 @@ impl WhatsAppService {
                 .into_iter()
                 .flatten()
                 .flatten()
-                .map(|entry| entry.path().to_string_lossy().into_owned())
+                .map(|entry| entry.path())
+                .filter(|path| path.is_file())
+                .map(|path| path.to_string_lossy().into_owned())
                 .collect()
         } else {
             Vec::new()

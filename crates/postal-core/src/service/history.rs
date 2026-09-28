@@ -164,6 +164,9 @@ impl Inbound {
                 names_learned += 1;
             }
         }
+        // The phone's recent stickers ride the initial sync; seed them so the
+        // picker shows them without a resync.
+        self.seed_recent_stickers(&history.recent_stickers).await;
         let mut chats = Vec::new();
         for conversation in &history.conversations {
             if conversation.id == "status@broadcast" {
