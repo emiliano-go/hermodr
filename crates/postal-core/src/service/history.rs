@@ -125,7 +125,6 @@ impl WhatsAppService {
 
 impl Inbound {
     pub(super) async fn on_history_sync(&self, sync: &LazyHistorySync) {
-        let Self { store, events, client_for_events, media_dir, older_waits, sync_progress, .. } = self;
         let Some(history) = sync.get() else {
             log::warn!("history sync type {} failed to decode", sync.sync_type());
             return;
@@ -139,13 +138,45 @@ impl Inbound {
             history.pushnames.len(),
             history.phone_number_to_lid_mappings.len(),
         );
-        let batch_guard = store.batch().await;
-        let store = &*batch_guard;
-        let client = client_for_events.get().cloned();
-        let own = client
-            .as_deref()
-            .and_then(|c| c.pn())
-            .map(|j| j.to_non_ad().to_string());
+        let batch_guard = self.store.batch().await;
+        let mut chats = Vec::new();
+        let mut added_chats = 0;
+        let mut names_learned;
+        {
+            let store = &batch_guard;
+            let client = self.client_for_events.get().cloned();
+            let own = client.as_deref().and_then(|c| c.pn()).map(|j| j.to_non_ad().to_string());
+            names_learned = self.learn_history_names(store, history).await;
+            // The phone's recent stickers ride the initial sync; seed them so
+            // the picker shows them without a resync.
+            self.seed_recent_stickers(&history.recent_stickers).await;
+            for conversation in &history.conversations {
+                let (chat, learned) = self
+                    .apply_history_conversation(store, conversation, client.as_deref(), own.as_deref())
+                    .await;
+                names_learned += learned;
+                if let Some(chat) = chat {
+                    added_chats += 1;
+                    chats.push(chat);
+                }
+            }
+        }
+        if names_learned > 0 {
+            let _ = self.events.send(ServiceEvent::NamesUpdated { count: names_learned });
+        }
+        self.finish_history_sync(sync, &mut chats, added_chats);
+        if !chats.is_empty() {
+            let _ = self.events.send(ServiceEvent::HistoryLoaded { chats });
+        }
+        // "Load older" answers are on-demand chunks, not the pairing sync.
+        if let Some(percent) = sync.progress().filter(|_| sync.sync_type() != 6) {
+            let _ = self.events.send(ServiceEvent::HistoryProgress { percent });
+        }
+        batch_guard.finish().await.logged();
+    }
+
+    /// Push names and LID/PN mappings the sync carries, as learned names.
+    async fn learn_history_names(&self, store: &StoreWorker, history: &wa::HistorySync) -> usize {
         let mut names_learned = 0;
         for push in &history.pushnames {
             if let (Some(id), Some(name)) = (&push.id, &push.pushname) {
@@ -154,169 +185,177 @@ impl Inbound {
                 }
             }
         }
-        let pair = async |lid: Option<&str>, pn: Option<&str>| {
-            let (Some(lid), Some(pn)) = (lid, pn) else { return false };
-            let user = |j: &str| j.split(['@', ':']).next().unwrap_or(j).to_string();
-            store.set_lid_pn(&user(lid), &user(pn)).await.observed().is_some()
-        };
         for mapping in &history.phone_number_to_lid_mappings {
-            if pair(mapping.lid_jid.as_deref(), mapping.pn_jid.as_deref()).await {
-                names_learned += 1;
+            names_learned += self
+                .pair_history_addresses(store, mapping.lid_jid.as_deref(), mapping.pn_jid.as_deref())
+                .await;
+        }
+        names_learned
+    }
+
+    /// Records a history row's LID/PN pair, so later rows resolve to one chat.
+    async fn pair_history_addresses(&self, store: &StoreWorker, lid: Option<&str>, pn: Option<&str>) -> usize {
+        let (Some(lid), Some(pn)) = (lid, pn) else { return 0 };
+        let user = |j: &str| j.split(['@', ':']).next().unwrap_or(j).to_string();
+        store.set_lid_pn(&user(lid), &user(pn)).await.observed().is_some() as usize
+    }
+
+    /// Seeds one conversation's rows. Returns the canonical chat when it gained
+    /// messages, and how many names it taught.
+    async fn apply_history_conversation(
+        &self,
+        store: &StoreWorker,
+        conversation: &wa::Conversation,
+        client: Option<&Client>,
+        own: Option<&str>,
+    ) -> (Option<String>, usize) {
+        if conversation.id == "status@broadcast" {
+            return (None, 0);
+        }
+        let mut names_learned = self
+            .pair_history_addresses(store, conversation.lid_jid.as_deref(), conversation.pn_jid.as_deref())
+            .await;
+        let Some(jid) = conversation.id.parse::<Jid>().observed() else { return (None, 0) };
+        let chat = resolve_chat(client, store, &jid).await;
+        self.name_history_chat(store, &chat, conversation).await;
+        let mut added = false;
+        for entry in &conversation.messages {
+            let (row_added, learned) = self.apply_history_message(store, &chat, entry, client, own).await;
+            added |= row_added;
+            names_learned += learned;
+        }
+        (added.then_some(chat), names_learned)
+    }
+
+    /// Names a conversation from its display name (a contact) or subject (a
+    /// group).
+    async fn name_history_chat(&self, store: &StoreWorker, chat: &str, conversation: &wa::Conversation) {
+        if !chat.ends_with("@g.us") {
+            let name = conversation
+                .display_name
+                .as_deref()
+                .or(conversation.username.as_deref())
+                .filter(|n| !n.trim().is_empty());
+            if let Some(name) = name {
+                store.set_name(chat, name).await.logged();
             }
         }
-        // The phone's recent stickers ride the initial sync; seed them so the
-        // picker shows them without a resync.
-        self.seed_recent_stickers(&history.recent_stickers).await;
-        let mut chats = Vec::new();
-        for conversation in &history.conversations {
-            if conversation.id == "status@broadcast" {
-                continue;
-            }
-            pair(conversation.lid_jid.as_deref(), conversation.pn_jid.as_deref()).await;
-            let Some(jid) = conversation.id.parse::<Jid>().observed() else { continue };
-            let chat = resolve_chat(client.as_deref(), store, &jid).await;
-            if !chat.ends_with("@g.us") {
-                let name = conversation
-                    .display_name
-                    .as_deref()
-                    .or(conversation.username.as_deref())
-                    .filter(|n| !n.trim().is_empty());
-                if let Some(name) = name {
-                    store.set_name(&chat, name).await.logged();
-                }
-            }
-            if let Some(subject) =
-                conversation.name.as_deref().filter(|n| !n.is_empty())
-            {
-                if chat.ends_with("@g.us") {
-                    store.set_name(&chat, subject).await.logged();
-                }
-            }
-            let mut added = false;
-            for entry in &conversation.messages {
-                let Some(web) = entry.message.as_option() else { continue };
-                let Some(key) = web.key.as_option() else { continue };
-                if let Some(notice) = web.message_stub_type.and_then(system_kind) {
-                    let Some(id) = key.id.clone() else { continue };
-                    let notice_kind = notice.clone();
-                    let stored = system_row(
-                        &chat,
-                        id,
-                        web.message_timestamp.unwrap_or(0) as i64,
-                        notice,
-                        web.message_stub_parameters.clone(),
-                    );
-                    let seen = store.message(&chat, &stored.header.id).await.observed().is_some()
-                        || store.has_system_near(&chat, &notice_kind, stored.header.timestamp).await.observed().unwrap_or(false);
-                    if !seen && store.insert_message(&stored).await.observed().is_some() {
-                        added = true;
-                    }
-                    continue;
-                }
-                let (Some(id), Some(message)) =
-                    (key.id.clone(), web.message.as_option())
-                else {
-                    continue;
-                };
-                let from_me = key.from_me.unwrap_or(false);
-                let sender = if from_me {
-                    own.clone().unwrap_or_else(|| chat.clone())
-                } else {
-                    web.participant
-                        .clone()
-                        .or_else(|| key.participant.clone())
-                        .unwrap_or_else(|| chat.clone())
-                };
-                // Learned even from rows we already have: a re-paired
-                // device gets its names back from this history.
-                if let Some(push) =
-                    web.push_name.as_deref().filter(|p| !p.is_empty())
-                {
-                    if !from_me && store.set_name(&sender, push).await.observed().is_some() {
-                        names_learned += 1;
-                    }
-                }
-                // A stored row is already complete; rebuilding
-                // it would only rewrite its thumbnails.
-                if store.message(&chat, &id).await.observed().is_some() {
-                    continue;
-                }
-                if let Some(target) = revoke_target(message) {
-                    store.revoke_message(&chat, &target).await.logged();
-                    continue;
-                }
-                remember_structures(&store, &chat, &id, &sender, message).await;
-                let header = MessageHeader {
-                    chat: chat.clone(),
-                    id,
-                    sender,
-                    timestamp: web.message_timestamp.unwrap_or(0) as i64,
-                    from_me,
-                };
-                // History media is never bulk downloaded;
-                // it is fetched on demand like any other.
-                let Some(mut stored) = stored_message(
-                    message,
-                    header,
-                    client.as_deref(),
-                    media_dir.as_deref(),
-                    false,
-                )
-                .await
-                else {
-                    continue;
-                };
-                // Old messages must not raise unread counts.
-                stored.local.read = true;
-                match store.insert_message(&stored).await {
-                    Ok(()) => {
-                        added = true;
-                        if message.is_view_once() {
-                            store.set_view_once(&chat, &stored.header.id, stored.header.from_me).await.logged();
-                        }
-                    }
-                    Err(e) => log::error!("could not store history message in {chat}: {e}"),
-                }
-            }
-            if added {
-                chats.push(chat);
+        if let Some(subject) = conversation.name.as_deref().filter(|n| !n.is_empty()) {
+            if chat.ends_with("@g.us") {
+                store.set_name(chat, subject).await.logged();
             }
         }
-        if names_learned > 0 {
-            let _ = events.send(ServiceEvent::NamesUpdated { count: names_learned });
+    }
+
+    /// Seeds one history message. Returns whether a row was added and how many
+    /// names it taught.
+    async fn apply_history_message(
+        &self,
+        store: &StoreWorker,
+        chat: &str,
+        entry: &wa::HistorySyncMsg,
+        client: Option<&Client>,
+        own: Option<&str>,
+    ) -> (bool, usize) {
+        let Some(web) = entry.message.as_option() else { return (false, 0) };
+        let Some(key) = web.key.as_option() else { return (false, 0) };
+        if let Some(notice) = web.message_stub_type.and_then(system_kind) {
+            let Some(id) = key.id.clone() else { return (false, 0) };
+            let notice_kind = notice.clone();
+            let stored = system_row(
+                chat,
+                id,
+                web.message_timestamp.unwrap_or(0) as i64,
+                notice,
+                web.message_stub_parameters.clone(),
+            );
+            let seen = store.message(chat, &stored.header.id).await.observed().is_some()
+                || store
+                    .has_system_near(chat, &notice_kind, stored.header.timestamp)
+                    .await
+                    .observed()
+                    .unwrap_or(false);
+            if !seen && store.insert_message(&stored).await.observed().is_some() {
+                return (true, 0);
+            }
+            return (false, 0);
         }
-        let added_chats = chats.len();
-        // A request the UI is still waiting on has now been
-        // answered, whether or not it brought new rows: an
-        // answer with nothing older is an answer, and without
-        // it the UI waits out its timeout and blames the phone.
-        let answered = sync.peer_data_request_session_id().and_then(|session| {
-            older_waits.lock().unwrap().resolve(session)
-        });
+        let (Some(id), Some(message)) = (key.id.clone(), web.message.as_option()) else {
+            return (false, 0);
+        };
+        let from_me = key.from_me.unwrap_or(false);
+        let sender = if from_me {
+            own.map(str::to_string).unwrap_or_else(|| chat.to_string())
+        } else {
+            web.participant
+                .clone()
+                .or_else(|| key.participant.clone())
+                .unwrap_or_else(|| chat.to_string())
+        };
+        // Learned even from rows we already have: a re-paired device gets its
+        // names back from this history.
+        let mut learned = 0;
+        if let Some(push) = web.push_name.as_deref().filter(|p| !p.is_empty()) {
+            if !from_me && store.set_name(&sender, push).await.observed().is_some() {
+                learned = 1;
+            }
+        }
+        // A stored row is already complete; rebuilding it would only rewrite
+        // its thumbnails.
+        if store.message(chat, &id).await.observed().is_some() {
+            return (false, learned);
+        }
+        if let Some(target) = revoke_target(message) {
+            store.revoke_message(chat, &target).await.logged();
+            return (false, learned);
+        }
+        remember_structures(store, chat, &id, &sender, message).await;
+        let header = MessageHeader {
+            chat: chat.to_string(),
+            id,
+            sender,
+            timestamp: web.message_timestamp.unwrap_or(0) as i64,
+            from_me,
+        };
+        // History media is never bulk downloaded; it is fetched on demand like
+        // any other.
+        let Some(mut stored) = stored_message(message, header, client, self.media_dir.as_deref(), false).await else {
+            return (false, learned);
+        };
+        // Old messages must not raise unread counts.
+        stored.local.read = true;
+        match store.insert_message(&stored).await {
+            Ok(()) => {
+                if message.is_view_once() {
+                    store.set_view_once(chat, &stored.header.id, stored.header.from_me).await.logged();
+                }
+                (true, learned)
+            }
+            Err(e) => {
+                log::error!("could not store history message in {chat}: {e}");
+                (false, learned)
+            }
+        }
+    }
+
+    /// Resolves a waiting "load older" request and records the chunk for the
+    /// readiness gate. An answered request is not a conversation the initial
+    /// window added, so it is not counted.
+    fn finish_history_sync(&self, sync: &LazyHistorySync, chats: &mut Vec<String>, added_chats: usize) {
+        let answered = sync
+            .peer_data_request_session_id()
+            .and_then(|session| self.older_waits.lock().unwrap().resolve(session));
         if let Some(chat) = answered {
             if !chats.contains(&chat) {
                 chats.push(chat);
             }
         }
-        // DiskRetention is left to the next live write, so
-        // what was just loaded can be seen first. Record
-        // the chunk for the readiness gate even when it
-        // added nothing, so a stream of no-op chunks does
-        // not look quiescent while history is still coming.
-        {
-            let mut p = sync_progress.lock().unwrap();
-            // An answered request is not a conversation the
-            // initial window added, so it is not counted.
-            p.history_chats += added_chats;
-            p.last_progress = Some(std::time::Instant::now());
-        }
-        if !chats.is_empty() {
-            let _ = events.send(ServiceEvent::HistoryLoaded { chats });
-        }
-        // "Load older" answers are on-demand chunks, not the pairing sync.
-        if let Some(percent) = sync.progress().filter(|_| sync.sync_type() != 6) {
-            let _ = events.send(ServiceEvent::HistoryProgress { percent });
-        }
-        batch_guard.finish().await.logged();
+        // DiskRetention is left to the next live write, so what was just
+        // loaded can be seen first. Record the chunk even when it added
+        // nothing, so a stream of no-op chunks does not look quiescent while
+        // history is still coming.
+        let mut p = self.sync_progress.lock().unwrap();
+        p.history_chats += added_chats;
+        p.last_progress = Some(std::time::Instant::now());
     }
 }
