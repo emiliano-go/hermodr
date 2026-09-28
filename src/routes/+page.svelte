@@ -905,6 +905,7 @@
       onchataction={(command, args) => chats.chatAction(command, args)}
       onmarkread={(chat) => chats.chatAction("mark_read", { chat: chat.chat })}
       archivedChats={chats.archivedChats}
+      freezeOnHover={session.settings.freeze_chat_list_on_hover ?? true}
       onresize={startResize} />
 
     <section class="conversation">

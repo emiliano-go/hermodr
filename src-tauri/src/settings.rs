@@ -47,6 +47,11 @@ pub struct UiSettings {
     /// notify, whatever this is set to.
     #[serde(default = "default_true")]
     pub notifications_enabled: bool,
+    /// Whether the chat list keeps its order while the pointer is over it.
+    /// Previews still update in place; the new order applies once the pointer
+    /// leaves or a chat is opened. Off reorders immediately.
+    #[serde(default = "default_true")]
+    pub freeze_chat_list_on_hover: bool,
 }
 
 pub(crate) fn default_true() -> bool {
@@ -69,6 +74,7 @@ impl Default for UiSettings {
             keep_archived: true,
             android_instance: false,
             notifications_enabled: true,
+            freeze_chat_list_on_hover: true,
         }
     }
 }
@@ -192,6 +198,10 @@ mod tests {
         assert!(parse_settings("{}").unwrap().notifications_enabled);
         assert!(parse_settings(legacy).unwrap().notifications_enabled);
         assert!(!parse_settings(r#"{"notifications_enabled":false}"#).unwrap().notifications_enabled);
+        // The hover freeze defaults to on, including for settings saved before it existed.
+        assert!(parse_settings("{}").unwrap().freeze_chat_list_on_hover);
+        assert!(parse_settings(legacy).unwrap().freeze_chat_list_on_hover);
+        assert!(!parse_settings(r#"{"freeze_chat_list_on_hover":false}"#).unwrap().freeze_chat_list_on_hover);
         assert_eq!(bounded.message_window_size, 500);
     }
 }

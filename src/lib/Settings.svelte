@@ -627,6 +627,18 @@
             </div>
             <input class="switch" type="checkbox" bind:checked={draft.keep_archived} />
           </label>
+          <label class="setting">
+            <div>
+              <span class="setting-title">Pause chat reordering while hovering</span>
+              <span class="setting-desc">
+                On: the chat list keeps its order while the pointer is over it, so a new
+                message cannot move the chat under your cursor. Previews and unread counts
+                still update; the new order applies when the pointer leaves or you open a
+                chat. Off: the list reorders immediately.
+              </span>
+            </div>
+            <input class="switch" type="checkbox" bind:checked={draft.freeze_chat_list_on_hover} />
+          </label>
         {:else if section === "notifications"}
           <h2>Notifications</h2>
           <p class="lede">Desktop notifications for new direct messages and group messages.</p>

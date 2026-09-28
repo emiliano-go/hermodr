@@ -162,6 +162,8 @@ export type UiSettings = {
   android_instance: boolean;
   /** Global kill switch for desktop notifications; muted chats never notify. */
   notifications_enabled: boolean;
+  /** Keep the chat list order while the pointer hovers over it; reorder on leave/open. */
+  freeze_chat_list_on_hover: boolean;
 };
 export type ConnectionState = { started: boolean; connected: boolean; qr: string | null };
 export type OnceState = { paired: boolean; pairing: boolean; running: boolean; connected: boolean; qr: string | null };

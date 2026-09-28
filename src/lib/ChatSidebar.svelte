@@ -62,6 +62,7 @@
     onmarkread,
     archivedChats,
     onresize,
+    freezeOnHover = true,
   }: {
     searchQuery: string;
     searchResults: SearchResult[];
@@ -103,6 +104,8 @@
     onmarkread: (chat: ChatSummary) => void;
     archivedChats: number;
     onresize: (event: MouseEvent) => void;
+    /** Pause list reordering while the pointer is over the list. */
+    freezeOnHover?: boolean;
   } = $props();
 
   const MUTES: [string, number][] = [
@@ -127,6 +130,39 @@
   function closeChatMenu() {
     chatMenu = null;
   }
+
+  // Hover freeze: while the pointer is over the list, new arrivals update each
+  // row in place but keep the captured order, so the row under the cursor
+  // cannot jump away. The pending order applies on leave or on open/action.
+  let listHover = $state(false);
+  let frozenOrder = $state<string[]>([]);
+
+  function onListEnter() {
+    listHover = true;
+    if (freezeOnHover) frozenOrder = visibleChats.map((c) => c.chat);
+  }
+
+  function onListLeave() {
+    listHover = false;
+    frozenOrder = [];
+  }
+
+  function releaseFreeze() {
+    frozenOrder = [];
+  }
+
+  const displayedChats = $derived.by(() => {
+    if (!freezeOnHover || !listHover || frozenOrder.length === 0) return visibleChats;
+    const pos = new Map(frozenOrder.map((id, i) => [id, i] as const));
+    return [...visibleChats].sort((a, b) => {
+      const pa = pos.get(a.chat);
+      const pb = pos.get(b.chat);
+      if (pa === undefined && pb === undefined) return 0;
+      if (pa === undefined) return 1;
+      if (pb === undefined) return -1;
+      return pa - pb;
+    });
+  });
 </script>
 
 <aside class="chats">
@@ -216,19 +252,23 @@
       {/each}
     </ul>
   {:else}
-  <ul>
-    {#each visibleChats as chat (chat.chat)}
+  <ul onmouseenter={onListEnter} onmouseleave={onListLeave}>
+    {#each displayedChats as chat (chat.chat)}
       <li>
         <div
           class="chat-row"
           class:active={chat.chat === selectedChat}
           role="button"
           tabindex="0"
-          onclick={() => onopenchat(chat.chat)}
+          onclick={() => {
+            releaseFreeze();
+            onopenchat(chat.chat);
+          }}
           oncontextmenu={(e) => openChatMenu(e, chat)}
           onkeydown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
+              releaseFreeze();
               onopenchat(chat.chat);
             }
           }}>
@@ -262,6 +302,7 @@
                 title="Jump to mention"
                 onclick={(e) => {
                   e.stopPropagation();
+                  releaseFreeze();
                   onopenchat(chat.chat, true);
                 }}>@</button>
             {/if}
@@ -277,12 +318,15 @@
               class="pin-toggle"
               title={chat.pinned ? "Unpin" : "Pin"}
               aria-label={chat.pinned ? "Unpin" : "Pin"}
-              onclick={(e) => ontogglepin(chat, e)}><Icon name="pin" size={14} /></button>
+              onclick={(e) => {
+                releaseFreeze();
+                ontogglepin(chat, e);
+              }}><Icon name="pin" size={14} /></button>
           </span>
         </div>
       </li>
     {/each}
-    {#if visibleChats.length === 0}
+    {#if displayedChats.length === 0}
       <li class="empty">
         {chatFilter === "unread"
           ? "No unread chats."
@@ -372,6 +416,7 @@
       iconSize={15}
       role="menuitem"
       onclick={() => {
+        releaseFreeze();
         ontogglepin(menuChat);
         closeChatMenu();
       }}>{menuChat.pinned ? "Unpin" : "Pin"}</Button>
@@ -381,6 +426,7 @@
       iconSize={15}
       role="menuitem"
       onclick={() => {
+        releaseFreeze();
         onchataction("set_archived", { chat: menuChat.chat, archived: !menuChat.archived });
         closeChatMenu();
       }}>{menuChat.archived ? "Unarchive" : "Archive"}</Button>
@@ -416,6 +462,7 @@
       onclick={() => {
         if (menuChat.unread_count > 0) onmarkread(menuChat);
         else onchataction("set_marked_unread", { chat: menuChat.chat, unread: !menuChat.marked_unread });
+        releaseFreeze();
         closeChatMenu();
       }}>{menuChat.unread_count > 0 || menuChat.marked_unread ? "Mark as read" : "Mark as unread"}</Button>
     <Button
@@ -425,6 +472,7 @@
       role="menuitem"
       onclick={() => {
         const c = menuChat;
+        releaseFreeze();
         closeChatMenu();
         onclearchat(c);
       }}>Clear chat</Button>
@@ -435,6 +483,7 @@
       role="menuitem"
       onclick={() => {
         const c = menuChat;
+        releaseFreeze();
         closeChatMenu();
         ondeletechat(c);
       }}>Delete chat</Button>
@@ -446,6 +495,7 @@
         role="menuitem"
         onclick={() => {
           const c = menuChat;
+          releaseFreeze();
           closeChatMenu();
           if (confirm(`Exit ${c.display_name ?? "this group"}?`)) onchataction("leave_group", { chat: c.chat });
         }}>Exit group</Button>

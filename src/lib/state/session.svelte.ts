@@ -81,6 +81,7 @@ export class SessionState {
     keep_archived: true,
     android_instance: false,
     notifications_enabled: true,
+    freeze_chat_list_on_hover: true,
   });
 
   /** Interface scale, persisted under `postal.zoom`; Ctrl +/-/0 adjust it. */
