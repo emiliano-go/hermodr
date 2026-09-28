@@ -83,6 +83,7 @@ impl WhatsAppService {
     }
 
     /// Everything the group info sidebar needs.
+    /// Everything the group info sidebar needs.
     pub async fn group_info(&self, chat: &str) -> Result<GroupInfo> {
         if !chat.ends_with("@g.us") {
             return Ok(GroupInfo::default());
@@ -90,6 +91,36 @@ impl WhatsAppService {
         if let Some(info) = self.group_cache.lock().unwrap().get(chat).cloned() {
             return Ok(info);
         }
+        let metadata = self.fetch_group_metadata(chat).await?;
+        let participants = self.group_participants(&metadata).await;
+        let admin = self.is_group_admin(&metadata);
+        let parent = metadata.parent_group_jid.as_ref().map(|j| j.to_string());
+        let parent_name = self.group_parent_name(parent.as_deref()).await;
+        let (owner, owner_jid) = self.group_owner(&metadata, &participants).await;
+        let info = GroupInfo {
+            subject: metadata.subject.clone(),
+            description: metadata.description.clone(),
+            created_at: metadata.creation_time,
+            owner,
+            owner_jid,
+            participants,
+            allow_admin_reports: metadata.allow_admin_reports,
+            announce: metadata.is_announcement,
+            locked: metadata.is_locked,
+            community: metadata.is_parent_group,
+            announcements: metadata.is_default_sub_group,
+            parent,
+            parent_name,
+            admin,
+            can_send: !metadata.is_parent_group && (!metadata.is_announcement || admin),
+        };
+        self.group_cache.lock().unwrap().insert(chat.to_string(), info.clone());
+        Ok(info)
+    }
+
+    /// The group's metadata with the participant phone numbers the server
+    /// omits filled in from the client's LID/PN cache.
+    async fn fetch_group_metadata(&self, chat: &str) -> Result<whatsapp_rust::GroupMetadata> {
         let jid: Jid = chat.parse()?;
         let mut metadata = self
             .client
@@ -97,13 +128,16 @@ impl WhatsAppService {
             .fetch_metadata(&jid)
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        // The server often omits the phone number on LID participants, so fill
-        // it from the client's LID/PN cache before naming them.
         self.client
             .groups()
             .resolve_participant_addresses(&mut metadata)
             .await;
+        Ok(metadata)
+    }
 
+    /// The member list: one entry per address form, named from whatever is
+    /// known, enriched with usync usernames, sorted by name.
+    async fn group_participants(&self, metadata: &whatsapp_rust::GroupMetadata) -> Vec<Participant> {
         let mut seen = std::collections::HashSet::new();
         let mut participants = Vec::new();
         for member in &metadata.participants {
@@ -190,29 +224,46 @@ impl WhatsAppService {
             }
         }
         participants.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        participants
+    }
 
-        // Whether we are an admin, matched in whichever form the group lists us.
+    /// Whether we are an admin, matched in whichever form the group lists us.
+    fn is_group_admin(&self, metadata: &whatsapp_rust::GroupMetadata) -> bool {
         let own: Vec<String> = [self.client.pn(), self.client.lid()]
             .into_iter()
             .flatten()
             .map(|j| j.to_non_ad().to_string())
             .collect();
-        let admin = metadata.participants.iter().any(|m| {
+        metadata.participants.iter().any(|m| {
             m.is_admin()
                 && [Some(&m.jid), m.phone_number.as_ref(), m.lid.as_ref()]
                     .into_iter()
                     .flatten()
                     .any(|j| own.contains(&j.to_non_ad().to_string()))
-        });
-        let parent = metadata.parent_group_jid.as_ref().map(|j| j.to_string());
-        let parent_name = match &parent {
-            Some(jid) => match self.store.name_for(jid).await.observed().flatten() {
-                Some(name) => Some(name),
-                None => self.group_overviews().await.into_iter().find(|(id, _)| id == jid).map(|(_, s)| s),
-            },
-            None => None,
-        };
-        // The creator may have left, so a member's name comes first, then anything known.
+        })
+    }
+
+    /// The parent community's name, from the store or the group list.
+    async fn group_parent_name(&self, parent: Option<&str>) -> Option<String> {
+        let jid = parent?;
+        match self.store.name_for(jid).await.observed().flatten() {
+            Some(name) => Some(name),
+            None => self
+                .group_overviews()
+                .await
+                .into_iter()
+                .find(|(id, _)| id.as_str() == jid)
+                .map(|(_, subject)| subject),
+        }
+    }
+
+    /// Who created the group, preferring the member entry so a name the group
+    /// still lists wins over anything learned elsewhere.
+    async fn group_owner(
+        &self,
+        metadata: &whatsapp_rust::GroupMetadata,
+        participants: &[Participant],
+    ) -> (Option<String>, Option<String>) {
         let creator: Vec<String> = [metadata.creator.as_ref(), metadata.creator_pn.as_ref()]
             .into_iter()
             .flatten()
@@ -232,35 +283,17 @@ impl WhatsAppService {
                 participants.iter().find(|p| p.jid == jid)
             });
         let owner_jid = member.map(|p| p.jid.clone()).or_else(|| creator.first().cloned());
-        let named_owner = if member.is_none() { first_stored_name(&self.store, &creator).await.map(|(_, name)| name) } else { None };
+        let named_owner = if member.is_none() {
+            first_stored_name(&self.store, &creator).await.map(|(_, name)| name)
+        } else {
+            None
+        };
         let owner = member
             .map(|p| p.name.clone())
             .or(named_owner)
             .or_else(|| metadata.creator_username.clone())
             .or_else(|| metadata.creator_pn.as_ref().map(|j| format!("+{}", j.user)));
-        let community = metadata.is_parent_group;
-        let info = GroupInfo {
-            subject: metadata.subject.clone(),
-            description: metadata.description.clone(),
-            created_at: metadata.creation_time,
-            owner,
-            owner_jid,
-            participants,
-            allow_admin_reports: metadata.allow_admin_reports,
-            announce: metadata.is_announcement,
-            locked: metadata.is_locked,
-            community,
-            announcements: metadata.is_default_sub_group,
-            parent,
-            parent_name,
-            admin,
-            can_send: !community && (!metadata.is_announcement || admin),
-        };
-        self.group_cache
-            .lock()
-            .unwrap()
-            .insert(chat.to_string(), info.clone());
-        Ok(info)
+        (owner, owner_jid)
     }
 
     /// A group invite link's group, without joining it.
