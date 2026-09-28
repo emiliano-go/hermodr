@@ -223,8 +223,10 @@ impl WhatsAppService {
     /// Best known name per JID, looked up under both its LID and phone form;
     /// our own addresses read as our push name. Falls back to the phone number
     /// digits, and leaves out JIDs nothing is known about.
+    /// Best known name per JID, looked up under both its LID and phone form;
+    /// our own addresses read as our push name. Falls back to the phone number
+    /// digits, and leaves out JIDs nothing is known about.
     pub async fn names_for(&self, jids: &[String]) -> std::collections::HashMap<String, String> {
-        let numeric = |n: &str| is_placeholder_name(n);
         let own: Vec<String> = [self.client.pn(), self.client.lid()]
             .into_iter()
             .flatten()
@@ -236,29 +238,12 @@ impl WhatsAppService {
         for jid in jids {
             let Ok(parsed) = jid.parse::<Jid>() else { continue };
             let bare = parsed.to_non_ad();
-            let key = bare.to_string();
-            if own.contains(&key) && !push_name.is_empty() {
+            if own.contains(&bare.to_string()) && !push_name.is_empty() {
                 out.insert(jid.clone(), push_name.clone());
                 continue;
             }
-            let mut name = self.store.name_for(&key).await.observed().flatten();
-            let mut number = bare.is_pn().then(|| bare.user.to_string());
-            if name.as_deref().is_none_or(numeric) {
-                if let Some((lid, pn)) = other_form(&self.client, &self.store, &bare).await {
-                    let other = if bare.is_lid() {
-                        format!("{pn}@s.whatsapp.net")
-                    } else {
-                        format!("{lid}@lid")
-                    };
-                    number = Some(pn);
-                    if let Some(found) = self.store.name_for(&other).await.observed().flatten() {
-                        if !numeric(&found) {
-                            name = Some(found);
-                        }
-                    }
-                }
-            }
-            match name.filter(|n| !numeric(n)) {
+            let (name, number) = self.local_name(&bare).await;
+            match name.filter(|n| !is_placeholder_name(n)) {
                 Some(name) => {
                     out.insert(jid.clone(), name);
                 }
@@ -270,42 +255,74 @@ impl WhatsAppService {
                 }
             }
         }
-        // Push names only travel with messages; for anyone we have not heard
-        // from, the username or verified business name is the next best thing.
-        unknown.retain(|(_, jid)| !self.nameless.lock().unwrap().contains(&jid.to_string()));
-        if !unknown.is_empty() {
-            let query: Vec<Jid> = unknown.iter().map(|(_, j)| j.clone()).collect();
-            match self.user_info(&query).await {
-                Ok(infos) => {
-                    let mut learned = 0;
-                    for (asked, jid) in unknown.iter() {
-                        let info = infos.values().find(|i| {
-                            i.jid.user == jid.user || i.lid.as_ref().is_some_and(|l| l.user == jid.user)
-                        });
-                        let found = info.and_then(|i| {
-                            i.verified_name
-                                .as_ref()
-                                .and_then(|v| v.name.clone())
-                                .or_else(|| i.username.as_ref().map(|u| u.to_string()))
-                        });
-                        if let Some(found) = found.filter(|n| !n.trim().is_empty()) {
-                            self.store.set_name(&jid.to_string(), &found).await.logged();
-                            out.insert(asked.clone(), found);
-                            learned += 1;
-                        } else {
-                            self.nameless.lock().unwrap().insert(jid.to_string());
-                        }
+        self.ask_server(&mut out, unknown).await;
+        out
+    }
+
+    /// The best stored name and number for a bare JID, trying its other address
+    /// form when this one says nothing readable.
+    async fn local_name(&self, bare: &Jid) -> (Option<String>, Option<String>) {
+        let mut name = self.store.name_for(&bare.to_string()).await.observed().flatten();
+        let mut number = bare.is_pn().then(|| bare.user.to_string());
+        if name.as_deref().is_none_or(is_placeholder_name) {
+            if let Some((lid, pn)) = other_form(&self.client, &self.store, bare).await {
+                let other = if bare.is_lid() {
+                    format!("{pn}@s.whatsapp.net")
+                } else {
+                    format!("{lid}@lid")
+                };
+                number = Some(pn);
+                if let Some(found) = self.store.name_for(&other).await.observed().flatten() {
+                    if !is_placeholder_name(&found) {
+                        name = Some(found);
                     }
-                    log::debug!(
-                        "names: asked the server about {}, learned {learned}, {} still unnamed",
-                        unknown.len(),
-                        unknown.len() - learned,
-                    );
                 }
-                Err(e) => log::warn!("names: user info query for {} JID(s) failed: {e}", unknown.len()),
             }
         }
-        out
+        (name, number)
+    }
+
+    /// Push names only travel with messages; for anyone we have not heard from,
+    /// the username or verified business name is the next best thing.
+    async fn ask_server(
+        &self,
+        out: &mut std::collections::HashMap<String, String>,
+        mut unknown: Vec<(String, Jid)>,
+    ) {
+        unknown.retain(|(_, jid)| !self.nameless.lock().unwrap().contains(&jid.to_string()));
+        if unknown.is_empty() {
+            return;
+        }
+        let query: Vec<Jid> = unknown.iter().map(|(_, jid)| jid.clone()).collect();
+        match self.user_info(&query).await {
+            Ok(infos) => {
+                let mut learned = 0;
+                for (asked, jid) in unknown.iter() {
+                    let info = infos.values().find(|i| {
+                        i.jid.user == jid.user || i.lid.as_ref().is_some_and(|l| l.user == jid.user)
+                    });
+                    let found = info.and_then(|i| {
+                        i.verified_name
+                            .as_ref()
+                            .and_then(|v| v.name.clone())
+                            .or_else(|| i.username.as_ref().map(|u| u.to_string()))
+                    });
+                    if let Some(found) = found.filter(|n| !n.trim().is_empty()) {
+                        self.store.set_name(&jid.to_string(), &found).await.logged();
+                        out.insert(asked.clone(), found);
+                        learned += 1;
+                    } else {
+                        self.nameless.lock().unwrap().insert(jid.to_string());
+                    }
+                }
+                log::debug!(
+                    "names: asked the server about {}, learned {learned}, {} still unnamed",
+                    unknown.len(),
+                    unknown.len() - learned,
+                );
+            }
+            Err(e) => log::warn!("names: user info query for {} JID(s) failed: {e}", unknown.len()),
+        }
     }
 
     /// Everything a profile card shows about someone, fetched fresh.

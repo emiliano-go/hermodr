@@ -132,31 +132,49 @@ fn quote_of(message: &wa::Message, header: &MessageHeader) -> Option<Quoted> {
     use whatsapp_rust::wacore::proto_helpers::MessageExt;
     let context = message_context(message)?;
     let id = context.stanza_id.as_ref()?.to_string();
-    // Who wrote the quoted message. A group always names the participant; a
-    // private chat may leave it out, where the author is the reply's sender.
-    // In a group an absent participant is left absent rather than guessed at, so
-    // that a reply cannot pass itself off as the author of what it quotes.
+    let sender = quote_author(context, header);
+    // The wrapper is read before unwrapping: the flag and the locator ride on
+    // it, while the text and media live in the message it wraps.
+    let wrapper = context.quoted_message.as_option();
+    let view_once = wrapper.is_some_and(|w| w.is_view_once());
+    let none_quoted = wa::Message::text("");
+    let quoted = wrapper.map(|w| w.get_base_message()).unwrap_or(&none_quoted);
+    let (kind, name) = quoted_kind_and_name(quoted);
+    let text = quoted_text(quoted, wrapper.is_some(), kind, name.as_deref());
+    let thumb = quoted_thumb(quoted);
+    Some(Quoted {
+        id,
+        sender,
+        text,
+        kind,
+        thumb,
+        chat: context.remote_jid.clone(),
+        view_once,
+        // The quoted message exactly as it arrived, view-once wrapper included,
+        // so a reply from here can quote it in the same form.
+        locator: wrapper.filter(|_| view_once).map(buffa::Message::encode_to_vec),
+    })
+}
+
+/// Who wrote the quoted message. A group always names the participant; a
+/// private chat may leave it out, where the author is the reply's sender.
+/// In a group an absent participant is left absent rather than guessed at, so
+/// that a reply cannot pass itself off as the author of what it quotes.
+fn quote_author(context: &wa::ContextInfo, header: &MessageHeader) -> String {
     let private = !header.chat.parse::<Jid>().is_ok_and(|c| c.is_group());
-    let sender = context
+    context
         .participant
         .as_ref()
         .map(|p| p.to_string())
         .filter(|p| !p.is_empty())
         .or_else(|| private.then(|| header.sender.clone()))
-        .unwrap_or_default();
-    // A reply may name its quoted message and carry none of its content: that
-    // is what a client sends when it has nothing to quote, and the recipient
-    // resolves it from its own history. The name is kept so the quote still
-    // points somewhere, and what is left blank is left blank rather than
-    // invented, which would otherwise erase a quote already stored.
-    let wrapper = context.quoted_message.as_option();
-    // The flag rides on the wrapper, so it is read before unwrapping.
-    let view_once = wrapper.is_some_and(|w| w.is_view_once());
-    let none_quoted = wa::Message::text("");
-    let quoted = wrapper.map(|w| w.get_base_message()).unwrap_or(&none_quoted);
-    // A quoted media message has no text, so name its type instead of saying
-    // "media". The caption, when there is one, wins.
-    let (kind, name) = if quoted.image_message.as_option().is_some() {
+        .unwrap_or_default()
+}
+
+/// A quoted media message has no text, so its type and file name are read
+/// instead of saying "media".
+fn quoted_kind_and_name(quoted: &wa::Message) -> (&'static str, Option<String>) {
+    if quoted.image_message.as_option().is_some() {
         ("image", None)
     } else if quoted.video_message.as_option().is_some() {
         ("video", None)
@@ -166,53 +184,68 @@ fn quote_of(message: &wa::Message, header: &MessageHeader) -> Option<Quoted> {
         ("document", document.file_name.clone())
     } else {
         ("", None)
-    };
-    let text = if wrapper.is_none() {
-        // Nothing was quoted but the name, so no text is claimed at all: the
-        // empty string is what hides the quote rather than showing a guess.
-        String::new()
-    } else {
-        quoted
-            .text_content()
-            .filter(|t| !t.is_empty())
-            .map(|t| t.to_string())
-            .unwrap_or_else(|| match kind {
-                "image" => "Photo".to_string(),
-                "video" => "Video".to_string(),
-                "audio" => "Voice message".to_string(),
-                "document" => name.unwrap_or_else(|| "Document".to_string()),
-                _ => "[media]".to_string(),
-            })
-    };
-    let thumb = quoted
+    }
+}
+
+/// The text shown for a quote: the quoted message's own text, or its media name
+/// when it has none. A reply that named its quoted message but carried none of
+/// its content keeps an empty text rather than claiming a guess.
+fn quoted_text(quoted: &wa::Message, wrapper: bool, kind: &str, name: Option<&str>) -> String {
+    if !wrapper {
+        return String::new();
+    }
+    quoted
+        .text_content()
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_string())
+        .unwrap_or_else(|| match kind {
+            "image" => "Photo".to_string(),
+            "video" => "Video".to_string(),
+            "audio" => "Voice message".to_string(),
+            "document" => name.unwrap_or("Document").to_string(),
+            _ => "[media]".to_string(),
+        })
+}
+
+/// The quoted message's thumbnail, when it carries one.
+fn quoted_thumb(quoted: &wa::Message) -> Option<Vec<u8>> {
+    quoted
         .image_message
         .as_option()
         .and_then(|m| m.jpeg_thumbnail.clone())
-        .or_else(|| {
-            quoted
-                .video_message
-                .as_option()
-                .and_then(|m| m.jpeg_thumbnail.clone())
-        })
-        .or_else(|| {
-            quoted
-                .document_message
-                .as_option()
-                .and_then(|m| m.jpeg_thumbnail.clone())
-        });
-    // The quoted message exactly as it arrived, view-once wrapper and thumbnail
-    // included, so a reply from here can quote it in the same form.
-    let locator = wrapper.filter(|_| view_once).map(buffa::Message::encode_to_vec);
-    Some(Quoted {
-        id,
-        sender,
-        text,
-        kind,
-        thumb,
-        chat: context.remote_jid.clone(),
-        view_once,
-        locator,
-    })
+        .or_else(|| quoted.video_message.as_option().and_then(|m| m.jpeg_thumbnail.clone()))
+        .or_else(|| quoted.document_message.as_option().and_then(|m| m.jpeg_thumbnail.clone()))
+}
+
+#[cfg(test)]
+mod quote_tests {
+    use super::*;
+    use buffa::MessageField;
+
+    #[test]
+    fn a_quote_names_its_kind_and_falls_back_to_a_readable_text() {
+        let photo = wa::Message {
+            image_message: MessageField::some(wa::message::ImageMessage::default()),
+            ..Default::default()
+        };
+        assert_eq!(quoted_kind_and_name(&photo), ("image", None));
+        assert_eq!(quoted_text(&photo, true, "image", None), "Photo");
+        assert_eq!(quoted_text(&photo, false, "image", None), "");
+
+        let doc = wa::Message {
+            document_message: MessageField::some(wa::message::DocumentMessage {
+                file_name: Some("notes.pdf".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(quoted_kind_and_name(&doc), ("document", Some("notes.pdf".into())));
+        assert_eq!(quoted_text(&doc, true, "document", Some("notes.pdf")), "notes.pdf");
+
+        let text = wa::Message::text("see this");
+        assert_eq!(quoted_kind_and_name(&text), ("", None));
+        assert_eq!(quoted_text(&text, true, "", None), "see this");
+    }
 }
 
 /// Converts a protocol message into a storable one, downloading any media.
