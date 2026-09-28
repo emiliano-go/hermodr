@@ -8,6 +8,7 @@
     | "whatsapp"
     | "privacy"
     | "chats"
+    | "notifications"
     | "device"
     | "media"
     | "startup"
@@ -38,6 +39,12 @@
   import StorageManager from "$lib/StorageManager.svelte";
   import ArchiveManager from "$lib/ArchiveManager.svelte";
   import { limitValue, parseLimit } from "$lib/retention";
+  import type { NotifPermission } from "$lib/notifications";
+  import {
+    notificationPermission,
+    requestNotificationPermission,
+    sendTestNotification,
+  } from "$lib/notifications";
   import {
     ACTIONS,
     keybinds,
@@ -142,6 +149,7 @@
     ...(me ? [{ id: "whatsapp" as Section, label: "WhatsApp privacy", group: "User settings" }] : []),
     { id: "privacy", label: "Storage & history", group: "App settings" },
     { id: "chats", label: "Chats", group: "App settings" },
+    { id: "notifications", label: "Notifications", group: "App settings" },
     { id: "device", label: "Device", group: "App settings" },
     { id: "media", label: "Media", group: "App settings" },
     { id: "startup", label: "Startup", group: "App settings" },
@@ -210,6 +218,34 @@
   }
   let clearingHistory = $state(false);
   let backfillError = $state<string | null>(null);
+
+  // Desktop notification permission lives with the OS, not in our settings,
+  // so it is shown, not edited. Delivered through the native plugin: the
+  // webview auto-denies Notification requests, which made an Allow button
+  // built on it a dead click. A `denied` answer is final until the user
+  // re-enables Postal in the system settings, so that state offers unblock
+  // steps and a recheck instead of another dead prompt.
+  let notifPermission = $state<NotifPermission>("prompt");
+  let notifBusy = $state(false);
+  async function refreshNotifPermission() {
+    notifBusy = true;
+    try {
+      notifPermission = await notificationPermission();
+    } finally {
+      notifBusy = false;
+    }
+  }
+  async function requestNotifPermission() {
+    notifBusy = true;
+    try {
+      notifPermission = await requestNotificationPermission();
+    } finally {
+      notifBusy = false;
+    }
+  }
+  $effect(() => {
+    if (section === "notifications") void refreshNotifPermission();
+  });
 
   // The account's profile lives on WhatsApp's servers, so it is fetched when a
   // section that shows it opens and written back field by field.
@@ -591,6 +627,65 @@
             </div>
             <input class="switch" type="checkbox" bind:checked={draft.keep_archived} />
           </label>
+        {:else if section === "notifications"}
+          <h2>Notifications</h2>
+          <p class="lede">Desktop notifications for new direct messages and group messages.</p>
+          <label class="setting">
+            <div>
+              <span class="setting-title">Enable notifications</span>
+              <span class="setting-desc">
+                Off silences every chat, immediately. Muted chats never notify, whether this is
+                on or off; unmute one from its menu in the chat list.
+              </span>
+            </div>
+            <input
+              class="switch"
+              type="checkbox"
+              checked={draft.notifications_enabled}
+              onchange={(e) => {
+                draft.notifications_enabled = e.currentTarget.checked;
+                // A kill switch must take effect at once, not sit behind Save.
+                void save();
+              }} />
+          </label>
+          <p class="lede">
+            {#if settings.notifications_enabled === false}
+              Notifications are off — new messages will not ping you.
+            {:else if notifPermission === "granted"}
+              Notifications are on for every chat except muted ones.
+            {:else}
+              Notifications are on here, but the system has not allowed them yet — see below.
+            {/if}
+          </p>
+          <div class="setting">
+            <div>
+              <span class="setting-title">System permission</span>
+              <span class="setting-desc">
+                {#if notifPermission === "unsupported"}
+                  This system does not support desktop notifications.
+                {:else if notifPermission === "granted"}
+                  Allowed. Notifications appear when a new message arrives in another chat.
+                {:else if notifPermission === "denied"}
+                  Blocked. Postal cannot ask again from here: re-enable it in the system
+                  settings (GNOME Settings → Notifications → Postal; macOS System Settings →
+                  Notifications; Windows Settings → Notifications), then press Recheck.
+                {:else}
+                  Not decided yet. Press Allow and the system asks once.
+                {/if}
+              </span>
+            </div>
+            {#if notifPermission === "prompt"}
+              <button class="button" disabled={notifBusy} onclick={requestNotifPermission}>
+                {notifBusy ? "Asking…" : "Allow"}
+              </button>
+            {:else if notifPermission === "denied"}
+              <button class="button" disabled={notifBusy} onclick={refreshNotifPermission}>
+                {notifBusy ? "Checking…" : "Recheck"}
+              </button>
+            {:else if notifPermission === "granted"}
+              <button class="button" onclick={() => void sendTestNotification()}>Test</button>
+            {/if}
+          </div>
         {:else if section === "device"}
           <h2>Android companion</h2>
           <p class="lede">

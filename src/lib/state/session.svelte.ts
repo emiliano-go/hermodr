@@ -3,6 +3,26 @@ import { invoke } from "$lib/ipc";
 import type { Account, ConnectionState, UiSettings } from "$lib/models";
 import { ui } from "./ui.svelte";
 
+/** Device memory of the notification kill switch, backing backends that drop it. */
+const NOTIFICATIONS_KEY = "postal.notifications_enabled";
+
+function readLocalNotifications(): boolean | null {
+  try {
+    const raw = localStorage.getItem(NOTIFICATIONS_KEY);
+    return raw === null ? null : raw === "1";
+  } catch {
+    return null;
+  }
+}
+
+function writeLocalNotifications(enabled: boolean) {
+  try {
+    localStorage.setItem(NOTIFICATIONS_KEY, enabled ? "1" : "0");
+  } catch {
+    // The backend copy is authoritative when present; this only fills its gaps.
+  }
+}
+
 function storedZoom() {
   try {
     const saved = Number(localStorage.getItem("postal.zoom"));
@@ -60,6 +80,7 @@ export class SessionState {
     skip_loading_screen: false,
     keep_archived: true,
     android_instance: false,
+    notifications_enabled: true,
   });
 
   /** Interface scale, persisted under `postal.zoom`; Ctrl +/-/0 adjust it. */
@@ -134,9 +155,18 @@ export class SessionState {
 
   async loadSettings() {
     this.settings = await invoke<UiSettings>("get_settings");
+    // Off must behave as if every chat were muted, even when the backend
+    // cannot persist the toggle: a stale backend drops the field, and a
+    // fresh one defaults it on for older settings files. An explicit
+    // backend `false` always wins; otherwise a stored off wins.
+    if (this.settings.notifications_enabled !== false && readLocalNotifications() === false) {
+      this.settings.notifications_enabled = false;
+    }
   }
 
   async saveSettings(next: UiSettings) {
+    // Device memory of the toggle, so the choice survives backends that drop it.
+    writeLocalNotifications(next.notifications_enabled);
     try {
       await invoke("set_settings", { settings: next });
       this.settings = next;

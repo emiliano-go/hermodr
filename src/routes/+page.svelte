@@ -684,6 +684,13 @@
     window.addEventListener("error", onError);
     window.addEventListener("unhandledrejection", onRejection);
 
+    // Clicking a desktop notification opens its chat.
+    const onOpenChat = (event: Event) => {
+      const chat = (event as CustomEvent<string>).detail;
+      if (chat) void openChat(chat);
+    };
+    window.addEventListener("postal:open-chat", onOpenChat);
+
     // Typing anywhere lands in the composer, so a chat can be answered without
     // clicking the field first.
     const onAnyKey = (event: KeyboardEvent) => {
@@ -775,6 +782,7 @@
       window.removeEventListener("error", onError);
       window.removeEventListener("unhandledrejection", onRejection);
       window.removeEventListener("keydown", onAnyKey);
+      window.removeEventListener("postal:open-chat", onOpenChat);
     };
   });
 </script>

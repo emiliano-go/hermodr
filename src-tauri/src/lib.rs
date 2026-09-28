@@ -80,6 +80,7 @@ pub fn run() {
 
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init());
     // A second launch hands its arguments to the running instance and exits,
     // so one process at a time owns the WhatsApp session. The dev server is

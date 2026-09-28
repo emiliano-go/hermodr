@@ -11,6 +11,7 @@
     request_full_history: false, auto_download_media: false, warn_missing_video_preview: true,
     media_dir: null, send_typing: false, send_receipts: false, keep_history: true,
     skip_loading_screen: false, keep_archived: true, android_instance: false,
+    notifications_enabled: true,
   });
   const noop = () => {};
 </script>

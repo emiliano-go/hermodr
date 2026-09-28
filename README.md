@@ -289,8 +289,10 @@ Working:
 - Themes (Dark, Light, Midnight, Liquid Glass, Material 3), a theme editor with
   live previews, CSS extensions, background pictures per app or per chat,
   density, text size and animation settings
+- Desktop notifications for direct messages and groups, with per-chat mutes
+  and a global toggle under settings/notifications
 
-Not yet: calls, desktop notifications, the tray icon, status updates,
+Not yet: calls, the tray icon, status updates,
 communities and channel management, broadcast lists and albums. The issue
 tracker has the details.
 
