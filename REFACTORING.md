@@ -20,6 +20,13 @@ Work happens on `codex/refactor-backend` in an isolated worktree.
 - The independent postal-plugins crate provides read-only sidecars, explicit
   consent, acknowledged events, eager/lazy lifecycle, bounded queues and crash
   handling. Synthetic child processes and a browser fixture verify this surface.
+- Send actions reserve the outbox before conversion or downloads. Attachment
+  batches remain contiguous, and account changes cancel pending preparation.
+  Message retrieval uses wire timestamps followed by a persisted first-seen
+  sequence, rather than treating random message IDs as chronological. Paging,
+  read boundaries, retention and previews share this order. Migration 10 seeds
+  existing rows from their stored row order; unavailable wire precision is not
+  reconstructed.
 
 The counts below record earlier checkpoints, not the latest integrated suite.
 

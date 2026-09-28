@@ -6,6 +6,8 @@ pub const MAX_MESSAGE_PAGE: u32 = 2_000;
 pub struct MessageCursor {
     pub timestamp: i64,
     pub id: String,
+    #[serde(default)]
+    pub sort_order: i64,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
@@ -29,13 +31,19 @@ impl MessageStore {
             MessagePageDirection::After => (">", "ASC"),
             MessagePageDirection::Through => ("<=", "DESC"),
         };
-        let filter = if cursor.is_some() { format!("AND (m.timestamp, m.id) {comparison} (?3, ?4)") } else { String::new() };
+        let sort_order = if let Some(cursor) = cursor {
+            if cursor.sort_order > 0 { cursor.sort_order } else {
+                conn.query_row("SELECT sort_order FROM messages WHERE chat = ?1 AND id = ?2", params![chat, cursor.id], |r| r.get(0)).optional()?
+                    .ok_or_else(|| anyhow::anyhow!("message cursor expired; reload the chat"))?
+            }
+        } else { 0 };
+        let filter = if cursor.is_some() { format!("AND (m.timestamp, m.sort_order, m.id) {comparison} (?3, ?4, ?5)") } else { String::new() };
         let mut statement = conn.prepare(&format!(
             "SELECT {MESSAGE_COLUMNS} FROM messages m LEFT JOIN names n ON n.jid = m.sender
-             WHERE m.chat = ?1 {filter} ORDER BY m.timestamp {order}, m.id {order} LIMIT ?2"
+             WHERE m.chat = ?1 {filter} ORDER BY m.timestamp {order}, m.sort_order {order}, m.id {order} LIMIT ?2"
         ))?;
         let mut values: Vec<&dyn rusqlite::ToSql> = vec![&chat, &fetch];
-        if let Some(cursor) = cursor { values.extend([&cursor.timestamp as &dyn rusqlite::ToSql, &cursor.id]); }
+        if let Some(cursor) = cursor { values.extend([&cursor.timestamp as &dyn rusqlite::ToSql, &sort_order, &cursor.id]); }
         let mut messages = statement.query_map(values.as_slice(), message_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
         let has_more = messages.len() > limit;
         messages.truncate(limit);
@@ -47,6 +55,62 @@ impl MessageStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn equal_timestamp_messages_keep_arrival_order_instead_of_id_order() {
+        let store = MessageStore::open(Path::new(":memory:")).unwrap();
+        for id in ["z", "a", "m"] {
+            store.insert_message(&StoredMessage { header: MessageHeader {
+                chat: "order@s".into(), id: id.into(), timestamp: 100, ..Default::default()
+            }, ..Default::default() }).unwrap();
+        }
+        let page = store.message_page("order@s", 2, None, MessagePageDirection::Before).unwrap();
+        assert_eq!(page.messages.iter().map(|m| m.header.id.as_str()).collect::<Vec<_>>(), ["m", "a"]);
+        assert_eq!(store.unread_until("order@s", "a").unwrap().iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["z", "a"]);
+        assert_eq!(store.mark_read_until("order@s", "a").unwrap(), 2);
+        assert!(!store.message("order@s", "m").unwrap().local.read);
+        assert_eq!(store.messages_for("order@s", 3).unwrap().iter().map(|m| m.header.id.as_str()).collect::<Vec<_>>(), ["m", "a", "z"]);
+        let anchor = store.message("order@s", "a").unwrap();
+        let cursor = MessageCursor { id: "a".into(), timestamp: 100, sort_order: anchor.local.sort_order };
+        let mut replay = anchor.clone();
+        replay.local.sort_order = 0;
+        store.insert_message(&replay).unwrap();
+        assert_eq!(store.message("order@s", "a").unwrap().local.sort_order, cursor.sort_order);
+        store.conn.lock().unwrap().execute("DELETE FROM messages WHERE id = 'a'", []).unwrap();
+        store.conn.lock().unwrap().execute_batch("VACUUM").unwrap();
+        let before = store.message_page("order@s", 3, Some(&cursor), MessagePageDirection::Before).unwrap();
+        let after = store.message_page("order@s", 3, Some(&cursor), MessagePageDirection::After).unwrap();
+        assert_eq!(before.messages[0].header.id, "z");
+        assert_eq!(after.messages[0].header.id, "m");
+        assert_eq!(store.chats().unwrap()[0].last_message_at, 100);
+    }
+
+    #[test]
+    fn legacy_order_survives_reopen_and_counter_never_reuses_deleted_order() {
+        let path = std::env::temp_dir().join(format!("postal-order-{}-{}.db", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let conn = Connection::open(&path).unwrap();
+        super::super::schema::migrate_to(&conn, 9).unwrap();
+        for id in ["z", "a", "m"] {
+            conn.execute("INSERT INTO messages(chat,id,sender,timestamp,from_me,text) VALUES ('legacy@s',?1,'peer@s',100,0,?1)", [id]).unwrap();
+        }
+        drop(conn);
+        let store = MessageStore::open(&path).unwrap();
+        let order = store.message("legacy@s", "m").unwrap().local.sort_order;
+        assert_eq!(store.chats().unwrap()[0].last_text, "m");
+        store.conn.lock().unwrap().execute("DELETE FROM messages WHERE id = 'm'", []).unwrap();
+        drop(store);
+        let store = MessageStore::open(&path).unwrap();
+        store.insert_message(&StoredMessage { header: MessageHeader {
+            chat: "legacy@s".into(), id: "0".into(), timestamp: 100, ..Default::default()
+        }, text: "latest".into(), ..Default::default() }).unwrap();
+        assert!(store.message("legacy@s", "0").unwrap().local.sort_order > order);
+        assert_eq!(store.chats().unwrap()[0].last_text, "latest");
+        assert_eq!(store.message_page("legacy@s", 3, None, MessagePageDirection::Before).unwrap().messages.iter()
+            .map(|m| m.header.id.as_str()).collect::<Vec<_>>(), ["0", "a", "z"]);
+        drop(store);
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn pages_cover_timestamp_ties_in_both_directions_without_deleting_rows() {
@@ -63,12 +127,12 @@ mod tests {
         let mut seen = Vec::new();
         loop {
             let page = store.message_page("test@s", 113, cursor.as_ref(), MessagePageDirection::Before).unwrap();
-            cursor = page.messages.last().map(|m| MessageCursor { id: m.header.id.clone(), timestamp: m.header.timestamp });
+            cursor = page.messages.last().map(|m| MessageCursor { id: m.header.id.clone(), timestamp: m.header.timestamp, sort_order: m.local.sort_order });
             seen.extend(page.messages.iter().map(|m| m.header.id.clone()));
             if !page.has_more { break; }
         }
         assert_eq!(seen, (0..2_005).rev().map(|n| format!("{n:04}")).collect::<Vec<_>>());
-        let cursor = MessageCursor { id: "0500".into(), timestamp: 100 };
+        let cursor = MessageCursor { id: "0500".into(), timestamp: 100, sort_order: 0 };
         let after = store.message_page("test@s", 2, Some(&cursor), MessagePageDirection::After).unwrap();
         assert_eq!(after.messages.iter().map(|m| m.header.id.as_str()).collect::<Vec<_>>(), ["0502", "0501"]);
         assert!(after.has_more);
@@ -93,9 +157,9 @@ mod tests {
                 chat: "ties@s".into(), id: id.into(), timestamp: 200, sender: "peer@s".into(), ..Default::default()
             }, ..Default::default() }).unwrap();
         }
-        assert_eq!(store.unread_until("ties@s", "b").unwrap().iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["a", "b"]);
-        assert_eq!(store.mark_read_until("ties@s", "b").unwrap(), 2);
-        assert!(!store.message("ties@s", "c").unwrap().local.read);
+        assert_eq!(store.unread_until("ties@s", "a").unwrap().iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["c", "a"]);
+        assert_eq!(store.mark_read_until("ties@s", "a").unwrap(), 2);
+        assert!(!store.message("ties@s", "b").unwrap().local.read);
     }
 }
 

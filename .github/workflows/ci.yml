@@ -42,6 +42,7 @@ jobs:
           node --experimental-strip-types --test src/lib/message-window.test.ts
           node --experimental-strip-types --test src/lib/media-retry.test.ts
           node --experimental-strip-types --test src/lib/upload.test.ts
+          node --experimental-strip-types --test src/lib/send-order.test.ts
 
   core:
     name: Core (${{ matrix.os }})

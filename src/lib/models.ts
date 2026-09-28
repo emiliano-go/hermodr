@@ -50,6 +50,7 @@ export type ChatRetention = {
 };
 
 export type StoredMessage = {
+  sort_order?: number;
   chat: string;
   id: string;
   sender: string;

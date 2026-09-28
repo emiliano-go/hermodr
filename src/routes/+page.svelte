@@ -1086,7 +1086,7 @@
           onselectemoji={(emoji) => composer.selectEmoji(emoji)}
           bind:pickerTab={composer.pickerTab}
           {selectedChat}
-          enqueue={<T>(task: () => Promise<T>) => composer.enqueue(task)}
+          enqueue={<T>(task: (signal: AbortSignal) => Promise<T>) => composer.enqueue(task)}
           onpickeremoji={(emoji) => composer.insertAtCaret(emoji)}
           takereply={(): Record<string, string> => {
             const reply = composer.replyingTo;

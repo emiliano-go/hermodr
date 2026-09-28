@@ -118,7 +118,7 @@ impl MessageStore {
         let chat = &*names::canonical_chat(&conn, chat)?;
         let mut stmt = conn.prepare(
             "SELECT id, sender FROM messages
-             WHERE chat = ?1 AND read = 0 AND from_me = 0 ORDER BY timestamp",
+             WHERE chat = ?1 AND read = 0 AND from_me = 0 ORDER BY timestamp, sort_order, id",
         )?;
         let rows = stmt.query_map(params![chat], |r| Ok((r.get(0)?, r.get(1)?)))?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
@@ -153,15 +153,15 @@ impl MessageStore {
 
     /// Unread incoming messages up to and including `id`, oldest first.
     ///
-    /// The timestamp/id boundary matches message paging.
+    /// The timestamp/order/id boundary matches message paging.
     pub fn unread_until(&self, chat: &str, id: &str) -> Result<Vec<(String, String)>> {
         let conn = self.conn.lock().unwrap();
         let chat = &*names::canonical_chat(&conn, chat)?;
         let mut stmt = conn.prepare(
             "SELECT id, sender FROM messages
              WHERE chat = ?1 AND read = 0 AND from_me = 0
-               AND (timestamp, id) <= (SELECT timestamp, id FROM messages WHERE chat = ?1 AND id = ?2)
-             ORDER BY timestamp, id",
+               AND (timestamp, sort_order, id) <= (SELECT timestamp, sort_order, id FROM messages WHERE chat = ?1 AND id = ?2)
+             ORDER BY timestamp, sort_order, id",
         )?;
         let rows = stmt.query_map(params![chat, id], |r| Ok((r.get(0)?, r.get(1)?)))?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
@@ -174,7 +174,7 @@ impl MessageStore {
         let changed = conn.execute(
             "UPDATE messages SET read = 1
              WHERE chat = ?1 AND read = 0 AND from_me = 0
-               AND (timestamp, id) <= (SELECT timestamp, id FROM messages WHERE chat = ?1 AND id = ?2)",
+               AND (timestamp, sort_order, id) <= (SELECT timestamp, sort_order, id FROM messages WHERE chat = ?1 AND id = ?2)",
             params![chat, id],
         )?;
         Ok(changed)

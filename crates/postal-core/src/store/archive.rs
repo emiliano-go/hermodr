@@ -180,7 +180,7 @@ impl MessageStore {
         serde_json::to_writer(&mut writer, chat)?;
         write!(writer, ",\"pages\":[")?;
         let mut statement = snapshot.prepare(&format!("SELECT {MESSAGE_COLUMNS} FROM messages m
-            LEFT JOIN names n ON n.jid = m.sender WHERE m.chat = ?1 ORDER BY m.timestamp, m.id"))?;
+            LEFT JOIN names n ON n.jid = m.sender WHERE m.chat = ?1 ORDER BY m.timestamp, m.sort_order, m.id"))?;
         let mut rows = statement.query([chat])?;
         let mut count = 0;
         loop {

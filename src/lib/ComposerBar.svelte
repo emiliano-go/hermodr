@@ -78,7 +78,7 @@
     onselectemoji: (emoji: string) => void;
     pickerTab: PickerTab | null;
     selectedChat: string;
-    enqueue: <T>(task: () => Promise<T>) => Promise<T>;
+    enqueue: <T>(task: (signal: AbortSignal) => Promise<T>) => Promise<T>;
     /** Takes the reply being composed as send arguments, clearing it. */
     takereply: () => Record<string, string>;
     onpickeremoji: (emoji: string) => void;

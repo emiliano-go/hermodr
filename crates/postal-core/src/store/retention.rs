@@ -185,7 +185,7 @@ impl DiskRetentionManager {
                     "DELETE FROM messages WHERE (chat, id) IN (
                          SELECT chat, id FROM (
                              SELECT m.chat, m.id,
-                                    ROW_NUMBER() OVER (PARTITION BY m.chat ORDER BY m.timestamp DESC) AS rank,
+                                    ROW_NUMBER() OVER (PARTITION BY m.chat ORDER BY m.timestamp DESC, m.sort_order DESC, m.id DESC) AS rank,
                                     CASE WHEN r.jid IS NULL OR r.count_mode = 'inherit' THEN :cap
                                          WHEN r.count_mode = 'limited' THEN r.max_messages ELSE NULL END AS cap
                              FROM messages m LEFT JOIN chat_retention r ON r.jid = m.chat

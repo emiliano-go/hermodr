@@ -67,6 +67,8 @@ fn backup_roundtrip_preserves_archive_but_excludes_session_credentials() {
     restore_backup(&backup, &account, &restored_media).unwrap();
     let restored = MessageStore::open(&account.join("messages.db")).unwrap();
     assert_eq!(restored.count().unwrap(), 1003);
+    assert_eq!(restored.message("test@s", "m0000").unwrap().local.sort_order,
+        store.message("test@s", "m0000").unwrap().local.sort_order);
     assert_eq!(restored.name_for("sender@s").unwrap().as_deref(), Some("Synthetic sender"));
     assert_eq!(restored.poll_secret("test@s", "m0001").unwrap().unwrap().secret, vec![7; 32]);
     assert_eq!(restored.marks("test@s").unwrap().starred, ["m0000"]);

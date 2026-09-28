@@ -9,6 +9,7 @@
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { invoke } from "$lib/ipc";
   import { base64Of as toBase64 } from "$lib/files";
+  import { sendAttachment } from "$lib/upload";
   import Icon from "$lib/Icon.svelte";
   import ImageCropper from "$lib/ImageCropper.svelte";
   import { stickers as stickerEvents } from "$lib/state/stickers.svelte";
@@ -35,7 +36,7 @@
     chat: string;
     tab?: PickerTab;
     /** The app's ordered outbox, so picks go out in sequence with everything else. */
-    enqueue: <T>(task: () => Promise<T>) => Promise<T>;
+    enqueue: <T>(task: (signal: AbortSignal) => Promise<T>) => Promise<T>;
     /** Takes the reply being composed, if any, as send arguments, clearing it. */
     takereply: () => Record<string, string>;
     onemoji: (emoji: string) => void;
@@ -151,13 +152,14 @@
     }
   }
 
-  async function sendPackSticker(sticker: Sticker) {
-    try {
+  function sendPackSticker(sticker: Sticker) {
+    const destination = chat;
+    const reply = takereply();
+    return send(async (signal) => {
       const path = sticker.path ?? (await invoke<string>("download_sticker", { filehash: sticker.filehash }));
-      sendFromLibrary(path, "sticker");
-    } catch (e) {
-      onerror(String(e));
-    }
+      signal.throwIfAborted();
+      return invoke("send_from_library", { chat: destination, path, kind: "sticker", ...reply });
+    });
   }
 
   /** Downloads a synced sticker to cold storage on first use, then sends it. */
@@ -181,7 +183,7 @@
     }
   }
 
-  async function send(task: () => Promise<unknown>) {
+  async function send(task: (signal: AbortSignal) => Promise<unknown>) {
     onclose();
     try {
       await enqueue(task);
@@ -192,8 +194,9 @@
   }
 
   function sendFromLibrary(path: string, kind: "gif" | "sticker") {
+    const destination = chat;
     const reply = takereply();
-    send(() => invoke("send_from_library", { chat, path, kind, ...reply }));
+    send(() => invoke("send_from_library", { chat: destination, path, kind, ...reply }));
   }
 
   async function uploadFile(file: File) {
@@ -201,18 +204,22 @@
       making = file;
       return;
     }
-    const data = await toBase64(file);
+    const destination = chat;
     const reply = takereply();
-    send(() => invoke("send_media", { chat, name: file.name, data, gif: true, ...reply }));
+    await send((signal) => sendAttachment(file, { chat: destination, gif: true, ...reply }, signal));
   }
 
   /** A picture being cropped into a sticker. */
   let making = $state<File | null>(null);
   async function sendMade(file: File) {
     making = null;
-    const data = await toBase64(file);
+    const destination = chat;
     const reply = takereply();
-    send(() => invoke("send_sticker", { chat, data, ...reply }));
+    await send(async (signal) => {
+      const data = await toBase64(file);
+      signal.throwIfAborted();
+      return invoke("send_sticker", { chat: destination, data, ...reply });
+    });
   }
   async function saveMade(file: File) {
     making = null;

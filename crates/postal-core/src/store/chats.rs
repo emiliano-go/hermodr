@@ -199,13 +199,13 @@ impl MessageStore {
              LEFT JOIN messages m ON m.rowid =
                   (SELECT rowid FROM messages WHERE chat = c.jid
                      AND (system_kind IS NULL OR system_kind LIKE 'CALL_MISSED%' OR system_kind LIKE 'SILENCED_UNKNOWN_CALLER%')
-                   ORDER BY timestamp DESC LIMIT 1)
+                   ORDER BY timestamp DESC, sort_order DESC, id DESC LIMIT 1)
              LEFT JOIN names n ON n.jid = c.jid
              LEFT JOIN names s ON s.jid = m.sender
              LEFT JOIN pins p ON p.jid = c.jid
              LEFT JOIN chat_state cs ON cs.jid = c.jid
              WHERE c.jid NOT IN (SELECT jid FROM hidden_chats)
-             ORDER BY pinned DESC, COALESCE(g.last_message_at, c.last_message_at) DESC",
+             ORDER BY pinned DESC, COALESCE(g.last_message_at, c.last_message_at) DESC, m.sort_order DESC, c.jid",
         )?;
         let summaries = stmt
             .query_map([], |row| {

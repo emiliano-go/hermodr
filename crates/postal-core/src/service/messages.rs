@@ -647,7 +647,7 @@ impl WhatsAppService {
         direction: crate::store::MessagePageDirection, anchor_id: Option<&str>) -> Result<crate::store::MessagePage> {
         let cursor = if let Some(id) = anchor_id {
             match self.store.message(chat, id).await {
-                Ok(message) => Some(crate::store::MessageCursor { timestamp: message.header.timestamp, id: message.header.id }),
+                Ok(message) => Some(crate::store::MessageCursor { timestamp: message.header.timestamp, id: message.header.id, sort_order: message.local.sort_order }),
                 Err(error) if error.downcast_ref::<rusqlite::Error>() == Some(&rusqlite::Error::QueryReturnedNoRows) => {
                     return Ok(crate::store::MessagePage { messages: vec![], has_more: false });
                 }

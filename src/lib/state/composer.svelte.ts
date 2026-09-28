@@ -131,10 +131,11 @@ export class ComposerState {
   typingHidden = $derived(!this.chatSendsTyping);
   receiptsHidden = $derived(!this.chatSendsReceipts);
 
-  enqueue<T>(task: () => Promise<T>, account = this.accountSeq): Promise<T> {
+  enqueue<T>(task: (signal: AbortSignal) => Promise<T>, account = this.accountSeq): Promise<T> {
+    const signal = this.uploadsAbort.signal;
     const start = () => {
       if (account !== this.accountSeq) throw new Error("Account changed before sending");
-      return task();
+      return task(signal);
     };
     const run = this.outbox.then(start, start);
     this.outbox = run.catch(() => {});
@@ -575,11 +576,11 @@ export class ComposerState {
       if (done?.url.startsWith("blob:")) URL.revokeObjectURL(done.url);
       this.outgoing = this.outgoing.filter((o) => o.token !== token);
     };
-    for (const [i, item] of items.entries()) {
-      const { token } = batch[i];
-      try {
-        const warning = await this.enqueue(() =>
-          sendAttachment(item.file, {
+    await this.enqueue(async () => {
+      for (const [i, item] of items.entries()) {
+        const { token } = batch[i];
+        try {
+          const warning = await sendAttachment(item.file, {
             chat,
             caption: item.caption.trim() || null,
             replyToId: reply?.id ?? null,
@@ -588,25 +589,25 @@ export class ComposerState {
             viewOnce: item.once,
             mentions: captioned && item.id === firstId ? mentions : [],
             progress: token,
-          }, signal),
-          account,
-        );
-        if (account !== this.accountSeq) return;
-        if (warning && session.settings.warn_missing_video_preview) ui.notify(warning);
-        if (chats.selectedChat === chat) await messages.reloadMessages(chat);
-        finish(token);
-        if (chats.selectedChat === chat) this.host.scrollToBottom();
-      } catch (e) {
-        if (account !== this.accountSeq) return;
-        ui.fail(e);
-        // What did not go out returns to the tray, so it can be sent again.
-        for (const rest of batch.slice(i)) {
-          this.outgoing = this.outgoing.filter((o) => o.token !== rest.token);
+          }, signal);
+          if (account !== this.accountSeq) return;
+          if (warning && session.settings.warn_missing_video_preview) ui.notify(warning);
+          if (chats.selectedChat === chat) await messages.reloadMessages(chat).catch((e) => ui.fail(e));
+          finish(token);
+          if (chats.selectedChat === chat) this.host.scrollToBottom();
+        } catch (e) {
+          if (account !== this.accountSeq) return;
+          ui.fail(e);
+          // Unsent files return to the tray for an explicit retry.
+          for (const rest of batch.slice(i)) {
+            this.outgoing = this.outgoing.filter((o) => o.token !== rest.token);
+          }
+          this.pending = [...items.slice(i), ...this.pending];
+          break;
         }
-        this.pending = [...items.slice(i), ...this.pending];
-        break;
       }
-    }
+    }, account).catch((e) => { if (account === this.accountSeq) ui.fail(e); });
+    if (account !== this.accountSeq) return;
     await chats.refreshChats();
   }
 
@@ -619,9 +620,10 @@ export class ComposerState {
     const reply = this.replyingTo;
     this.replyingTo = null;
     try {
-      const data = await base64Of(note.blob);
-      await this.enqueue(() =>
-        invoke("send_voice", {
+      await this.enqueue(async (signal) => {
+        const data = await base64Of(note.blob);
+        signal.throwIfAborted();
+        return invoke("send_voice", {
           chat,
           data,
           seconds: note.seconds,
@@ -630,9 +632,8 @@ export class ComposerState {
           replyToSender: reply?.sender ?? null,
           replyToText: reply?.text ?? null,
           viewOnce: note.viewOnce,
-        }),
-        account,
-      );
+        });
+      }, account);
       if (account !== this.accountSeq) return;
       await messages.reloadMessages(chats.selectedChat);
       await chats.refreshChats();

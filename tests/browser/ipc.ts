@@ -7,6 +7,7 @@ export const windowFixture = {
 };
 export const mediaFixture = { calls: 0, failure: true, deferNext: false, pending: [] as (() => void)[] };
 export const pluginFixture = { enabled: false, failure: false, crashed: false };
+export const sendFixture = { before: null as ((command: string, args?: Record<string, unknown>) => Promise<void>) | null };
 export const uploadFixture = { calls: [] as string[], maxChunk: 0, size: 0, written: 0, chunks: [] as Uint8Array[],
   failChunk: false, failSend: false, afterChunk: null as (() => void) | null };
 export const archiveFixture = { failure: false, cancelled: false, deferNext: false, pending: [] as (() => void)[],
@@ -21,6 +22,8 @@ export const fixture = { updated: false, failure: false, calls: 0, savedRetentio
 };
 
 export async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  if (sendFixture.before) await sendFixture.before(command, args);
+  if (["send_text", "send_reply", "send_voice", "send_sticker", "send_from_library", "send_typing"].includes(command)) return undefined as T;
   if (command === "list_plugins") return { directory: "synthetic/plugins", errors: [], plugins: [
     { id: "com.example.fixture", name: "Synthetic Plugin", version: "1", activation: "lazy", idle_timeout_secs: 30,
       capabilities: ["events:read"], enabled: pluginFixture.enabled, state: "idle", error: pluginFixture.crashed ? "Disabled after three synthetic crashes" : null },
@@ -88,7 +91,7 @@ export async function invoke<T>(command: string, args?: Record<string, unknown>)
   }
   if (command === "message_page") {
     if (windowFixture.failure) throw new Error("Synthetic page failure");
-    const compare = (a: MessageCursor, b: MessageCursor) => a.timestamp - b.timestamp || (a.id === b.id ? 0 : a.id < b.id ? -1 : 1);
+    const compare = (a: MessageCursor, b: MessageCursor) => a.timestamp - b.timestamp || (a.sort_order ?? 0) - (b.sort_order ?? 0) || (a.id === b.id ? 0 : a.id < b.id ? -1 : 1);
     const anchor = args?.anchorId ? windowFixture.archive.find((m) => m.chat === args?.chat && m.id === args.anchorId) : undefined;
     const cursor = anchor ?? args?.cursor as MessageCursor | undefined;
     const after = args?.direction === "after";

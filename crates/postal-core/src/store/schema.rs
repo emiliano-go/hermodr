@@ -311,6 +311,7 @@ const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
     migrate_v7_media_paths,
     migrate_v8_page_cursor,
     migrate_v9_stickers,
+    migrate_v10_message_order,
 ];
 
 pub(super) fn migrate(conn: &Connection) -> Result<()> {
@@ -719,5 +720,25 @@ fn migrate_v9_stickers(conn: &Connection) -> Result<()> {
          CREATE INDEX IF NOT EXISTS idx_stickers_pack ON stickers(pack_id);
          CREATE INDEX IF NOT EXISTS idx_stickers_recent ON stickers(recent_at DESC);",
     )?;
+    Ok(())
+}
+
+fn migrate_v10_message_order(conn: &Connection) -> Result<()> {
+    let columns = conn.prepare("PRAGMA table_info(messages)")?.query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    if !columns.iter().any(|column| column == "sort_order") {
+        conn.execute_batch("ALTER TABLE messages ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0 CHECK(sort_order >= 0);")?;
+    }
+    conn.execute_batch("UPDATE messages SET sort_order = rowid WHERE sort_order = 0;
+        CREATE TABLE IF NOT EXISTS message_order_counter (id INTEGER PRIMARY KEY CHECK(id = 1), value INTEGER NOT NULL CHECK(value >= 0));
+        INSERT INTO message_order_counter VALUES (1, COALESCE((SELECT MAX(sort_order) FROM messages), 0))
+            ON CONFLICT(id) DO UPDATE SET value = MAX(value, excluded.value);
+        CREATE TRIGGER IF NOT EXISTS assign_message_order AFTER INSERT ON messages BEGIN
+            UPDATE message_order_counter SET value = CASE WHEN NEW.sort_order > 0 THEN MAX(value, NEW.sort_order) ELSE value + 1 END WHERE id = 1;
+            UPDATE messages SET sort_order = (SELECT value FROM message_order_counter WHERE id = 1)
+                WHERE rowid = NEW.rowid AND sort_order = 0;
+        END;
+        DROP INDEX IF EXISTS idx_messages_chat_time;
+        CREATE INDEX idx_messages_chat_time ON messages(chat, timestamp DESC, sort_order DESC, id DESC);")?;
     Ok(())
 }

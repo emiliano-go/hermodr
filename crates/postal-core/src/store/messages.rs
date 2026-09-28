@@ -33,11 +33,12 @@ impl MessageStore {
                   reply_to_kind, reply_to_thumb, media_thumb, media_ref, reply_to_chat,
                   preview_site, preview_color, media_duration, system_kind, system_params,
                   reply_to_view_once, reply_to_recoverable, reply_to_path, reply_to_locator,
-                  media_once_kind)
+                  media_once_kind, sort_order)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
                      ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?29, ?30,
-                     ?31, ?32, ?33, ?34, ?35)
+                     ?31, ?32, ?33, ?34, ?35, ?36)
              ON CONFLICT(chat, id) DO UPDATE SET
+                 sort_order = CASE WHEN excluded.sort_order > 0 THEN MIN(messages.sort_order, excluded.sort_order) ELSE messages.sort_order END,
                  sender = excluded.sender,
                  timestamp = excluded.timestamp,
                  from_me = excluded.from_me,
@@ -114,6 +115,7 @@ impl MessageStore {
                 message.quote.path,
                 message.quote.locator,
                 message.media.once_kind,
+                message.local.sort_order,
             ],
         )?;
         Ok(())
@@ -128,7 +130,7 @@ impl MessageStore {
              FROM messages m
              LEFT JOIN names n ON n.jid = m.sender
              WHERE m.chat = ?1
-             ORDER BY m.timestamp DESC LIMIT ?2"
+             ORDER BY m.timestamp DESC, m.sort_order DESC, m.id DESC LIMIT ?2"
         ))?;
         let rows = stmt.query_map(params![chat, limit], message_row)?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
@@ -144,7 +146,7 @@ impl MessageStore {
              FROM messages m
              LEFT JOIN names n ON n.jid = m.sender
              WHERE m.mentioned = 1 AND m.from_me = 0 AND (?1 IS NULL OR m.chat = ?1)
-             ORDER BY m.timestamp DESC LIMIT ?2"
+             ORDER BY m.timestamp DESC, m.sort_order DESC, m.id DESC LIMIT ?2"
         ))?;
         let rows = stmt.query_map(params![chat, limit], message_row)?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
@@ -162,7 +164,7 @@ impl MessageStore {
              FROM messages m
              LEFT JOIN names n ON n.jid = m.sender
              WHERE m.chat = ?1 AND lower(m.text) LIKE ?2 ESCAPE '\\'
-             ORDER BY m.timestamp DESC LIMIT ?3"
+             ORDER BY m.timestamp DESC, m.sort_order DESC, m.id DESC LIMIT ?3"
         ))?;
         let rows = stmt.query_map(params![chat, pattern, limit], message_row)?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
@@ -176,7 +178,7 @@ impl MessageStore {
              FROM stars s
              JOIN messages m ON m.chat = s.chat AND m.id = s.id
              LEFT JOIN names n ON n.jid = m.sender
-             ORDER BY m.timestamp DESC"
+             ORDER BY m.timestamp DESC, m.sort_order DESC, m.id DESC"
         ))?;
         let rows = stmt.query_map([], message_row)?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
@@ -189,7 +191,7 @@ impl MessageStore {
         let row = conn
             .query_row(
                 "SELECT id, from_me, timestamp FROM messages
-                 WHERE chat = ?1 ORDER BY timestamp ASC LIMIT 1",
+                 WHERE chat = ?1 ORDER BY timestamp ASC, sort_order ASC, id ASC LIMIT 1",
                 params![chat],
                 |r| {
                     Ok((
@@ -270,7 +272,7 @@ impl MessageStore {
         let mut stmt = conn.prepare(
             "SELECT id FROM messages
              WHERE chat = ?1 AND read = 0 AND from_me = 0 AND mentioned = 1
-             ORDER BY timestamp ASC",
+             ORDER BY timestamp ASC, sort_order ASC, id ASC",
         )?;
         let rows = stmt.query_map(params![chat], |r| r.get::<_, String>(0))?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)

@@ -60,7 +60,7 @@
             replyAuthor="Ana" replySnippet={messages[1].text} editing={null} pending={[]}
             recording={false} mentionMatches={[]} mentionIndex={0} onselectmention={noop}
             emojiToken={null} emojiMatches={[]} emojiIndex={0} onselectemoji={noop} pickerTab={null}
-            {selectedChat} enqueue={(task) => task()} takereply={() => ({})}
+            {selectedChat} enqueue={(task) => task(new AbortController().signal)} takereply={() => ({})}
             onpickeremoji={noop} onpickersent={noop} onpickererror={noop} onstage={noop}
             oncreatekind={noop} oninput={noop} onkey={noop} onsend={noop}
             oncancelreply={noop} oncanceledit={noop} onremove={noop} ontoggleonce={noop} onsendvoice={noop}

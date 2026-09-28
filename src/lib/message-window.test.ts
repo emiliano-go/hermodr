@@ -25,6 +25,16 @@ test("RAM window pages both ways, deduplicates updates, and never mutates its ar
   for (const limit of [0, 49, 2_001, Infinity, NaN, 50.5]) assert.throws(() => new MessageWindow(limit));
 });
 
+test("same-second messages retain persisted arrival order through page merges and edits", () => {
+  const window = new MessageWindow(50);
+  const rows = ["z", "a", "m"].map((id, index) => ({ chat: "test@s", id, timestamp: 100, sort_order: index + 1 }) as StoredMessage);
+  window.replace(rows.slice(1));
+  window.retain(rows.slice(0, 1), "older");
+  assert.deepEqual(window.loaded.map((m) => m.id), ["m", "a", "z"]);
+  window.retain([{ ...rows[1], text: "edited" }]);
+  assert.deepEqual(window.loaded.map((m) => m.id), ["m", "a", "z"]);
+});
+
 test("pager defers concurrent refreshes, rejects stale pages, and falls back to phone only at archive end", async () => {
   const server = await createServer({ configFile: fileURLToPath(new URL("../../tests/browser/vite.config.ts", import.meta.url)), cacheDir: fileURLToPath(new URL("../../node_modules/.vite-tests/message-window", import.meta.url)), ssr: { optimizeDeps: { noDiscovery: true, include: [] } }, server: { middlewareMode: true, ws: false } });
   let pager: { resetAccount(): void } | undefined;
