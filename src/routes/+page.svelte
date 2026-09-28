@@ -1868,18 +1868,20 @@
   }
   /* Reserves room on the last line so the time never covers text. The spacer
      renders in MessageText while the bubble context lives in MessageBubble.
-     Widths cover the widest metas measured (12h clock + star + "Edited":
-     theirs 48px, mine 76px, edited mine 109px) plus headroom for wider fonts. */
+     Incoming and own messages reserve the same room, so the gap between text
+     and time matches on both sides. Widths cover the widest metas measured
+     (12h clock + ticks + star + "Edited": 76px, edited 109px) plus headroom
+     for wider fonts. */
   :global(.meta-spacer) {
     display: inline-block;
-    width: 52px;
+    width: 88px;
     height: 1px;
   }
   :global(.meta-spacer.mine) {
     width: 88px;
   }
   :global(.bubble.edited .meta-spacer) {
-    width: 94px;
+    width: 120px;
   }
   :global(.bubble.edited .meta-spacer.mine) {
     width: 120px;
