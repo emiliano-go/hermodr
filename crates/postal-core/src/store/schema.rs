@@ -371,6 +371,34 @@ pub(super) fn migrate_to(conn: &Connection, target: usize) -> Result<()> {
 
 // Version 0 covered several released schemas; only this adoption step probes columns.
 fn migrate_v1_schema(conn: &Connection) -> Result<()> {
+    create_base_tables(conn)?;
+    let existing = table_columns(conn, "messages")?;
+    add_missing_columns(conn, &existing, ADDED_MESSAGE_COLUMNS)?;
+    create_state_tables(conn)?;
+    // The media reference is a blob, so it cannot go through the TEXT
+    // migration list above.
+    let message_columns = table_columns(conn, "messages")?;
+    if !message_columns.iter().any(|c| c == "media_ref") {
+        conn.execute("ALTER TABLE messages ADD COLUMN media_ref BLOB", [])?;
+    }
+    let name_columns = table_columns(conn, "names")?;
+    if !name_columns.iter().any(|c| c == "saved") {
+        conn.execute("ALTER TABLE names ADD COLUMN saved INTEGER NOT NULL DEFAULT 0", [])?;
+    }
+    add_missing_columns(
+        conn,
+        &existing,
+        &[
+            ("read", "INTEGER NOT NULL DEFAULT 0"),
+            ("revoked", "INTEGER NOT NULL DEFAULT 0"),
+            ("status", "TEXT"),
+        ],
+    )?;
+    Ok(())
+}
+
+/// The two tables every released schema has.
+fn create_base_tables(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS messages (
              chat         TEXT NOT NULL,
@@ -404,73 +432,11 @@ fn migrate_v1_schema(conn: &Connection) -> Result<()> {
              saved INTEGER NOT NULL DEFAULT 0
          );",
     )?;
+    Ok(())
+}
 
-    // Columns added after the first release. SQLite has no "ADD COLUMN IF
-    // NOT EXISTS", so the existing set is inspected first.
-    let existing: Vec<String> = {
-        let mut stmt = conn.prepare("PRAGMA table_info(messages)")?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()?
-    };
-    for column in [
-        "media_kind",
-        "media_path",
-        "media_thumb",
-        "reply_to_id",
-        "reply_to_text",
-        "reply_to_sender",
-        "reply_to_chat",
-        "reply_to_kind",
-        "reply_to_thumb",
-        "reply_to_path",
-        "preview_url",
-        "preview_title",
-        "preview_desc",
-        "preview_thumb",
-        "preview_site",
-        "preview_color",
-        "system_kind",
-        "system_params",
-    ] {
-        if !existing.iter().any(|c| c == column) {
-            conn.execute(
-                &format!("ALTER TABLE messages ADD COLUMN {column} TEXT"),
-                [],
-            )?;
-        }
-    }
-
-    if !existing.iter().any(|c| c == "mentioned") {
-        conn.execute(
-            "ALTER TABLE messages ADD COLUMN mentioned INTEGER NOT NULL DEFAULT 0",
-            [],
-        )?;
-    }
-
-    if !existing.iter().any(|c| c == "media_duration") {
-        conn.execute("ALTER TABLE messages ADD COLUMN media_duration INTEGER", [])?;
-    }
-
-    // The view-once a reply quotes, and the only copy of it a linked device
-    // is ever sent. `reply_to_locator` is the quoted message as it arrived
-    // (older rows: the bare media submessage), so the copy can be fetched
-    // and quoted again in the same form.
-    for (column, decl) in [
-        ("reply_to_view_once", "INTEGER NOT NULL DEFAULT 0"),
-        ("reply_to_recoverable", "INTEGER NOT NULL DEFAULT 0"),
-        ("reply_to_locator", "BLOB"),
-        // The kind a view-once had before it was marked as one, so a
-        // recovered copy is shown by the player that fits it.
-        ("media_once_kind", "TEXT"),
-    ] {
-        if !existing.iter().any(|c| c == column) {
-            conn.execute(
-                &format!("ALTER TABLE messages ADD COLUMN {column} {decl}"),
-                [],
-            )?;
-        }
-    }
-
+/// Everything that hangs off a message or a chat.
+fn create_state_tables(conn: &Connection) -> Result<()> {
     // Chat pins, mirrored from the account so they match the phone.
     conn.execute("CREATE TABLE IF NOT EXISTS pins (jid TEXT PRIMARY KEY)", [])?;
     // Archive, mute and mark-unread, mirrored from the account like pins.
@@ -524,7 +490,6 @@ fn migrate_v1_schema(conn: &Connection) -> Result<()> {
          CREATE INDEX IF NOT EXISTS lid_pn_by_pn ON lid_pn (pn);
          CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);",
     )?;
-
     // Per chat overrides. Absent means the global setting applies.
     conn.execute(
         "CREATE TABLE IF NOT EXISTS chat_settings (
@@ -552,46 +517,59 @@ fn migrate_v1_schema(conn: &Connection) -> Result<()> {
         "CREATE TABLE IF NOT EXISTS cleared_chats (jid TEXT PRIMARY KEY)",
         [],
     )?;
+    Ok(())
+}
 
-    // The media reference is a blob, so it cannot go through the TEXT
-    // migration loop above.
-    let message_columns: Vec<String> = {
-        let mut stmt = conn.prepare("PRAGMA table_info(messages)")?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()?
-    };
-    if !message_columns.iter().any(|c| c == "media_ref") {
-        conn.execute("ALTER TABLE messages ADD COLUMN media_ref BLOB", [])?;
-    }
+/// Columns added after the first release. SQLite has no "ADD COLUMN IF NOT
+/// EXISTS", so the existing set is inspected first.
+const ADDED_MESSAGE_COLUMNS: &[(&str, &str)] = &[
+    ("media_kind", "TEXT"),
+    ("media_path", "TEXT"),
+    ("media_thumb", "TEXT"),
+    ("reply_to_id", "TEXT"),
+    ("reply_to_text", "TEXT"),
+    ("reply_to_sender", "TEXT"),
+    ("reply_to_chat", "TEXT"),
+    ("reply_to_kind", "TEXT"),
+    ("reply_to_thumb", "TEXT"),
+    ("reply_to_path", "TEXT"),
+    ("preview_url", "TEXT"),
+    ("preview_title", "TEXT"),
+    ("preview_desc", "TEXT"),
+    ("preview_thumb", "TEXT"),
+    ("preview_site", "TEXT"),
+    ("preview_color", "TEXT"),
+    ("system_kind", "TEXT"),
+    ("system_params", "TEXT"),
+    ("mentioned", "INTEGER NOT NULL DEFAULT 0"),
+    ("media_duration", "INTEGER"),
+    // The view-once a reply quotes, and the only copy of it a linked device
+    // is ever sent. `reply_to_locator` is the quoted message as it arrived
+    // (older rows: the bare media submessage), so the copy can be fetched
+    // and quoted again in the same form.
+    ("reply_to_view_once", "INTEGER NOT NULL DEFAULT 0"),
+    ("reply_to_recoverable", "INTEGER NOT NULL DEFAULT 0"),
+    ("reply_to_locator", "BLOB"),
+    // The kind a view-once had before it was marked as one, so a recovered
+    // copy is shown by the player that fits it.
+    ("media_once_kind", "TEXT"),
+];
 
-    let existing_names: Vec<String> = {
-        let mut stmt = conn.prepare("PRAGMA table_info(names)")?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()?
-    };
-    if !existing_names.iter().any(|c| c == "saved") {
-        conn.execute(
-            "ALTER TABLE names ADD COLUMN saved INTEGER NOT NULL DEFAULT 0",
-            [],
-        )?;
-    }
-
-    if !existing.iter().any(|c| c == "read") {
-        conn.execute(
-            "ALTER TABLE messages ADD COLUMN read INTEGER NOT NULL DEFAULT 0",
-            [],
-        )?;
-    }
-    if !existing.iter().any(|c| c == "revoked") {
-        conn.execute(
-            "ALTER TABLE messages ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0",
-            [],
-        )?;
-    }
-    if !existing.iter().any(|c| c == "status") {
-        conn.execute("ALTER TABLE messages ADD COLUMN status TEXT", [])?;
+/// Adds the columns of `columns` the table does not have yet.
+fn add_missing_columns(conn: &Connection, existing: &[String], columns: &[(&str, &str)]) -> Result<()> {
+    for (column, decl) in columns {
+        if !existing.iter().any(|c| c == column) {
+            conn.execute(&format!("ALTER TABLE messages ADD COLUMN {column} {decl}"), [])?;
+        }
     }
     Ok(())
+}
+
+/// A table's column names, for the probes SQLite cannot express as DDL.
+fn table_columns(conn: &Connection, table: &str) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
 fn migrate_v2_legacy_data(conn: &Connection) -> Result<()> {
@@ -752,8 +730,7 @@ fn migrate_v9_stickers(conn: &Connection) -> Result<()> {
 }
 
 fn migrate_v10_message_order(conn: &Connection) -> Result<()> {
-    let columns = conn.prepare("PRAGMA table_info(messages)")?.query_map([], |row| row.get::<_, String>(1))?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let columns = table_columns(conn, "messages")?;
     if !columns.iter().any(|column| column == "sort_order") {
         conn.execute_batch("ALTER TABLE messages ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0 CHECK(sort_order >= 0);")?;
     }
@@ -774,8 +751,7 @@ fn migrate_v10_message_order(conn: &Connection) -> Result<()> {
 /// Soft delete: the row stays, flagged on this device only. A column added
 /// after v10, so it must probe rather than assume the adoption step ran.
 fn migrate_v11_soft_delete(conn: &Connection) -> Result<()> {
-    let columns = conn.prepare("PRAGMA table_info(messages)")?.query_map([], |row| row.get::<_, String>(1))?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let columns = table_columns(conn, "messages")?;
     if !columns.iter().any(|column| column == "deleted") {
         conn.execute_batch("ALTER TABLE messages ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0;")?;
     }
