@@ -84,63 +84,13 @@ pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &s
     let base = account_base(app, account);
     remove_stale_sessions(&base, &current_sessions(&base));
 
-    let (service, mut events) = WhatsAppService::start(config).await.map_err(|e| {
+    let (service, events) = WhatsAppService::start(config).await.map_err(|e| {
         log::error!("failed to start account {account}: {e:#}");
         format!("failed to start service: {e}")
     })?;
     let service = Arc::new(service);
-
-    // `events` was registered before the connection attempt, so the pairing code
-    // cannot slip through the gap between starting and subscribing. The service
-    // is held weakly: once the active slot drops it, a swap lets the loop, and
-    // with it the old session files, go.
-    let emitter = app.clone();
-    let service_for_events = Arc::downgrade(&service);
-    let account_id = account.to_string();
-    tauri::async_runtime::spawn(async move {
-        loop {
-            match events.recv().await {
-                Ok(ServiceEvent::LoggedOut) => {
-                    log::warn!("account {account_id} was logged out; its session is dropped");
-                    if let Some(service) = service_for_events.upgrade() {
-                        forget_session(&emitter, &account_id, &service);
-                    }
-                    emit_service_event(&emitter, &ServiceEvent::LoggedOut);
-                    // Holding the service keeps its session database open.
-                    break;
-                }
-                Ok(event) => {
-                    if service_for_events.upgrade().is_none() {
-                        break;
-                    }
-                    if matches!(
-                        event,
-                        ServiceEvent::Message { .. } | ServiceEvent::MessageHint { .. }
-                    ) {
-                        emitter.state::<AppState>().once_wake.notify_one();
-                    }
-                    emit_service_event(&emitter, &event);
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(dropped)) => {
-                    // A slow consumer missed some events, and that can include
-                    // `Connected`: an offline-sync burst is larger than any
-                    // buffer. Re-announce the state so the UI catches up. The
-                    // messages themselves are in the store to be refetched.
-                    log::warn!("UI fell behind, dropped {dropped} service event(s)");
-                    let Some(service) = service_for_events.upgrade() else { break };
-                    emit_service_event(&emitter, &resync_event(&service));
-                }
-                Err(_) => break,
-            }
-        }
-    });
-
-    // A media folder outside the app data directory still has to be readable by
-    // the UI, so the asset scope is widened to whatever was configured.
-    if let Some(dir) = service.media_dir() {
-        let _ = std::fs::create_dir_all(&dir);
-        let _ = app.asset_protocol_scope().allow_directory(&dir, true);
-    }
+    spawn_main_events(app, &service, account, events);
+    widen_media_scope(app, &service);
 
     *state.service.lock().unwrap() = Some(service);
 
@@ -357,60 +307,78 @@ async fn observe_companion(state: &AppState) -> CompanionView {
 }
 
 
-fn emit_service_event(app: &AppHandle, event: &ServiceEvent) {
-    crate::plugins::publish(&app.state::<AppState>().plugins, event);
-    if let Err(error) = app.emit(SERVICE_EVENT, event) {
-        log::error!("could not emit service event to UI: {error}");
-    }
-}
-
-/// Whether the account already linked the optional Android instance.
-pub(crate) fn once_paired(state: &AppState, account: &str) -> bool {
-    state
-        .accounts
-        .lock()
-        .unwrap()
-        .accounts
-        .iter()
-        .find(|a| a.id == account)
-        .is_some_and(|a| a.once_paired)
-}
-
-fn set_once_paired(app: &AppHandle, account: &str, paired: bool) {
-    let state = app.state::<AppState>();
-    let mut file = state.accounts.lock().unwrap();
-    if let Some(entry) = file.accounts.iter_mut().find(|a| a.id == account) {
-        entry.once_paired = paired;
-        save_accounts(app, &file);
-    }
-}
-
-/// Starts the optional Android instance: a second link used only to fetch
-/// one-time media into the shared store. No-op when it is already running.
-pub(crate) async fn start_once(app: &AppHandle, state: &AppState) -> Result<(), String> {
-    if state.once_service.lock().unwrap().is_some() {
-        return Ok(());
-    }
-    let Some(account) = active_account(state) else {
-        return Err("no account yet".to_string());
-    };
-    let settings = state.settings.lock().unwrap().clone();
-    crate::account_store::migrate_history(app, &settings, &account);
-    let config = once_config_for(app, &settings, &account)?;
-    remove_stale_sessions(&account_base(app, &account), &current_sessions(&account_base(app, &account)));
-
-    let (service, mut events) = WhatsAppService::start(config).await.map_err(|e| {
-        log::error!("failed to start the Android instance: {e:#}");
-        format!("failed to start the Android instance: {e}")
-    })?;
-    *state.once_qr.lock().unwrap() = service.current_qr();
-    let service = Arc::new(service);
-    *state.once_service.lock().unwrap() = Some(service.clone());
-
-    // Its own event stream drives the pairing sheet and forwards the store
-    // changes the main UI must reload for. Held weakly so a stop drops it.
+/// Forwards the main session's events to the UI. `events` was registered
+/// before the connection attempt, so the pairing code cannot slip through the
+/// gap between starting and subscribing. The service is held weakly: once the
+/// active slot drops it, a swap lets the loop, and with it the old session
+/// files, go.
+fn spawn_main_events(
+    app: &AppHandle,
+    service: &Arc<WhatsAppService>,
+    account: &str,
+    mut events: tokio::sync::broadcast::Receiver<ServiceEvent>,
+) {
     let emitter = app.clone();
-    let service_for_events = Arc::downgrade(&service);
+    let service_for_events = Arc::downgrade(service);
+    let account_id = account.to_string();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            match events.recv().await {
+                Ok(ServiceEvent::LoggedOut) => {
+                    log::warn!("account {account_id} was logged out; its session is dropped");
+                    if let Some(service) = service_for_events.upgrade() {
+                        forget_session(&emitter, &account_id, &service);
+                    }
+                    emit_service_event(&emitter, &ServiceEvent::LoggedOut);
+                    // Holding the service keeps its session database open.
+                    break;
+                }
+                Ok(event) => {
+                    if service_for_events.upgrade().is_none() {
+                        break;
+                    }
+                    if matches!(
+                        event,
+                        ServiceEvent::Message { .. } | ServiceEvent::MessageHint { .. }
+                    ) {
+                        emitter.state::<AppState>().once_wake.notify_one();
+                    }
+                    emit_service_event(&emitter, &event);
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(dropped)) => {
+                    // A slow consumer missed some events, and that can include
+                    // `Connected`: an offline-sync burst is larger than any
+                    // buffer. Re-announce the state so the UI catches up. The
+                    // messages themselves are in the store to be refetched.
+                    log::warn!("UI fell behind, dropped {dropped} service event(s)");
+                    let Some(service) = service_for_events.upgrade() else { break };
+                    emit_service_event(&emitter, &resync_event(&service));
+                }
+                Err(_) => break,
+            }
+        }
+    });
+}
+
+/// The media folder may sit outside the app data directory, so the asset
+/// scope is widened to whatever was configured.
+fn widen_media_scope(app: &AppHandle, service: &WhatsAppService) {
+    if let Some(dir) = service.media_dir() {
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = app.asset_protocol_scope().allow_directory(&dir, true);
+    }
+}
+
+/// Its own event stream drives the pairing sheet and forwards the store
+/// changes the main UI must reload for. Held weakly so a stop drops it.
+fn spawn_instance_events(
+    app: &AppHandle,
+    service: &Arc<WhatsAppService>,
+    account: &str,
+    mut events: tokio::sync::broadcast::Receiver<ServiceEvent>,
+) {
+    let emitter = app.clone();
+    let service_for_events = Arc::downgrade(service);
     let account_id = account.to_string();
     tauri::async_runtime::spawn(async move {
         loop {
@@ -465,6 +433,58 @@ pub(crate) async fn start_once(app: &AppHandle, state: &AppState) -> Result<(), 
         let state = emitter.state::<AppState>();
         state.once_connected.store(false, Ordering::SeqCst);
     });
+}
+
+fn emit_service_event(app: &AppHandle, event: &ServiceEvent) {
+    crate::plugins::publish(&app.state::<AppState>().plugins, event);
+    if let Err(error) = app.emit(SERVICE_EVENT, event) {
+        log::error!("could not emit service event to UI: {error}");
+    }
+}
+
+/// Whether the account already linked the optional Android instance.
+pub(crate) fn once_paired(state: &AppState, account: &str) -> bool {
+    state
+        .accounts
+        .lock()
+        .unwrap()
+        .accounts
+        .iter()
+        .find(|a| a.id == account)
+        .is_some_and(|a| a.once_paired)
+}
+
+fn set_once_paired(app: &AppHandle, account: &str, paired: bool) {
+    let state = app.state::<AppState>();
+    let mut file = state.accounts.lock().unwrap();
+    if let Some(entry) = file.accounts.iter_mut().find(|a| a.id == account) {
+        entry.once_paired = paired;
+        save_accounts(app, &file);
+    }
+}
+
+/// Starts the optional Android instance: a second link used only to fetch
+/// one-time media into the shared store. No-op when it is already running.
+pub(crate) async fn start_once(app: &AppHandle, state: &AppState) -> Result<(), String> {
+    if state.once_service.lock().unwrap().is_some() {
+        return Ok(());
+    }
+    let Some(account) = active_account(state) else {
+        return Err("no account yet".to_string());
+    };
+    let settings = state.settings.lock().unwrap().clone();
+    crate::account_store::migrate_history(app, &settings, &account);
+    let config = once_config_for(app, &settings, &account)?;
+    remove_stale_sessions(&account_base(app, &account), &current_sessions(&account_base(app, &account)));
+
+    let (service, events) = WhatsAppService::start(config).await.map_err(|e| {
+        log::error!("failed to start the Android instance: {e:#}");
+        format!("failed to start the Android instance: {e}")
+    })?;
+    *state.once_qr.lock().unwrap() = service.current_qr();
+    let service = Arc::new(service);
+    *state.once_service.lock().unwrap() = Some(service.clone());
+    spawn_instance_events(app, &service, &account, events);
     Ok(())
 }
 
