@@ -1,6 +1,7 @@
 //! The protocol event handler: live messages and the small state events.
 
 use super::*;
+use whatsapp_rust::wacore::types::events as wa_events;
 use whatsapp_rust::wacore::types::events::MessageBatch;
 
 /// What the protocol event handler shares with the service, cloned per event.
@@ -28,246 +29,36 @@ pub(super) struct Inbound {
 
 impl Inbound {
     pub(super) async fn handle(&self, event: &Event) {
-        let Self { store, events, connected, client_for_events, media_dir, group_cache, groups_cache, sync_progress, .. } =
-            self;
         match event {
             Event::Messages(batch) => self.on_messages(batch).await,
-            Event::Disconnected(_) => {
-                log::warn!("disconnected");
-                connected.store(false, Ordering::SeqCst);
-                let _ = events.send(ServiceEvent::Disconnected);
-            }
-            Event::LoggedOut(reason) => {
-                log::warn!("logged out: {reason:?}");
-                connected.store(false, Ordering::SeqCst);
-                let _ = events.send(ServiceEvent::LoggedOut);
-            }
+            Event::Disconnected(_) => self.on_disconnected(),
+            Event::LoggedOut(reason) => self.on_logged_out(reason),
             Event::Receipt(receipt) => self.on_receipt(receipt).await,
             Event::ServerAck(ack) => self.on_server_ack(ack).await,
-            // The name the user saved for a contact comes from
-            // the address book and outranks the push name the
-            // contact set for themselves.
-            Event::ContactUpdate(update) => {
-                let name = update
-                    .action
-                    .full_name
-                    .as_deref()
-                    .or(update.action.first_name.as_deref());
-                if let Some(name) = name.filter(|n| !n.trim().is_empty()) {
-                    store.set_saved_name(&update.jid.to_string(), name).await.logged();
-                }
-            }
-            Event::ContactRemoved(removed) => {
-                store.clear_saved_name(&removed.jid.to_string()).await.logged();
-            }
-            // Progress for the initial catch-up, so the UI can
-            // show how much of the backlog is still arriving.
-            Event::OfflineSyncPreview(preview) => {
-                let pending = preview.messages.max(0) as usize;
-                log::info!("offline sync: {pending} message(s) pending");
-                {
-                    let mut p = sync_progress.lock().unwrap();
-                    p.pending = pending;
-                    p.applied = 0;
-                    p.offline_done = false;
-                    p.last_emit = None;
-                    p.last_progress = Some(std::time::Instant::now());
-                }
-                if pending > 0 {
-                    let _ = events
-                        .send(ServiceEvent::Syncing { pending, applied: 0 });
-                }
-            }
-            Event::OfflineSyncCompleted(_) => {
-                log::info!("offline sync complete");
-                {
-                    let mut p = sync_progress.lock().unwrap();
-                    p.offline_done = true;
-                    p.last_progress = Some(std::time::Instant::now());
-                }
-                let _ = events.send(ServiceEvent::Synced);
-            }
-            // The drain ended without its end marker, so the rest
-            // redelivers on the next connection. Treat it as an
-            // end for the readiness gate rather than waiting for a
-            // completion that will not come this connection.
-            Event::OfflineSyncInterrupted(interrupted) => {
-                let delivered = interrupted.delivered.max(0) as usize;
-                log::warn!(
-                    "offline sync interrupted after {delivered} message(s); the rest will redeliver"
-                );
-                {
-                    let mut p = sync_progress.lock().unwrap();
-                    p.offline_done = true;
-                    p.last_progress = Some(std::time::Instant::now());
-                }
-                let _ = events.send(ServiceEvent::Synced);
-            }
-            // Pairing's recent window and "load older" answers
-            // arrive here, never as `Messages`.
+            Event::ContactUpdate(update) => self.on_contact_update(update).await,
+            Event::ContactRemoved(removed) => self.on_contact_removed(removed).await,
+            Event::OfflineSyncPreview(preview) => self.on_sync_preview(preview),
+            Event::OfflineSyncCompleted(_) => self.on_sync_completed(),
+            Event::OfflineSyncInterrupted(interrupted) => self.on_sync_interrupted(interrupted),
             Event::HistorySync(sync) => self.on_history_sync(sync).await,
-            Event::ChatPresence(update) => {
-                let state = match (update.state, update.media) {
-                    (ChatPresence::Composing, ChatPresenceMedia::Audio) => "recording",
-                    (ChatPresence::Composing, _) => "typing",
-                    _ => "paused",
-                };
-                let _ = events.send(ServiceEvent::Typing {
-                    chat: canonical_chat(
-                        client_for_events.get().map(|c| c.as_ref()),
-                        store,
-                        &update.source.chat,
-                        &update.source.sender,
-                        None,
-                    )
-                    .await,
-                    sender: update.source.sender.to_non_ad().to_string(),
-                    state: state.to_string(),
-                });
-            }
-            Event::Presence(presence) => {
-                // A chat is keyed by phone number; presence may name the LID.
-                let mut jid = presence.from.to_non_ad();
-                if jid.is_lid() {
-                    if let Some(client) = client_for_events.get() {
-                        if let Some(Some(entry)) = client.get_lid_pn_entry(&jid).await.observed() {
-                            jid = Jid::new(&*entry.phone_number, whatsapp_rust::wacore_binary::Server::Pn);
-                        }
-                    }
-                }
-                let _ = events.send(ServiceEvent::Presence {
-                    jid: jid.to_string(),
-                    online: !presence.unavailable,
-                    last_seen: presence.last_seen.map(|t| t.timestamp()),
-                });
-            }
+            Event::ChatPresence(update) => self.on_chat_presence(update).await,
+            Event::Presence(presence) => self.on_presence(presence).await,
             Event::IdentityChange(change) => self.on_identity_change(change).await,
             Event::DeviceListUpdate(update) => self.on_device_change(update).await,
-            Event::PictureUpdate(update) => {
-                let jid = update.jid.to_non_ad().to_string();
-                if let Some(dir) = media_dir.as_deref() {
-                    let path = avatar_path(dir, &jid);
-                    remove_cached_file(path.with_extension("none"));
-                    remove_cached_file(path);
-                    remove_cached_file(avatar_full_path(dir, &jid));
-                }
-                let _ = events.send(ServiceEvent::AvatarChanged { jid });
-            }
-            // Linked devices never receive view-once media: the
-            // server sends a stub instead, kept as a placeholder
-            // that points at the phone.
+            Event::PictureUpdate(update) => self.on_picture_update(update),
             Event::UndecryptableMessage(stub)
                 if stub.unavailable_type
                     == whatsapp_rust::wacore::types::events::UnavailableType::ViewOnce =>
             {
-                let info = &stub.info;
-                let chat = canonical_chat(
-                    client_for_events.get().map(|c| c.as_ref()),
-                    store,
-                    &info.source.chat,
-                    &info.source.sender,
-                    info.source.sender_alt.as_ref(),
-                )
-                .await;
-                let id = info.id.to_string();
-                if store.message(&chat, &id).await.observed().is_some() {
-                    return;
-                }
-                log::debug!("view-once in {chat}: arrived as a bare stub (no media)");
-                let from_me = info.source.is_from_me;
-                let message = StoredMessage {
-                    header: MessageHeader {
-                        chat: chat.clone(),
-                        id: id.clone(),
-                        sender: info.source.sender.to_string(),
-                        timestamp: info.timestamp.timestamp(),
-                        from_me,
-                    },
-                    media: Media {
-                        kind: Some("view_once".into()),
-                        once_kind: info.media_type.as_ref().map(once_kind_of),
-                        ..Default::default()
-                    },
-                    local: LocalState { read: from_me, ..Default::default() },
-                    ..Default::default()
-                };
-                store.set_view_once(&chat, &id, from_me).await.logged();
-                if store.insert_message(&message).await.observed().is_some() {
-                    let _ = events.send(ServiceEvent::hint(&message, true));
-                }
+                self.on_view_once_stub(stub).await
             }
-            // Settings, admins, members or the name changed: what we
-            // cached about the group (who may send, who is admin) is stale.
-            Event::GroupUpdate(update) => {
-                use whatsapp_rust::wacore::stanza::groups::GroupNotificationAction;
-                let chat = update.group_jid.to_non_ad().to_string();
-                log::debug!("group {chat} changed: {:?}", update.action);
-                group_cache.lock().unwrap().remove(&chat);
-                *groups_cache.lock().unwrap() = None;
-                if let GroupNotificationAction::Subject { subject, .. } = update.action.as_ref() {
-                    store.set_name(&chat, subject).await.logged();
-                }
-                self.on_group_update(update).await;
-                let _ = events.send(ServiceEvent::GroupChanged { chat });
-            }
+            Event::GroupUpdate(update) => self.on_group_changed(update).await,
             Event::MissedCall(call) => self.on_missed_call(call).await,
-            Event::UndecryptableMessage(stub) => {
-                log::warn!(
-                    "could not decrypt message {} in {} from {} ({:?})",
-                    stub.info.id,
-                    stub.info.source.chat,
-                    stub.info.source.sender,
-                    stub.unavailable_type,
-                );
-            }
-            // Chat pins are account state; mirror them so the
-            // list matches the phone.
-            Event::PinUpdate(pin) => {
-                let pinned = pin.action.pinned.unwrap_or(false);
-                let jid = resolve_chat(client_for_events.get().map(|c| c.as_ref()), store, &pin.jid).await;
-                store.set_pinned(&jid, pinned).await.logged();
-                let _ = events.send(ServiceEvent::ChatStateChanged { chat: jid });
-            }
-            Event::ArchiveUpdate(update) => {
-                let archived = update.action.archived.unwrap_or(false);
-                let jid = resolve_chat(client_for_events.get().map(|c| c.as_ref()), store, &update.jid).await;
-                log::debug!(
-                    "archive update for {jid}: archived={archived} full_sync={}",
-                    update.from_full_sync
-                );
-                store.set_archived(&jid, archived).await.logged();
-                let _ = events.send(ServiceEvent::ChatStateChanged { chat: jid });
-            }
-            Event::MuteUpdate(update) => {
-                let jid = resolve_chat(client_for_events.get().map(|c| c.as_ref()), store, &update.jid).await;
-                let until = match (update.action.muted.unwrap_or(false), update.action.mute_end_timestamp) {
-                    (false, _) => 0,
-                    (true, Some(ms)) if ms > 0 => ms / 1000,
-                    (true, _) => -1,
-                };
-                store.set_muted_until(&jid, until).await.logged();
-                let _ = events.send(ServiceEvent::ChatStateChanged { chat: jid });
-            }
-            Event::MarkChatAsReadUpdate(update) => {
-                let jid = resolve_chat(client_for_events.get().map(|c| c.as_ref()), store, &update.jid).await;
-                let read = update.action.read.unwrap_or(true);
-                store.set_marked_unread(&jid, !read).await.logged();
-                if read {
-                    // Another device read the chat; clear the messages here too,
-                    // or the unread badge stays though nothing is unseen.
-                    let through = update
-                        .action
-                        .message_range
-                        .as_option()
-                        .and_then(|range| range.last_message_timestamp);
-                    let changed = match through {
-                        Some(ts) => store.mark_read_through(&jid, ts).await.observed().unwrap_or(0),
-                        None => store.mark_read(&jid).await.observed().unwrap_or(0),
-                    };
-                    log::debug!("chat read on another device: {jid} ({changed} message(s))");
-                }
-                let _ = events.send(ServiceEvent::ChatStateChanged { chat: jid });
-            }
+            Event::UndecryptableMessage(stub) => self.on_undecryptable(stub),
+            Event::PinUpdate(pin) => self.on_pin_update(pin).await,
+            Event::ArchiveUpdate(update) => self.on_archive_update(update).await,
+            Event::MuteUpdate(update) => self.on_mute_update(update).await,
+            Event::MarkChatAsReadUpdate(update) => self.on_mark_read_update(update).await,
             Event::FavoriteStickerUpdate(update) => {
                 self.on_sticker_favorite(
                     &update.filehash,
@@ -282,6 +73,241 @@ impl Inbound {
             }
             _ => {}
         }
+    }
+
+    fn on_disconnected(&self) {
+        log::warn!("disconnected");
+        self.connected.store(false, Ordering::SeqCst);
+        let _ = self.events.send(ServiceEvent::Disconnected);
+    }
+
+    fn on_logged_out(&self, reason: &wa_events::LoggedOut) {
+        log::warn!("logged out: {reason:?}");
+        self.connected.store(false, Ordering::SeqCst);
+        let _ = self.events.send(ServiceEvent::LoggedOut);
+    }
+
+    /// The name the user saved for a contact comes from the address book and
+    /// outranks the push name the contact set for themselves.
+    async fn on_contact_update(&self, update: &wa_events::ContactUpdate) {
+        let name = update
+            .action
+            .full_name
+            .as_deref()
+            .or(update.action.first_name.as_deref());
+        if let Some(name) = name.filter(|n| !n.trim().is_empty()) {
+            self.store.set_saved_name(&update.jid.to_string(), name).await.logged();
+        }
+    }
+
+    async fn on_contact_removed(&self, removed: &wa_events::ContactRemoved) {
+        self.store.clear_saved_name(&removed.jid.to_string()).await.logged();
+    }
+
+    /// Progress for the initial catch-up, so the UI can show how much of the
+    /// backlog is still arriving.
+    fn on_sync_preview(&self, preview: &wa_events::OfflineSyncPreview) {
+        let pending = preview.messages.max(0) as usize;
+        log::info!("offline sync: {pending} message(s) pending");
+        {
+            let mut p = self.sync_progress.lock().unwrap();
+            p.pending = pending;
+            p.applied = 0;
+            p.offline_done = false;
+            p.last_emit = None;
+            p.last_progress = Some(std::time::Instant::now());
+        }
+        if pending > 0 {
+            let _ = self.events.send(ServiceEvent::Syncing { pending, applied: 0 });
+        }
+    }
+
+    fn on_sync_completed(&self) {
+        log::info!("offline sync complete");
+        {
+            let mut p = self.sync_progress.lock().unwrap();
+            p.offline_done = true;
+            p.last_progress = Some(std::time::Instant::now());
+        }
+        let _ = self.events.send(ServiceEvent::Synced);
+    }
+
+    /// The drain ended without its end marker, so the rest redelivers on the
+    /// next connection. Treat it as an end for the readiness gate rather than
+    /// waiting for a completion that will not come this connection.
+    fn on_sync_interrupted(&self, interrupted: &wa_events::OfflineSyncInterrupted) {
+        let delivered = interrupted.delivered.max(0) as usize;
+        log::warn!("offline sync interrupted after {delivered} message(s); the rest will redeliver");
+        {
+            let mut p = self.sync_progress.lock().unwrap();
+            p.offline_done = true;
+            p.last_progress = Some(std::time::Instant::now());
+        }
+        let _ = self.events.send(ServiceEvent::Synced);
+    }
+
+    async fn on_chat_presence(&self, update: &wa_events::ChatPresenceUpdate) {
+        let state = match (update.state, update.media) {
+            (ChatPresence::Composing, ChatPresenceMedia::Audio) => "recording",
+            (ChatPresence::Composing, _) => "typing",
+            _ => "paused",
+        };
+        let _ = self.events.send(ServiceEvent::Typing {
+            chat: canonical_chat(
+                self.client_for_events.get().map(|c| c.as_ref()),
+                &self.store,
+                &update.source.chat,
+                &update.source.sender,
+                None,
+            )
+            .await,
+            sender: update.source.sender.to_non_ad().to_string(),
+            state: state.to_string(),
+        });
+    }
+
+    async fn on_presence(&self, presence: &wa_events::PresenceUpdate) {
+        // A chat is keyed by phone number; presence may name the LID.
+        let mut jid = presence.from.to_non_ad();
+        if jid.is_lid() {
+            if let Some(client) = self.client_for_events.get() {
+                if let Some(Some(entry)) = client.get_lid_pn_entry(&jid).await.observed() {
+                    jid = Jid::new(&*entry.phone_number, whatsapp_rust::wacore_binary::Server::Pn);
+                }
+            }
+        }
+        let _ = self.events.send(ServiceEvent::Presence {
+            jid: jid.to_string(),
+            online: !presence.unavailable,
+            last_seen: presence.last_seen.map(|t| t.timestamp()),
+        });
+    }
+
+    fn on_picture_update(&self, update: &wa_events::PictureUpdate) {
+        let jid = update.jid.to_non_ad().to_string();
+        if let Some(dir) = self.media_dir.as_deref() {
+            let path = avatar_path(dir, &jid);
+            remove_cached_file(path.with_extension("none"));
+            remove_cached_file(path);
+            remove_cached_file(avatar_full_path(dir, &jid));
+        }
+        let _ = self.events.send(ServiceEvent::AvatarChanged { jid });
+    }
+
+    /// Linked devices never receive view-once media: the server sends a stub
+    /// instead, kept as a placeholder that points at the phone.
+    async fn on_view_once_stub(&self, stub: &wa_events::UndecryptableMessage) {
+        let info = &stub.info;
+        let chat = canonical_chat(
+            self.client_for_events.get().map(|c| c.as_ref()),
+            &self.store,
+            &info.source.chat,
+            &info.source.sender,
+            info.source.sender_alt.as_ref(),
+        )
+        .await;
+        let id = info.id.to_string();
+        if self.store.message(&chat, &id).await.observed().is_some() {
+            return;
+        }
+        log::debug!("view-once in {chat}: arrived as a bare stub (no media)");
+        let from_me = info.source.is_from_me;
+        let message = StoredMessage {
+            header: MessageHeader {
+                chat: chat.clone(),
+                id: id.clone(),
+                sender: info.source.sender.to_string(),
+                timestamp: info.timestamp.timestamp(),
+                from_me,
+            },
+            media: Media {
+                kind: Some("view_once".into()),
+                once_kind: info.media_type.as_ref().map(once_kind_of),
+                ..Default::default()
+            },
+            local: LocalState { read: from_me, ..Default::default() },
+            ..Default::default()
+        };
+        self.store.set_view_once(&chat, &id, from_me).await.logged();
+        if self.store.insert_message(&message).await.observed().is_some() {
+            let _ = self.events.send(ServiceEvent::hint(&message, true));
+        }
+    }
+
+    /// Settings, admins, members or the name changed: what we cached about the
+    /// group (who may send, who is admin) is stale.
+    async fn on_group_changed(&self, update: &wa_events::GroupUpdate) {
+        use whatsapp_rust::wacore::stanza::groups::GroupNotificationAction;
+        let chat = update.group_jid.to_non_ad().to_string();
+        log::debug!("group {chat} changed: {:?}", update.action);
+        self.group_cache.lock().unwrap().remove(&chat);
+        *self.groups_cache.lock().unwrap() = None;
+        if let GroupNotificationAction::Subject { subject, .. } = update.action.as_ref() {
+            self.store.set_name(&chat, subject).await.logged();
+        }
+        self.on_group_update(update).await;
+        let _ = self.events.send(ServiceEvent::GroupChanged { chat });
+    }
+
+    fn on_undecryptable(&self, stub: &wa_events::UndecryptableMessage) {
+        log::warn!(
+            "could not decrypt message {} in {} from {} ({:?})",
+            stub.info.id,
+            stub.info.source.chat,
+            stub.info.source.sender,
+            stub.unavailable_type,
+        );
+    }
+
+    /// Chat pins are account state; mirror them so the list matches the phone.
+    async fn on_pin_update(&self, pin: &wa_events::PinUpdate) {
+        let pinned = pin.action.pinned.unwrap_or(false);
+        let jid = resolve_chat(self.client_for_events.get().map(|c| c.as_ref()), &self.store, &pin.jid).await;
+        self.store.set_pinned(&jid, pinned).await.logged();
+        let _ = self.events.send(ServiceEvent::ChatStateChanged { chat: jid });
+    }
+
+    async fn on_archive_update(&self, update: &wa_events::ArchiveUpdate) {
+        let archived = update.action.archived.unwrap_or(false);
+        let jid = resolve_chat(self.client_for_events.get().map(|c| c.as_ref()), &self.store, &update.jid).await;
+        log::debug!(
+            "archive update for {jid}: archived={archived} full_sync={}",
+            update.from_full_sync
+        );
+        self.store.set_archived(&jid, archived).await.logged();
+        let _ = self.events.send(ServiceEvent::ChatStateChanged { chat: jid });
+    }
+
+    async fn on_mute_update(&self, update: &wa_events::MuteUpdate) {
+        let jid = resolve_chat(self.client_for_events.get().map(|c| c.as_ref()), &self.store, &update.jid).await;
+        let until = match (update.action.muted.unwrap_or(false), update.action.mute_end_timestamp) {
+            (false, _) => 0,
+            (true, Some(ms)) if ms > 0 => ms / 1000,
+            (true, _) => -1,
+        };
+        self.store.set_muted_until(&jid, until).await.logged();
+        let _ = self.events.send(ServiceEvent::ChatStateChanged { chat: jid });
+    }
+
+    async fn on_mark_read_update(&self, update: &wa_events::MarkChatAsReadUpdate) {
+        let jid = resolve_chat(self.client_for_events.get().map(|c| c.as_ref()), &self.store, &update.jid).await;
+        let read = update.action.read.unwrap_or(true);
+        self.store.set_marked_unread(&jid, !read).await.logged();
+        if read {
+            // Another device read the chat; clear the messages here too,
+            // or the unread badge stays though nothing is unseen.
+            let through = update
+                .action
+                .message_range
+                .as_option()
+                .and_then(|range| range.last_message_timestamp);
+            let changed = match through {
+                Some(ts) => self.store.mark_read_through(&jid, ts).await.observed().unwrap_or(0),
+                None => self.store.mark_read(&jid).await.observed().unwrap_or(0),
+            };
+            log::debug!("chat read on another device: {jid} ({changed} message(s))");
+        }
+        let _ = self.events.send(ServiceEvent::ChatStateChanged { chat: jid });
     }
 
     async fn on_messages(&self, batch: &MessageBatch) {
