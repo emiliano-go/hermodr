@@ -2,6 +2,63 @@
 
 use super::*;
 
+/// The message upsert: a repeat of a stored one refreshes its content but
+/// never moves local state backwards (see `insert_message`).
+const INSERT_MESSAGE_SQL: &str = "INSERT INTO messages
+     (chat, id, sender, timestamp, from_me, text,
+      media_kind, media_path, reply_to_id, reply_to_text, reply_to_sender,
+      read, revoked, mentioned, status,
+      preview_url, preview_title, preview_desc, preview_thumb,
+      reply_to_kind, reply_to_thumb, media_thumb, media_ref, reply_to_chat,
+      preview_site, preview_color, media_duration, system_kind, system_params,
+      reply_to_view_once, reply_to_recoverable, reply_to_path, reply_to_locator,
+      media_once_kind, sort_order)
+ VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+         ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?29, ?30,
+         ?31, ?32, ?33, ?34, ?35, ?36)
+ ON CONFLICT(chat, id) DO UPDATE SET
+     sort_order = CASE WHEN excluded.sort_order > 0 THEN MIN(messages.sort_order, excluded.sort_order) ELSE messages.sort_order END,
+     sender = excluded.sender,
+     timestamp = excluded.timestamp,
+     from_me = excluded.from_me,
+     text = CASE WHEN EXISTS (SELECT 1 FROM edited e
+                              WHERE e.chat = messages.chat AND e.id = messages.id)
+            THEN text ELSE excluded.text END,
+      media_kind = CASE WHEN excluded.media_kind = 'view_once' AND media_path IS NOT NULL
+                        THEN media_kind ELSE excluded.media_kind END,
+      media_path = COALESCE(media_path, excluded.media_path),
+      reply_to_id = COALESCE(excluded.reply_to_id, reply_to_id),
+      reply_to_text = CASE WHEN excluded.reply_to_text IS NULL OR excluded.reply_to_text = ''
+                           THEN reply_to_text ELSE excluded.reply_to_text END,
+      reply_to_sender = COALESCE(excluded.reply_to_sender, reply_to_sender),
+     read = MAX(read, excluded.read),
+     revoked = excluded.revoked,
+     mentioned = MAX(mentioned, excluded.mentioned),
+     status = CASE WHEN ?28 >(CASE status WHEN 'pending' THEN 0 WHEN 'sent' THEN 1
+                               WHEN 'delivered' THEN 2 WHEN 'read' THEN 3 ELSE -1 END)
+              THEN excluded.status ELSE status END,
+     preview_url = excluded.preview_url,
+     preview_title = excluded.preview_title,
+     preview_desc = excluded.preview_desc,
+     preview_thumb = excluded.preview_thumb,
+      reply_to_kind = CASE WHEN excluded.reply_to_kind IS NULL OR excluded.reply_to_kind = ''
+                            THEN reply_to_kind ELSE excluded.reply_to_kind END,
+      reply_to_thumb = COALESCE(excluded.reply_to_thumb, reply_to_thumb),
+     media_thumb = COALESCE(media_thumb, excluded.media_thumb),
+     media_ref = COALESCE(excluded.media_ref, media_ref),
+     media_duration = COALESCE(excluded.media_duration, media_duration),
+      reply_to_chat = COALESCE(excluded.reply_to_chat, reply_to_chat),
+     preview_site = excluded.preview_site,
+     preview_color = excluded.preview_color,
+      system_kind = excluded.system_kind,
+      system_params = excluded.system_params,
+      reply_to_view_once = MAX(reply_to_view_once, excluded.reply_to_view_once),
+      reply_to_recoverable = MAX(reply_to_recoverable, excluded.reply_to_recoverable),
+      reply_to_path = COALESCE(reply_to_path, excluded.reply_to_path),
+      reply_to_locator = COALESCE(excluded.reply_to_locator, reply_to_locator),
+      media_once_kind = COALESCE(excluded.media_once_kind, media_once_kind)
+  WHERE revoked = 0";
+
 impl MessageStore {
     /// Records a message. A repeat of a stored one (a replayed or duplicate
     /// event) refreshes its content but never moves local state backwards:
@@ -23,62 +80,11 @@ impl MessageStore {
         Ok(())
     }
 
+    /// The upsert behind every insert; see `insert_message` for the
+    /// state rules it enforces.
     pub(super) fn insert_row(conn: &Connection, message: &StoredMessage) -> Result<()> {
         conn.execute(
-            "INSERT INTO messages
-                 (chat, id, sender, timestamp, from_me, text,
-                  media_kind, media_path, reply_to_id, reply_to_text, reply_to_sender,
-                  read, revoked, mentioned, status,
-                  preview_url, preview_title, preview_desc, preview_thumb,
-                  reply_to_kind, reply_to_thumb, media_thumb, media_ref, reply_to_chat,
-                  preview_site, preview_color, media_duration, system_kind, system_params,
-                  reply_to_view_once, reply_to_recoverable, reply_to_path, reply_to_locator,
-                  media_once_kind, sort_order)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                     ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?29, ?30,
-                     ?31, ?32, ?33, ?34, ?35, ?36)
-             ON CONFLICT(chat, id) DO UPDATE SET
-                 sort_order = CASE WHEN excluded.sort_order > 0 THEN MIN(messages.sort_order, excluded.sort_order) ELSE messages.sort_order END,
-                 sender = excluded.sender,
-                 timestamp = excluded.timestamp,
-                 from_me = excluded.from_me,
-                 text = CASE WHEN EXISTS (SELECT 1 FROM edited e
-                                          WHERE e.chat = messages.chat AND e.id = messages.id)
-                        THEN text ELSE excluded.text END,
-                  media_kind = CASE WHEN excluded.media_kind = 'view_once' AND media_path IS NOT NULL
-                                    THEN media_kind ELSE excluded.media_kind END,
-                  media_path = COALESCE(media_path, excluded.media_path),
-                  reply_to_id = COALESCE(excluded.reply_to_id, reply_to_id),
-                  reply_to_text = CASE WHEN excluded.reply_to_text IS NULL OR excluded.reply_to_text = ''
-                                       THEN reply_to_text ELSE excluded.reply_to_text END,
-                  reply_to_sender = COALESCE(excluded.reply_to_sender, reply_to_sender),
-                 read = MAX(read, excluded.read),
-                 revoked = excluded.revoked,
-                 mentioned = MAX(mentioned, excluded.mentioned),
-                 status = CASE WHEN ?28 >(CASE status WHEN 'pending' THEN 0 WHEN 'sent' THEN 1
-                                           WHEN 'delivered' THEN 2 WHEN 'read' THEN 3 ELSE -1 END)
-                          THEN excluded.status ELSE status END,
-                 preview_url = excluded.preview_url,
-                 preview_title = excluded.preview_title,
-                 preview_desc = excluded.preview_desc,
-                 preview_thumb = excluded.preview_thumb,
-                  reply_to_kind = CASE WHEN excluded.reply_to_kind IS NULL OR excluded.reply_to_kind = ''
-                                        THEN reply_to_kind ELSE excluded.reply_to_kind END,
-                  reply_to_thumb = COALESCE(excluded.reply_to_thumb, reply_to_thumb),
-                 media_thumb = COALESCE(media_thumb, excluded.media_thumb),
-                 media_ref = COALESCE(excluded.media_ref, media_ref),
-                 media_duration = COALESCE(excluded.media_duration, media_duration),
-                  reply_to_chat = COALESCE(excluded.reply_to_chat, reply_to_chat),
-                 preview_site = excluded.preview_site,
-                 preview_color = excluded.preview_color,
-                  system_kind = excluded.system_kind,
-                  system_params = excluded.system_params,
-                  reply_to_view_once = MAX(reply_to_view_once, excluded.reply_to_view_once),
-                  reply_to_recoverable = MAX(reply_to_recoverable, excluded.reply_to_recoverable),
-                  reply_to_path = COALESCE(reply_to_path, excluded.reply_to_path),
-                  reply_to_locator = COALESCE(excluded.reply_to_locator, reply_to_locator),
-                  media_once_kind = COALESCE(excluded.media_once_kind, media_once_kind)
-              WHERE revoked = 0",
+            INSERT_MESSAGE_SQL,
             params![
                 message.header.chat,
                 message.header.id,
