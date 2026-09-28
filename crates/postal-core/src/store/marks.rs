@@ -60,105 +60,17 @@ impl MessageStore {
     }
 
     pub(super) fn marks_on(conn: &Connection, chat: &str, message_ids: Option<&[String]>) -> Result<ChatMarks> {
-        anyhow::ensure!(message_ids.is_none_or(|ids| ids.len() <= MAX_MESSAGE_PAGE as usize), "too many message IDs");
-        let window = message_ids.map(serde_json::to_string).transpose()?;
-        let chat = &*names::canonical_chat(&conn, chat)?;
-        let reactions = conn
-            .prepare("SELECT target, sender, emoji FROM reactions WHERE chat = ?1 AND (?2 IS NULL OR target IN (SELECT value FROM json_each(?2)))")?
-            .query_map(params![chat, window], |r| {
-                Ok(Reaction { target: r.get(0)?, sender: r.get(1)?, emoji: r.get(2)? })
-            })?
-            .collect::<rusqlite::Result<_>>()?;
-        let starred = conn
-            .prepare("SELECT id FROM stars WHERE chat = ?1 AND (?2 IS NULL OR id IN (SELECT value FROM json_each(?2)))")?
-            .query_map(params![chat, window], |r| r.get(0))?
-            .collect::<rusqlite::Result<_>>()?;
-        let pinned = conn
-            .query_row("SELECT id FROM message_pins WHERE chat = ?1", params![chat], |r| r.get(0))
-            .optional()?;
-        let json = |s: String| serde_json::from_str::<Vec<String>>(&s).unwrap_or_default();
-
-        let mut polls: Vec<Poll> = conn
-            .prepare("SELECT id, name, options, multi FROM polls WHERE chat = ?1 AND (?2 IS NULL OR id IN (SELECT value FROM json_each(?2)))")?
-            .query_map(params![chat, window], |r| {
-                Ok(Poll {
-                    id: r.get(0)?,
-                    name: r.get(1)?,
-                    options: json(r.get(2)?),
-                    multi: r.get::<_, i32>(3)? != 0,
-                    votes: Vec::new(),
-                })
-            })?
-            .collect::<rusqlite::Result<_>>()?;
-        let votes: Vec<(String, PollVote)> = conn
-            .prepare("SELECT poll, voter, options FROM poll_votes WHERE chat = ?1 AND (?2 IS NULL OR poll IN (SELECT value FROM json_each(?2)))")?
-            .query_map(params![chat, window], |r| {
-                Ok((r.get(0)?, PollVote { voter: r.get(1)?, options: json(r.get(2)?) }))
-            })?
-            .collect::<rusqlite::Result<_>>()?;
-        for (poll, vote) in votes {
-            if let Some(p) = polls.iter_mut().find(|p| p.id == poll) {
-                p.votes.push(vote);
-            }
-        }
-
-        let mut events: Vec<Event> = conn
-            .prepare(
-                "SELECT id, name, description, start_at, end_at, location, link, canceled
-                 FROM events WHERE chat = ?1 AND (?2 IS NULL OR id IN (SELECT value FROM json_each(?2)))",
-            )?
-            .query_map(params![chat, window], |r| {
-                Ok(Event {
-                    id: r.get(0)?,
-                    name: r.get(1)?,
-                    description: r.get(2)?,
-                    start: r.get(3)?,
-                    end: r.get(4)?,
-                    location: r.get(5)?,
-                    link: r.get(6)?,
-                    canceled: r.get::<_, i32>(7)? != 0,
-                    responses: Vec::new(),
-                })
-            })?
-            .collect::<rusqlite::Result<_>>()?;
-        let responses: Vec<(String, EventResponse)> = conn
-            .prepare("SELECT event, responder, response FROM event_responses WHERE chat = ?1 AND (?2 IS NULL OR event IN (SELECT value FROM json_each(?2)))")?
-            .query_map(params![chat, window], |r| {
-                Ok((r.get(0)?, EventResponse { responder: r.get(1)?, response: r.get(2)? }))
-            })?
-            .collect::<rusqlite::Result<_>>()?;
-        for (event, response) in responses {
-            if let Some(e) = events.iter_mut().find(|e| e.id == event) {
-                e.responses.push(response);
-            }
-        }
-
-        let view_once = conn
-            .prepare(
-                "SELECT id, opened,
-                        EXISTS(SELECT 1 FROM messages m
-                                WHERE m.chat = v.chat AND m.id = v.id
-                                  AND m.media_path IS NOT NULL AND m.media_path != '')
-                     OR EXISTS(SELECT 1 FROM messages q
-                                WHERE q.reply_to_id = v.id
-                                  AND q.reply_to_locator IS NOT NULL AND q.reply_to_locator != '')
-                 FROM view_once v WHERE chat = ?1 AND (?2 IS NULL OR id IN (SELECT value FROM json_each(?2)))",
-            )?
-            .query_map(params![chat, window], |r| {
-                Ok(ViewOnce { id: r.get(0)?, opened: r.get::<_, i32>(1)? != 0, available: r.get::<_, i32>(2)? != 0 })
-            })?
-            .collect::<rusqlite::Result<_>>()?;
-
-        let ids = |table: &str| -> Result<Vec<String>> {
-            conn.prepare(&format!("SELECT id FROM {table} WHERE chat = ?1 AND (?2 IS NULL OR id IN (SELECT value FROM json_each(?2)))"))?
-                .query_map(params![chat, window], |r| r.get(0))?
-                .collect::<rusqlite::Result<_>>()
-                .map_err(Into::into)
-        };
-        let forwarded = ids("forwarded")?;
-        let edited = ids("edited")?;
-
-        Ok(ChatMarks { reactions, starred, pinned, polls, events, view_once, forwarded, edited })
+        let scope = MarksScope::new(conn, chat, message_ids)?;
+        Ok(ChatMarks {
+            reactions: scope.reactions()?,
+            starred: scope.starred()?,
+            pinned: scope.pinned()?,
+            polls: scope.polls_with_votes()?,
+            events: scope.events_with_responses()?,
+            view_once: scope.view_once()?,
+            forwarded: scope.simple_marks("forwarded")?,
+            edited: scope.simple_marks("edited")?,
+        })
     }
 
     pub fn set_forwarded(&self, chat: &str, id: &str) -> Result<()> {
@@ -372,4 +284,152 @@ impl StoreWorker {
         let response = response.to_owned();
         self.run(move |store| store.set_event_response(&chat, &event, &responder, &response)).await
     }
+}
+
+
+/// One chat's marks, optionally limited to a window of message ids. The id
+/// list is encoded once as the JSON every query filters on.
+struct MarksScope<'a> {
+    conn: &'a Connection,
+    chat: String,
+    window: Option<String>,
+}
+
+impl MarksScope<'_> {
+    fn new<'a>(conn: &'a Connection, chat: &str, message_ids: Option<&[String]>) -> Result<MarksScope<'a>> {
+        anyhow::ensure!(
+            message_ids.is_none_or(|ids| ids.len() <= MAX_MESSAGE_PAGE as usize),
+            "too many message IDs"
+        );
+        Ok(MarksScope {
+            conn,
+            chat: names::canonical_chat(conn, chat)?.into_owned(),
+            window: message_ids.map(serde_json::to_string).transpose()?,
+        })
+    }
+
+    fn reactions(&self) -> Result<Vec<Reaction>> {
+        let rows = self
+            .conn
+            .prepare("SELECT target, sender, emoji FROM reactions WHERE chat = ?1 AND (?2 IS NULL OR target IN (SELECT value FROM json_each(?2)))")?
+            .query_map(params![self.chat, self.window], |r| {
+                Ok(Reaction { target: r.get(0)?, sender: r.get(1)?, emoji: r.get(2)? })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    fn starred(&self) -> Result<Vec<String>> {
+        let rows = self
+            .conn
+            .prepare("SELECT id FROM stars WHERE chat = ?1 AND (?2 IS NULL OR id IN (SELECT value FROM json_each(?2)))")?
+            .query_map(params![self.chat, self.window], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    fn pinned(&self) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row("SELECT id FROM message_pins WHERE chat = ?1", params![self.chat], |r| r.get(0))
+            .optional()?)
+    }
+
+    fn polls_with_votes(&self) -> Result<Vec<Poll>> {
+        let mut polls: Vec<Poll> = self
+            .conn
+            .prepare("SELECT id, name, options, multi FROM polls WHERE chat = ?1 AND (?2 IS NULL OR id IN (SELECT value FROM json_each(?2)))")?
+            .query_map(params![self.chat, self.window], |r| {
+                Ok(Poll {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    options: json_list(r.get(2)?),
+                    multi: r.get::<_, i32>(3)? != 0,
+                    votes: Vec::new(),
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        let votes: Vec<(String, PollVote)> = self
+            .conn
+            .prepare("SELECT poll, voter, options FROM poll_votes WHERE chat = ?1 AND (?2 IS NULL OR poll IN (SELECT value FROM json_each(?2)))")?
+            .query_map(params![self.chat, self.window], |r| {
+                Ok((r.get(0)?, PollVote { voter: r.get(1)?, options: json_list(r.get(2)?) }))
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        for (poll, vote) in votes {
+            if let Some(p) = polls.iter_mut().find(|p| p.id == poll) {
+                p.votes.push(vote);
+            }
+        }
+        Ok(polls)
+    }
+
+    fn events_with_responses(&self) -> Result<Vec<Event>> {
+        let mut events: Vec<Event> = self
+            .conn
+            .prepare(
+                "SELECT id, name, description, start_at, end_at, location, link, canceled
+                 FROM events WHERE chat = ?1 AND (?2 IS NULL OR id IN (SELECT value FROM json_each(?2)))",
+            )?
+            .query_map(params![self.chat, self.window], |r| {
+                Ok(Event {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    description: r.get(2)?,
+                    start: r.get(3)?,
+                    end: r.get(4)?,
+                    location: r.get(5)?,
+                    link: r.get(6)?,
+                    canceled: r.get::<_, i32>(7)? != 0,
+                    responses: Vec::new(),
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        let responses: Vec<(String, EventResponse)> = self
+            .conn
+            .prepare("SELECT event, responder, response FROM event_responses WHERE chat = ?1 AND (?2 IS NULL OR event IN (SELECT value FROM json_each(?2)))")?
+            .query_map(params![self.chat, self.window], |r| {
+                Ok((r.get(0)?, EventResponse { responder: r.get(1)?, response: r.get(2)? }))
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        for (event, response) in responses {
+            if let Some(e) = events.iter_mut().find(|e| e.id == event) {
+                e.responses.push(response);
+            }
+        }
+        Ok(events)
+    }
+
+    fn view_once(&self) -> Result<Vec<ViewOnce>> {
+        let rows = self
+            .conn
+            .prepare(
+                "SELECT id, opened,
+                        EXISTS(SELECT 1 FROM messages m
+                                WHERE m.chat = v.chat AND m.id = v.id
+                                  AND m.media_path IS NOT NULL AND m.media_path != '')
+                     OR EXISTS(SELECT 1 FROM messages q
+                                WHERE q.reply_to_id = v.id
+                                  AND q.reply_to_locator IS NOT NULL AND q.reply_to_locator != '')
+                 FROM view_once v WHERE chat = ?1 AND (?2 IS NULL OR id IN (SELECT value FROM json_each(?2)))",
+            )?
+            .query_map(params![self.chat, self.window], |r| {
+                Ok(ViewOnce { id: r.get(0)?, opened: r.get::<_, i32>(1)? != 0, available: r.get::<_, i32>(2)? != 0 })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    fn simple_marks(&self, table: &str) -> Result<Vec<String>> {
+        let rows = self
+            .conn
+            .prepare(&format!("SELECT id FROM {table} WHERE chat = ?1 AND (?2 IS NULL OR id IN (SELECT value FROM json_each(?2)))"))?
+            .query_map(params![self.chat, self.window], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+}
+
+fn json_list(s: String) -> Vec<String> {
+    serde_json::from_str(&s).unwrap_or_default()
 }
