@@ -127,6 +127,21 @@ older supported schemas; newer schemas, unsupported formats, corrupt databases a
 attachment paths fail explicitly. Incomplete imports are removed before the
 account is registered. Backups can be moved between folders on the same machine.
 
+Attachments larger than 1 MiB cross IPC in 256 KiB chunks and are staged under
+the app cache. Upload tokens belong to an account, expire after an idle hour,
+and are removed after success, failure or cancellation. At most eight uploads
+can wait in staging. Ciphertext is generated into a second temporary file and
+streamed through the pinned library's Ureq transport, including resumed uploads.
+Small attachments retain their single-call path. Staging and encryption can
+temporarily require roughly twice the attachment's size on disk.
+
+Downloads, including quoted copies, stream to temporary files and publish a cache
+path only after verification succeeds. Retry attempts truncate partial output.
+Video previews read files directly; image previews cap decoding at 8192 pixels
+per side and 128 MiB. These bounds cover transfer buffers, not total application
+memory: voice/sticker conversion and Linux's playback fallback can still buffer
+media. Switching accounts cancels queued sends and unfinished attachment staging.
+
 ## Installing
 
 Releases ship an AppImage. Download it from the releases page, or run:

@@ -1,4 +1,5 @@
 use super::*;
+use super::media_files::TemporaryFile;
 
 #[cfg(test)]
 #[path = "media_download_tests.rs"]
@@ -20,14 +21,13 @@ pub(super) async fn fetch_media(client: &Client, store: &StoreWorker, dir: &Path
     // one the platform ever sends, so it is used before the sender's phone is
     // troubled with a reupload.
     if once && message.as_ref().is_none_or(|m| !has_direct_path(m)) {
-        if let Some((copied, data)) = fetch_quoted_copy(client, store, id).await? {
-            log::debug!("recovered {id} {} ({} KB) from the copy inside a reply", copied.kind, data.len() / 1024);
-            std::fs::create_dir_all(dir)?;
-            let path = dir.join(format!("{id}.{}", copied.extension()));
-            std::fs::write(&path, &data)?;
+        if let Some((copied, data)) = fetch_quoted_copy(client, store, dir, id).await? {
+            log::debug!("recovered {id} {} from the copy inside a reply", copied.kind);
+            let path = media_path(dir, id, &copied.extension())?;
+            tokio::fs::rename(&data.path, &path).await?;
             store.set_media_path(chat, id, &path.to_string_lossy()).await?;
             store.set_once_kind(chat, id, copied.kind).await?;
-            record_thumb(store, chat, id, copied.kind, &data).await?;
+            record_thumb(store, chat, id, copied.kind, &path).await?;
             return store.message(chat, id).await;
         }
     }
@@ -38,7 +38,7 @@ pub(super) async fn fetch_media(client: &Client, store: &StoreWorker, dir: &Path
         anyhow::bail!("no stored media reference");
     };
     fetch_stored_media(store, dir, chat, id, message,
-        |media| async move { download_bytes(client, &media).await },
+        |media, writer| async move { download_file(client, &media, writer).await },
         |message| async move { reupload(client, store, chat, id, &message).await },
     ).await
 }
@@ -48,16 +48,18 @@ async fn fetch_stored_media<D, DF, R, RF>(
     download: D, reupload: R,
 ) -> Result<StoredMessage>
 where
-    D: Fn(MediaInfo) -> DF,
-    DF: std::future::Future<Output = Result<Vec<u8>>>,
+    D: Fn(MediaInfo, std::fs::File) -> DF,
+    DF: std::future::Future<Output = Result<std::fs::File>>,
     R: FnOnce(wa::Message) -> RF,
     RF: std::future::Future<Output = Result<String>>,
 {
     let media = detect_media(&message).ok_or_else(|| anyhow::anyhow!("message carries no media"))?;
     let kind = media.kind;
     let extension = media.extension();
+    let path = media_path(dir, id, &extension)?;
+    let (temporary, writer) = download_target(dir).await?;
     let started = std::time::Instant::now();
-    let data = match download(media).await {
+    let data = match download(media, writer).await {
         Ok(data) => data,
         Err(first) => {
             log::info!("download of {id} failed ({first:#}); asking the sender to upload it again");
@@ -65,15 +67,15 @@ where
             set_direct_path(&mut message, &path);
             store.set_media_ref(chat, id, &buffa::Message::encode_to_vec(&message)).await?;
             let media = detect_media(&message).ok_or_else(|| anyhow::anyhow!("message carries no media"))?;
-            download(media).await?
+            let writer = tokio::fs::OpenOptions::new().write(true).truncate(true).open(&temporary.path).await?.into_std().await;
+            download(media, writer).await?
         }
     };
-    log::debug!("downloaded {id} {kind} ({} KB) in {:?}", data.len() / 1024, started.elapsed());
-    tokio::fs::create_dir_all(dir).await?;
-    let path = dir.join(format!("{id}.{extension}"));
-    tokio::fs::write(&path, &data).await?;
+    log::debug!("downloaded {id} {kind} ({} KB) in {:?}", data.metadata()?.len() / 1024, started.elapsed());
+    drop(data);
+    tokio::fs::rename(&temporary.path, &path).await?;
     store.set_media_path(chat, id, &path.to_string_lossy()).await?;
-    record_thumb(store, chat, id, kind, &data).await?;
+    record_thumb(store, chat, id, kind, &path).await?;
     store.message(chat, id).await
 }
 
@@ -81,11 +83,12 @@ where
 ///
 /// A view-once arrives without a thumbnail, so a copy the companion keeps has to
 /// make its own; ordinary media already carries the sender's.
-async fn record_thumb(store: &StoreWorker, chat: &str, id: &str, kind: &str, bytes: &[u8]) -> Result<()> {
+async fn record_thumb(store: &StoreWorker, chat: &str, id: &str, kind: &'static str, path: &Path) -> Result<()> {
     if store.message(chat, id).await?.media.thumb.is_some() {
         return Ok(());
     }
-    if let Some(thumb) = media_thumbnail(kind, bytes) {
+    let path = path.to_path_buf();
+    if let Some(thumb) = tokio::task::spawn_blocking(move || super::media_codec::media_thumbnail_file(kind, &path)).await? {
         store.set_media_thumb(chat, id, &thumb_uri(&thumb)).await?;
     }
     Ok(())
@@ -95,7 +98,7 @@ async fn record_thumb(store: &StoreWorker, chat: &str, id: &str, kind: &str, byt
 ///
 /// The copy arrives complete, with the address the view-once itself lacks, so
 /// this is the only route to the media that does not need the sender's phone.
-async fn fetch_quoted_copy(client: &Client, store: &StoreWorker, id: &str) -> Result<Option<(MediaInfo, Vec<u8>)>> {
+async fn fetch_quoted_copy(client: &Client, store: &StoreWorker, dir: &Path, id: &str) -> Result<Option<(MediaInfo, TemporaryFile)>> {
     use whatsapp_rust::wacore::proto_helpers::MessageExt;
     let Some(source) = store.quote_source_for(id).await? else { return Ok(None) };
     let message = <wa::Message as buffa::Message>::decode(&mut source.locator.as_slice())
@@ -103,8 +106,9 @@ async fn fetch_quoted_copy(client: &Client, store: &StoreWorker, id: &str) -> Re
     let media = detect_media(message.get_base_message())
         .ok_or_else(|| anyhow::anyhow!("the copy inside the reply carries no media"))?;
     let started = std::time::Instant::now();
-    let data = download_bytes(client, &media).await?;
-    log::info!("view-once {id}: took the copy inside reply {} ({} KB) in {:?}", source.id, data.len() / 1024, started.elapsed());
+    let (data, writer) = download_target(dir).await?;
+    drop(download_file(client, &media, writer).await?);
+    log::info!("view-once {id}: took the copy inside reply {} in {:?}", source.id, started.elapsed());
     Ok(Some((media, data)))
 }
 
@@ -227,26 +231,40 @@ pub(super) async fn fetch_quote_media(
         anyhow::bail!("WhatsApp sent this device no place to fetch that view-once from; open it on your phone");
     }
     let started = std::time::Instant::now();
-    let data = download_bytes(client, &media).await?;
+    let (data, writer) = download_target(dir).await?;
+    let verified = download_file(client, &media, writer).await?;
     log::debug!(
         "recovered quoted view-once {quoted} {} ({} KB) in {:?}",
         media.kind,
-        data.len() / 1024,
+        verified.metadata()?.len() / 1024,
         started.elapsed()
     );
-    std::fs::create_dir_all(dir)?;
+    drop(verified);
     // Named after the quoted message, so every reply quoting the same view-once
     // shares one file and one download.
-    let path = dir.join(format!("{QUOTE_FILE_PREFIX}{quoted}.{}", media.extension()));
-    std::fs::write(&path, &data)?;
+    let path = media_path(dir, &format!("{QUOTE_FILE_PREFIX}{quoted}"), &media.extension())?;
+    tokio::fs::rename(&data.path, &path).await?;
     store.set_quote_media_path(chat, id, &path.to_string_lossy()).await?;
     store.message(chat, id).await
 }
 
 /// Fetches and decrypts a media submessage.
-async fn download_bytes(client: &Client, media: &MediaInfo) -> Result<Vec<u8>> {
-    tokio::time::timeout(Duration::from_secs(120), client.download(media.downloadable.as_ref()))
+async fn download_file(client: &Client, media: &MediaInfo, writer: std::fs::File) -> Result<std::fs::File> {
+    tokio::time::timeout(Duration::from_secs(120), client.download_to_writer(media.downloadable.as_ref(), writer))
         .await
         .map_err(|_| anyhow::anyhow!("download timed out"))?
-        .map_err(|e| anyhow::anyhow!(e.to_string()))
+}
+
+async fn download_target(dir: &Path) -> Result<(TemporaryFile, std::fs::File)> {
+    tokio::fs::create_dir_all(dir).await?;
+    let dir = dir.to_path_buf();
+    tokio::task::spawn_blocking(move || TemporaryFile::download(&dir)).await?
+}
+
+fn media_path(dir: &Path, id: &str, extension: &str) -> Result<PathBuf> {
+    anyhow::ensure!(!id.contains(['/', '\\', ':', '\0']), "invalid media identifier");
+    let name = format!("{id}.{extension}");
+    let mut parts = Path::new(&name).components();
+    anyhow::ensure!(matches!(parts.next(), Some(std::path::Component::Normal(_))) && parts.next().is_none(), "invalid media identifier");
+    Ok(dir.join(name))
 }

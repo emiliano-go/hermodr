@@ -45,6 +45,7 @@ mod history;
 mod inbound;
 mod links;
 mod media;
+mod media_files;
 mod media_codec;
 mod media_download;
 mod media_wire;

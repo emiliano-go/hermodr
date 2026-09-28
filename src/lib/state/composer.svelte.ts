@@ -8,6 +8,7 @@ import { invoke } from "$lib/ipc";
 import { loadEmojis, rememberEmoji, searchEmojis, type Emoji } from "$lib/emoji";
 import type { PickerTab } from "$lib/ExpressionPicker.svelte";
 import { base64Of, imagePreview, rasterizeSvg } from "$lib/files";
+import { sendAttachment } from "$lib/upload";
 import { keybinds, matches } from "$lib/keybinds.svelte";
 import type { Recording } from "$lib/VoiceRecorder.svelte";
 import type { ChatPrivacy, Outgoing, PendingMedia, StoredMessage } from "$lib/models";
@@ -62,6 +63,8 @@ export class ComposerState {
    * chat in the order they were sent even when an earlier one is slow.
    */
   outbox: Promise<unknown> = Promise.resolve();
+  private accountSeq = 0;
+  private uploadsAbort = new AbortController();
 
   /** The textarea element, synced from the route; read at event time only. */
   inputEl: HTMLTextAreaElement | undefined = undefined;
@@ -128,8 +131,12 @@ export class ComposerState {
   typingHidden = $derived(!this.chatSendsTyping);
   receiptsHidden = $derived(!this.chatSendsReceipts);
 
-  enqueue<T>(task: () => Promise<T>): Promise<T> {
-    const run = this.outbox.then(task, task);
+  enqueue<T>(task: () => Promise<T>, account = this.accountSeq): Promise<T> {
+    const start = () => {
+      if (account !== this.accountSeq) throw new Error("Account changed before sending");
+      return task();
+    };
+    const run = this.outbox.then(start, start);
     this.outbox = run.catch(() => {});
     return run;
   }
@@ -539,6 +546,8 @@ export class ComposerState {
 
   /** `text` from the composer becomes the first attachment's caption, unless it has its own. */
   async sendPending(text = "", mentions: string[] = []) {
+    const account = this.accountSeq;
+    const signal = this.uploadsAbort.signal;
     const selectedChat = chats.selectedChat;
     if (!selectedChat || this.pending.length === 0) return;
     const captioned = !!text && !this.pending[0].caption.trim();
@@ -569,12 +578,9 @@ export class ComposerState {
     for (const [i, item] of items.entries()) {
       const { token } = batch[i];
       try {
-        const data = await base64Of(item.file);
         const warning = await this.enqueue(() =>
-          invoke<string | null>("send_media", {
+          sendAttachment(item.file, {
             chat,
-            name: item.file.name,
-            data,
             caption: item.caption.trim() || null,
             replyToId: reply?.id ?? null,
             replyToSender: reply?.sender ?? null,
@@ -582,13 +588,16 @@ export class ComposerState {
             viewOnce: item.once,
             mentions: captioned && item.id === firstId ? mentions : [],
             progress: token,
-          }),
+          }, signal),
+          account,
         );
+        if (account !== this.accountSeq) return;
         if (warning && session.settings.warn_missing_video_preview) ui.notify(warning);
         if (chats.selectedChat === chat) await messages.reloadMessages(chat);
         finish(token);
         if (chats.selectedChat === chat) this.host.scrollToBottom();
       } catch (e) {
+        if (account !== this.accountSeq) return;
         ui.fail(e);
         // What did not go out returns to the tray, so it can be sent again.
         for (const rest of batch.slice(i)) {
@@ -602,6 +611,7 @@ export class ComposerState {
   }
 
   async sendVoice(note: Recording) {
+    const account = this.accountSeq;
     this.recording = false;
     const selectedChat = chats.selectedChat;
     if (!selectedChat) return;
@@ -621,11 +631,14 @@ export class ComposerState {
           replyToText: reply?.text ?? null,
           viewOnce: note.viewOnce,
         }),
+        account,
       );
+      if (account !== this.accountSeq) return;
       await messages.reloadMessages(chats.selectedChat);
       await chats.refreshChats();
       this.host.scrollToBottom();
     } catch (e) {
+      if (account !== this.accountSeq) return;
       ui.fail(e);
     }
   }
@@ -645,6 +658,14 @@ export class ComposerState {
 
   /** Mirrors resetUi: drafts, tray, replies, edits and history are dropped. */
   resetAccount() {
+    this.accountSeq++;
+    this.uploadsAbort.abort();
+    this.uploadsAbort = new AbortController();
+    this.outbox = Promise.resolve();
+    for (const item of [...this.pending, ...this.outgoing]) {
+      if (item.url.startsWith("blob:")) URL.revokeObjectURL(item.url);
+    }
+    this.outgoing = [];
     this.draft = "";
     this.drafts = {};
     this.pending = [];

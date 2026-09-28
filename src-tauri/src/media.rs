@@ -21,15 +21,15 @@ pub(crate) async fn storage_cleanup(
 
 /// Sends an attachment as an image or document.
 ///
-/// The file arrives base64-encoded because the webview cannot hand out a real
-/// filesystem path, and the plugin that could is not usable alongside the
-/// pinned Tauri checkout.
+/// Small files arrive as base64; large files name an account-owned staged upload.
+/// The renderer never chooses the source filesystem path.
 #[tauri::command]
 pub(crate) async fn send_media(
     state: State<'_, AppState>,
     chat: String,
     name: String,
-    data: String,
+    data: Option<String>,
+    upload: Option<String>,
     caption: Option<String>,
     reply_to_id: Option<String>,
     reply_to_sender: Option<String>,
@@ -39,7 +39,6 @@ pub(crate) async fn send_media(
     mentions: Option<Vec<String>>,
     progress: Option<String>,
 ) -> Result<Option<String>, String> {
-    let bytes = BASE64.decode(data.as_bytes()).map_err(|e| e.to_string())?;
     let reply = match (reply_to_id, reply_to_sender, reply_to_text) {
         (Some(id), Some(sender), Some(text)) => Some((id, sender, text)),
         _ => None,
@@ -52,10 +51,19 @@ pub(crate) async fn send_media(
         ..Default::default()
     };
     let service = state.service()?;
-    service
-        .send_media(&chat, &name, bytes, caption, reply, options)
-        .await
-        .map_err(|e| e.to_string())
+    match (data, upload) {
+        (Some(data), None) => {
+            let bytes = BASE64.decode(data.as_bytes()).map_err(|e| e.to_string())?;
+            service.send_media(&chat, &name, bytes, caption, reply, options).await.map_err(|e| e.to_string())
+        }
+        (None, Some(token)) => {
+            let owner = crate::account_store::active_account(&state).ok_or("no active account")?;
+            let uploads = state.uploads.clone();
+            let staged = tauri::async_runtime::spawn_blocking(move || uploads.take(&owner, &token)).await.map_err(|e| e.to_string())??;
+            service.send_media_file(&chat, &staged.name, staged.path.clone(), caption, reply, options).await.map_err(|e| e.to_string())
+        }
+        _ => Err("provide either attachment bytes or a staged upload".into()),
+    }
 }
 
 /// Sends a voice note recorded by the webview (WebM/Opus, base64).

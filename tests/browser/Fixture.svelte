@@ -6,6 +6,7 @@
   import MessageWindow from "./MessageWindow.svelte";
   import MediaRetry from "./MediaRetry.svelte";
   import ArchiveManager from "$lib/ArchiveManager.svelte";
+  import Upload from "./Upload.svelte";
   import { archiveFixture } from "./ipc";
   import { session } from "$lib/state/session.svelte";
   import { fixture } from "./ipc";
@@ -35,6 +36,7 @@
 <button onclick={() => { archiveFixture.deferNext = true; }}>Delay next archive operation</button>
 <button onclick={() => { archiveFixture.pending.shift()?.(); }}>Release archive operation</button>
 <ArchiveManager />
+<Upload />
 <p aria-label="Account fixture status">Active: {session.activeAccount ?? "unloaded"}; accounts: {session.accountList.map((account) => account.id).join(", ")}</p>
 
 <style>

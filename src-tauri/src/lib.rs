@@ -21,6 +21,7 @@ mod settings;
 mod chats;
 mod messages;
 mod media;
+mod uploads;
 mod media_actions;
 mod groups;
 mod contacts;
@@ -51,6 +52,7 @@ struct AppState {
     once_wake: tokio::sync::Notify,
     settings: Mutex<UiSettings>,
     accounts: Mutex<AccountsFile>,
+    uploads: Arc<uploads::Uploads>,
 }
 
 impl AppState {
@@ -109,6 +111,7 @@ pub fn run() {
                 once_wake: tokio::sync::Notify::new(),
                 settings: Mutex::new(load_settings(app.handle())),
                 accounts: Mutex::new(accounts),
+                uploads: Arc::default(),
             });
             connection::spawn_once_manager(app.handle());
 
@@ -214,6 +217,9 @@ pub fn run() {
             media::storage_report,
             archive::export_archive,
             archive::restore_local_backup,
+            uploads::begin_upload,
+            uploads::append_upload,
+            uploads::cancel_upload,
             media::storage_cleanup,
             chats::clear_history,
             chats::clear_chat,

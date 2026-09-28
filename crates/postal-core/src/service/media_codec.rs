@@ -29,7 +29,24 @@ pub(super) fn media_thumbnail(kind: &str, bytes: &[u8]) -> Option<Vec<u8>> {
 }
 
 pub(super) fn image_thumbnail(bytes: &[u8]) -> Option<Vec<u8>> {
-    jpeg_thumbnail(image::load_from_memory(bytes).ok()?)
+    image_thumbnail_reader(image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().ok()?)
+}
+
+pub(super) fn media_thumbnail_file(kind: &str, path: &std::path::Path) -> Option<Vec<u8>> {
+    match kind {
+        "image" => image_thumbnail_reader(image::ImageReader::open(path).ok()?.with_guessed_format().ok()?),
+        "video" | "gif" => video_thumbnail_file(path),
+        _ => None,
+    }
+}
+
+fn image_thumbnail_reader<R: std::io::BufRead + std::io::Seek>(mut reader: image::ImageReader<R>) -> Option<Vec<u8>> {
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(8192);
+    limits.max_image_height = Some(8192);
+    limits.max_alloc = Some(128 * 1024 * 1024);
+    reader.limits(limits);
+    jpeg_thumbnail(reader.decode().ok()?)
 }
 
 /// A centred square crop, at most `size` pixels a side, as JPEG.
@@ -57,6 +74,19 @@ fn jpeg_thumbnail(image: image::DynamicImage) -> Option<Vec<u8>> {
 
 #[cfg(windows)]
 fn video_thumbnail(bytes: &[u8]) -> Option<Vec<u8>> {
+    video_thumbnail_source(VideoInput::Bytes(bytes))
+}
+
+#[cfg(windows)]
+fn video_thumbnail_file(path: &std::path::Path) -> Option<Vec<u8>> {
+    video_thumbnail_source(VideoInput::File(path))
+}
+
+#[cfg(windows)]
+enum VideoInput<'a> { Bytes(&'a [u8]), File(&'a std::path::Path) }
+
+#[cfg(windows)]
+fn video_thumbnail_source(input: VideoInput<'_>) -> Option<Vec<u8>> {
     use windows::Win32::{
         Media::MediaFoundation::{MFShutdown, MFStartup, MFSTARTUP_NOSOCKET, MF_VERSION},
         System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED},
@@ -69,7 +99,7 @@ fn video_thumbnail(bytes: &[u8]) -> Option<Vec<u8>> {
             .spawn(|| unsafe {
                 CoInitializeEx(None, COINIT_MULTITHREADED).ok().ok()?;
                 let frame = MFStartup(MF_VERSION, MFSTARTUP_NOSOCKET).ok().and_then(|()| {
-                    let frame = first_frame(bytes);
+                    let frame = first_frame(input);
                     let _ = MFShutdown();
                     frame
                 });
@@ -87,16 +117,26 @@ fn video_thumbnail(bytes: &[u8]) -> Option<Vec<u8>> {
 ///
 /// Must run between `MFStartup` and `MFShutdown` on a COM thread.
 #[cfg(windows)]
-unsafe fn first_frame(bytes: &[u8]) -> Option<image::RgbImage> {
+unsafe fn first_frame(input: VideoInput<'_>) -> Option<image::RgbImage> {
     use windows::Win32::{Media::MediaFoundation::*, UI::Shell::SHCreateMemStream};
 
-    let stream = MFCreateMFByteStreamOnStream(&SHCreateMemStream(Some(bytes))?).ok()?;
     let mut attributes = None;
     MFCreateAttributes(&mut attributes, 1).ok()?;
     let attributes = attributes?;
     // Lets the reader convert whatever the decoder emits to RGB32.
     attributes.SetUINT32(&MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, 1).ok()?;
-    let reader = MFCreateSourceReaderFromByteStream(&stream, &attributes).ok()?;
+    let reader = match input {
+        VideoInput::Bytes(bytes) => {
+            let stream = MFCreateMFByteStreamOnStream(&SHCreateMemStream(Some(bytes))?).ok()?;
+            MFCreateSourceReaderFromByteStream(&stream, &attributes).ok()?
+        }
+        VideoInput::File(path) => {
+            use std::os::windows::ffi::OsStrExt;
+            let path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+            let stream = MFCreateFile(MF_ACCESSMODE_READ, MF_OPENMODE_FAIL_IF_NOT_EXIST, MF_FILEFLAGS_NONE, windows::core::PCWSTR(path.as_ptr())).ok()?;
+            MFCreateSourceReaderFromByteStream(&stream, &attributes).ok()?
+        }
+    };
 
     let video = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32;
     reader.SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS.0 as u32, false).ok()?;
@@ -161,6 +201,15 @@ unsafe fn first_frame(bytes: &[u8]) -> Option<image::RgbImage> {
         });
     let _ = buffer.Unlock();
     frame
+}
+
+#[cfg(not(windows))]
+fn video_thumbnail_file(path: &std::path::Path) -> Option<Vec<u8>> {
+    let output = std::process::Command::new("ffmpeg")
+        .args(["-loglevel", "error", "-i"]).arg(path)
+        .args(["-frames:v", "1", "-vf", "scale=256:256:force_original_aspect_ratio=decrease", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"])
+        .output().ok()?;
+    (output.status.success() && !output.stdout.is_empty()).then_some(output.stdout)
 }
 
 #[cfg(not(windows))]

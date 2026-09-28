@@ -1,6 +1,7 @@
 use super::*;
 use buffa::Message as _;
 use std::sync::atomic::AtomicUsize;
+use std::io::Write;
 
 #[tokio::test]
 async fn retries_replace_and_persist_locators_and_stop_after_one_reupload() {
@@ -27,13 +28,15 @@ async fn retries_replace_and_persist_locators_and_stop_after_one_reupload() {
         let requests = AtomicUsize::new(0);
         let (downloads, reuploads) = (&attempts, &requests);
         let result = fetch_stored_media(&store, &directory, &row.header.chat, &row.header.id, locator,
-            |media| async move {
+            |media, mut writer| async move {
                 let attempt = downloads.fetch_add(1, Ordering::SeqCst);
                 assert_eq!(media.downloadable.direct_path(), Some(if attempt == 0 { "/old" } else { "/new" }));
                 if scenario != "direct" && attempt == 0 || scenario == "download-failed" {
+                    writer.write_all(b"unverified partial data that must be discarded")?;
                     anyhow::bail!("synthetic CDN failure");
                 }
-                Ok(b"synthetic attachment".to_vec())
+                writer.write_all(b"synthetic attachment")?;
+                Ok(writer)
             },
             |message| async move {
                 reuploads.fetch_add(1, Ordering::SeqCst);
@@ -42,8 +45,8 @@ async fn retries_replace_and_persist_locators_and_stop_after_one_reupload() {
                 Ok("/new".into())
             },
         ).await;
-        assert_eq!(attempts.load(Ordering::SeqCst), if matches!(scenario, "direct" | "reupload-failed") { 1 } else { 2 });
-        assert_eq!(requests.load(Ordering::SeqCst), usize::from(scenario != "direct"));
+        assert_eq!(attempts.load(Ordering::SeqCst), match scenario { "write-failed" => 0, "direct" | "reupload-failed" => 1, _ => 2 });
+        assert_eq!(requests.load(Ordering::SeqCst), usize::from(!matches!(scenario, "direct" | "write-failed")));
         let persisted = store.message(&row.header.chat, &row.header.id).await.unwrap();
         assert_eq!(persisted.text, "caption survives");
         if matches!(scenario, "direct" | "recovered") {
@@ -56,12 +59,23 @@ async fn retries_replace_and_persist_locators_and_stop_after_one_reupload() {
         }
         let bytes = store.media_ref_for(&row.header.chat, &row.header.id).await.unwrap().unwrap();
         let stored = wa::Message::decode(&mut bytes.as_slice()).unwrap();
-        if !matches!(scenario, "direct" | "reupload-failed") {
+        if !matches!(scenario, "direct" | "reupload-failed" | "write-failed") {
             assert_eq!(stored.image_message.direct_path.as_deref(), Some("/new"));
             assert!(stored.image_message.url.is_none());
         } else {
             assert_eq!(stored.image_message.direct_path.as_deref(), Some("/old"));
         }
+        if directory.is_dir() {
+            assert!(std::fs::read_dir(&directory).unwrap().all(|entry| entry.unwrap().path().extension().is_none_or(|extension| extension != "part")));
+        }
     }
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn media_identifiers_cannot_escape_the_download_folder() {
+    assert!(media_path(Path::new("media"), "fixture", "jpg").is_ok());
+    for id in ["../outside", "/absolute", "nested/file", "nested\\file", "file:stream"] {
+        assert!(media_path(Path::new("media"), id, "jpg").is_err());
+    }
 }

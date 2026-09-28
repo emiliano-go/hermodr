@@ -4,28 +4,29 @@ use super::*;
 use whatsapp_rust::media::{self, AudioOptions, DocumentOptions, ImageOptions, VideoOptions};
 
 /// Encrypted media handed to the uploader, reporting how far it has been read.
-struct ProgressSource {
-    data: Arc<[u8]>,
+struct ProgressSource<S> {
+    source: S,
     report: Arc<dyn Fn(u64) + Send + Sync>,
 }
 
-impl whatsapp_rust::wacore::upload::UploadSource for ProgressSource {
+impl<S: whatsapp_rust::wacore::upload::UploadSource> whatsapp_rust::wacore::upload::UploadSource for ProgressSource<S> {
     fn len(&self) -> u64 {
-        self.data.len() as u64
+        self.source.len()
     }
 
     fn reader_from(&self, offset: u64) -> std::io::Result<Box<dyn std::io::Read + Send>> {
-        let mut cursor = std::io::Cursor::new(Arc::clone(&self.data));
-        cursor.set_position(offset.min(self.len()));
-        Ok(Box::new(CountingReader { inner: cursor, read: offset, report: Arc::clone(&self.report) }))
+        let reader = self.source.reader_from(offset)?;
+        Ok(Box::new(CountingReader { inner: reader, read: offset.min(self.len()), report: Arc::clone(&self.report) }))
     }
 }
 
 struct CountingReader {
-    inner: std::io::Cursor<Arc<[u8]>>,
+    inner: Box<dyn std::io::Read + Send>,
     read: u64,
     report: Arc<dyn Fn(u64) + Send + Sync>,
 }
+
+enum MediaInput { Bytes(Vec<u8>), File(PathBuf) }
 
 impl std::io::Read for CountingReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
@@ -143,6 +144,20 @@ impl WhatsAppService {
         reply: Option<(String, String, String)>,
         options: SendOptions,
     ) -> Result<Option<String>> {
+        self.send_media_input(chat, file_name, MediaInput::Bytes(bytes), caption, reply, options).await
+    }
+
+    pub async fn send_media_file(
+        &self, chat: &str, file_name: &str, path: PathBuf, caption: Option<String>,
+        reply: Option<(String, String, String)>, options: SendOptions,
+    ) -> Result<Option<String>> {
+        self.send_media_input(chat, file_name, MediaInput::File(path), caption, reply, options).await
+    }
+
+    async fn send_media_input(
+        &self, chat: &str, file_name: &str, input: MediaInput, caption: Option<String>,
+        reply: Option<(String, String, String)>, options: SendOptions,
+    ) -> Result<Option<String>> {
         let SendOptions { gif, view_once, voice, forwarded, mentions, progress } = options;
         let to: Jid = chat.parse()?;
         self.unarchive_on_send(chat).await;
@@ -164,15 +179,35 @@ impl WhatsAppService {
             _ => (MediaType::Document, "document"),
         };
 
-        let upload = match progress {
-            Some(token) => self.upload_reporting(bytes.clone(), media_type, token).await?,
-            None => self.client.upload(bytes.clone(), media_type, Default::default()).await?,
+        let upload = match &input {
+            MediaInput::Bytes(bytes) => match progress {
+                Some(token) => self.upload_reporting(bytes.clone(), media_type, token).await?,
+                None => self.client.upload(bytes.clone(), media_type, Default::default()).await?,
+            },
+            MediaInput::File(path) => {
+                let path = path.clone();
+                let (source, info) = tokio::task::spawn_blocking(move || super::media_files::encrypt_file(&path, media_type)).await??;
+                match progress {
+                    Some(token) => {
+                        use whatsapp_rust::wacore::upload::UploadSource;
+                        let report = self.upload_reporter(token, source.len());
+                        self.client.upload_stream(ProgressSource { source, report }, info, media_type).await?
+                    }
+                    None => self.client.upload_stream(source, info, media_type).await?,
+                }
+            }
         };
 
         let mimetype = mime_for(&extension).map(str::to_string);
 
         // A thumbnail lets the recipient see a preview before the file lands.
-        let thumb = media_thumbnail(kind, &bytes);
+        let thumb = match &input {
+            MediaInput::Bytes(bytes) => media_thumbnail(kind, bytes),
+            MediaInput::File(path) => {
+                let path = path.clone();
+                tokio::task::spawn_blocking(move || super::media_codec::media_thumbnail_file(kind, &path)).await?
+            }
+        };
         let warning = (kind == "video" || kind == "gif")
             .then(|| thumb.is_none())
             .filter(|missing| *missing)
@@ -280,10 +315,14 @@ impl WhatsAppService {
         let mut stored_path = None;
         if let Some(dir) = self.media_dir().filter(|_| !view_once) {
             let dir = &dir;
-            if std::fs::create_dir_all(dir).observed().is_some() {
+            if tokio::fs::create_dir_all(dir).await.observed().is_some() {
                 let name = if extension.is_empty() { "bin".to_string() } else { extension.clone() };
                 let dest = dir.join(format!("{}.{}", result.message_id, name));
-                if std::fs::write(&dest, &bytes).observed().is_some() {
+                let saved = match &input {
+                    MediaInput::Bytes(bytes) => tokio::fs::write(&dest, bytes).await,
+                    MediaInput::File(path) => tokio::fs::copy(path, &dest).await.map(|_| ()),
+                };
+                if saved.observed().is_some() {
                     stored_path = Some(dest.to_string_lossy().to_string());
                 }
             }
@@ -344,15 +383,8 @@ impl WhatsAppService {
         })
         .await??;
         let total = enc.data_to_upload.len() as u64;
-        let events = self.events.clone();
-        let last = Arc::new(AtomicU64::new(u64::MAX));
-        let report: Arc<dyn Fn(u64) + Send + Sync> = Arc::new(move |sent: u64| {
-            let percent = sent.saturating_mul(100) / total.max(1);
-            if last.swap(percent, Ordering::Relaxed) != percent {
-                let _ = events.send(ServiceEvent::UploadProgress { token: token.clone(), sent, total });
-            }
-        });
-        let source = ProgressSource { data: Arc::from(enc.data_to_upload), report };
+        let report = self.upload_reporter(token, total);
+        let source = ProgressSource { source: Arc::<[u8]>::from(enc.data_to_upload), report };
         let info = EncryptedMediaInfo {
             media_key: enc.media_key,
             file_sha256: enc.file_sha256,
@@ -361,6 +393,17 @@ impl WhatsAppService {
             streaming_sidecar: enc.streaming_sidecar,
         };
         Ok(self.client.upload_stream(source, info, media_type).await?)
+    }
+
+    fn upload_reporter(&self, token: String, total: u64) -> Arc<dyn Fn(u64) + Send + Sync> {
+        let events = self.events.clone();
+        let last = Arc::new(AtomicU64::new(u64::MAX));
+        Arc::new(move |sent: u64| {
+            let percent = sent.saturating_mul(100) / total.max(1);
+            if last.swap(percent, Ordering::Relaxed) != percent {
+                let _ = events.send(ServiceEvent::UploadProgress { token: token.clone(), sent, total });
+            }
+        })
     }
 
     /// Sends a picture as a sticker (see [`sticker_webp`]).

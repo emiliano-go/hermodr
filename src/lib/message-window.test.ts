@@ -26,7 +26,7 @@ test("RAM window pages both ways, deduplicates updates, and never mutates its ar
 });
 
 test("pager defers concurrent refreshes, rejects stale pages, and falls back to phone only at archive end", async () => {
-  const server = await createServer({ configFile: fileURLToPath(new URL("../../tests/browser/vite.config.ts", import.meta.url)), server: { middlewareMode: true, ws: false } });
+  const server = await createServer({ configFile: fileURLToPath(new URL("../../tests/browser/vite.config.ts", import.meta.url)), cacheDir: fileURLToPath(new URL("../../node_modules/.vite-tests/message-window", import.meta.url)), ssr: { optimizeDeps: { noDiscovery: true, include: [] } }, server: { middlewareMode: true, ws: false } });
   let pager: { resetAccount(): void } | undefined;
   try {
     const { MessagesState } = await server.ssrLoadModule(fileURLToPath(new URL("./state/messages.svelte.ts", import.meta.url)));

@@ -6,6 +6,8 @@ export const windowFixture = {
   phoneRequests: 0, failure: false, deferNext: false, pending: [] as (() => void)[],
 };
 export const mediaFixture = { calls: 0, failure: true, deferNext: false, pending: [] as (() => void)[] };
+export const uploadFixture = { calls: [] as string[], maxChunk: 0, size: 0, written: 0, chunks: [] as Uint8Array[],
+  failChunk: false, failSend: false, afterChunk: null as (() => void) | null };
 export const archiveFixture = { failure: false, cancelled: false, deferNext: false, pending: [] as (() => void)[],
   calls: [] as string[], accounts: [{ id: "existing", label: "Existing account" }] as { id: string; label: string }[] };
 export const fixture = { updated: false, failure: false, calls: 0, savedRetention: null as unknown,
@@ -18,6 +20,27 @@ export const fixture = { updated: false, failure: false, calls: 0, savedRetentio
 };
 
 export async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  if (command === "begin_upload") {
+    uploadFixture.calls.push("begin"); uploadFixture.size = Number(args?.size); uploadFixture.written = 0; uploadFixture.chunks = [];
+    return "synthetic-upload" as T;
+  }
+  if (command === "append_upload") {
+    uploadFixture.calls.push("append");
+    if (uploadFixture.failChunk) throw new Error("Synthetic staging failure");
+    if (args?.offset !== uploadFixture.written) throw new Error("Out-of-order chunk");
+    const bytes = Uint8Array.from(atob(String(args?.data)), (character) => character.charCodeAt(0));
+    uploadFixture.maxChunk = Math.max(uploadFixture.maxChunk, bytes.length);
+    uploadFixture.written += bytes.length; uploadFixture.chunks.push(bytes);
+    uploadFixture.afterChunk?.();
+    return undefined as T;
+  }
+  if (command === "send_media") {
+    uploadFixture.calls.push(args?.upload ? "send-staged" : "send-inline");
+    if (uploadFixture.failSend) throw new Error("Synthetic send failure");
+    if (args?.upload && uploadFixture.written !== uploadFixture.size) throw new Error("Incomplete staged upload");
+    return null as T;
+  }
+  if (command === "cancel_upload") { uploadFixture.calls.push("cancel"); return undefined as T; }
   if (command === "chats") return [{ chat: "archive@s", display_name: "Synthetic conversation" }] as T;
   if (command === "accounts") return { accounts: archiveFixture.accounts, active: "existing" } as T;
   if (command === "export_archive" || command === "restore_local_backup") {

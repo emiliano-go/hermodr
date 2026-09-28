@@ -4,7 +4,7 @@ import { createServer } from "vite";
 import { fileURLToPath } from "node:url";
 
 test("media retries stop at the cap, refresh successful downloads and ignore the previous account", async () => {
-  const server = await createServer({ configFile: fileURLToPath(new URL("../../tests/browser/vite.config.ts", import.meta.url)), server: { middlewareMode: true, ws: false } });
+  const server = await createServer({ configFile: fileURLToPath(new URL("../../tests/browser/vite.config.ts", import.meta.url)), cacheDir: fileURLToPath(new URL("../../node_modules/.vite-tests/media-retry", import.meta.url)), ssr: { optimizeDeps: { noDiscovery: true, include: [] } }, server: { middlewareMode: true, ws: false } });
   let state: { resetAccount(): void } | undefined;
   try {
     const { MessagesState, MAX_DOWNLOAD_TRIES } = await server.ssrLoadModule(fileURLToPath(new URL("./state/messages.svelte.ts", import.meta.url)));
