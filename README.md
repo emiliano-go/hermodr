@@ -29,6 +29,11 @@ Postal takes the other path. Because it implements the protocol itself:
   Older/newer pages come from SQLite; only exhausted local history asks the phone.
   Eviction from RAM never deletes disk rows. Back to latest returns to live messages.
   History can also be cleared, or kept in memory only.
+  The archive lives in the app data folder by default; *Settings → Storage &
+  history → History folder* points it at another drive (cold storage) and moves
+  the existing archive there on the next start. "Delete on this computer" never
+  removes a message: it is flagged locally only and shown greyed out, so only
+  disk retention or clearing history actually remove rows.
   Disk retention deletes expired messages strictly, including a quiet chat's
   last message. Chat identity, last activity, names and pins survive separately;
   an empty chat has no retained message preview. Delete chat removes it from the
@@ -229,9 +234,10 @@ Tauri event-emission failures and lagged consumers are logged separately.
 Right-click an image for **Copy Image**, **Save Image…**, or **Open Image**.
 Save uses the native file picker and preserves the original file. Copy places
 decoded image pixels on the clipboard. Other attachments offer Save and Open.
-Missing files download on demand; deleted and unkept one-time messages cannot be
-exported. One-time media kept by the Android companion follows ordinary
-attachment actions.
+Missing files download on demand; revoked and unkept one-time messages cannot be
+exported. Messages deleted on this computer stay in the archive greyed out, so
+their media can still be saved. One-time media kept by the Android companion
+follows ordinary attachment actions.
 
 Downloaded media is written to the folder set in Settings, which defaults to the
 app data directory. The asset protocol is scoped to whatever folder is
