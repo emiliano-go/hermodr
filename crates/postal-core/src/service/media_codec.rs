@@ -133,6 +133,9 @@ fn video_thumbnail_file(path: &std::path::Path) -> Option<Vec<u8>> {
 }
 
 #[cfg(windows)]
+use windows::Win32::Media::MediaFoundation::{IMFMediaBuffer, IMFSourceReader, IMFSample};
+
+#[cfg(windows)]
 enum VideoInput<'a> { Bytes(&'a [u8]), File(&'a std::path::Path) }
 
 #[cfg(windows)]
@@ -168,6 +171,22 @@ fn video_thumbnail_source(input: VideoInput<'_>) -> Option<Vec<u8>> {
 /// Must run between `MFStartup` and `MFShutdown` on a COM thread.
 #[cfg(windows)]
 unsafe fn first_frame(input: VideoInput<'_>) -> Option<image::RgbImage> {
+    use windows::Win32::Media::MediaFoundation::*;
+
+    let reader = open_video_reader(input)?;
+    let video = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32;
+    select_rgb_stream(&reader, video)?;
+    let sample = first_sample(&reader, video)?;
+    let buffer = sample.ConvertToContiguousBuffer().ok()?;
+    // Read after the first sample: the decoder only settles the frame size then.
+    let (width, height, stride, visible) = frame_geometry(&reader, video)?;
+    copy_frame(&buffer, width, height, stride, visible)
+}
+
+/// Opens a reader over staged bytes or a file, with video processing on so the
+/// decoder can emit RGB32.
+#[cfg(windows)]
+unsafe fn open_video_reader(input: VideoInput<'_>) -> Option<IMFSourceReader> {
     use windows::Win32::{Media::MediaFoundation::*, UI::Shell::SHCreateMemStream};
 
     let mut attributes = None;
@@ -175,26 +194,38 @@ unsafe fn first_frame(input: VideoInput<'_>) -> Option<image::RgbImage> {
     let attributes = attributes?;
     // Lets the reader convert whatever the decoder emits to RGB32.
     attributes.SetUINT32(&MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, 1).ok()?;
-    let reader = match input {
+    match input {
         VideoInput::Bytes(bytes) => {
             let stream = MFCreateMFByteStreamOnStream(&SHCreateMemStream(Some(bytes))?).ok()?;
-            MFCreateSourceReaderFromByteStream(&stream, &attributes).ok()?
+            MFCreateSourceReaderFromByteStream(&stream, &attributes).ok()
         }
         VideoInput::File(path) => {
             use std::os::windows::ffi::OsStrExt;
             let path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
             let stream = MFCreateFile(MF_ACCESSMODE_READ, MF_OPENMODE_FAIL_IF_NOT_EXIST, MF_FILEFLAGS_NONE, windows::core::PCWSTR(path.as_ptr())).ok()?;
-            MFCreateSourceReaderFromByteStream(&stream, &attributes).ok()?
+            MFCreateSourceReaderFromByteStream(&stream, &attributes).ok()
         }
-    };
+    }
+}
 
-    let video = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32;
+/// Selects the first video stream and asks for RGB32.
+#[cfg(windows)]
+unsafe fn select_rgb_stream(reader: &IMFSourceReader, video: u32) -> Option<()> {
+    use windows::Win32::Media::MediaFoundation::*;
+
     reader.SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS.0 as u32, false).ok()?;
     reader.SetStreamSelection(video, true).ok()?;
     let wanted = MFCreateMediaType().ok()?;
     wanted.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video).ok()?;
     wanted.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_RGB32).ok()?;
     reader.SetCurrentMediaType(video, None, &wanted).ok()?;
+    Some(())
+}
+
+/// The first decodable sample, or none at end of stream.
+#[cfg(windows)]
+unsafe fn first_sample(reader: &IMFSourceReader, video: u32) -> Option<IMFSample> {
+    use windows::Win32::Media::MediaFoundation::*;
 
     let mut sample: Option<IMFSample> = None;
     for _ in 0..64 {
@@ -206,9 +237,14 @@ unsafe fn first_frame(input: VideoInput<'_>) -> Option<image::RgbImage> {
             break;
         }
     }
-    let buffer = sample?.ConvertToContiguousBuffer().ok()?;
+    sample
+}
 
-    // Read after the first sample: the decoder only settles the frame size then.
+/// Frame size, stride and the visible aperture (left, top, width, height).
+#[cfg(windows)]
+unsafe fn frame_geometry(reader: &IMFSourceReader, video: u32) -> Option<(u32, u32, i32, (u32, u32, u32, u32))> {
+    use windows::Win32::Media::MediaFoundation::*;
+
     let format = reader.GetCurrentMediaType(video).ok()?;
     let size = format.GetUINT64(&MF_MT_FRAME_SIZE).ok()?;
     let (width, height) = ((size >> 32) as u32, size as u32);
@@ -219,7 +255,7 @@ unsafe fn first_frame(input: VideoInput<'_>) -> Option<image::RgbImage> {
     // Decoders pad to whole macroblocks (1080 rows become 1088); the aperture is
     // the picture. MFVideoArea: two MFOffset { fract: u16, value: i16 }, then SIZE.
     let mut area = [0u8; 16];
-    let (left, top, visible_w, visible_h) = format
+    let visible = format
         .GetBlob(&MF_MT_MINIMUM_DISPLAY_APERTURE, &mut area, None)
         .ok()
         .map(|()| {
@@ -232,7 +268,19 @@ unsafe fn first_frame(input: VideoInput<'_>) -> Option<image::RgbImage> {
         })
         .filter(|&(x, y, w, h)| w > 0 && h > 0 && x + w <= width && y + h <= height)
         .unwrap_or((0, 0, width, height));
+    Some((width, height, stride, visible))
+}
 
+/// Copies the visible area of the locked RGB32 buffer into an image.
+#[cfg(windows)]
+unsafe fn copy_frame(
+    buffer: &IMFMediaBuffer,
+    width: u32,
+    height: u32,
+    stride: i32,
+    visible: (u32, u32, u32, u32),
+) -> Option<image::RgbImage> {
+    let (left, top, visible_w, visible_h) = visible;
     let mut data: *mut u8 = std::ptr::null_mut();
     let mut len = 0u32;
     buffer.Lock(&mut data, None, Some(&mut len as *mut _)).ok()?;

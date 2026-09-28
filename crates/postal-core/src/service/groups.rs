@@ -194,37 +194,40 @@ impl WhatsAppService {
                 label,
             });
         }
-        // Group metadata rarely carries usernames; bounded usync queries fill them in,
-        // and gives members we only know by number a username or business name.
+        self.enrich_usernames(&mut participants).await;
+        participants.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        participants
+    }
+
+    /// Group metadata rarely carries usernames; bounded usync queries fill them
+    /// in, and give members we only know by number a username or business name.
+    async fn enrich_usernames(&self, participants: &mut [Participant]) {
         let jids: Vec<Jid> = participants.iter().filter_map(|p| p.jid.parse().ok()).collect();
-        if let Ok(infos) = self.user_info(&jids).await {
-            let numeric = |n: &str| is_placeholder_name(n);
-            for p in participants.iter_mut() {
-                let user = p.jid.split('@').next().unwrap_or_default();
-                let Some(info) = infos.values().find(|i| {
-                    i.jid.user == user
-                        || i.lid.as_ref().is_some_and(|l| l.user == user)
-                        || p.number.as_deref() == Some(i.jid.user.as_str())
-                }) else {
-                    continue;
-                };
-                if p.username.is_none() {
-                    p.username = info.username.as_ref().map(|u| u.to_string());
-                }
-                if numeric(&p.name) {
-                    if let Some(better) = info
-                        .verified_name
-                        .as_ref()
-                        .and_then(|v| v.name.clone())
-                        .or_else(|| p.username.clone())
-                    {
-                        p.name = better;
-                    }
+        let Ok(infos) = self.user_info(&jids).await else { return };
+        let numeric = |n: &str| is_placeholder_name(n);
+        for p in participants.iter_mut() {
+            let user = p.jid.split('@').next().unwrap_or_default();
+            let Some(info) = infos.values().find(|i| {
+                i.jid.user == user
+                    || i.lid.as_ref().is_some_and(|l| l.user == user)
+                    || p.number.as_deref() == Some(i.jid.user.as_str())
+            }) else {
+                continue;
+            };
+            if p.username.is_none() {
+                p.username = info.username.as_ref().map(|u| u.to_string());
+            }
+            if numeric(&p.name) {
+                if let Some(better) = info
+                    .verified_name
+                    .as_ref()
+                    .and_then(|v| v.name.clone())
+                    .or_else(|| p.username.clone())
+                {
+                    p.name = better;
                 }
             }
         }
-        participants.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-        participants
     }
 
     /// Whether we are an admin, matched in whichever form the group lists us.
