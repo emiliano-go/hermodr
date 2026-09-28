@@ -152,19 +152,85 @@
     }
   }
 
-  function sendPackSticker(sticker: Sticker) {
-    const destination = chat;
-    const reply = takereply();
-    return send(async (signal) => {
-      const path = sticker.path ?? (await invoke<string>("download_sticker", { filehash: sticker.filehash }));
-      signal.throwIfAborted();
-      return invoke("send_from_library", { chat: destination, path, kind: "sticker", ...reply });
-    });
+  /** Files downloading right now, keyed by filehash, so a second click does not start another. */
+  let fetching = $state<Record<string, true>>({});
+  /** Categories whose fetch-all is running, keyed by pack id. */
+  let fetchingAll = $state<Record<string, true>>({});
+
+  /** WhatsApp's download rate limiter, told apart from ordinary failures. */
+  class RateLimited extends Error {}
+
+  function isRateLimit(e: unknown) {
+    return /429|rate[- ]?overlimit/i.test(String(e));
   }
 
-  /** Downloads a synced sticker to cold storage on first use, then sends it. */
-  function sendSynced(sticker: Sticker) {
-    void sendPackSticker(sticker);
+  function rateText(e: unknown) {
+    return e instanceof RateLimited
+      ? "WhatsApp is rate-limiting sticker downloads. Try again in a few minutes."
+      : String(e);
+  }
+
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  /** Gap between downloads in a fetch-all, so a burst does not trip the limiter. */
+  const FETCH_GAP_MS = 350;
+
+  /** Downloads a sticker without sending it; an already-downloaded file is reused. */
+  async function fetchSticker(sticker: Sticker): Promise<string | null> {
+    if (sticker.path) return sticker.path;
+    if (fetching[sticker.filehash]) return null;
+    fetching[sticker.filehash] = true;
+    try {
+      const path = await invoke<string>("download_sticker", { filehash: sticker.filehash });
+      sticker.path = path;
+      return path;
+    } catch (e) {
+      if (isRateLimit(e)) throw new RateLimited(String(e));
+      onerror(String(e));
+      return null;
+    } finally {
+      delete fetching[sticker.filehash];
+    }
+  }
+
+  /** Fetches a whole set in order, pacing the downloads and cooling off on 429. */
+  async function fetchAll(key: string, stickers: Sticker[]) {
+    if (fetchingAll[key]) return;
+    fetchingAll[key] = true;
+    try {
+      for (const sticker of stickers) {
+        if (sticker.path) continue;
+        let fetched = false;
+        for (let attempt = 0; attempt < 3 && !fetched; attempt++) {
+          try {
+            await fetchSticker(sticker);
+            fetched = true;
+          } catch (e) {
+            if (!(e instanceof RateLimited)) throw e;
+            await sleep(4000 * (attempt + 1));
+          }
+        }
+        if (!fetched) {
+          onerror("WhatsApp is rate-limiting sticker downloads. Try again in a few minutes.");
+          return;
+        }
+        await sleep(FETCH_GAP_MS);
+      }
+    } finally {
+      delete fetchingAll[key];
+    }
+  }
+
+  /** A tile fetches a missing file; only a ready one is sent. */
+  function clickSticker(sticker: Sticker) {
+    if (!sticker.path) {
+      void fetchSticker(sticker).catch((e) => onerror(rateText(e)));
+      return;
+    }
+    const destination = chat;
+    const reply = takereply();
+    void send(() =>
+      invoke("send_from_library", { chat: destination, path: sticker.path!, kind: "sticker", ...reply }),
+    );
   }
 
   function toggleSyncedFavorite(sticker: Sticker) {
@@ -246,11 +312,20 @@
 
 {#snippet syncedTile(sticker: Sticker)}
   <div class="tile">
-    <button class="tile-send" title="Send sticker" onclick={() => sendSynced(sticker)}>
+    <button
+      class="tile-send"
+      title={sticker.path ? "Send sticker" : "Fetch sticker"}
+      onclick={() => clickSticker(sticker)}>
       {#if sticker.path && !broken[sticker.path]}
         <img src={convertFileSrc(sticker.path!)} alt="" loading="lazy" onerror={() => (broken[sticker.path!] = true)} />
       {:else}
-        <span class="tile-unsupported">{sticker.lottie ? "Lottie sticker" : "Tap to fetch"}</span>
+        <span class="tile-unsupported">
+          {sticker.lottie
+            ? "Lottie sticker"
+            : fetching[sticker.filehash]
+              ? "Fetching…"
+              : "Tap to fetch"}
+        </span>
       {/if}
     </button>
     <button
@@ -356,25 +431,54 @@
         }} />
       {#if tab === "sticker"}
         {#if openPack}
+          {@const pack = openPack}
           <div class="pack-head">
             <button class="pack-back" title="All packs" onclick={() => (openPack = null)}><Icon name="chevronLeft" size={15} /></button>
-            <span class="pack-name">{openPack.pack.name ?? openPack.pack.publisher ?? "Sticker pack"}</span>
+            <span class="pack-name">{pack.pack.name ?? pack.pack.publisher ?? "Sticker pack"}</span>
+            {#if pack.stickers.length > 0}
+              <button
+                class="fetch-all"
+                disabled={!!fetchingAll[pack.pack.pack_id]}
+                onclick={() => fetchAll(pack.pack.pack_id, pack.stickers)}>
+                {fetchingAll[pack.pack.pack_id] ? "Fetching…" : "Fetch all"}
+              </button>
+            {/if}
           </div>
           <div class="tiles stickers">
-            {#each openPack.stickers as sticker (sticker.filehash)}
-              <button class="tile-send" title="Send sticker" onclick={() => sendPackSticker(sticker)}>
+            {#each pack.stickers as sticker (sticker.filehash)}
+              <button
+                class="tile-send"
+                title={sticker.path ? "Send sticker" : "Fetch sticker"}
+                onclick={() => clickSticker(sticker)}>
                 {#if sticker.path && !broken[sticker.path]}
                   <img src={convertFileSrc(sticker.path!)} alt="" loading="lazy" onerror={() => (broken[sticker.path!] = true)} />
                 {:else}
-                  <span class="tile-unsupported">{sticker.lottie ? "Lottie sticker" : "Tap to fetch"}</span>
+                  <span class="tile-unsupported">
+                    {sticker.lottie
+                      ? "Lottie sticker"
+                      : fetching[sticker.filehash]
+                        ? "Fetching…"
+                        : "Tap to fetch"}
+                  </span>
                 {/if}
               </button>
             {/each}
           </div>
-          {#if openPack.stickers.length === 0}<p class="empty">This pack has no stickers to show.</p>{/if}
+          {#if pack.stickers.length === 0}<p class="empty">This pack has no stickers to show.</p>{/if}
         {:else}
+          <button class="resync" onclick={resyncLibrary}><Icon name="repeat" size={14} /> Sync with phone</button>
           {#if lib.favorites.length > 0}
-            <h4>Favorites</h4>
+            <div class="section-head">
+              <h4>Favorites</h4>
+              {#if lib.favorites.some((sticker) => !sticker.path)}
+                <button
+                  class="fetch-all"
+                  disabled={!!fetchingAll["favorites"]}
+                  onclick={() => fetchAll("favorites", lib.favorites)}>
+                  {fetchingAll["favorites"] ? "Fetching…" : "Fetch all"}
+                </button>
+              {/if}
+            </div>
             <div class="tiles stickers">
               {#each lib.favorites as sticker (sticker.filehash)}
                 {@render syncedTile(sticker)}
@@ -425,7 +529,6 @@
               {/each}
             </div>
           {/if}
-          <button class="resync" onclick={resyncLibrary}><Icon name="repeat" size={14} /> Sync with phone</button>
         {/if}
       {:else}
         <div class="tiles gifs">
@@ -578,6 +681,11 @@
     font-weight: 600;
     color: var(--muted);
   }
+  .section-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(38px, 1fr));
@@ -683,6 +791,25 @@
   .pack-name {
     font-size: 13px;
     font-weight: 600;
+  }
+  .fetch-all {
+    margin-left: auto;
+    padding: 5px 10px;
+    border: 0;
+    border-radius: 6px;
+    background: var(--raised);
+    color: var(--muted);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .fetch-all:hover:not(:disabled) {
+    color: var(--text);
+  }
+  .fetch-all:disabled {
+    opacity: 0.7;
+    cursor: default;
   }
   .resync {
     display: flex;
