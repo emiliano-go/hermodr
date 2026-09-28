@@ -39,6 +39,12 @@
   import StorageManager from "$lib/StorageManager.svelte";
   import ArchiveManager from "$lib/ArchiveManager.svelte";
   import { limitValue, parseLimit } from "$lib/retention";
+  import type { NotifPermission } from "$lib/notifications";
+  import {
+    notificationPermission,
+    requestNotificationPermission,
+    sendTestNotification,
+  } from "$lib/notifications";
   import {
     ACTIONS,
     keybinds,
@@ -213,30 +219,33 @@
   let clearingHistory = $state(false);
   let backfillError = $state<string | null>(null);
 
-  // Desktop notifications use the Web Notification API; the permission lives
-  // with the OS/browser, not in our settings, so it is shown, not edited.
-  let notifPermission = $state(
-    typeof Notification === "undefined" ? "unsupported" : Notification.permission,
-  );
-  function refreshNotifPermission() {
-    if (typeof Notification !== "undefined") notifPermission = Notification.permission;
+  // Desktop notification permission lives with the OS, not in our settings,
+  // so it is shown, not edited. Delivered through the native plugin: the
+  // webview auto-denies Notification requests, which made an Allow button
+  // built on it a dead click. A `denied` answer is final until the user
+  // re-enables Postal in the system settings, so that state offers unblock
+  // steps and a recheck instead of another dead prompt.
+  let notifPermission = $state<NotifPermission>("prompt");
+  let notifBusy = $state(false);
+  async function refreshNotifPermission() {
+    notifBusy = true;
+    try {
+      notifPermission = await notificationPermission();
+    } finally {
+      notifBusy = false;
+    }
   }
   async function requestNotifPermission() {
-    if (typeof Notification === "undefined") return;
+    notifBusy = true;
     try {
-      notifPermission = await Notification.requestPermission();
-    } catch {
-      notifPermission = Notification.permission;
+      notifPermission = await requestNotificationPermission();
+    } finally {
+      notifBusy = false;
     }
   }
-  function sendTestNotification() {
-    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
-    try {
-      new Notification("Postal", { body: "Notifications are on.", tag: "postal-test" });
-    } catch {
-      // Best-effort only.
-    }
-  }
+  $effect(() => {
+    if (section === "notifications") void refreshNotifPermission();
+  });
 
   // The account's profile lives on WhatsApp's servers, so it is fetched when a
   // section that shows it opens and written back field by field.
@@ -639,6 +648,15 @@
                 void save();
               }} />
           </label>
+          <p class="lede">
+            {#if settings.notifications_enabled === false}
+              Notifications are off — new messages will not ping you.
+            {:else if notifPermission === "granted"}
+              Notifications are on for every chat except muted ones.
+            {:else}
+              Notifications are on here, but the system has not allowed them yet — see below.
+            {/if}
+          </p>
           <div class="setting">
             <div>
               <span class="setting-title">System permission</span>
@@ -648,21 +666,24 @@
                 {:else if notifPermission === "granted"}
                   Allowed. Notifications appear when a new message arrives in another chat.
                 {:else if notifPermission === "denied"}
-                  Blocked. Allow notifications in the system settings to see them.
+                  Blocked. Postal cannot ask again from here: re-enable it in the system
+                  settings (GNOME Settings → Notifications → Postal; macOS System Settings →
+                  Notifications; Windows Settings → Notifications), then press Recheck.
                 {:else}
-                  Not decided yet. The browser asks the first time a message arrives.
+                  Not decided yet. Press Allow and the system asks once.
                 {/if}
               </span>
             </div>
-            {#if notifPermission !== "unsupported" && notifPermission !== "granted"}
-              <button class="button" onclick={requestNotifPermission}>Allow</button>
+            {#if notifPermission === "prompt"}
+              <button class="button" disabled={notifBusy} onclick={requestNotifPermission}>
+                {notifBusy ? "Asking…" : "Allow"}
+              </button>
+            {:else if notifPermission === "denied"}
+              <button class="button" disabled={notifBusy} onclick={refreshNotifPermission}>
+                {notifBusy ? "Checking…" : "Recheck"}
+              </button>
             {:else if notifPermission === "granted"}
-              <button
-                class="button"
-                onclick={() => {
-                  refreshNotifPermission();
-                  sendTestNotification();
-                }}>Test</button>
+              <button class="button" onclick={() => void sendTestNotification()}>Test</button>
             {/if}
           </div>
         {:else if section === "device"}

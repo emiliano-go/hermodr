@@ -1,9 +1,12 @@
 // Desktop notifications for direct messages and groups.
 //
 // Pure helpers (`isChatMuted`, `shouldNotify`, `notificationTitle`,
-// `notificationBody`) are unit-tested in `notifications.test.ts`. The thin
-// sender at the bottom uses the Web Notification API so no new native
-// dependency is needed; it works in the Tauri webview and in a browser.
+// `notificationBody`) are unit-tested in `notifications.test.ts`. Delivery
+// goes through Tauri's native notification plugin, which shows a real OS
+// permission prompt: the webview's own Notification API auto-denies without
+// one, so an "Allow" button built on it can never work. Outside Tauri (the
+// synthetic browser harness) the Web Notification API is the fallback.
+import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { plain } from "./format.ts";
 import { MEDIA_LABELS, captionOf } from "./message.ts";
 import type { StoredMessage } from "./models.ts";
@@ -77,30 +80,70 @@ export function groupNotificationBody(senderName: string, body: string): string 
   return senderName ? `${senderName}: ${body}` : body;
 }
 
-/** Asks the OS for permission when it has not been decided yet. */
-export async function ensureNotificationPermission(): Promise<NotificationPermission | null> {
-  if (typeof Notification === "undefined") return null;
-  if (Notification.permission === "default") {
-    try {
-      return await Notification.requestPermission();
-    } catch {
-      return Notification.permission;
-    }
-  }
-  return Notification.permission;
+/** OS permission state for desktop notifications. */
+export type NotifPermission = "granted" | "denied" | "prompt" | "unsupported";
+
+function webPermission(): NotifPermission {
+  if (typeof Notification === "undefined") return "unsupported";
+  if (Notification.permission === "granted") return "granted";
+  if (Notification.permission === "denied") return "denied";
+  return "prompt";
 }
 
-/** Shows one desktop notification; clicking it opens the chat. No-ops without permission. */
-export function showChatNotification(title: string, body: string, chat: string): void {
-  if (typeof Notification === "undefined" || typeof window === "undefined") return;
-  if (Notification.permission !== "granted") return;
+/** Reads the current permission without prompting. Never throws. */
+export async function notificationPermission(): Promise<NotifPermission> {
   try {
-    const note = new Notification(title, { body, tag: `postal-${chat}`, silent: false });
-    note.onclick = () => {
-      window.focus();
-      window.dispatchEvent(new CustomEvent<string>("postal:open-chat", { detail: chat }));
-    };
+    return (await isPermissionGranted()) ? "granted" : "prompt";
   } catch {
-    // Notifications are best-effort; the chat list already shows the message.
+    return webPermission();
+  }
+}
+
+/**
+ * Asks the OS for permission. A `denied` answer is final until the user
+ * re-enables Postal in the system settings: no API can re-prompt from
+ * that state, so the settings UI shows unblock steps instead of retrying.
+ */
+export async function requestNotificationPermission(): Promise<NotifPermission> {
+  try {
+    return (await requestPermission()) ? "granted" : "denied";
+  } catch {
+    if (typeof Notification === "undefined") return "unsupported";
+    if (Notification.permission === "granted") return "granted";
+    try {
+      return (await Notification.requestPermission()) === "granted" ? "granted" : "denied";
+    } catch {
+      return webPermission();
+    }
+  }
+}
+
+/** Shows one desktop notification. No-ops without permission. Never throws. */
+export async function showChatNotification(title: string, body: string, chat: string): Promise<void> {
+  if (typeof window === "undefined") return;
+  try {
+    if (!(await isPermissionGranted())) return;
+    await sendNotification({ title, body });
+  } catch {
+    // Outside Tauri (synthetic browser harness): best-effort Web API fallback.
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    try {
+      const note = new Notification(title, { body, tag: `postal-${chat}`, silent: false });
+      note.onclick = () => {
+        window.focus();
+        window.dispatchEvent(new CustomEvent<string>("postal:open-chat", { detail: chat }));
+      };
+    } catch {
+      // Notifications are best-effort; the chat list already shows the message.
+    }
+  }
+}
+
+/** Pings once from the settings test button. Never throws. */
+export async function sendTestNotification(): Promise<void> {
+  try {
+    await sendNotification({ title: "Postal", body: "Notifications are on." });
+  } catch {
+    // Best-effort only.
   }
 }
