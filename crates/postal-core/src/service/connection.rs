@@ -261,88 +261,145 @@ pub(super) fn sync_ready(p: &SyncProgress, elapsed: std::time::Duration) -> bool
     (p.offline_done || no_backlog) && quiescent
 }
 
-impl WhatsAppService {
-    /// Connects an account, pairing first if it has no session yet.
-    ///
-    /// Returns the service along with an event receiver that was registered
-    /// before the connection attempt began. The pairing code is emitted during
-    /// startup, so a receiver created afterwards would miss it; the returned one
-    /// is guaranteed to see every event from the beginning.
-    pub async fn start(config: ServiceConfig) -> Result<(Self, broadcast::Receiver<ServiceEvent>)> {
-        log::info!(
-            "starting: session {}, messages {}, aliases {}, media {:?}, retention {:?}, full history {}",
-            config.session_path.display(),
-            config.messages_path.display(),
-            config.aliases_path.display(),
-            config.media_dir,
-            config.retention,
-            config.request_full_history,
-        );
-        let store = StoreWorker::open(&config.messages_path).await?;
-        let disk_retention = Arc::new(DiskRetentionManager::new(config.retention));
-        let aliases = AliasWorker::open(&config.aliases_path).await?;
-        let (events, initial_rx) = broadcast::channel(256);
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+/// The paths and policies a session starts with, so a bug report has them.
+fn log_start(config: &ServiceConfig) {
+    log::info!(
+        "starting: session {}, messages {}, aliases {}, media {:?}, retention {:?}, full history {}",
+        config.session_path.display(),
+        config.messages_path.display(),
+        config.aliases_path.display(),
+        config.media_dir,
+        config.retention,
+        config.request_full_history,
+    );
+}
 
-        let session_path = config.session_path.clone();
-        let retention = config.retention;
-        match store.run(move |store| reclaim_oversized_secrets(&session_path, &retention, store)).await {
-            Ok(0) => {}
-            Ok(removed) => log::info!("reclaimed {removed} stale decryption secret(s)"),
-            Err(e) => log::warn!("could not reclaim stale decryption secrets: {e}"),
+/// Reclaims the stale decryption secrets an oversized secret store holds.
+async fn reclaim_secrets(store: &StoreWorker, config: &ServiceConfig) {
+    let session_path = config.session_path.clone();
+    let retention = config.retention;
+    match store.run(move |store| reclaim_oversized_secrets(&session_path, &retention, store)).await {
+        Ok(0) => {}
+        Ok(removed) => log::info!("reclaimed {removed} stale decryption secret(s)"),
+        Err(e) => log::warn!("could not reclaim stale decryption secrets: {e}"),
+    }
+}
+
+/// The event kinds the handler subscribes to. Unlisted kinds never reach it:
+/// history ("load older" included), typing and picture changes need these.
+const WATCHED_EVENTS: &[EventKind] = &[
+    EventKind::Messages,
+    EventKind::Disconnected,
+    EventKind::LoggedOut,
+    EventKind::Receipt,
+    EventKind::ServerAck,
+    EventKind::ContactUpdate,
+    EventKind::ContactRemoved,
+    EventKind::OfflineSyncPreview,
+    EventKind::OfflineSyncCompleted,
+    EventKind::OfflineSyncInterrupted,
+    EventKind::PinUpdate,
+    EventKind::ArchiveUpdate,
+    EventKind::MuteUpdate,
+    EventKind::MarkChatAsReadUpdate,
+    EventKind::HistorySync,
+    EventKind::ChatPresence,
+    EventKind::PictureUpdate,
+    EventKind::UndecryptableMessage,
+    EventKind::IdentityChange,
+    EventKind::DeviceListUpdate,
+    EventKind::Presence,
+    EventKind::GroupUpdate,
+    EventKind::MissedCall,
+    EventKind::FavoriteStickerUpdate,
+    EventKind::RemoveRecentStickerUpdate,
+];
+
+/// The state a session's tasks share, built once at startup.
+struct SessionState {
+    qr: Arc<Mutex<Option<String>>>,
+    connected: Arc<AtomicBool>,
+    keep_archived: Arc<AtomicBool>,
+    keep_view_once: Arc<AtomicBool>,
+    reconnecting: Arc<AtomicBool>,
+    names_resynced: Arc<AtomicBool>,
+    client_slot: Arc<std::sync::OnceLock<Arc<Client>>>,
+    group_cache: Arc<Mutex<std::collections::HashMap<String, GroupInfo>>>,
+    groups_cache: Arc<Mutex<Option<Vec<whatsapp_rust::GroupOverview>>>>,
+    sync_progress: Arc<Mutex<SyncProgress>>,
+    initial_gate_done: Arc<std::sync::atomic::AtomicBool>,
+    older_waits: Arc<Mutex<OlderWaits>>,
+}
+
+impl SessionState {
+    fn new(config: &ServiceConfig) -> Self {
+        Self {
+            qr: Arc::new(Mutex::new(None)),
+            connected: Arc::new(AtomicBool::new(false)),
+            // Shared with the event handler so the settings apply without a
+            // reconnect.
+            keep_archived: Arc::new(AtomicBool::new(config.keep_archived)),
+            keep_view_once: Arc::new(AtomicBool::new(config.keep_view_once)),
+            // Single-flight guard for a forced reconnect after a stall or a resume.
+            reconnecting: Arc::new(AtomicBool::new(false)),
+            // Whether the address book has already been replayed this run.
+            names_resynced: Arc::new(AtomicBool::new(false)),
+            // The client only exists once the bot is built, but the message
+            // handler needs it to download media. A OnceLock bridges that.
+            client_slot: Arc::new(std::sync::OnceLock::new()),
+            group_cache: Arc::default(),
+            groups_cache: Arc::default(),
+            // Progress of the initial catch-up; shared with the readiness task
+            // that decides when the UI may leave its loading screen.
+            sync_progress: Arc::default(),
+            // Readiness is announced once per run; a reconnect must not re-gate.
+            initial_gate_done: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            older_waits: Arc::default(),
         }
+    }
 
+    /// The protocol event handler, sharing this session's state.
+    fn inbound(
+        &self,
+        store: &StoreWorker,
+        disk_retention: &Arc<DiskRetentionManager>,
+        events: &broadcast::Sender<ServiceEvent>,
+        config: &ServiceConfig,
+    ) -> Inbound {
+        Inbound {
+            store: store.clone(),
+            disk_retention: disk_retention.clone(),
+            events: events.clone(),
+            connected: self.connected.clone(),
+            client_for_events: self.client_slot.clone(),
+            media_dir: config.media_dir.clone(),
+            group_cache: self.group_cache.clone(),
+            groups_cache: self.groups_cache.clone(),
+            older_waits: self.older_waits.clone(),
+            // Auto-downloads run beside the event handler, so a long backlog of
+            // media never holds up the messages behind it.
+            downloads: Arc::new(tokio::sync::Semaphore::new(4)),
+            sync_progress: self.sync_progress.clone(),
+            auto_download_default: config.auto_download_media,
+            keep_archived: self.keep_archived.clone(),
+            keep_view_once: self.keep_view_once.clone(),
+        }
+    }
+
+    /// The client with its callbacks, wired to this session's state.
+    async fn build_bot(
+        &self,
+        config: &ServiceConfig,
+        store: &StoreWorker,
+        events: &broadcast::Sender<ServiceEvent>,
+        inbound: Inbound,
+    ) -> Result<Bot> {
         let policy = if config.request_full_history {
             HistoryPolicy::accept_everything()
         } else {
             HistoryPolicy::default()
         };
-
-        let qr_state = Arc::new(Mutex::new(None));
-        let connected_state = Arc::new(AtomicBool::new(false));
-        // Whether a new message keeps an archived chat archived; shared with the
-        // event handler so the setting applies without a reconnect.
-        let keep_archived_state = Arc::new(AtomicBool::new(config.keep_archived));
-        // Whether an arriving view-once is kept as ordinary media; shared with
-        // the event handler so the setting applies without a reconnect.
-        let keep_view_once_state = Arc::new(AtomicBool::new(config.keep_view_once));
-        // Single-flight guard for a forced reconnect after a stall or a resume.
-        let reconnecting_state = Arc::new(AtomicBool::new(false));
-        // Whether the address book has already been replayed this run.
-        let names_resynced = Arc::new(AtomicBool::new(false));
-        // The client only exists once the bot is built, but the message handler
-        // needs it to download media. A OnceLock bridges that ordering.
-        let client_slot: Arc<std::sync::OnceLock<Arc<Client>>> =
-            Arc::new(std::sync::OnceLock::new());
-
-        let media_dir = config.media_dir.clone();
-        let group_cache: Arc<Mutex<std::collections::HashMap<String, GroupInfo>>> = Arc::default();
-        let groups_cache: Arc<Mutex<Option<Vec<whatsapp_rust::GroupOverview>>>> = Arc::default();
-        // Progress of the initial catch-up; shared with the readiness task that
-        // decides when the UI may leave its loading screen.
-        let sync_progress: Arc<Mutex<SyncProgress>> = Arc::default();
-        // Readiness is announced once per run; a reconnect must not re-gate the UI.
-        let initial_gate_done = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let older_waits: Arc<Mutex<OlderWaits>> = Arc::default();
-        let inbound = Inbound {
-            store: store.clone(),
-            disk_retention: disk_retention.clone(),
-            events: events.clone(),
-            connected: connected_state.clone(),
-            client_for_events: client_slot.clone(),
-            media_dir: media_dir.clone(),
-            group_cache: group_cache.clone(),
-            groups_cache: groups_cache.clone(),
-            older_waits: older_waits.clone(),
-            // Auto-downloads run beside the event handler, so a long backlog of media
-            // never holds up the messages behind it.
-            downloads: Arc::new(tokio::sync::Semaphore::new(4)),
-            sync_progress: sync_progress.clone(),
-            auto_download_default: config.auto_download_media,
-            keep_archived: keep_archived_state.clone(),
-            keep_view_once: keep_view_once_state,
-        };
-        let bot = Bot::builder()
+        Ok(Bot::builder()
             .with_watched_ab_props(super::diagnostics::boolean_props())
             .with_backend(SqliteStore::new(config.session_path.to_string_lossy().as_ref()).await?)
             .with_history_sync_admission(policy)
@@ -350,7 +407,7 @@ impl WhatsAppService {
             .with_cache_config(cache_config_for(&config.retention))
             .on_qr_code({
                 let events = events.clone();
-                let qr_state = qr_state.clone();
+                let qr_state = self.qr.clone();
                 move |code, _timeout| {
                     let events = events.clone();
                     let qr_state = qr_state.clone();
@@ -363,17 +420,17 @@ impl WhatsAppService {
             })
             .on_connected({
                 let events = events.clone();
-                let qr_state = qr_state.clone();
-                let connected_state = connected_state.clone();
-                let names_resynced = names_resynced.clone();
+                let qr = self.qr.clone();
+                let connected = self.connected.clone();
+                let names_resynced = self.names_resynced.clone();
                 let store = store.clone();
                 let session_path = config.session_path.clone();
-                let sync_progress = sync_progress.clone();
-                let initial_gate_done = initial_gate_done.clone();
+                let sync_progress = self.sync_progress.clone();
+                let initial_gate_done = self.initial_gate_done.clone();
                 move |client| {
                     let events = events.clone();
-                    let qr_state = qr_state.clone();
-                    let connected_state = connected_state.clone();
+                    let qr = qr.clone();
+                    let connected = connected.clone();
                     let names_resynced = names_resynced.clone();
                     let store = store.clone();
                     let session_path = session_path.clone();
@@ -381,133 +438,151 @@ impl WhatsAppService {
                     let initial_gate_done = initial_gate_done.clone();
                     async move {
                         log::info!("connected");
-                        connected_state.store(true, Ordering::SeqCst);
+                        connected.store(true, Ordering::SeqCst);
                         // The code is spent once paired.
-                        *qr_state.lock().unwrap() = None;
+                        *qr.lock().unwrap() = None;
                         let _ = events.send(ServiceEvent::Connected);
-
-                        // Tell the UI once when the initial catch-up is applied,
-                        // so it does not drop its loading screen mid-burst. The
-                        // drain completes first; the settle window then covers
-                        // the initial history window, which has no done event.
                         if !initial_gate_done.swap(true, Ordering::SeqCst) {
-                            let progress = sync_progress.clone();
-                            let events = events.clone();
-                            tokio::spawn(async move {
-                                let started = std::time::Instant::now();
-                                loop {
-                                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                                    let elapsed = started.elapsed();
-                                    let (ready, messages, chats) = {
-                                        let p = progress.lock().unwrap();
-                                        (sync_ready(&p, elapsed), p.applied, p.history_chats)
-                                    };
-                                    if ready {
-                                        let _ = events.send(ServiceEvent::InitialSyncComplete {
-                                            messages,
-                                            chats,
-                                        });
-                                        break;
-                                    }
-                                }
-                            });
+                            spawn_initial_gate(events.clone(), sync_progress.clone());
                         }
-
-                        // Saved contact names reach the client as app-state
-                        // patches, and an already-paired session has none left
-                        // to deliver. Replay the address book once per run so
-                        // the names are learned.
                         if !names_resynced.swap(true, Ordering::SeqCst) {
-                            let client = client.clone();
-                            let events = events.clone();
-                            let session_path = session_path.clone();
-                            tokio::spawn(async move {
-                                match client
-                                    .resync_app_state_collection(WAPatchName::CriticalUnblockLow)
-                                    .await
-                                {
-                                    Ok(_) => {
-                                        store.run(move |store| { backfill_lid_names(&session_path, store); Ok(()) }).await.logged();
-                                        if let Some(count) = store.saved_name_count().await.observed() {
-                                            log::info!("address book: {count} saved name(s)");
-                                            if count > 0 {
-                                                let _ =
-                                                    events.send(ServiceEvent::NamesUpdated { count });
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        log::warn!("contact resync failed: {e}");
-                                    }
-                                }
-                            });
+                            spawn_address_book_resync(client.clone(), events.clone(), store.clone(), session_path.clone());
                         }
-                        // Pins, archive, mute and read marks all live in
-                        // regular_low. Resync it on every connection so the app
-                        // adopts the account's state after a reconnect or a
-                        // conflict, the phone being the authority.
-                        {
-                            let client = client.clone();
-                            tokio::spawn(async move {
-                                match client
-                                    .resync_app_state_collection(WAPatchName::RegularLow)
-                                    .await
-                                {
-                                    Ok(report) if report.all_synced() => {
-                                        log::debug!("regular_low resync: all collections synced");
-                                    }
-                                    Ok(report) => {
-                                        let stale: Vec<_> =
-                                            report.unsynced().map(|n| n.as_str()).collect();
-                                        log::warn!(
-                                            "regular_low resync left collections unsynced: {stale:?}"
-                                        );
-                                    }
-                                    Err(e) => log::warn!("regular_low resync failed: {e}"),
-                                }
-                            });
-                        }
+                        spawn_regular_low_resync(client.clone());
                     }
                 }
             })
-            .on_event_for(
-                &[
-                    EventKind::Messages,
-                    EventKind::Disconnected,
-                    EventKind::LoggedOut,
-                    EventKind::Receipt,
-                    EventKind::ServerAck,
-                    EventKind::ContactUpdate,
-                    EventKind::ContactRemoved,
-                    EventKind::OfflineSyncPreview,
-                    EventKind::OfflineSyncCompleted,
-                    EventKind::OfflineSyncInterrupted,
-                    EventKind::PinUpdate,
-                    EventKind::ArchiveUpdate,
-                    EventKind::MuteUpdate,
-                    EventKind::MarkChatAsReadUpdate,
-                    // Unlisted kinds never reach the handler: history ("load
-                    // older" included), typing and picture changes need these.
-                    EventKind::HistorySync,
-                    EventKind::ChatPresence,
-                    EventKind::PictureUpdate,
-                    EventKind::UndecryptableMessage,
-                    EventKind::IdentityChange,
-                    EventKind::DeviceListUpdate,
-                    EventKind::Presence,
-                    EventKind::GroupUpdate,
-                    EventKind::MissedCall,
-                    EventKind::FavoriteStickerUpdate,
-                    EventKind::RemoveRecentStickerUpdate,
-                ],
-                move |event, _client| {
-                    let inbound = inbound.clone();
-                    async move { inbound.handle(event.as_ref()).await }
-                },
-            )
+            .on_event_for(WATCHED_EVENTS, move |event, _client| {
+                let inbound = inbound.clone();
+                async move { inbound.handle(event.as_ref()).await }
+            })
             .build()
-            .await?;
+            .await?)
+    }
+}
 
+/// Tells the UI once when the initial catch-up is applied, so it does not drop
+/// its loading screen mid-burst. The drain completes first; the settle window
+/// then covers the initial history window, which has no done event.
+fn spawn_initial_gate(events: broadcast::Sender<ServiceEvent>, progress: Arc<Mutex<SyncProgress>>) {
+    tokio::spawn(async move {
+        let started = std::time::Instant::now();
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            let elapsed = started.elapsed();
+            let (ready, messages, chats) = {
+                let p = progress.lock().unwrap();
+                (sync_ready(&p, elapsed), p.applied, p.history_chats)
+            };
+            if ready {
+                let _ = events.send(ServiceEvent::InitialSyncComplete { messages, chats });
+                break;
+            }
+        }
+    });
+}
+
+/// Replays the address book once per run, so saved contact names reach the
+/// client even though an already-paired session has no app-state patches left
+/// to deliver.
+fn spawn_address_book_resync(
+    client: Arc<Client>,
+    events: broadcast::Sender<ServiceEvent>,
+    store: StoreWorker,
+    session_path: std::path::PathBuf,
+) {
+    tokio::spawn(async move {
+        match client.resync_app_state_collection(WAPatchName::CriticalUnblockLow).await {
+            Ok(_) => {
+                store.run(move |store| { backfill_lid_names(&session_path, store); Ok(()) }).await.logged();
+                if let Some(count) = store.saved_name_count().await.observed() {
+                    log::info!("address book: {count} saved name(s)");
+                    if count > 0 {
+                        let _ = events.send(ServiceEvent::NamesUpdated { count });
+                    }
+                }
+            }
+            Err(e) => {
+                log::warn!("contact resync failed: {e}");
+            }
+        }
+    });
+}
+
+/// Pins, archive, mute and read marks all live in regular_low. Resync it on
+/// every connection so the app adopts the account's state after a reconnect or
+/// a conflict, the phone being the authority.
+fn spawn_regular_low_resync(client: Arc<Client>) {
+    tokio::spawn(async move {
+        match client.resync_app_state_collection(WAPatchName::RegularLow).await {
+            Ok(report) if report.all_synced() => {
+                log::debug!("regular_low resync: all collections synced");
+            }
+            Ok(report) => {
+                let stale: Vec<_> = report.unsynced().map(|n| n.as_str()).collect();
+                log::warn!("regular_low resync left collections unsynced: {stale:?}");
+            }
+            Err(e) => log::warn!("regular_low resync failed: {e}"),
+        }
+    });
+}
+
+/// System sleep leaves a half-open socket that the library's keepalive may
+/// never surface, after which the app neither sends nor receives until
+/// restarted. Wall-clock jumps across a suspend, so a large gap between ticks
+/// means the machine woke up; drop the transport so the run loop reconnects.
+fn spawn_resume_watchdog(client: &Arc<Client>, reconnecting: &Arc<AtomicBool>) {
+    let client = client.clone();
+    let reconnecting = reconnecting.clone();
+    let shutdown = client.shutdown_signal();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs(30));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut last = std::time::SystemTime::now();
+        loop {
+            tokio::select! {
+                _ = tick.tick() => {
+                    let now = std::time::SystemTime::now();
+                    let gap = now.duration_since(last).unwrap_or_default();
+                    last = now;
+                    if gap > Duration::from_secs(120) && client.is_connected() {
+                        log::warn!(
+                            "resumed after {:.1} min; forcing reconnect",
+                            gap.as_secs_f64() / 60.0
+                        );
+                        force_reconnect(&client, &reconnecting);
+                    }
+                }
+                _ = whatsapp_rust::wacore::runtime::wait_for_shutdown(&shutdown) => {
+                    log::debug!("resume watchdog stopping");
+                    break;
+                }
+            }
+        }
+    });
+}
+
+
+impl WhatsAppService {
+    /// Connects an account, pairing first if it has no session yet.
+    ///
+    /// Returns the service along with an event receiver that was registered
+    /// before the connection attempt began. The pairing code is emitted during
+    /// startup, so a receiver created afterwards would miss it; the returned one
+    /// is guaranteed to see every event from the beginning.
+    pub async fn start(config: ServiceConfig) -> Result<(Self, broadcast::Receiver<ServiceEvent>)> {
+        log_start(&config);
+        let store = StoreWorker::open(&config.messages_path).await?;
+        let disk_retention = Arc::new(DiskRetentionManager::new(config.retention));
+        let aliases = AliasWorker::open(&config.aliases_path).await?;
+        let (events, initial_rx) = broadcast::channel(256);
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+
+        reclaim_secrets(&store, &config).await;
+
+        let states = SessionState::new(&config);
+        let inbound = states.inbound(&store, &disk_retention, &events, &config);
+        let bot = states.build_bot(&config, &store, &events, inbound).await?;
         let client = bot.client();
         // In-memory only, so it is set on every start. Android metadata is what
         // makes the server treat this companion as trusted and hand over
@@ -516,47 +591,11 @@ impl WhatsAppService {
         if config.android_pair {
             client.set_client_profile(android_tablet_profile()).await;
         }
-
         // Hand the client to the message handler, which needs it to download
         // media. Without this the slot stays empty and every attachment is
         // recorded with no file.
-        client_slot.set(client.clone()).map_err(|_| anyhow::anyhow!("event client already initialized"))?;
-
-        // System sleep leaves a half-open socket that the library's keepalive
-        // may never surface, after which the app neither sends nor receives
-        // until restarted. Wall-clock jumps across a suspend, so a large gap
-        // between ticks means the machine woke up; drop the transport so the
-        // run loop reconnects.
-        {
-            let client = client.clone();
-            let reconnecting = reconnecting_state.clone();
-            let shutdown = client.shutdown_signal();
-            tokio::spawn(async move {
-                let mut tick = tokio::time::interval(Duration::from_secs(30));
-                tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-                let mut last = std::time::SystemTime::now();
-                loop {
-                    tokio::select! {
-                        _ = tick.tick() => {
-                            let now = std::time::SystemTime::now();
-                            let gap = now.duration_since(last).unwrap_or_default();
-                            last = now;
-                            if gap > Duration::from_secs(120) && client.is_connected() {
-                                log::warn!(
-                                    "resumed after {:.1} min; forcing reconnect",
-                                    gap.as_secs_f64() / 60.0
-                                );
-                                force_reconnect(&client, &reconnecting);
-                            }
-                        }
-                        _ = whatsapp_rust::wacore::runtime::wait_for_shutdown(&shutdown) => {
-                            log::debug!("resume watchdog stopping");
-                            break;
-                        }
-                    }
-                }
-            });
-        }
+        states.client_slot.set(client.clone()).map_err(|_| anyhow::anyhow!("event client already initialized"))?;
+        spawn_resume_watchdog(&client, &states.reconnecting);
 
         // `run()` only returns on logout or shutdown, so it lives in its own task.
         tokio::spawn(async move {
@@ -574,18 +613,18 @@ impl WhatsAppService {
                 aliases,
                 events,
                 shutdown: Mutex::new(Some(shutdown_tx)),
-                media_dir,
-                qr: qr_state,
-                connected: connected_state,
-                keep_archived: keep_archived_state,
-                reconnecting: reconnecting_state,
+                media_dir: config.media_dir,
+                qr: states.qr,
+                connected: states.connected,
+                keep_archived: states.keep_archived,
+                reconnecting: states.reconnecting,
                 subject_backoff: Mutex::default(),
                 nameless: Mutex::default(),
                 user_info_slots: tokio::sync::Semaphore::new(user_info::MAX_REQUESTS),
                 resolving: AtomicBool::new(false),
-                group_cache,
-                groups_cache,
-                older_waits,
+                group_cache: states.group_cache,
+                groups_cache: states.groups_cache,
+                older_waits: states.older_waits,
             },
             initial_rx,
         ))
