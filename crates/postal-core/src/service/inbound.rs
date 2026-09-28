@@ -27,6 +27,38 @@ pub(super) struct Inbound {
     pub(super) keep_view_once: Arc<AtomicBool>,
 }
 
+/// Our own addresses, so a mention can be recognised whichever form it uses.
+fn own_addresses(client: Option<&Client>) -> Vec<String> {
+    client
+        .map(|c| {
+            [c.pn(), c.lid()]
+                .into_iter()
+                .flatten()
+                .map(|j| j.to_non_ad().to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// One message batch's shared state. The store is the batch handle, so every
+/// write in the loop commits together.
+struct BatchCtx<'a> {
+    store: &'a StoreWorker,
+    client: Option<Arc<Client>>,
+    own: Vec<String>,
+    media_dir: Option<PathBuf>,
+    touched: Vec<String>,
+}
+
+/// One inbound message's resolved identity, shared by every step below.
+struct Incoming {
+    chat: String,
+    sender: String,
+    from_me: bool,
+    id: String,
+}
+
+
 impl Inbound {
     pub(super) async fn handle(&self, event: &Event) {
         match event {
@@ -311,454 +343,34 @@ impl Inbound {
     }
 
     async fn on_messages(&self, batch: &MessageBatch) {
-        let Self { store, events, client_for_events, media_dir, group_cache, downloads, sync_progress, auto_download_default, .. } =
-            self;
-        let auto_download_default = *auto_download_default;
         let started = std::time::Instant::now();
-        let batch_guard = store.batch().await;
-        let store = &*batch_guard;
-        let client = client_for_events.get().cloned();
-        // Our own addresses, so a mention can be
-        // recognised whichever form it uses.
-        let own: Vec<String> = client
-            .as_deref()
-            .map(|c| {
-                [c.pn(), c.lid()]
-                    .into_iter()
-                    .flatten()
-                    .map(|j| j.to_non_ad().to_string())
-                    .collect()
-            })
-            .unwrap_or_default();
-        let mut touched: Vec<String> = Vec::with_capacity(batch.messages.len());
+        let batch_guard = self.store.batch().await;
+        let client = self.client_for_events.get().cloned();
+        let own = own_addresses(client.as_deref());
+        let mut ctx = BatchCtx {
+            store: &batch_guard,
+            client,
+            own,
+            media_dir: self.media_dir.clone(),
+            touched: Vec::with_capacity(batch.messages.len()),
+        };
         for inbound in batch.messages.iter() {
-            // The envelope carries the sender's display
-            // name, which is the only name source
-            // available without a contacts query.
-            let push_name = inbound.info.push_name.to_string();
-            let sender = inbound.info.source.sender.to_string();
-            let chat = canonical_chat(
-                client.as_deref(),
-                store,
-                &inbound.info.source.chat,
-                &inbound.info.source.sender,
-                inbound.info.source.sender_alt.as_ref(),
-            )
-            .await;
-            touched.push(chat.clone());
-            let is_group = inbound.info.source.is_group
-                || chat.ends_with("@g.us");
-            let from_me = inbound.info.source.is_from_me;
-
-            // Status updates are not a conversation; keep
-            // them out of the store so they never show up
-            // as a chat.
-            if chat == "status@broadcast" {
+            let Some(incoming) = self.resolve_incoming(inbound, &ctx).await else {
                 continue;
-            }
-
-            // Address-book names are keyed by phone
-            // number, but an LID-addressed chat names
-            // its sender with a LID, so the two never
-            // match on their own. The source carries
-            // the other form; copy the name across so
-            // the saved one is what gets shown.
-            remember_lid_pn(
-                &store,
-                &inbound.info.source.sender,
-                inbound.info.source.sender_alt.as_ref(),
-            ).await;
-            if let Some(alt) =
-                inbound.info.source.sender_alt.as_ref().map(|j| j.to_string())
-            {
-                let known =
-                    store.name_for(&alt).await.observed().flatten().filter(|n| !is_placeholder_name(n));
-                let is_saved = known.is_some();
-                // Fall back to the phone number, never
-                // the unreadable LID.
-                let name = known.unwrap_or_else(|| {
-                    alt.split('@').next().unwrap_or(&alt).to_string()
-                });
-                if is_saved {
-                    store.set_saved_name(&sender, &name).await.logged();
-                    if !is_group && !from_me {
-                        store.set_saved_name(&chat, &name).await.logged();
-                    }
-                } else {
-                    // The bare number is only a placeholder;
-                    // it must not replace a push name that a
-                    // message without one would otherwise erase.
-                    let unnamed = async |jid: &str| {
-                        store.name_for(jid).await.observed().flatten().is_none()
-                    };
-                    if unnamed(&sender).await {
-                        store.set_name(&sender, &name).await.logged();
-                    }
-                    if !is_group && !from_me && unnamed(&chat).await {
-                        store.set_name(&chat, &name).await.logged();
-                    }
-                }
-            }
-
-            if !push_name.is_empty() {
-                // Push names never override a saved one.
-                store.set_name(&sender, &push_name).await.logged();
-                // A participant's JID has no device suffix
-                // while a message's sender does, so store
-                // the bare form too or the group member
-                // list cannot find the name.
-                if let Some((user, server)) = sender.split_once('@') {
-                    let bare = format!(
-                        "{}@{}",
-                        user.split(':').next().unwrap_or(user),
-                        server
-                    );
-                    if bare != sender {
-                        store.set_name(&bare, &push_name).await.logged();
-                    }
-                }
-                // A one-to-one chat is named after its
-                // contact. A group is named by its
-                // subject, and a message we sent must
-                // never name a chat after us, which is
-                // what turned a group into our own name.
-                if !is_group && !from_me {
-                    store.set_name(&chat, &push_name).await.logged();
-                }
-            }
-
-            let base = inbound.message.get_base_message();
-            let message_id = inbound.info.id.to_string();
-            let author = if from_me {
-                own.first().cloned().unwrap_or_else(|| sender.clone())
+            };
+            ctx.touched.push(incoming.chat.clone());
+            let author = if incoming.from_me {
+                ctx.own.first().cloned().unwrap_or_else(|| incoming.sender.clone())
             } else {
                 inbound.info.source.sender.to_non_ad().to_string()
             };
-            remember_structures(&store, &chat, &message_id, &author, &inbound.message).await;
-
-            if let Some(update) = base.poll_update_message.as_option() {
-                use whatsapp_rust::wacore::poll::{compute_option_hash, PollVoteCiphertext};
-                let poll_id = update.poll_creation_message_key.as_option().and_then(|k| k.id.clone());
-                let def = match poll_id.as_deref() { Some(id) => store.poll_secret(&chat, id).await.observed().flatten(), None => None };
-                if let (Some(poll_id), Some(def), Some(vote), Some(client)) = (
-                    poll_id,
-                    def,
-                    update.vote.as_option(),
-                    client.as_deref(),
-                ) {
-                    // The key is derived from the creator's and voter's
-                    // addresses, and an LID-addressed group uses the LID
-                    // form, so try every form either side is known by.
-                    let mut creators = vec![def.creator.clone()];
-                    if own.contains(&def.creator) {
-                        creators.extend(own.iter().filter(|j| **j != def.creator).cloned());
-                    }
-                    let mut voters = vec![inbound.info.source.sender.to_non_ad()];
-                    if let Some(alt) = inbound.info.source.sender_alt.as_ref() {
-                        voters.push(alt.to_non_ad());
-                    }
-                    if from_me {
-                        voters.extend(own.iter().filter_map(|j| j.parse::<Jid>().ok()));
-                    }
-                    let voter = voters[0].clone();
-                    let mut opened = Err(anyhow::anyhow!("no address pair opened it"));
-                    'pairs: for creator in creators.iter().filter_map(|c| c.parse::<Jid>().ok()) {
-                        for voter in &voters {
-                            let cipher = PollVoteCiphertext {
-                                enc_payload: vote.enc_payload.as_deref().unwrap_or_default(),
-                                enc_iv: vote.enc_iv.as_deref().unwrap_or_default(),
-                            };
-                            if let Ok(hashes) = client
-                                .polls()
-                                .decrypt_vote(cipher, &def.secret, &poll_id, &creator, voter)
-                                .await
-                            {
-                                opened = Ok(hashes);
-                                break 'pairs;
-                            }
-                        }
-                    }
-                    match opened {
-                        Ok(hashes) => {
-                            let chosen: Vec<String> = def
-                                .options
-                                .iter()
-                                .filter(|o| hashes.iter().any(|h| h.as_slice() == compute_option_hash(o)))
-                                .cloned()
-                                .collect();
-                            let who = if from_me { "@me".to_string() } else { voter.to_string() };
-                            store.set_poll_vote(&chat, &poll_id, &who, &chosen).await.logged();
-                            let _ = events.send(ServiceEvent::Marks { chat: chat.clone() });
-                        }
-                        Err(e) => log::warn!("could not open a vote on poll {poll_id}: {e}"),
-                    }
-                }
+            remember_structures(ctx.store, &incoming.chat, &incoming.id, &author, &inbound.message).await;
+            if self.apply_control(&ctx, inbound, &incoming).await {
                 continue;
             }
-
-            if let Some(response) = base.enc_event_response_message.as_option() {
-                let event_id = response.event_creation_message_key.as_option().and_then(|k| k.id.clone());
-                let def = match event_id.as_deref() { Some(id) => store.event_secret(&chat, id).await.observed().flatten(), None => None };
-                if let (Some(event_id), Some(def)) = (event_id, def) {
-                    let responder = inbound.info.source.sender.to_non_ad().to_string();
-                    // Our own events may have been answered under our other address.
-                    let mut creators = vec![def.creator.clone()];
-                    if own.contains(&def.creator) {
-                        creators.extend(own.iter().filter(|j| **j != def.creator).cloned());
-                    }
-                    let opened = creators.iter().find_map(|creator| {
-                        whatsapp_rust::wacore::event::decrypt_event_response_with_secret(
-                            response.enc_payload.as_deref().unwrap_or_default(),
-                            response.enc_iv.as_deref().unwrap_or_default(),
-                            &def.secret,
-                            &event_id,
-                            creator,
-                            &responder,
-                        )
-                        .ok()
-                    });
-                    match opened {
-                        Some(answer) => {
-                            let who = if from_me { "@me".to_string() } else { responder };
-                            store.set_event_response(&chat, &event_id, &who, response_name(answer.response)).await.logged();
-                            let _ = events.send(ServiceEvent::Marks { chat: chat.clone() });
-                        }
-                        None => log::warn!("could not open an RSVP to event {event_id}"),
-                    }
-                }
-                continue;
-            }
-
-            if let Some(reaction) = base.reaction_message.as_option() {
-                if let Some(target) =
-                    reaction.key.as_option().and_then(|k| k.id.clone())
-                {
-                    let who = if from_me {
-                        "@me".to_string()
-                    } else {
-                        inbound.info.source.sender.to_non_ad().to_string()
-                    };
-                    let emoji = reaction.text.clone().unwrap_or_default();
-                    store.set_reaction(&chat, &target, &who, &emoji).await.logged();
-                    let _ = events.send(ServiceEvent::Marks { chat: chat.clone() });
-                }
-                continue;
-            }
-            if let Some(pin) = base.pin_in_chat_message.as_option() {
-                use wa::message::pin_in_chat_message::Type;
-                let target = pin.key.as_option().and_then(|k| k.id.clone());
-                let pinned = pin.r#type == Some(Type::PIN_FOR_ALL);
-                store
-                    .set_message_pin(&chat, target.as_deref().filter(|_| pinned))
-                    .await.logged();
-                let _ = events.send(ServiceEvent::Marks { chat: chat.clone() });
-                continue;
-            }
-
-            if let Some(label) = member_label_change(&inbound.message) {
-                let member =
-                    inbound.info.source.sender.to_non_ad().to_string();
-                if let Some(info) = group_cache.lock().unwrap().get_mut(&chat) {
-                    if let Some(p) =
-                        info.participants.iter_mut().find(|p| p.jid == member)
-                    {
-                        p.label = (!label.is_empty()).then(|| label.clone());
-                    }
-                }
-                let _ = events.send(ServiceEvent::MemberLabel {
-                    chat: chat.clone(),
-                    jid: member,
-                    label,
-                });
-                continue;
-            }
-
-            // A revoke is a protocol message naming the
-            // original; mark it deleted rather than
-            // dropping the notice, so the chat shows
-            // that something was removed.
-            if let Some(target) = revoke_target(&inbound.message) {
-                if let Some(true) = store.revoke_message(&chat, &target).await.observed() {
-                    if let Some(updated) =
-                        store.message(&chat, &target).await.observed()
-                    {
-                        let _ = events.send(ServiceEvent::hint(&updated, false));
-                    }
-                }
-                continue;
-            }
-
-            if let Some((target, text)) = edit_of(&inbound.message) {
-                if let Some(true) = store.update_message_content(&chat, &target, &text).await.observed() {
-                    if let Some(updated) = store.message(&chat, &target).await.observed() {
-                        let _ = events.send(ServiceEvent::hint(&updated, false));
-                    }
-                    let _ = events.send(ServiceEvent::Marks { chat: chat.clone() });
-                }
-                continue;
-            }
-
-            // Stickers and voice notes are small and read as part
-            // of the conversation, so WhatsApp always fetches them.
-            let base = inbound.message.get_base_message();
-            // A shared pack is library metadata, not a chat message.
-            if base.sticker_pack_message.is_set() {
-                self.on_sticker_pack(&inbound.message).await;
-                continue;
-            }
-            let small = base.sticker_message.is_set()
-                || base.audio_message.as_option().is_some_and(|a| a.ptt == Some(true));
-            let auto_download = small
-                || store
-                    .chat_auto_download(&chat)
-                    .await.observed()
-                    .flatten()
-                    .unwrap_or(auto_download_default);
-            let Some(mut message) =
-                incoming_message(&chat, inbound, client.as_deref(), media_dir.as_deref(), false)
-                    .await
-            else {
-                continue;
-            };
-            // Mentions stay `@<number>` as on the wire; the UI
-            // resolves them when drawn, so later names apply.
-            message.local.mentioned = mentions_me(&inbound.message, &own);
-            if inbound.message.is_view_once() {
-                store.set_view_once(&chat, &message.header.id, from_me).await.logged();
-            }
-            if is_forwarded(&inbound.message) {
-                store.set_forwarded(&chat, &message.header.id).await.logged();
-            }
-            // Pairing only brings recent days; a reply to something
-            // older pulls that chat's past so the quote can be opened.
-            if let (Some(quoted), Some(client)) = (message.quote.id.clone(), client.clone()) {
-                let quoted_chat = message.quote.chat.clone().unwrap_or_else(|| chat.clone());
-                if store.message(&quoted_chat, &quoted).await.is_err() && recall_allowed(&quoted_chat) {
-                    let store = store.clone();
-                    tokio::spawn(async move {
-                        fetch_older(&client, &store, &quoted_chat, 50).await.logged();
-                    });
-                }
-            }
-            if let Err(e) = store.insert_message(&message).await {
-                log::error!("could not store message {} in {chat}: {e}", message.header.id);
-            } else {
-                // Count backlog progress so the loading
-                // screen's bar tracks stored messages, not
-                // raw inbound events.
-                if message.media.kind.as_deref() == Some("sticker") {
-                    if let Err(e) = record_sticker(store, &message).await {
-                        log::warn!("could not record sticker {}: {e}", message.header.id);
-                    }
-                }
-                {
-                    let mut p = sync_progress.lock().unwrap();
-                    if p.pending > 0 && !p.offline_done {
-                        p.applied = (p.applied + 1).min(p.pending);
-                        p.last_progress = Some(std::time::Instant::now());
-                        let emit = p.applied >= p.pending
-                            || p.last_emit.map_or(true, |t| {
-                                t.elapsed()
-                                    >= std::time::Duration::from_millis(50)
-                            });
-                        if emit {
-                            p.last_emit = Some(std::time::Instant::now());
-                            let (pending, applied) = (p.pending, p.applied);
-                            drop(p);
-                            let _ = events.send(ServiceEvent::Syncing {
-                                pending,
-                                applied,
-                            });
-                        }
-                    }
-                }
-                // A new incoming message moves an archived chat back to the main
-                // list unless the account keeps archived chats archived. The
-                // account is told too, so the phone cannot re-archive it later.
-                if !from_me
-                    && !self.keep_archived.load(Ordering::SeqCst)
-                    && store.is_archived(&chat).await.observed().unwrap_or(false)
-                {
-                    store.set_archived(&chat, false).await.logged();
-                    let _ = events.send(ServiceEvent::ChatStateChanged { chat: chat.clone() });
-                    if let (Some(client), Ok(jid)) = (client.clone(), chat.parse::<Jid>()) {
-                        tokio::spawn(async move {
-                            if let Err(e) =
-                                client.chat_actions().unarchive_chat(&jid, None).await
-                            {
-                                log::warn!("could not unarchive {jid}: {e}");
-                            }
-                        });
-                    }
-                }
-            }
-            // A view-once this device can fetch (an Android-linked companion
-            // gets the cipher) is kept as ordinary media, so it can be viewed
-            // and saved again instead of spent unseen. That overrides the
-            // auto-download setting: its own setting decides.
-            if message.media.kind.as_deref() == Some("view_once") {
-                log::debug!(
-                    "view-once in {chat}: arrived with fetchable media: {}",
-                    message.media.locator.is_some()
-                );
-            }
-            let keep_once = message.media.kind.as_deref() == Some("view_once")
-                && message.media.locator.is_some()
-                && self.keep_view_once.load(Ordering::SeqCst);
-            let fetch = match ((auto_download || keep_once) && message.media.locator.is_some(), &client, &media_dir) {
-                (true, Some(client), Some(dir)) => {
-                    Some((client.clone(), dir.clone(), message.header.id.clone(), keep_once))
-                }
-                _ => None,
-            };
-            let _ = events.send(ServiceEvent::hint(&message, true));
-            if let Some((client, dir, id, keep_once)) = fetch {
-                let (store, events, downloads, chat) =
-                    (store.clone(), events.clone(), downloads.clone(), chat.clone());
-                tokio::spawn(async move {
-                    let Ok(_permit) = downloads.acquire().await else { return };
-                    match fetch_media(&client, &store, &dir, &chat, &id).await {
-                        Ok(updated) => {
-                            if keep_once {
-                                if let Err(e) = store.keep_view_once(&chat, &id).await {
-                                    log::warn!("could not keep view-once {id}: {e}");
-                                } else if let Some(kept) = store.message(&chat, &id).await.observed() {
-                                    // The mark is gone, so the row reloads as
-                                    // ordinary media already holding the file.
-                                    let _ = events.send(ServiceEvent::hint(&kept, false));
-                                    let _ = events.send(ServiceEvent::Marks { chat: chat.clone() });
-                                    return;
-                                }
-                            }
-                            // Non-fresh: the row refetches coalesced, no follow or lookup.
-                            let _ = events.send(ServiceEvent::hint(&updated, false));
-                        }
-                        Err(e) => log::warn!("failed to download {id} media: {e}"),
-                    }
-                });
-            }
+            self.store_incoming(&ctx, inbound, &incoming).await;
         }
-        // Bound the store right after writes so the
-        // limit holds even if the process stops.
-        let pruning = std::time::Instant::now();
-        touched.sort_unstable();
-        touched.dedup();
-        let retention = self.disk_retention.clone();
-        let removed = match store.run(move |store| retention.enforce_for(store, &touched)).await {
-            Ok(removed) => removed,
-            Err(e) => {
-                log::error!("retention failed: {e}");
-                0
-            }
-        };
-        if removed > 0 {
-            let _ = events.send(ServiceEvent::RetentionApplied { removed });
-            // A pruned reply can be the last one naming a recovered view-once.
-            let directory = media_dir.clone();
-            if let Err(e) = store.run(move |store| prune_quote_files(directory.as_deref(), store)).await {
-                log::error!("pruning recovered view-once files failed: {e}");
-            }
-        }
+        let (removed, pruning) = self.enforce_retention(&mut ctx).await;
         batch_guard.finish().await.logged();
         log::debug!(
             "{} live message(s) in {:?} (retention {:?}, pruned {removed})",
@@ -766,5 +378,471 @@ impl Inbound {
             started.elapsed(),
             pruning.elapsed(),
         );
+    }
+
+    /// Resolves a stanza's chat, sender and flags, recording the names it
+    /// carries. `None` for a broadcast status, which is not a conversation.
+    async fn resolve_incoming(&self, inbound: &InboundMessage, ctx: &BatchCtx<'_>) -> Option<Incoming> {
+        let push_name = inbound.info.push_name.to_string();
+        let sender = inbound.info.source.sender.to_string();
+        let chat = canonical_chat(
+            ctx.client.as_deref(),
+            ctx.store,
+            &inbound.info.source.chat,
+            &inbound.info.source.sender,
+            inbound.info.source.sender_alt.as_ref(),
+        )
+        .await;
+        if chat == "status@broadcast" {
+            return None;
+        }
+        let is_group = inbound.info.source.is_group || chat.ends_with("@g.us");
+        let from_me = inbound.info.source.is_from_me;
+        // Address-book names are keyed by phone number, but an LID-addressed
+        // chat names its sender with a LID, so the two never match on their
+        // own. The source carries the other form; copy the name across so the
+        // saved one is what gets shown.
+        remember_lid_pn(ctx.store, &inbound.info.source.sender, inbound.info.source.sender_alt.as_ref()).await;
+        if let Some(alt) = inbound.info.source.sender_alt.as_ref().map(|j| j.to_string()) {
+            self.remember_alt_name(ctx, &sender, &chat, is_group, from_me, &alt).await;
+        }
+        if !push_name.is_empty() {
+            self.remember_push_name(ctx, &sender, &chat, is_group, from_me, &push_name).await;
+        }
+        Some(Incoming {
+            chat,
+            sender,
+            from_me,
+            id: inbound.info.id.to_string(),
+        })
+    }
+
+    /// Copies the address-book name for the sender's other address form onto
+    /// the form this message uses.
+    async fn remember_alt_name(
+        &self,
+        ctx: &BatchCtx<'_>,
+        sender: &str,
+        chat: &str,
+        is_group: bool,
+        from_me: bool,
+        alt: &str,
+    ) {
+        let known = ctx.store.name_for(alt).await.observed().flatten().filter(|n| !is_placeholder_name(n));
+        let is_saved = known.is_some();
+        // Fall back to the phone number, never the unreadable LID.
+        let name = known.unwrap_or_else(|| alt.split('@').next().unwrap_or(alt).to_string());
+        if is_saved {
+            ctx.store.set_saved_name(sender, &name).await.logged();
+            if !is_group && !from_me {
+                ctx.store.set_saved_name(chat, &name).await.logged();
+            }
+            return;
+        }
+        // The bare number is only a placeholder; it must not replace a push
+        // name that a message without one would otherwise erase.
+        if ctx.store.name_for(sender).await.observed().flatten().is_none() {
+            ctx.store.set_name(sender, &name).await.logged();
+        }
+        if !is_group && !from_me && ctx.store.name_for(chat).await.observed().flatten().is_none() {
+            ctx.store.set_name(chat, &name).await.logged();
+        }
+    }
+
+    /// Records the push name a message carries, on the sender and, for a direct
+    /// chat, on the chat itself.
+    async fn remember_push_name(
+        &self,
+        ctx: &BatchCtx<'_>,
+        sender: &str,
+        chat: &str,
+        is_group: bool,
+        from_me: bool,
+        push_name: &str,
+    ) {
+        // Push names never override a saved one.
+        ctx.store.set_name(sender, push_name).await.logged();
+        // A participant's JID has no device suffix while a message's sender
+        // does, so store the bare form too or the group member list cannot find
+        // the name.
+        if let Some((user, server)) = sender.split_once('@') {
+            let bare = format!("{}@{}", user.split(':').next().unwrap_or(user), server);
+            if bare != sender {
+                ctx.store.set_name(&bare, push_name).await.logged();
+            }
+        }
+        // A one-to-one chat is named after its contact. A group is named by its
+        // subject, and a message we sent must never name a chat after us.
+        if !is_group && !from_me {
+            ctx.store.set_name(chat, push_name).await.logged();
+        }
+    }
+
+    /// Applies a message that is state for something else rather than a message
+    /// of its own: a vote, an RSVP, a reaction, a pin, a label, a revoke, an
+    /// edit or a sticker pack. Returns whether it was one.
+    async fn apply_control(&self, ctx: &BatchCtx<'_>, inbound: &InboundMessage, incoming: &Incoming) -> bool {
+        let base = inbound.message.get_base_message();
+        if base.poll_update_message.as_option().is_some() {
+            self.apply_poll_vote(ctx, inbound, incoming).await;
+            return true;
+        }
+        if base.enc_event_response_message.as_option().is_some() {
+            self.apply_event_response(ctx, inbound, incoming).await;
+            return true;
+        }
+        if base.reaction_message.as_option().is_some() {
+            self.apply_reaction(ctx, &incoming.chat, incoming.from_me, inbound).await;
+            return true;
+        }
+        if base.pin_in_chat_message.as_option().is_some() {
+            self.apply_message_pin(ctx, &incoming.chat, base).await;
+            return true;
+        }
+        if let Some(label) = member_label_change(&inbound.message) {
+            self.apply_label_change(&incoming.chat, &inbound.info.source.sender.to_non_ad().to_string(), label);
+            return true;
+        }
+        if let Some(target) = revoke_target(&inbound.message) {
+            self.apply_revoke(ctx, &incoming.chat, &target).await;
+            return true;
+        }
+        if let Some((target, text)) = edit_of(&inbound.message) {
+            self.apply_edit(ctx, &incoming.chat, &target, &text).await;
+            return true;
+        }
+        if base.sticker_pack_message.is_set() {
+            self.on_sticker_pack(&inbound.message).await;
+            return true;
+        }
+        false
+    }
+
+    /// A vote on a poll. The key is derived from the creator's and voter's
+    /// addresses, and an LID-addressed group uses the LID form, so every form
+    /// either side is known by is tried.
+    async fn apply_poll_vote(&self, ctx: &BatchCtx<'_>, inbound: &InboundMessage, incoming: &Incoming) {
+        use whatsapp_rust::wacore::poll::{compute_option_hash, PollVoteCiphertext};
+        let Some(update) = inbound.message.get_base_message().poll_update_message.as_option() else { return };
+        let chat = &incoming.chat;
+        let poll_id = update.poll_creation_message_key.as_option().and_then(|k| k.id.clone());
+        let def = match poll_id.as_deref() { Some(id) => ctx.store.poll_secret(chat, id).await.observed().flatten(), None => None };
+        let Some((poll_id, def, vote)) = poll_id.zip(def).zip(update.vote.as_option()).map(|((id, def), vote)| (id, def, vote)).filter(|_| ctx.client.is_some()) else {
+            return;
+        };
+        let client = ctx.client.as_deref().expect("checked above");
+        let mut creators = vec![def.creator.clone()];
+        if ctx.own.contains(&def.creator) {
+            creators.extend(ctx.own.iter().filter(|j| **j != def.creator).cloned());
+        }
+        let mut voters = vec![inbound.info.source.sender.to_non_ad()];
+        if let Some(alt) = inbound.info.source.sender_alt.as_ref() {
+            voters.push(alt.to_non_ad());
+        }
+        if incoming.from_me {
+            voters.extend(ctx.own.iter().filter_map(|j| j.parse::<Jid>().ok()));
+        }
+        let voter = voters[0].clone();
+        let mut opened = Err(anyhow::anyhow!("no address pair opened it"));
+        'pairs: for creator in creators.iter().filter_map(|c| c.parse::<Jid>().ok()) {
+            for voter in &voters {
+                let cipher = PollVoteCiphertext {
+                    enc_payload: vote.enc_payload.as_deref().unwrap_or_default(),
+                    enc_iv: vote.enc_iv.as_deref().unwrap_or_default(),
+                };
+                if let Ok(hashes) = client.polls().decrypt_vote(cipher, &def.secret, &poll_id, &creator, voter).await {
+                    opened = Ok(hashes);
+                    break 'pairs;
+                }
+            }
+        }
+        match opened {
+            Ok(hashes) => {
+                let chosen: Vec<String> = def
+                    .options
+                    .iter()
+                    .filter(|o| hashes.iter().any(|h| h.as_slice() == compute_option_hash(o)))
+                    .cloned()
+                    .collect();
+                let who = if incoming.from_me { "@me".to_string() } else { voter.to_string() };
+                ctx.store.set_poll_vote(chat, &poll_id, &who, &chosen).await.logged();
+                let _ = self.events.send(ServiceEvent::Marks { chat: chat.clone() });
+            }
+            Err(e) => log::warn!("could not open a vote on poll {poll_id}: {e}"),
+        }
+    }
+
+    /// An RSVP to an event. Our own events may have been answered under our
+    /// other address, so every creator form is tried.
+    async fn apply_event_response(&self, ctx: &BatchCtx<'_>, inbound: &InboundMessage, incoming: &Incoming) {
+        let Some(response) = inbound.message.get_base_message().enc_event_response_message.as_option() else { return };
+        let chat = &incoming.chat;
+        let event_id = response.event_creation_message_key.as_option().and_then(|k| k.id.clone());
+        let def = match event_id.as_deref() { Some(id) => ctx.store.event_secret(chat, id).await.observed().flatten(), None => None };
+        let Some((event_id, def)) = event_id.zip(def) else { return };
+        let responder = inbound.info.source.sender.to_non_ad().to_string();
+        let mut creators = vec![def.creator.clone()];
+        if ctx.own.contains(&def.creator) {
+            creators.extend(ctx.own.iter().filter(|j| **j != def.creator).cloned());
+        }
+        let opened = creators.iter().find_map(|creator| {
+            whatsapp_rust::wacore::event::decrypt_event_response_with_secret(
+                response.enc_payload.as_deref().unwrap_or_default(),
+                response.enc_iv.as_deref().unwrap_or_default(),
+                &def.secret,
+                &event_id,
+                creator,
+                &responder,
+            )
+            .ok()
+        });
+        match opened {
+            Some(answer) => {
+                let who = if incoming.from_me { "@me".to_string() } else { responder };
+                ctx.store.set_event_response(chat, &event_id, &who, response_name(answer.response)).await.logged();
+                let _ = self.events.send(ServiceEvent::Marks { chat: chat.clone() });
+            }
+            None => log::warn!("could not open an RSVP to event {event_id}"),
+        }
+    }
+
+    async fn apply_reaction(&self, ctx: &BatchCtx<'_>, chat: &str, from_me: bool, inbound: &InboundMessage) {
+        let Some(reaction) = inbound.message.get_base_message().reaction_message.as_option() else { return };
+        let Some(target) = reaction.key.as_option().and_then(|k| k.id.clone()) else { return };
+        let who = if from_me {
+            "@me".to_string()
+        } else {
+            inbound.info.source.sender.to_non_ad().to_string()
+        };
+        let emoji = reaction.text.clone().unwrap_or_default();
+        ctx.store.set_reaction(chat, &target, &who, &emoji).await.logged();
+        let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
+    }
+
+    async fn apply_message_pin(&self, ctx: &BatchCtx<'_>, chat: &str, base: &wa::Message) {
+        use wa::message::pin_in_chat_message::Type;
+        let Some(pin) = base.pin_in_chat_message.as_option() else { return };
+        let target = pin.key.as_option().and_then(|k| k.id.clone());
+        let pinned = pin.r#type == Some(Type::PIN_FOR_ALL);
+        ctx.store.set_message_pin(chat, target.as_deref().filter(|_| pinned)).await.logged();
+        let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
+    }
+
+    /// A member label change updates the cached participant and tells the UI.
+    fn apply_label_change(&self, chat: &str, member: &str, label: String) {
+        if let Some(info) = self.group_cache.lock().unwrap().get_mut(chat) {
+            if let Some(p) = info.participants.iter_mut().find(|p| p.jid == member) {
+                p.label = (!label.is_empty()).then(|| label.clone());
+            }
+        }
+        let _ = self.events.send(ServiceEvent::MemberLabel {
+            chat: chat.to_string(),
+            jid: member.to_string(),
+            label,
+        });
+    }
+
+    /// A revoke is a protocol message naming the original; mark it deleted
+    /// rather than dropping the notice, so the chat shows that something was
+    /// removed.
+    async fn apply_revoke(&self, ctx: &BatchCtx<'_>, chat: &str, target: &str) {
+        if let Some(true) = ctx.store.revoke_message(chat, target).await.observed() {
+            if let Some(updated) = ctx.store.message(chat, target).await.observed() {
+                let _ = self.events.send(ServiceEvent::hint(&updated, false));
+            }
+        }
+    }
+
+    async fn apply_edit(&self, ctx: &BatchCtx<'_>, chat: &str, target: &str, text: &str) {
+        if let Some(true) = ctx.store.update_message_content(chat, target, text).await.observed() {
+            if let Some(updated) = ctx.store.message(chat, target).await.observed() {
+                let _ = self.events.send(ServiceEvent::hint(&updated, false));
+            }
+            let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
+        }
+    }
+
+    /// Decodes and stores one ordinary message, then starts any media fetch.
+    async fn store_incoming(&self, ctx: &BatchCtx<'_>, inbound: &InboundMessage, incoming: &Incoming) {
+        let auto_download = self.auto_download_for(ctx, inbound, &incoming.chat).await;
+        let Some(mut message) = incoming_message(
+            &incoming.chat, inbound, ctx.client.as_deref(), ctx.media_dir.as_deref(), false,
+        )
+        .await
+        else {
+            return;
+        };
+        // Mentions stay `@<number>` as on the wire; the UI resolves them when
+        // drawn, so later names apply.
+        message.local.mentioned = mentions_me(&inbound.message, &ctx.own);
+        if inbound.message.is_view_once() {
+            ctx.store.set_view_once(&incoming.chat, &message.header.id, incoming.from_me).await.logged();
+        }
+        if is_forwarded(&inbound.message) {
+            ctx.store.set_forwarded(&incoming.chat, &message.header.id).await.logged();
+        }
+        self.recall_quoted(ctx, &incoming.chat, &message).await;
+        self.store_and_track(ctx, &incoming.chat, &message).await;
+        self.spawn_media_fetch(ctx, &incoming.chat, &message, auto_download);
+    }
+
+    /// Whether to fetch this message's media now. Stickers and voice notes are
+    /// small and read as part of the conversation, so WhatsApp always fetches
+    /// them; anything else follows the chat's setting.
+    async fn auto_download_for(&self, ctx: &BatchCtx<'_>, inbound: &InboundMessage, chat: &str) -> bool {
+        let base = inbound.message.get_base_message();
+        let small = base.sticker_message.is_set()
+            || base.audio_message.as_option().is_some_and(|a| a.ptt == Some(true));
+        if small {
+            return true;
+        }
+        ctx.store
+            .chat_auto_download(chat)
+            .await
+            .observed()
+            .flatten()
+            .unwrap_or(self.auto_download_default)
+    }
+
+    /// Pairing only brings recent days; a reply to something older pulls that
+    /// chat's past so the quote can be opened.
+    async fn recall_quoted(&self, ctx: &BatchCtx<'_>, chat: &str, message: &StoredMessage) {
+        let (Some(quoted), Some(client)) = (message.quote.id.clone(), ctx.client.clone()) else { return };
+        let quoted_chat = message.quote.chat.clone().unwrap_or_else(|| chat.to_string());
+        if ctx.store.message(&quoted_chat, &quoted).await.is_ok() || !recall_allowed(&quoted_chat) {
+            return;
+        }
+        let store = ctx.store.clone();
+        tokio::spawn(async move {
+            fetch_older(&client, &store, &quoted_chat, 50).await.logged();
+        });
+    }
+
+    /// Stores the row, counts it for the loading gate, records a sticker and
+    /// moves an archived chat back unless the account keeps them archived.
+    async fn store_and_track(&self, ctx: &BatchCtx<'_>, chat: &str, message: &StoredMessage) {
+        if let Err(e) = ctx.store.insert_message(message).await {
+            log::error!("could not store message {} in {chat}: {e}", message.header.id);
+            return;
+        }
+        if message.media.kind.as_deref() == Some("sticker") {
+            if let Err(e) = record_sticker(ctx.store, message).await {
+                log::warn!("could not record sticker {}: {e}", message.header.id);
+            }
+        }
+        self.track_sync_progress();
+        self.maybe_unarchive(ctx, message).await;
+    }
+
+    /// Counts backlog progress so the loading screen's bar tracks stored
+    /// messages, not raw inbound events.
+    fn track_sync_progress(&self) {
+        let mut p = self.sync_progress.lock().unwrap();
+        if p.pending == 0 || p.offline_done {
+            return;
+        }
+        p.applied = (p.applied + 1).min(p.pending);
+        p.last_progress = Some(std::time::Instant::now());
+        let emit = p.applied >= p.pending
+            || p.last_emit.map_or(true, |t| t.elapsed() >= std::time::Duration::from_millis(50));
+        if emit {
+            p.last_emit = Some(std::time::Instant::now());
+            let (pending, applied) = (p.pending, p.applied);
+            drop(p);
+            let _ = self.events.send(ServiceEvent::Syncing { pending, applied });
+        }
+    }
+
+    /// A new incoming message moves an archived chat back to the main list
+    /// unless the account keeps archived chats archived. The account is told
+    /// too, so the phone cannot re-archive it later.
+    async fn maybe_unarchive(&self, ctx: &BatchCtx<'_>, message: &StoredMessage) {
+        let chat = message.header.chat.clone();
+        if message.header.from_me
+            || self.keep_archived.load(Ordering::SeqCst)
+            || !ctx.store.is_archived(&chat).await.observed().unwrap_or(false)
+        {
+            return;
+        }
+        ctx.store.set_archived(&chat, false).await.logged();
+        let _ = self.events.send(ServiceEvent::ChatStateChanged { chat: chat.clone() });
+        let (Some(client), Ok(jid)) = (ctx.client.clone(), chat.parse::<Jid>()) else { return };
+        tokio::spawn(async move {
+            if let Err(e) = client.chat_actions().unarchive_chat(&jid, None).await {
+                log::warn!("could not unarchive {jid}: {e}");
+            }
+        });
+    }
+
+    /// Fetches the file for an ordinary message, keeping a view-once as
+    /// ordinary media when this link can receive it. That overrides the
+    /// auto-download setting: the view-once setting decides.
+    fn spawn_media_fetch(&self, ctx: &BatchCtx<'_>, chat: &str, message: &StoredMessage, auto_download: bool) {
+        if message.media.kind.as_deref() == Some("view_once") {
+            log::debug!(
+                "view-once in {chat}: arrived with fetchable media: {}",
+                message.media.locator.is_some()
+            );
+        }
+        let keep_once = message.media.kind.as_deref() == Some("view_once")
+            && message.media.locator.is_some()
+            && self.keep_view_once.load(Ordering::SeqCst);
+        let fetch = match ((auto_download || keep_once) && message.media.locator.is_some(), &ctx.client, &ctx.media_dir) {
+            (true, Some(client), Some(dir)) => {
+                Some((client.clone(), dir.clone(), message.header.id.clone(), keep_once))
+            }
+            _ => None,
+        };
+        let _ = self.events.send(ServiceEvent::hint(message, true));
+        let Some((client, dir, id, keep_once)) = fetch else { return };
+        let (store, events, downloads) = (ctx.store.clone(), self.events.clone(), self.downloads.clone());
+        let chat = chat.to_string();
+        tokio::spawn(async move {
+            let Ok(_permit) = downloads.acquire().await else { return };
+            match fetch_media(&client, &store, &dir, &chat, &id).await {
+                Ok(updated) => {
+                    if keep_once {
+                        if let Err(e) = store.keep_view_once(&chat, &id).await {
+                            log::warn!("could not keep view-once {id}: {e}");
+                        } else if let Some(kept) = store.message(&chat, &id).await.observed() {
+                            // The mark is gone, so the row reloads as ordinary
+                            // media already holding the file.
+                            let _ = events.send(ServiceEvent::hint(&kept, false));
+                            let _ = events.send(ServiceEvent::Marks { chat: chat.clone() });
+                            return;
+                        }
+                    }
+                    // Non-fresh: the row refetches coalesced, no follow or lookup.
+                    let _ = events.send(ServiceEvent::hint(&updated, false));
+                }
+                Err(e) => log::warn!("failed to download {id} media: {e}"),
+            }
+        });
+    }
+
+    /// Bounds the store right after writes so the limit holds even if the
+    /// process stops. Returns how many rows went and when the pruning started.
+    async fn enforce_retention(&self, ctx: &mut BatchCtx<'_>) -> (usize, std::time::Instant) {
+        let pruning = std::time::Instant::now();
+        ctx.touched.sort_unstable();
+        ctx.touched.dedup();
+        let retention = self.disk_retention.clone();
+        let touched = std::mem::take(&mut ctx.touched);
+        let removed = match ctx.store.run(move |store| retention.enforce_for(store, &touched)).await {
+            Ok(removed) => removed,
+            Err(e) => {
+                log::error!("retention failed: {e}");
+                0
+            }
+        };
+        if removed > 0 {
+            let _ = self.events.send(ServiceEvent::RetentionApplied { removed });
+            // A pruned reply can be the last one naming a recovered view-once.
+            let directory = ctx.media_dir.clone();
+            if let Err(e) = ctx.store.run(move |store| prune_quote_files(directory.as_deref(), store)).await {
+                log::error!("pruning recovered view-once files failed: {e}");
+            }
+        }
+        (removed, pruning)
     }
 }
