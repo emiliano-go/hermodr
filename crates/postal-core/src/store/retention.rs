@@ -32,6 +32,141 @@ pub struct DiskRetentionManager {
     last_full_prune: std::sync::atomic::AtomicI64,
 }
 
+/// Whether any global or per-chat limit could match a row. With no policy
+/// anywhere, every delete below matches nothing by construction, yet each
+/// still scans: on a large store that holds the store lock for seconds per
+/// live message, stalling sends, reads and the UI behind it. So the scans only
+/// run when something could match, globally or on some chat.
+fn policy_could_match(conn: &Connection, policy: DiskRetention) -> Result<bool> {
+    Ok(policy.oldest_allowed().is_some()
+        || policy.max_messages_per_chat.value().is_some()
+        || per_chat_limited(conn, "age_mode")?
+        || per_chat_limited(conn, "count_mode")?)
+}
+
+fn per_chat_limited(conn: &Connection, mode: &str) -> Result<bool> {
+    Ok(conn
+        .query_row(
+            &format!("SELECT EXISTS(SELECT 1 FROM chat_retention WHERE {mode} = 'limited')"),
+            [],
+            |r| r.get::<_, i32>(0),
+        )?
+        != 0)
+}
+
+/// The optional chat list a prune is scoped to, encoded once as JSON so the
+/// scoped statements filter on the (chat, timestamp) index instead of reading
+/// every row.
+struct PruneScope<'a> {
+    conn: &'a Connection,
+    json: Option<String>,
+}
+
+impl PruneScope<'_> {
+    fn new<'a>(conn: &'a Connection, chats: Option<&[String]>) -> Result<PruneScope<'a>> {
+        Ok(PruneScope { conn, json: chats.map(serde_json::to_string).transpose()? })
+    }
+
+    fn scope(&self) -> &'static str {
+        if self.json.is_some() { "chat IN (SELECT value FROM json_each(:scope))" } else { "1" }
+    }
+
+    fn scope_m(&self) -> &'static str {
+        if self.json.is_some() { "m.chat IN (SELECT value FROM json_each(:scope))" } else { "1" }
+    }
+
+    fn run(&self, sql: &str, extra: &[(&str, &dyn rusqlite::ToSql)]) -> rusqlite::Result<usize> {
+        let mut params = extra.to_vec();
+        if let Some(json) = &self.json {
+            params.push((":scope", json));
+        }
+        self.conn.execute(sql, params.as_slice())
+    }
+
+    /// The shared window; a chat with its own window or cap is only bound by
+    /// that one.
+    fn purge_global_age(&self, oldest: Option<i64>) -> Result<usize> {
+        let Some(oldest) = oldest else { return Ok(0) };
+        Ok(self.run(
+            &format!(
+                "DELETE FROM messages WHERE {} AND timestamp < :oldest AND chat NOT IN
+                     (SELECT jid FROM chat_retention WHERE age_mode != 'inherit')",
+                self.scope()
+            ),
+            &[(":oldest", &oldest)],
+        )?)
+    }
+
+    /// The per-chat window only matches when some chat has one; the global
+    /// oldest above already covers the shared window.
+    fn purge_per_chat_age(&self) -> Result<usize> {
+        if !per_chat_limited(self.conn, "age_mode")? {
+            return Ok(0);
+        }
+        let now = unix_now();
+        Ok(self.run(
+            &format!(
+                "DELETE FROM messages WHERE {} AND EXISTS (
+                     SELECT 1 FROM chat_retention r WHERE r.jid = messages.chat
+                     AND r.age_mode = 'limited' AND messages.timestamp < :now - r.max_age_hours * 3600)",
+                self.scope()
+            ),
+            &[(":now", &now)],
+        )?)
+    }
+
+    /// Rank within each chat and drop everything past its cap.
+    fn purge_caps(&self, cap: Option<u32>) -> Result<usize> {
+        if cap.is_none() && !per_chat_limited(self.conn, "count_mode")? {
+            return Ok(0);
+        }
+        Ok(self.run(
+            &format!(
+                "DELETE FROM messages WHERE (chat, id) IN (
+                     SELECT chat, id FROM (
+                         SELECT m.chat, m.id,
+                                ROW_NUMBER() OVER (PARTITION BY m.chat ORDER BY m.timestamp DESC, m.sort_order DESC, m.id DESC) AS rank,
+                                CASE WHEN r.jid IS NULL OR r.count_mode = 'inherit' THEN :cap
+                                     WHEN r.count_mode = 'limited' THEN r.max_messages ELSE NULL END AS cap
+                         FROM messages m LEFT JOIN chat_retention r ON r.jid = m.chat
+                         WHERE {}
+                     ) WHERE cap IS NOT NULL AND rank > cap
+                 )",
+                self.scope_m()
+            ),
+            &[(":cap", &cap)],
+        )?)
+    }
+}
+
+/// Drops the state rows whose message has just been pruned.
+fn purge_orphan_state(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "DELETE FROM forwarded WHERE NOT EXISTS (
+             SELECT 1 FROM messages m WHERE m.chat = forwarded.chat AND m.id = forwarded.id);
+         DELETE FROM edited WHERE NOT EXISTS (
+             SELECT 1 FROM messages m WHERE m.chat = edited.chat AND m.id = edited.id);
+         DELETE FROM view_once WHERE NOT EXISTS (
+             SELECT 1 FROM messages m WHERE m.chat = view_once.chat AND m.id = view_once.id);
+         DELETE FROM receipts WHERE NOT EXISTS (SELECT 1 FROM messages m WHERE m.id = receipts.id);
+         DELETE FROM reactions WHERE NOT EXISTS (
+             SELECT 1 FROM messages m WHERE m.chat = reactions.chat AND m.id = reactions.target);
+         DELETE FROM stars WHERE NOT EXISTS (
+             SELECT 1 FROM messages m WHERE m.chat = stars.chat AND m.id = stars.id);
+         DELETE FROM message_pins WHERE NOT EXISTS (
+             SELECT 1 FROM messages m WHERE m.chat = message_pins.chat AND m.id = message_pins.id);
+         DELETE FROM poll_votes WHERE NOT EXISTS (
+             SELECT 1 FROM messages m WHERE m.chat = poll_votes.chat AND m.id = poll_votes.poll);
+         DELETE FROM polls WHERE NOT EXISTS (
+             SELECT 1 FROM messages m WHERE m.chat = polls.chat AND m.id = polls.id);
+         DELETE FROM event_responses WHERE NOT EXISTS (
+             SELECT 1 FROM messages m WHERE m.chat = event_responses.chat AND m.id = event_responses.event);
+         DELETE FROM events WHERE NOT EXISTS (
+             SELECT 1 FROM messages m WHERE m.chat = events.chat AND m.id = events.id);",
+    )?;
+    Ok(())
+}
+
 impl MessageStore {
     pub fn chat_retention(&self, jid: &str) -> Result<ChatRetention> {
         let conn = self.conn.lock().unwrap();
@@ -113,114 +248,17 @@ impl DiskRetentionManager {
 
     fn prune(&self, store: &MessageStore, chats: Option<&[String]>, policy: DiskRetention) -> Result<usize> {
         let conn = store.conn.lock().unwrap();
-        // With no policy anywhere, every delete below matches nothing by
-        // construction, yet each still scans: on a large store that holds the
-        // store lock for seconds per live message, stalling sends, reads and
-        // the UI behind it. So each scan only runs when a policy that could
-        // match exists, globally or on some chat.
-        let oldest = policy.oldest_allowed();
-        let per_chat_age = conn
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM chat_retention WHERE age_mode = 'limited')",
-                [],
-                |r| r.get::<_, i32>(0),
-            )?
-            != 0;
-        let cap = policy.max_messages_per_chat.value();
-        let per_chat_cap = conn
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM chat_retention WHERE count_mode = 'limited')",
-                [],
-                |r| r.get::<_, i32>(0),
-            )?
-            != 0;
-        if oldest.is_none() && !per_chat_age && cap.is_none() && !per_chat_cap {
+        if !policy_could_match(&conn, policy)? {
             return Ok(0);
         }
-        let json = chats.map(serde_json::to_string).transpose()?;
-        // Scoped statements filter on the (chat, timestamp) index instead of reading every row.
-        let (scope, scope_m) = if json.is_some() {
-            ("chat IN (SELECT value FROM json_each(:scope))", "m.chat IN (SELECT value FROM json_each(:scope))")
-        } else {
-            ("1", "1")
-        };
-        let run = |sql: &str, extra: &[(&str, &dyn rusqlite::ToSql)]| -> rusqlite::Result<usize> {
-            let mut params = extra.to_vec();
-            if let Some(json) = &json {
-                params.push((":scope", json));
-            }
-            conn.execute(sql, params.as_slice())
-        };
-
+        let scope = PruneScope::new(&conn, chats)?;
         let mut removed = 0;
-
-        // A chat with its own window or cap is only bound by that one.
-        if let Some(oldest) = oldest {
-            removed += run(
-                &format!(
-                    "DELETE FROM messages WHERE {scope} AND timestamp < :oldest AND chat NOT IN
-                         (SELECT jid FROM chat_retention WHERE age_mode != 'inherit')"
-                ),
-                &[(":oldest", &oldest)],
-            )?;
-        }
-
-        // The per-chat window only matches when some chat has one; the global
-        // oldest above already covers the shared window.
-        if per_chat_age {
-            removed += run(
-                &format!(
-                    "DELETE FROM messages WHERE {scope} AND EXISTS (
-                         SELECT 1 FROM chat_retention r WHERE r.jid = messages.chat
-                         AND r.age_mode = 'limited' AND messages.timestamp < :now - r.max_age_hours * 3600)"
-                ),
-                &[(":now", &unix_now())],
-            )?;
-        }
-
-        // Rank within each chat and drop everything past its cap.
-        if cap.is_some() || per_chat_cap {
-            removed += run(
-                &format!(
-                    "DELETE FROM messages WHERE (chat, id) IN (
-                         SELECT chat, id FROM (
-                             SELECT m.chat, m.id,
-                                    ROW_NUMBER() OVER (PARTITION BY m.chat ORDER BY m.timestamp DESC, m.sort_order DESC, m.id DESC) AS rank,
-                                    CASE WHEN r.jid IS NULL OR r.count_mode = 'inherit' THEN :cap
-                                         WHEN r.count_mode = 'limited' THEN r.max_messages ELSE NULL END AS cap
-                             FROM messages m LEFT JOIN chat_retention r ON r.jid = m.chat
-                             WHERE {scope_m}
-                         ) WHERE cap IS NOT NULL AND rank > cap
-                     )"
-                ),
-                &[(":cap", &cap)],
-            )?;
-        }
-        // State attached to messages only goes stale when messages go.
+        removed += scope.purge_global_age(policy.oldest_allowed())?;
+        removed += scope.purge_per_chat_age()?;
+        removed += scope.purge_caps(policy.max_messages_per_chat.value())?;
         if removed > 0 {
-            conn.execute_batch(
-                "DELETE FROM forwarded WHERE NOT EXISTS (
-                     SELECT 1 FROM messages m WHERE m.chat = forwarded.chat AND m.id = forwarded.id);
-                 DELETE FROM edited WHERE NOT EXISTS (
-                     SELECT 1 FROM messages m WHERE m.chat = edited.chat AND m.id = edited.id);
-                 DELETE FROM view_once WHERE NOT EXISTS (
-                     SELECT 1 FROM messages m WHERE m.chat = view_once.chat AND m.id = view_once.id);
-                 DELETE FROM receipts WHERE NOT EXISTS (SELECT 1 FROM messages m WHERE m.id = receipts.id);
-                 DELETE FROM reactions WHERE NOT EXISTS (
-                     SELECT 1 FROM messages m WHERE m.chat = reactions.chat AND m.id = reactions.target);
-                 DELETE FROM stars WHERE NOT EXISTS (
-                     SELECT 1 FROM messages m WHERE m.chat = stars.chat AND m.id = stars.id);
-                 DELETE FROM message_pins WHERE NOT EXISTS (
-                     SELECT 1 FROM messages m WHERE m.chat = message_pins.chat AND m.id = message_pins.id);
-                 DELETE FROM poll_votes WHERE NOT EXISTS (
-                     SELECT 1 FROM messages m WHERE m.chat = poll_votes.chat AND m.id = poll_votes.poll);
-                 DELETE FROM polls WHERE NOT EXISTS (
-                     SELECT 1 FROM messages m WHERE m.chat = polls.chat AND m.id = polls.id);
-                 DELETE FROM event_responses WHERE NOT EXISTS (
-                     SELECT 1 FROM messages m WHERE m.chat = event_responses.chat AND m.id = event_responses.event);
-                 DELETE FROM events WHERE NOT EXISTS (
-                     SELECT 1 FROM messages m WHERE m.chat = events.chat AND m.id = events.id);",
-            )?;
+            // State attached to messages only goes stale when messages go.
+            purge_orphan_state(&conn)?;
             reclaim(&conn, 2_000)?;
         }
         Ok(removed)
