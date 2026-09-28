@@ -400,10 +400,13 @@
       void messages.showLatest(chats.selectedChat).then((loaded) => { if (loaded) scrollToBottom(); });
       return;
     }
-    // Wait for the new messages to render before measuring.
-    requestAnimationFrame(() => {
-      if (scroller) scroller.scrollTop = scroller.scrollHeight;
-      ui.scrolledUp = false;
+    // Wait for the new messages to render before measuring, so the pin lands
+    // on the laid-out bottom rather than the previous one.
+    void tick().then(() => {
+      requestAnimationFrame(() => {
+        if (scroller) scroller.scrollTop = scroller.scrollHeight;
+        ui.scrolledUp = false;
+      });
     });
   }
 
