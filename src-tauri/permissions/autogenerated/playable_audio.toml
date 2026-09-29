@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-playable-audio"
+description = "Enables the playable_audio command without any pre-configured scope."
+commands.allow = ["playable_audio"]
+
+[[permission]]
+identifier = "deny-playable-audio"
+description = "Denies the playable_audio command without any pre-configured scope."
+commands.deny = ["playable_audio"]

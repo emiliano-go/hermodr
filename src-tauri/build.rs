@@ -22,6 +22,7 @@ const COMMANDS: &[&str] = &[
     "open_path",
     "message_media_action",
     "read_file",
+    "playable_audio",
     "participants",
     "group_info",
     "set_pinned",

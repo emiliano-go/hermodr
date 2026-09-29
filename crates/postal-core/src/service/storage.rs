@@ -69,6 +69,11 @@ fn cached_avatar(root: &Path, path: &Path) -> bool {
         && matches!(path.extension().and_then(|s| s.to_str()), Some("jpg" | "none"))
 }
 
+/// Regenerable files the app derives: cached avatars and playback WAVs.
+fn cache_file(root: &Path, path: &Path) -> bool {
+    cached_avatar(root, path) || audio::is_playable(root, path)
+}
+
 fn canonical_file(path: &Path) -> Result<Option<PathBuf>> {
     match path.canonicalize() {
         Ok(path) => Ok(Some(path)),
@@ -129,7 +134,7 @@ pub(super) fn storage_report(store: &MessageStore, directory: &Path) -> Result<S
     if let Some(root) = &root {
         for (path, bytes) in physical {
             if owned.contains(&path) { continue; }
-            if cached_avatar(root, &path) { report.cache_bytes += bytes; }
+            if cache_file(root, &path) { report.cache_bytes += bytes; }
             else { report.other_bytes += bytes; }
         }
     }
@@ -154,7 +159,7 @@ pub(super) fn cleanup_storage(store: &MessageStore, directory: &Path, action: St
             let owned: HashSet<_> = store.media_entries()?.into_iter()
                 .map(|entry| canonical_file(Path::new(&entry.path))).collect::<Result<Vec<_>>>()?
                 .into_iter().flatten().collect();
-            files_under(&root)?.into_keys().filter(|path| cached_avatar(&root, path) && !owned.contains(path))
+            files_under(&root)?.into_keys().filter(|path| cache_file(&root, path) && !owned.contains(path))
                 .map(|path| path.to_string_lossy().into_owned()).collect()
         }
     };
@@ -177,9 +182,17 @@ pub(super) fn cleanup_storage(store: &MessageStore, directory: &Path, action: St
         if let Some(source) = source {
             if removed.insert(source.clone()) {
                 let bytes = source.metadata()?.len();
-                std::fs::remove_file(source)?;
+                std::fs::remove_file(&source)?;
                 result.files += 1;
                 result.bytes += bytes;
+                // The playback conversion is derived from this file, so it goes too.
+                let companion = audio::playable_path(&root, &source);
+                if let Ok(metadata) = companion.metadata() {
+                    if std::fs::remove_file(&companion).is_ok() {
+                        result.files += 1;
+                        result.bytes += metadata.len();
+                    }
+                }
             }
         }
         store.forget_media_file(&path)?;
@@ -215,12 +228,14 @@ mod tests {
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
         let media = root.join("media");
         std::fs::create_dir_all(media.join("avatars")).unwrap();
+        std::fs::create_dir_all(media.join("playable")).unwrap();
         let store = MessageStore::open(&root.join("synthetic.db")).unwrap();
         let photo = media.join("photo.jpg");
         let video = media.join("video.mp4");
         std::fs::write(&photo, [1; 20]).unwrap();
         std::fs::write(&video, [2; 80]).unwrap();
         std::fs::write(media.join("avatars/contact.jpg"), [3; 10]).unwrap();
+        std::fs::write(media.join("playable/photo.wav"), [5; 30]).unwrap();
         std::fs::write(media.join("unrelated.txt"), [4; 7]).unwrap();
         let locator = wa::Message { image_message: MessageField::some(wa::message::ImageMessage {
             direct_path: Some("/synthetic/photo".into()), media_key: Some(vec![5; 32]),
@@ -242,12 +257,13 @@ mod tests {
         store.set_saved_name("a@s", "Synthetic A").unwrap();
         let report = storage_report(&store, &media).unwrap();
         assert!(report.database_bytes > 0);
-        assert_eq!((report.attachment_bytes, report.cache_bytes, report.other_bytes), (100, 10, 7));
+        assert_eq!((report.attachment_bytes, report.cache_bytes, report.other_bytes), (100, 40, 7));
         assert_eq!(report.chats.iter().find(|c| c.chat == "a@s").unwrap().by_kind["video"], 80);
         assert_eq!(report.page(Some("a@s"), StorageOrder::Largest, 0).files[0].id, "video");
         assert_eq!(storage_report(&store, &media).unwrap().page(Some("a@s"), StorageOrder::Oldest, 0).files[0].id, "photo");
         let cleaned = cleanup_storage(&store, &media, StorageCleanup::Attachment { chat: "a@s".into(), id: "photo".into(), quoted: false }).unwrap();
-        assert_eq!((cleaned.files, cleaned.bytes), (1, 20));
+        assert_eq!((cleaned.files, cleaned.bytes), (2, 50), "the playback conversion goes with its source");
+        assert!(!media.join("playable/photo.wav").exists());
         for (chat, id) in [("a@s", "photo"), ("b@s", "shared")] {
             let row = store.message(chat, id).unwrap();
             assert_eq!(row.text, "caption stays");

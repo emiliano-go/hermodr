@@ -34,6 +34,8 @@
     "allow-send-media",
     "allow-open-path",
     "allow-read-file",
+    "allow-playable-audio",
+    "allow-playable-audio",
     "allow-participants",
     "allow-group-info",
     "allow-set-pinned",

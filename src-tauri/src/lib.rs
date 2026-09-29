@@ -93,6 +93,7 @@ macro_rules! postal_commands {
             desktop::open_path,
             media_actions::message_media_action,
             media::read_file,
+            media::playable_audio,
             groups::participants,
             groups::group_info,
             groups::group_kinds,

@@ -232,6 +232,14 @@ pub(crate) fn read_file(path: String) -> Result<String, String> {
     Ok(BASE64.encode(bytes))
 }
 
+/// A path the web view can play: the source itself when it is already PCM
+/// WAV, otherwise a WAV converted from it.
+#[tauri::command]
+pub(crate) async fn playable_audio(state: State<'_, AppState>, path: String) -> Result<String, String> {
+    let service = state.service()?;
+    service.playable_audio(&path).await.map_err(|e| command_error(&service, e))
+}
+
 /// Deletes downloaded media, keeping the messages.
 #[tauri::command(async)]
 pub(crate) async fn flush_media(state: State<'_, AppState>) -> Result<usize, String> {
