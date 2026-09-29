@@ -191,13 +191,17 @@ class PlayerState {
     this.position = 0;
     this.duration = track.duration ?? 0;
     try {
-      const data = await invoke<string>("read_file", { path: track.path });
+      // The backend decodes whatever this is into PCM WAV, which every web
+      // view plays without system codecs; already-WAV files come back as-is.
+      const playable = await invoke<string>("playable_audio", { path: track.path });
+      if (seq !== this.#seq) return;
+      const data = await invoke<string>("read_file", { path: playable });
       if (seq !== this.#seq) return;
       const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
       const cached = this.shapes[track.path];
       if (cached) this.duration = cached.duration;
       else void this.#decodeShape(track.path, bytes);
-      this.#url = URL.createObjectURL(new Blob([bytes], { type: mime(track.path) }));
+      this.#url = URL.createObjectURL(new Blob([bytes], { type: mime(playable) }));
       audio.src = this.#url;
       audio.playbackRate = this.rate;
       await audio.play();
