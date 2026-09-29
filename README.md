@@ -218,6 +218,12 @@ cargo run -p postal-core --bin service-check  # store messages, show retention
 `spike` renders its pairing code as Unicode blocks, so it needs no image viewer.
 Set `SPIKE_HISTORY=accept` to compare behaviour when the full history is allowed.
 
+Settings → Advanced turns the library's verbose logging (keepalive pings,
+transport frames, link probes) on or off; it is on by default, and applies the
+next time Postal starts. A watchdog also samples the transport and probes a
+link that has moved no frames for minutes, so a half-open socket reconnects
+instead of leaving the app silently offline.
+
 The app itself logs to `postal.log` in its data directory (*Settings → About →
 Open log*): connection changes, sync progress, per-batch timings, failed store
 writes, failed UI commands and crashes with a backtrace. `RUST_LOG` overrides

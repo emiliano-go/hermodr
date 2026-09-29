@@ -238,7 +238,7 @@ fn single_instance() -> tauri::plugin::TauriPlugin<tauri::Wry> {
 }
 
 fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    init_logging(&log_path(app.handle()));
+    init_logging(&log_path(app.handle()), load_settings(app.handle()).verbose_whatsapp_logs);
     let accounts = load_accounts(app.handle());
     migrate_media(app.handle(), &accounts);
 

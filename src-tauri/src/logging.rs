@@ -26,13 +26,20 @@ pub(crate) fn log_path(app: &AppHandle) -> PathBuf {
 /// Sends logs and panics to `<app data>/postal.log` as well as stderr, which
 /// is discarded when the app is launched from a desktop entry. Past 5 MB the
 /// file moves to `postal.log.old`, so the run before a crash is still there.
-pub(crate) fn init_logging(path: &std::path::Path) {
+pub(crate) fn init_logging(path: &std::path::Path, verbose_whatsapp: bool) {
     // Our crates and the UI (`ui`) log at info, debug in dev builds; history
     // sync and peer requests fail silently otherwise. RUST_LOG overrides.
     let ours = if cfg!(debug_assertions) { "debug" } else { "info" };
+    // The keepalive and transport targets explain why a link stalls; on by
+    // default, and switchable off from Settings → Advanced for a quieter log.
+    let transport = if verbose_whatsapp {
+        ",Client/Keepalive=debug,whatsapp_rust::client::node_io=debug"
+    } else {
+        ""
+    };
     let filter = format!(
         "warn,postal_lib={ours},postal_core={ours},ui={ours},\
-         whatsapp_rust::history_sync=info,whatsapp_rust::pdo=info"
+         whatsapp_rust::history_sync=info,whatsapp_rust::pdo=info{transport}"
     );
     let mut builder = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(filter));
     builder.format_timestamp_millis();

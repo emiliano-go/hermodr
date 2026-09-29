@@ -15,6 +15,7 @@
     | "plugins"
     | "keybinds"
     | "appearance"
+    | "advanced"
     | "about";
   type Profile = {
     name: string;
@@ -158,6 +159,7 @@
     { id: "plugins", label: "Plugins", group: "App settings" },
     { id: "keybinds", label: "Keybinds", group: "App settings" },
     { id: "appearance", label: "Customization", group: "App settings" },
+    { id: "advanced", label: "Advanced", group: "App settings" },
     { id: "about", label: "About", group: "Postal" },
   ]);
   $effect(() => {
@@ -886,6 +888,19 @@
           <h2>Customization</h2>
           <p class="lede">Themes and CSS extensions apply instantly and are saved on this device.</p>
           <div class="customization"><Customization /></div>
+        {:else if section === "advanced"}
+          <h2>Advanced</h2>
+          <p class="lede">Developer-oriented options. These only change logging.</p>
+          <label class="setting">
+            <div>
+              <span class="setting-title">Verbose WhatsApp logs</span>
+              <span class="setting-desc">
+                Log the library's keepalive pings, transport frames and link probes, which is what
+                makes a stalled connection diagnosable. Applies the next time Postal starts.
+              </span>
+            </div>
+            <input class="switch" type="checkbox" bind:checked={draft.verbose_whatsapp_logs} />
+          </label>
         {:else}
           <h2>About</h2>
           <div class="setting">

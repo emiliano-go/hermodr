@@ -56,6 +56,10 @@ pub struct UiSettings {
     /// leaves or a chat is opened. Off reorders immediately.
     #[serde(default = "default_true")]
     pub freeze_chat_list_on_hover: bool,
+    /// Log the library's keepalive pings and transport frames, so a stalled
+    /// link is diagnosable. Applies the next time Postal starts.
+    #[serde(default = "default_true")]
+    pub verbose_whatsapp_logs: bool,
 }
 
 pub(crate) fn default_true() -> bool {
@@ -80,6 +84,7 @@ impl Default for UiSettings {
             android_instance: false,
             notifications_enabled: true,
             freeze_chat_list_on_hover: true,
+            verbose_whatsapp_logs: true,
         }
     }
 }
@@ -211,6 +216,9 @@ mod tests {
         assert!(!parse_settings(r#"{"notifications_enabled":false}"#).unwrap().notifications_enabled);
         // The hover freeze defaults to on, including for settings saved before it existed.
         assert!(parse_settings("{}").unwrap().freeze_chat_list_on_hover);
+        // Verbose WhatsApp logs default to on, switchable from Advanced.
+        assert!(parse_settings("{}").unwrap().verbose_whatsapp_logs);
+        assert!(!parse_settings(r#"{"verbose_whatsapp_logs":false}"#).unwrap().verbose_whatsapp_logs);
         assert!(parse_settings(legacy).unwrap().freeze_chat_list_on_hover);
         assert!(!parse_settings(r#"{"freeze_chat_list_on_hover":false}"#).unwrap().freeze_chat_list_on_hover);
         assert_eq!(bounded.message_window_size, 500);
