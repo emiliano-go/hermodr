@@ -40,6 +40,8 @@ jobs:
       - run: pnpm test
       # Fails when a production Rust function grows past 80 lines.
       - run: pnpm check:fn-length
+      # Fails when a Tauri command misses its build.rs or ACL wiring.
+      - run: pnpm check:tauri-acl
 
   core:
     name: Core (${{ matrix.os }})

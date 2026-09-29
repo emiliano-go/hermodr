@@ -67,6 +67,7 @@ const COMMANDS: &[&str] = &[
     "star",
     "pin_message",
     "delete_message",
+    "delete_messages",
     "report_message",
     "forward_message",
     "marks",

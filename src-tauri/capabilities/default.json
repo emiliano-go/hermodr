@@ -80,6 +80,7 @@
     "allow-star",
     "allow-pin-message",
     "allow-delete-message",
+    "allow-delete-messages",
     "allow-report-message",
     "allow-forward-message",
     "allow-marks",
