@@ -345,24 +345,17 @@ impl MessageStore {
         Ok(message)
     }
 
-    /// Marks a message as deleted by its sender, clearing its content.
+    /// Marks a message as deleted by its sender, keeping the local copy.
     ///
-    /// The row is kept so the chat shows that something was removed rather than
-    /// silently losing a message. A recovered view-once copy it quoted is
-    /// dropped with the quote, so it stops holding a file open too. Returns
-    /// whether a row was updated.
+    /// The row, its text and any recovered media stay, so a message never
+    /// becomes unavailable here; the flag only tells the UI to grey it out,
+    /// like a message deleted on this device. Returns whether a row was
+    /// updated.
     pub fn revoke_message(&self, chat: &str, id: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let chat = &*names::canonical_chat(&conn, chat)?;
         let changed = conn.execute(
-              "UPDATE messages
-               SET revoked = 1, text = '', media_kind = NULL, media_path = NULL,
-                   media_once_kind = NULL,
-                   reply_to_id = NULL, reply_to_text = NULL, reply_to_sender = NULL,
-                   reply_to_kind = NULL, reply_to_thumb = NULL, reply_to_chat = NULL,
-                   reply_to_view_once = 0, reply_to_recoverable = 0,
-                   reply_to_path = NULL, reply_to_locator = NULL
-              WHERE chat = ?1 AND id = ?2 AND revoked = 0",
+            "UPDATE messages SET revoked = 1 WHERE chat = ?1 AND id = ?2 AND revoked = 0",
             params![chat, id],
         )?;
         Ok(changed > 0)

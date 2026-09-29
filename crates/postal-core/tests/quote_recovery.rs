@@ -151,12 +151,13 @@ fn pruning_keeps_a_named_copy_and_drops_an_orphan() {
 }
 
 #[test]
-fn a_revoked_reply_stops_naming_its_copy() {
+fn a_revoked_reply_keeps_naming_its_copy() {
     let s = store();
     s.insert_message(&reply("r1", "q1")).unwrap();
     s.set_quote_media_path("a@s", "r1", "/media/quote-q1.jpg").unwrap();
     assert!(s.revoke_message("a@s", "r1").unwrap());
-    assert!(s.quote_media_paths().unwrap().is_empty());
+    // Nothing becomes unavailable: the copy stays referenced.
+    assert!(s.quote_media_paths().unwrap().contains("/media/quote-q1.jpg"));
 }
 
 #[test]

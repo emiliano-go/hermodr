@@ -219,8 +219,14 @@
     // behind a one-time filter until it is clicked in this visit to the chat.
     const onceKept =
       !!message.media_once_kind && message.media_kind !== "view_once" && !!message.media_path;
+    // A revoked message keeps its local copy, so it still counts as drawable.
+    const hasBody =
+      !!message.text.trim() ||
+      !!message.media_kind ||
+      !!message.media_path ||
+      !!message.media_thumb ||
+      !!message.reply_to_text;
     const visual =
-      !message.revoked &&
       !viewOnce &&
       (message.media_kind === "image" ||
         message.media_kind === "video" ||
@@ -242,7 +248,7 @@
       onceKept,
       onceRevealed: !!revealedOnce[message.id],
       inlineMeta:
-        message.revoked ||
+        (message.revoked && !hasBody) ||
         (!message.preview_url && (!message.media_kind || (!!caption && !!message.media_path))),
       reactions: reactionsFor.get(message.id),
       isStarred: starredSet.has(message.id),
@@ -257,6 +263,7 @@
       downloading: !!downloading[message.id],
       downloadError: message.media_path ? null : (downloadErrors[message.id] ?? null),
       downloadGaveUp: (downloadTries[message.id] ?? 0) >= MAX_DOWNLOAD_TRIES,
+      hasBody,
       picking: !!picking && !message.revoked,
       picked: !!picking?.[message.id],
       onceAudioOpen: onceAudioOpenId === message.id,

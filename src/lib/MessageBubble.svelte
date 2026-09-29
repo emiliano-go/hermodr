@@ -83,7 +83,7 @@ import VideoPlayer from "$lib/VideoPlayer.svelte";
     !vm.showSender}
   class:menu-open={vm.menuOpen}
   class:edited={vm.isEdited}
-  class:deleted={message.deleted}
+  class:deleted={message.deleted || message.revoked}
   data-id={message.id}>
   {#if vm.showSender}
     <button
@@ -106,7 +106,8 @@ import VideoPlayer from "$lib/VideoPlayer.svelte";
     {/if}
   {/if}
 
-  {#if message.revoked}
+  {#if message.revoked && !vm.hasBody}
+    <!-- Nothing local to keep: only a revoke we heard about, never the message. -->
     <span class="revoked">This message was deleted<span class="meta-spacer"></span></span>
   {:else}
     {#if vm.isForwarded}

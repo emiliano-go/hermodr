@@ -452,7 +452,8 @@ fn replayed_messages_never_regress_local_state() {
     s.insert_message(&msg("a@s", "3", 0, "oops")).unwrap();
     let got = s.message("a@s", "3").unwrap();
     assert!(got.local.revoked);
-    assert_eq!(got.text, "");
+    // The revoke keeps the local copy, and a replay may not clear the flag.
+    assert_eq!(got.text, "oops");
 }
 
 #[test]
@@ -798,14 +799,14 @@ fn status_by_id_advances_without_the_chat() {
 }
 
 #[test]
-fn revoking_keeps_the_row_but_clears_content() {
+fn revoking_keeps_the_row_and_its_content() {
     let s = store(DiskRetention::unlimited());
     s.insert_message(&msg("a@s", "1", 0, "oops")).unwrap();
     assert!(s.revoke_message("a@s", "1").unwrap());
 
     let got = &s.messages_for("a@s", 1).unwrap()[0];
     assert!(got.local.revoked);
-    assert_eq!(got.text, "");
+    assert_eq!(got.text, "oops");
     // Revoking twice changes nothing the second time.
     assert!(!s.revoke_message("a@s", "1").unwrap());
 }

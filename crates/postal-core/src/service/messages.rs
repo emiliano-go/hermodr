@@ -312,18 +312,18 @@ impl WhatsAppService {
         Ok(())
     }
 
-    /// Deletes a message for everyone: ours as the sender, anyone's as an admin.
+    /// Deletes a message for everyone: ours as the sender, anyone's as an
+    /// admin. The local copy stays, greyed out, so a message never becomes
+    /// unavailable here.
     pub async fn delete_for_everyone(&self, chat: &str, id: &str, sender: &str, from_me: bool) -> Result<()> {
         self.revoke_for_everyone(chat, id, sender, from_me).await?;
-        // A revoked reply stops naming any view-once copy it had recovered.
-        self.prune_quote_files().await?;
         if let Some(updated) = self.store.message(chat, id).await.observed() {
             let _ = self.events.send(ServiceEvent::hint(&updated, false));
         }
         Ok(())
     }
 
-    /// Sends and records one revoke; the caller prunes and hints in bulk.
+    /// Sends and records one revoke; the caller hints.
     async fn revoke_for_everyone(&self, chat: &str, id: &str, sender: &str, from_me: bool) -> Result<()> {
         use whatsapp_rust::send::RevokeType;
         let jid: Jid = chat.parse()?;
@@ -357,8 +357,6 @@ impl WhatsAppService {
                 let from_me = existing.header.from_me;
                 self.revoke_for_everyone(chat, id, &sender, from_me).await?;
             }
-            // A revoked reply stops naming any view-once copy it had recovered.
-            self.prune_quote_files().await?;
             let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
         } else {
             for id in ids {

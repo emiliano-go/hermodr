@@ -69,7 +69,7 @@ export function bubbleView(m: StoredMessage, index: number, scene: string): Bubb
     memberTag: null, visual: false, caption: "", viewOnce: null,
     onceKept: false, onceRevealed: false, inlineMeta: true,
     reactions: index === 0 ? [{ emoji: "👍", count: 2, mine: true }] : undefined,
-    isStarred: false, isEdited: false, isForwarded: false,
+    isStarred: false, isEdited: false, isForwarded: false, hasBody: true,
     isReplying: scene === "chat" && index === 1, highlighted: false, forMe: m.mentioned,
     menuOpen: scene === "menu" && index === 2, poll: undefined, chatEvent: undefined,
     downloading: false, downloadError: null, downloadGaveUp: false,

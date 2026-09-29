@@ -361,6 +361,8 @@ export type BubbleVm = {
   downloadError: string | null;
   /** Downloading kept failing, so the retry is no longer offered. */
   downloadGaveUp: boolean;
+  /** The message still carries something to draw (text, media, a quote). */
+  hasBody: boolean;
   /** The message can be picked for a bulk action. */
   picking: boolean;
   /** It is picked. */

@@ -654,10 +654,10 @@ impl Inbound {
         });
     }
 
-    /// A revoke is a protocol message naming the original; mark it deleted
-    /// rather than dropping the notice, so the chat shows that something was
-    /// removed. Stopping a live location arrives this way, and keeps its last
-    /// position instead.
+    /// A revoke is a protocol message naming the original; mark it revoked
+    /// rather than dropping the notice. The local text and media stay and the
+    /// UI greys the bubble out, so nothing becomes unavailable here. Stopping
+    /// a live location arrives this way, and keeps its last position instead.
     async fn apply_revoke(&self, ctx: &BatchCtx<'_>, chat: &str, target: &str) {
         if let Some(existing) = ctx.store.message(chat, target).await.observed() {
             if existing.media.kind.as_deref() == Some("live_location") {
