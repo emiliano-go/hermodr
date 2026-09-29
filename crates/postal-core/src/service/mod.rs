@@ -34,6 +34,7 @@ use crate::{
     store::{LinkCard, LiveLocation, LocalState, Media, MessageHeader, MessageStore, StoreWorker, AliasWorker, Quote, DiskRetention, DiskRetentionManager, StoredMessage, Sticker, StickerPack},
 };
 
+mod audio;
 mod connection;
 mod contacts;
 mod diagnostics;
