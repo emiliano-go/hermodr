@@ -1,6 +1,6 @@
 use postal_core::StoredMessage;
 use tauri::State;
-use crate::{AppState, settings::sends_privacy};
+use crate::{AppState, connection::command_error, settings::sends_privacy};
 
 #[tauri::command(async)]
 pub(crate) async fn message_page(state: State<'_, AppState>, chat: String, limit: Option<u32>,
@@ -28,7 +28,7 @@ pub(crate) async fn messages(
 pub(crate) async fn mark_read(state: State<'_, AppState>, chat: String) -> Result<usize, String> {
     let service = state.service()?;
     let receipts = sends_privacy(&state, &service, &chat).await.1;
-    service.mark_read(&chat, receipts).await.map_err(|e| e.to_string())
+    service.mark_read(&chat, receipts).await.map_err(|e| command_error(&service, e))
 }
 
 /// Marks incoming messages up to and including `id` as read.
@@ -43,7 +43,7 @@ pub(crate) async fn mark_read_until(
     service
         .mark_read_until(&chat, &id, receipts)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| command_error(&service, e))
 }
 
 /// Sends a played receipt for a voice note or view-once media, unless receipts are off.
@@ -53,7 +53,7 @@ pub(crate) async fn mark_played(state: State<'_, AppState>, chat: String, id: St
     if !sends_privacy(&state, &service, &chat).await.1 {
         return Ok(());
     }
-    service.mark_played(&chat, &id, &sender).await.map_err(|e| e.to_string())
+    service.mark_played(&chat, &id, &sender).await.map_err(|e| command_error(&service, e))
 }
 
 /// Sends a text message quoting an earlier one.
@@ -80,7 +80,7 @@ pub(crate) async fn send_reply(
             reply_to_chat.as_deref().filter(|c| *c != chat),
         )
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| command_error(&service, e))
 }
 
 /// The message a context-menu action applies to.
@@ -95,29 +95,29 @@ pub(crate) struct Target {
 
 #[tauri::command]
 pub(crate) async fn react(state: State<'_, AppState>, target: Target, emoji: String) -> Result<(), String> {
-    state
-        .service()?
+    let service = state.service()?;
+    service
         .react(&target.chat, &target.id, &target.sender, target.from_me, &emoji)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| command_error(&service, e))
 }
 
 #[tauri::command]
 pub(crate) async fn star(state: State<'_, AppState>, target: Target, starred: bool) -> Result<(), String> {
-    state
-        .service()?
+    let service = state.service()?;
+    service
         .star(&target.chat, &target.id, &target.sender, target.from_me, starred)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| command_error(&service, e))
 }
 
 #[tauri::command]
 pub(crate) async fn pin_message(state: State<'_, AppState>, target: Target, pinned: bool) -> Result<(), String> {
-    state
-        .service()?
+    let service = state.service()?;
+    service
         .pin_message(&target.chat, &target.id, &target.sender, target.from_me, pinned)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| command_error(&service, e))
 }
 
 #[tauri::command]
@@ -134,12 +134,13 @@ pub(crate) async fn delete_message(
     } else {
         service.delete_for_me(&target.chat, &target.id).await
     };
-    done.map_err(|e| e.to_string())
+    done.map_err(|e| command_error(&service, e))
 }
 
 #[tauri::command]
 pub(crate) async fn report_message(state: State<'_, AppState>, chat: String, id: String) -> Result<(), String> {
-    state.service()?.report_to_admins(&chat, &id).await.map_err(|e| e.to_string())
+    let service = state.service()?;
+    service.report_to_admins(&chat, &id).await.map_err(|e| command_error(&service, e))
 }
 
 #[tauri::command]
@@ -149,7 +150,8 @@ pub(crate) async fn forward_message(
     id: String,
     to: String,
 ) -> Result<(), String> {
-    state.service()?.forward(&chat, &id, &to).await.map_err(|e| e.to_string())
+    let service = state.service()?;
+    service.forward(&chat, &id, &to).await.map_err(|e| command_error(&service, e))
 }
 
 #[tauri::command(async)]
@@ -208,7 +210,7 @@ pub(crate) async fn send_text(
     service
         .send_text(&chat, text, mentions.unwrap_or_default())
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| command_error(&service, e))
 }
 
 /// Replaces the text of one of our own messages.
@@ -219,11 +221,11 @@ pub(crate) async fn edit_message(
     id: String,
     text: String,
 ) -> Result<(), String> {
-    state
-        .service()?
+    let service = state.service()?;
+    service
         .edit_message(&chat, &id, text)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| command_error(&service, e))
 }
 
 /// The chat a stored message id belongs to.

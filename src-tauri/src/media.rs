@@ -3,6 +3,7 @@ use postal_core::{SendOptions, VoiceNote};
 use postal_core::{Sticker, StickerLibrary, StickerResyncReport};
 use tauri::State;
 use crate::AppState;
+use crate::connection::command_error;
 
 #[tauri::command(async)]
 pub(crate) async fn storage_report(
@@ -55,13 +56,13 @@ pub(crate) async fn send_media(
     match (data, upload) {
         (Some(data), None) => {
             let bytes = BASE64.decode(data.as_bytes()).map_err(|e| e.to_string())?;
-            service.send_media(&chat, &name, bytes, caption, reply, options).await.map_err(|e| e.to_string())
+            service.send_media(&chat, &name, bytes, caption, reply, options).await.map_err(|e| command_error(&service, e))
         }
         (None, Some(token)) => {
             let owner = crate::account_store::active_account(&state).ok_or("no active account")?;
             let uploads = state.uploads.clone();
             let staged = tauri::async_runtime::spawn_blocking(move || uploads.take(&owner, &token)).await.map_err(|e| e.to_string())??;
-            service.send_media_file(&chat, &staged.name, staged.path.clone(), caption, reply, options).await.map_err(|e| e.to_string())
+            service.send_media_file(&chat, &staged.name, staged.path.clone(), caption, reply, options).await.map_err(|e| command_error(&service, e))
         }
         _ => Err("provide either attachment bytes or a staged upload".into()),
     }
@@ -91,12 +92,12 @@ pub(crate) async fn send_voice(
         voice: Some(VoiceNote { seconds, waveform }),
         ..Default::default()
     };
-    state
-        .service()?
+    let service = state.service()?;
+    service
         .send_media(&chat, "voice.ogg", ogg, None, reply, options)
         .await
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(|e| command_error(&service, e))
 }
 
 /// Sends base64 image bytes as a sticker.
@@ -111,7 +112,8 @@ pub(crate) async fn send_sticker(
 ) -> Result<(), String> {
     let bytes = BASE64.decode(data.as_bytes()).map_err(|e| e.to_string())?;
     let reply = reply_of(reply_to_id, reply_to_sender, reply_to_text);
-    state.service()?.send_sticker(&chat, bytes, reply).await.map_err(|e| e.to_string())
+    let service = state.service()?;
+    service.send_sticker(&chat, bytes, reply).await.map_err(|e| command_error(&service, e))
 }
 
 /// The quoted `(id, sender, text)` a send carries, when all three were given.
@@ -149,11 +151,11 @@ pub(crate) async fn send_from_library(
     reply_to_sender: Option<String>,
     reply_to_text: Option<String>,
 ) -> Result<(), String> {
-    state
-        .service()?
+    let service = state.service()?;
+    service
         .send_from_library(&chat, &path, &kind, reply_of(reply_to_id, reply_to_sender, reply_to_text))
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| command_error(&service, e))
 }
 
 /// Packs, favourites and recents of the sticker library.

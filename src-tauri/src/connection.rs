@@ -99,6 +99,14 @@ pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &s
     Ok(())
 }
 
+/// Turns a command failure into the UI's message, telling the service first:
+/// a timeout or socket error on a send is how a half-open link is noticed
+/// without waiting for the watchdog.
+pub(crate) fn command_error(service: &WhatsAppService, error: impl std::fmt::Display) -> String {
+    service.note_error(&error);
+    error.to_string()
+}
+
 /// Pokes the companion manager to re-check whether the instance should run.
 pub(crate) fn wake_once(app: &AppHandle) {
     app.state::<AppState>().once_wake.notify_one();
