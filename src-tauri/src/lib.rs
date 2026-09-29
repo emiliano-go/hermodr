@@ -137,6 +137,7 @@ macro_rules! postal_commands {
             messages::star,
             messages::pin_message,
             messages::delete_message,
+            messages::delete_messages,
             messages::report_message,
             messages::forward_message,
             messages::marks,

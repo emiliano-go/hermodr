@@ -73,6 +73,7 @@ export function bubbleView(m: StoredMessage, index: number, scene: string): Bubb
     isReplying: scene === "chat" && index === 1, highlighted: false, forMe: m.mentioned,
     menuOpen: scene === "menu" && index === 2, poll: undefined, chatEvent: undefined,
     downloading: false, downloadError: null, downloadGaveUp: false,
+    picking: false, picked: false,
     onceAudioOpen: false, autoplay: false, voiceAvatar: null,
     quoteAuthor: m.reply_to_sender, quoteText: m.reply_to_text, quoteChatName: null,
   };
@@ -84,7 +85,7 @@ export const bubbleApi: BubbleApi = {
   avatarOf: () => null,
   formatTime: (ts) => new Date(ts * 1000).toISOString().slice(11, 16),
   namer: (jid) => jid,
-  onprofile: noop, onopenurl: noop, onreplydraft: noop, onmenu: noop,
+  onprofile: noop, onopenurl: noop, onreplydraft: noop, onmenu: noop, onpick: noop,
   onjumpquoted: noop, onrecoverquote: noop, recovering: {}, ondownload: noop,
   onopenviewer: noop, onopenmedia: noop, onopenquote: noop, onvote: noop,
   onrespond: noop, oneditrequest: noop, oncancelevent: noop, onreact: noop,

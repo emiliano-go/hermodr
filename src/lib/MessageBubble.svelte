@@ -49,16 +49,23 @@ import VideoPlayer from "$lib/VideoPlayer.svelte";
 
 <!-- The whole row answers double-click and right-click, not just the bubble. -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
+<!-- svelte-ignore a11y_click_events_have_key_events -->
 <div
   class="msg-row"
   class:replying={vm.isReplying}
   class:jumped={vm.highlighted}
   class:for-me={vm.forMe}
   class:first-row={vm.first}
-  ondblclick={() => api.onreplydraft(message)}
+  class:mine={message.from_me}
+  class:picking={vm.picking}
+  class:picked={vm.picked}
+  onclick={vm.picking ? () => api.onpick(message) : undefined}
+  ondblclick={() => {
+    if (!vm.picking) api.onreplydraft(message);
+  }}
   oncontextmenu={(e) => {
     e.preventDefault();
-    api.onmenu(e, message);
+    if (!vm.picking) api.onmenu(e, message);
   }}>
 <div
   class="bubble"
@@ -508,6 +515,41 @@ import VideoPlayer from "$lib/VideoPlayer.svelte";
   .msg-row.jumped {
     background: var(--jump-soft);
     transition-duration: calc(0.15s * var(--motion-scale));
+  }
+  /* Bulk selection: the row picks, the bubble stops swallowing clicks. */
+  .msg-row.picking {
+    position: relative;
+    cursor: pointer;
+    padding-left: calc(var(--pad-l) + 30px);
+  }
+  .msg-row.picking .bubble {
+    pointer-events: none;
+  }
+  .msg-row.picking::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: var(--pad-l);
+    width: 20px;
+    height: 20px;
+    margin-top: -10px;
+    box-sizing: border-box;
+    border: 2px solid var(--faint);
+    border-radius: 50%;
+  }
+  .msg-row.picking.picked::after {
+    content: "✓";
+    display: grid;
+    place-items: center;
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--accent-text);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .msg-row.picking:hover {
+    background: var(--row-hover);
   }
   .bubble {
     max-width: 70%;

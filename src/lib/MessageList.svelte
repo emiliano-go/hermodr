@@ -70,6 +70,8 @@
     formatTime,
     onreplydraft,
     onmenu,
+    onpick,
+    picking = null,
     onjumpquoted,
     ondownload,
     onopenviewer,
@@ -143,6 +145,9 @@
     formatTime: (ts: number) => string;
     onreplydraft: (m: StoredMessage) => void;
     onmenu: (e: MouseEvent, m: StoredMessage) => void;
+    onpick: (m: StoredMessage) => void;
+    /** Messages picked for a bulk action, in the open chat; null when not picking. */
+    picking?: Record<string, true> | null;
     onjumpquoted: (m: StoredMessage) => void;
     onrecoverquote: (m: StoredMessage) => void;
     recovering: Record<string, true>;
@@ -177,6 +182,7 @@
     namer,
     onreplydraft,
     onmenu,
+    onpick,
     onjumpquoted,
     onrecoverquote,
     recovering,
@@ -251,6 +257,8 @@
       downloading: !!downloading[message.id],
       downloadError: message.media_path ? null : (downloadErrors[message.id] ?? null),
       downloadGaveUp: (downloadTries[message.id] ?? 0) >= MAX_DOWNLOAD_TRIES,
+      picking: !!picking && !message.revoked,
+      picked: !!picking?.[message.id],
       onceAudioOpen: onceAudioOpenId === message.id,
       autoplay: autoplayId === message.id,
       voiceAvatar: voiceAvatarOf(message),

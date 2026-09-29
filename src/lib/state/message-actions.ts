@@ -132,7 +132,41 @@ export function menuItems(m: StoredMessage, openChat: (chat: string) => Promise<
     separated: !other,
     action: () => (ui.deleting = m),
   });
+  if (!m.revoked) {
+    items.push({
+      label: "Select messages",
+      icon: "check",
+      separated: true,
+      action: () => (ui.picking = { [m.id]: true }),
+    });
+  }
   return items;
+}
+
+/** Whether every picked message may be deleted for everyone. */
+export function canDeletePickedForEveryone() {
+  const ids = ui.bulkDelete ?? Object.keys(ui.picking ?? {});
+  return (
+    ids.length > 0 &&
+    ids.every((id) => {
+      const m = messages.messages.find((row) => row.id === id);
+      return !!m && canDeleteForEveryone(m);
+    })
+  );
+}
+
+/** Deletes the picked messages, for everyone or on this device only. */
+export async function deleteSelected(everyone: boolean) {
+  const ids = ui.bulkDelete ?? Object.keys(ui.picking ?? {});
+  ui.bulkDelete = null;
+  const chat = chats.selectedChat;
+  if (!chat || ids.length === 0) return;
+  await act(async () => {
+    await invoke("delete_messages", { chat, ids, everyone });
+    ui.picking = null;
+    await messages.reloadMessages(chat);
+    await chats.refreshChats();
+  });
 }
 
 /** Whether we may delete this message for everyone: ours, or ours to moderate. */

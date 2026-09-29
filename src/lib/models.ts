@@ -361,6 +361,10 @@ export type BubbleVm = {
   downloadError: string | null;
   /** Downloading kept failing, so the retry is no longer offered. */
   downloadGaveUp: boolean;
+  /** The message can be picked for a bulk action. */
+  picking: boolean;
+  /** It is picked. */
+  picked: boolean;
   onceAudioOpen: boolean;
   autoplay: boolean;
   voiceAvatar: string | null;
@@ -380,6 +384,8 @@ export type BubbleApi = {
   namer: (jid: string) => string;
   onreplydraft: (m: StoredMessage) => void;
   onmenu: (e: MouseEvent, m: StoredMessage) => void;
+  /** Picks or unpicks a message while a bulk selection is open. */
+  onpick: (m: StoredMessage) => void;
   onjumpquoted: (m: StoredMessage) => void;
   /** Takes back the view-once a reply quotes, then opens the recovered copy. */
   onrecoverquote: (m: StoredMessage) => void;

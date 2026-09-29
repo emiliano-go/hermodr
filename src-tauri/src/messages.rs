@@ -137,6 +137,21 @@ pub(crate) async fn delete_message(
     done.map_err(|e| command_error(&service, e))
 }
 
+/// Deletes several messages at once, for everyone or on this device only.
+#[tauri::command]
+pub(crate) async fn delete_messages(
+    state: State<'_, AppState>,
+    chat: String,
+    ids: Vec<String>,
+    everyone: bool,
+) -> Result<(), String> {
+    let service = state.service()?;
+    service
+        .delete_messages(&chat, &ids, everyone)
+        .await
+        .map_err(|e| command_error(&service, e))
+}
+
 #[tauri::command]
 pub(crate) async fn report_message(state: State<'_, AppState>, chat: String, id: String) -> Result<(), String> {
     let service = state.service()?;

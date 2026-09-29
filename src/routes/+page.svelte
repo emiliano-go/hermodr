@@ -4,7 +4,7 @@
   import { addAccount, chooseAccount, connect, reconnect, removeAccount, switchTo, syncState } from "$lib/state/accounts";
   import { onDrop, onPaste } from "$lib/state/attachments";
   import { openPings, openStarred, searchChat } from "$lib/state/finder";
-  import { act, canDeleteForEveryone, deleteMessage, eventFields, menuItems as messageMenuItems, saveEvent, target } from "$lib/state/message-actions";
+  import { act, canDeleteForEveryone, canDeletePickedForEveryone, deleteMessage, deleteSelected, eventFields, menuItems as messageMenuItems, saveEvent, target } from "$lib/state/message-actions";
   import { onMount, tick, untrack } from "svelte";
   import { invoke } from "$lib/ipc";
   import { listen } from "@tauri-apps/api/event";
@@ -31,6 +31,7 @@
   import ChatHeader from "$lib/ChatHeader.svelte";
   import MessageList from "$lib/MessageList.svelte";
   import ComposerBar from "$lib/ComposerBar.svelte";
+  import SelectionBar from "$lib/SelectionBar.svelte";
   import { hue } from "$lib/avatar";
   import { bare, captionOf, dayKey, dayLabel, formatTime, isSvg, MEDIA_LABELS } from "$lib/message";
   import { chats } from "$lib/state/chats.svelte";
@@ -128,6 +129,8 @@
       composer.replyingTo = null;
       composer.editing = null;
       composer.resetHistory();
+      ui.picking = null;
+      ui.bulkDelete = null;
     }
     chats.selectedChat = chat;
     // One-to-one typing only arrives for contacts we are subscribed to.
@@ -1022,6 +1025,13 @@
           firstUnreadId={messages.firstUnreadId}
           onjumpunread={(id) => scrollToMessage(id)}
           menuId={ui.menu?.message.id ?? null}
+          picking={ui.picking}
+          onpick={(m) => {
+            const next = { ...(ui.picking ?? {}) };
+            if (next[m.id]) delete next[m.id];
+            else next[m.id] = true;
+            ui.picking = next;
+          }}
           polls={messages.marks.polls}
           events={messages.marks.events}
           namer={(jid) => (members.isMe(jid) ? "You" : members.senderName(jid))}
@@ -1119,8 +1129,17 @@
 
         {@render syncStatus()}
 
-        <ComposerBar
-          bind:draft={composer.draft}
+        {#if ui.picking}
+          <SelectionBar
+            count={Object.keys(ui.picking).length}
+            ondelete={() => (ui.bulkDelete = Object.keys(ui.picking ?? {}))}
+            oncancel={() => {
+              ui.picking = null;
+              ui.bulkDelete = null;
+            }} />
+        {:else}
+          <ComposerBar
+            bind:draft={composer.draft}
           bind:composerInput
           replyingTo={composer.replyingTo}
           replyAuthor={composer.replyingTo
@@ -1165,8 +1184,9 @@
           onvoiceerror={(message) => (ui.error = message)}
           onreceipts={() => composer.toggleChatReceipts()}
           ontyping={() => composer.toggleChatTyping()}
-          receiptsHidden={composer.receiptsHidden}
-          typingHidden={composer.typingHidden} />
+            receiptsHidden={composer.receiptsHidden}
+            typingHidden={composer.typingHidden} />
+        {/if}
 
         {#if members.chatGroup && !members.chatGroup.can_send}
           <div class="read-only" role="status">
@@ -1269,6 +1289,25 @@
       {/if}
       <button class="danger" onclick={() => deleteMessage(false)}>Delete on this computer</button>
       <button onclick={() => (ui.deleting = null)}>Cancel</button>
+    {/snippet}
+  </ConfirmDialog>
+{/if}
+
+{#if ui.bulkDelete}
+  {@const picked = ui.bulkDelete}
+  <ConfirmDialog
+    label="Delete messages"
+    title={`Delete ${picked.length} message${picked.length === 1 ? "" : "s"}?`}
+    hint={canDeletePickedForEveryone()
+      ? "Delete them for everyone, or only on this computer (kept greyed out here)."
+      : "They are deleted on this computer only, and kept greyed out here."}
+    onclose={() => (ui.bulkDelete = null)}>
+    {#snippet actions()}
+      {#if canDeletePickedForEveryone()}
+        <button class="danger" onclick={() => deleteSelected(true)}>Delete for everyone</button>
+      {/if}
+      <button class="danger" onclick={() => deleteSelected(false)}>Delete on this computer</button>
+      <button onclick={() => (ui.bulkDelete = null)}>Cancel</button>
     {/snippet}
   </ConfirmDialog>
 {/if}

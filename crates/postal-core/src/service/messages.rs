@@ -314,6 +314,17 @@ impl WhatsAppService {
 
     /// Deletes a message for everyone: ours as the sender, anyone's as an admin.
     pub async fn delete_for_everyone(&self, chat: &str, id: &str, sender: &str, from_me: bool) -> Result<()> {
+        self.revoke_for_everyone(chat, id, sender, from_me).await?;
+        // A revoked reply stops naming any view-once copy it had recovered.
+        self.prune_quote_files().await?;
+        if let Some(updated) = self.store.message(chat, id).await.observed() {
+            let _ = self.events.send(ServiceEvent::hint(&updated, false));
+        }
+        Ok(())
+    }
+
+    /// Sends and records one revoke; the caller prunes and hints in bulk.
+    async fn revoke_for_everyone(&self, chat: &str, id: &str, sender: &str, from_me: bool) -> Result<()> {
         use whatsapp_rust::send::RevokeType;
         let jid: Jid = chat.parse()?;
         let kind = if from_me {
@@ -325,13 +336,7 @@ impl WhatsAppService {
             .revoke_message(jid, id, kind)
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        self.store.revoke_message(chat, id).await?;
-        // A revoked reply stops naming any view-once copy it had recovered.
-        self.prune_quote_files().await?;
-        if let Some(updated) = self.store.message(chat, id).await.observed() {
-            let _ = self.events.send(ServiceEvent::hint(&updated, false));
-        }
-        Ok(())
+        self.store.revoke_message(chat, id).await.map(|_| ())
     }
 
     /// Deletes a message on this device only: the row is kept and flagged, so
@@ -339,6 +344,27 @@ impl WhatsAppService {
     /// file is removed, so the copy stays recoverable.
     pub async fn delete_for_me(&self, chat: &str, id: &str) -> Result<()> {
         self.store.set_message_deleted(chat, id, true).await?;
+        Ok(())
+    }
+
+    /// Deletes several messages at once, for everyone or on this device only.
+    /// Every message is attempted; the first failure stops the run.
+    pub async fn delete_messages(&self, chat: &str, ids: &[String], everyone: bool) -> Result<()> {
+        if everyone {
+            for id in ids {
+                let existing = self.store.message(chat, id).await?;
+                let sender = existing.header.sender.clone();
+                let from_me = existing.header.from_me;
+                self.revoke_for_everyone(chat, id, &sender, from_me).await?;
+            }
+            // A revoked reply stops naming any view-once copy it had recovered.
+            self.prune_quote_files().await?;
+            let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
+        } else {
+            for id in ids {
+                self.delete_for_me(chat, id).await?;
+            }
+        }
         Ok(())
     }
 

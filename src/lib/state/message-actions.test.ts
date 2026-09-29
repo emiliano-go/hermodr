@@ -9,12 +9,19 @@ type Item = { label: string; action: () => unknown };
 /** Loads the state modules behind just enough of a window for the IPC layer. */
 async function withApp(run: (app: {
   menuItems: (m: StoredMessage, openChat: (chat: string) => Promise<void>) => Item[];
+  deleteSelected: (everyone: boolean) => Promise<void>;
+  canDeletePickedForEveryone: () => boolean;
   messages: {
     messages: StoredMessage[];
     marks: { reactions: { target: string; sender: string; emoji: string }[] };
     reactorsFor: Map<string, { emoji: string; senders: string[] }[]>;
   };
-  ui: { reactionsFor: StoredMessage | null; removeMember: { chat: string; jid: string; name: string } | null };
+  ui: {
+    reactionsFor: StoredMessage | null;
+    removeMember: { chat: string; jid: string; name: string } | null;
+    picking: Record<string, true> | null;
+    bulkDelete: string[] | null;
+  };
   members: { participants: { jid: string; name: string; admin: boolean; owner: boolean; number: string | null; username: string | null; label: string | null }[] };
   session: { me: string | null };
   composer: { editing: { chat: string; id: string; original: string } | null; startEditing: (m?: StoredMessage) => void };
@@ -29,14 +36,20 @@ async function withApp(run: (app: {
   Object.defineProperty(globalThis, "document", { configurable: true, value: { addEventListener() {} } });
   const server = await createServer({ cacheDir: fileURLToPath(new URL("../../../node_modules/.vite-tests/message-actions", import.meta.url)), ssr: { optimizeDeps: { noDiscovery: true, include: [] } }, server: { middlewareMode: true, ws: false } });
   try {
-    const { menuItems } = await server.ssrLoadModule("/src/lib/state/message-actions.ts");
+    const messageActions = await server.ssrLoadModule("/src/lib/state/message-actions.ts");
+    const { menuItems } = messageActions;
     const { messages } = await server.ssrLoadModule("/src/lib/state/messages.svelte.ts");
     const { ui } = await server.ssrLoadModule("/src/lib/state/ui.svelte.ts");
     const { members } = await server.ssrLoadModule("/src/lib/state/members.svelte.ts");
     const { session } = await server.ssrLoadModule("/src/lib/state/session.svelte.ts");
     const { composer } = await server.ssrLoadModule("/src/lib/state/composer.svelte.ts");
     const { chats } = await server.ssrLoadModule("/src/lib/state/chats.svelte.ts");
-    await run({ menuItems, messages, ui, members, session, composer, chats, calls });
+    await run({
+      menuItems,
+      deleteSelected: messageActions.deleteSelected,
+      canDeletePickedForEveryone: messageActions.canDeletePickedForEveryone,
+      messages, ui, members, session, composer, chats, calls,
+    });
   } finally {
     await server.close();
     Reflect.deleteProperty(globalThis, "window");
@@ -131,5 +144,45 @@ test("Edit targets the picked message, and Ctrl+Up the newest own one", async ()
     assert.deepEqual(composer.editing, { chat: "99@g.us", id: "mid", original: "older" });
     assert.ok(!menuItems(own("photo", "caption", "image"), async () => {})
       .some((item) => item.label === "Edit"));
+  });
+});
+
+test("Select messages starts a bulk selection, and deleting uses the bulk command", async () => {
+  await withApp(async ({ menuItems, deleteSelected, ui, chats, calls }) => {
+    chats.selectedChat = "99@g.us";
+    const message = { chat: "99@g.us", id: "a", sender: "111@s.whatsapp.net", from_me: false,
+      text: "hi", revoked: false } as StoredMessage;
+    const select = menuItems(message, async () => {})
+      .find((item) => item.label === "Select messages");
+    assert.ok(select);
+    select.action();
+    assert.deepEqual(ui.picking, { a: true });
+    assert.ok(!menuItems({ ...message, revoked: true }, async () => {})
+      .some((item) => item.label === "Select messages"));
+    ui.picking = { a: true, b: true };
+    await deleteSelected(false);
+    assert.ok(calls.some((call) => call.command === "delete_messages"
+      && JSON.stringify(call.args) === JSON.stringify({ chat: "99@g.us", ids: ["a", "b"], everyone: false })));
+    assert.equal(ui.picking, null);
+  });
+});
+
+test("bulk delete is offered for everyone only when every pick qualifies", async () => {
+  await withApp(async ({ canDeletePickedForEveryone, messages, members, session, ui }) => {
+    const mine = { chat: "99@g.us", id: "m", sender: "111@s.whatsapp.net", from_me: true,
+      text: "x", revoked: false } as StoredMessage;
+    const theirs = { chat: "99@g.us", id: "t", sender: "222@s.whatsapp.net", from_me: false,
+      text: "y", revoked: false } as StoredMessage;
+    messages.messages = [mine, theirs];
+    ui.picking = { m: true };
+    assert.ok(canDeletePickedForEveryone());
+    ui.picking = { m: true, t: true };
+    assert.ok(!canDeletePickedForEveryone());
+    members.participants = [{
+      jid: "111@s.whatsapp.net", name: "Me", admin: true, owner: false,
+      number: "111", username: null, label: null,
+    }];
+    session.me = "111@s.whatsapp.net";
+    assert.ok(canDeletePickedForEveryone());
   });
 });
