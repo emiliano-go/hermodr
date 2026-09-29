@@ -2,8 +2,11 @@
 // Null draws nothing: E2E_ENCRYPTED is the chat's fixed header instead, and a
 // kind without a sentence here is kept but not shown.
 
-export function noticeText(kind: string, params: string[], name: (jid: string) => string): string | null {
-  const names = params.map((p) => (p.includes("@") ? name(p) : p));
+export function noticeText(kind: string, params: string[], name: (jid: string) => string, actor = ""): string | null {
+  if (kind === "SILENCED_UNKNOWN_CALLER_AUDIO" || kind === "SILENCED_UNKNOWN_CALLER") return "Silenced voice call from an unknown number";
+  if (kind === "SILENCED_UNKNOWN_CALLER_VIDEO") return "Silenced video call from an unknown number";
+  const names = params.map((p) => p.includes("@") ? name(p) : kind.endsWith("CHANGE_NUMBER") && /^\d+$/.test(p) ? name(`${p}@s.whatsapp.net`) : p);
+  const author = actor ? name(actor) : null;
   const who = names.join(", ");
   // "You" and several people take the plural verb.
   const plural = names.length > 1 || names[0] === "You";
@@ -17,22 +20,30 @@ export function noticeText(kind: string, params: string[], name: (jid: string) =
     case "DEVICE_REMOVED":
       return `${who || "This contact"} removed a device.`;
     case "GROUP_CREATE":
-      return params[0] ? `Group “${params[0]}” was created.` : "The group was created.";
+      return author ? `${author} created ${params[0] ? `group "${params[0]}"` : "the group"}.`
+        : params[0] ? `Group "${params[0]}" was created.` : "The group was created.";
     case "GROUP_DELETE":
     case "COMMUNITY_PARENT_GROUP_DELETED":
       return "This group was deleted.";
     case "GROUP_DEACTIVATED":
       return "This group is no longer available.";
     case "GROUP_CHANGE_SUBJECT":
-      return params[0] ? `The group name changed to “${params[0]}”.` : "The group name changed.";
+      return author ? `${author} changed the group name${params[0] ? ` to "${params[0]}"` : ""}.`
+        : params[0] ? `The group name changed to "${params[0]}".` : "The group name changed.";
     case "GROUP_CHANGE_ICON":
-      return "The group icon changed.";
+      return author ? `${author} changed the group icon.` : "The group icon changed.";
     case "GROUP_CHANGE_DESCRIPTION":
-      return "The group description changed.";
+      return author ? `${author} changed the group description.` : "The group description changed.";
+    case "GROUP_CHANGE_INVITE_LINK":
+      return author ? `${author} reset the group invite link.` : "The group invite link changed.";
+    case "GROUP_CHANGE_RESTRICT":
+      return `${author ? `${author} changed who can edit group info. ` : ""}${params[0] === "on" || params[0] === "true" ? "Only admins can edit group info." : params[0] === "off" || params[0] === "false" ? "All members can edit group info." : "Group info permissions changed."}`;
+    case "GROUP_CHANGE_ANNOUNCE":
+      return `${author ? `${author} changed who can send messages. ` : ""}${params[0] === "on" || params[0] === "true" ? "Only admins can send messages." : params[0] === "off" || params[0] === "false" ? "All members can send messages." : "Group message permissions changed."}`;
     case "GROUP_PARTICIPANT_ADD":
     case "GROUP_PARTICIPANT_LINKED_GROUP_JOIN":
     case "GROUP_PARTICIPANT_JOINED_GROUP_AND_PARENT_GROUP":
-      return who ? `${who} joined.` : null;
+      return who ? author ? `${author} added ${who}.` : `${who} joined.` : null;
     case "GROUP_PARTICIPANT_INVITE":
       return who ? `${who} joined using the group's invite link.` : null;
     case "GROUP_PARTICIPANT_ACCEPT":
@@ -40,18 +51,63 @@ export function noticeText(kind: string, params: string[], name: (jid: string) =
     case "GROUP_PARTICIPANT_ADD_REQUEST_JOIN":
       return who ? `${who} joined after their request was approved.` : null;
     case "GROUP_PARTICIPANT_REMOVE":
-      return who ? `${who} ${was} removed.` : null;
+      return who ? author ? `${author} removed ${who}.` : `${who} ${was} removed.` : null;
     case "GROUP_PARTICIPANT_LEAVE":
       return who ? `${who} left.` : null;
     case "GROUP_PARTICIPANT_PROMOTE":
+    case "COMMUNITY_PARTICIPANT_PROMOTE":
+      if (author && who) return `${author} made ${who} ${names.length > 1 ? "admins" : "an admin"}.`;
       return who ? `${who} ${is} now ${names.length > 1 ?"admins" : "an admin"}.` : null;
     case "GROUP_PARTICIPANT_DEMOTE":
+    case "COMMUNITY_PARTICIPANT_DEMOTE":
+      if (author && who) return `${author} removed ${who}'s admin role.`;
       return who ? `${who} ${is} no longer ${names.length > 1 ?"admins" : "an admin"}.` : null;
-    case "GROUP_PARTICIPANT_CHANGE_NUMBER": {
-      // The stub names the old number and then the new one; the new one is who they are now.
-      const now = names.at(-1);
-      return now ? `${now} changed ${now === "You" ? "your" : "their"} phone number.` : null;
+    case "GROUP_PARTICIPANT_CHANGE_NUMBER":
+    case "INDIVIDUAL_CHANGE_NUMBER":
+      return names[0] ? `${names[0]} changed ${names[0] === "You" ? "your" : "their"} phone number${names[1] ? ` to ${names[1]}` : ""}.` : "This contact changed their phone number.";
+    case "GROUP_MEMBERSHIP_JOIN_APPROVAL_REQUEST":
+    case "GROUP_MEMBERSHIP_JOIN_APPROVAL_REQUEST_NON_ADMIN_ADD":
+      return `${who || author || "Someone"} requested to join the group.`;
+    case "GROUP_MEMBERSHIP_JOIN_APPROVAL_MODE":
+      return `${author ? `${author} changed join approval. ` : ""}${params[0] === "on" || params[0] === "true" ? "Admins must approve new members." : params[0] === "off" || params[0] === "false" ? "New members can join without approval." : "Join approval settings changed."}`;
+    case "GROUP_MEMBER_ADD_MODE":
+      return params[0] === "admin_add" ? "Only admins can add members." : params[0] === "all_member_add" ? "All members can add members." : "Who can add group members changed.";
+    case "GROUP_MEMBER_LINK_MODE":
+      return "Who can share the group invite link changed.";
+    case "GROUP_MEMBER_SHARE_GROUP_HISTORY_MODE":
+      return "Who can share history with new members changed.";
+    case "GROUP_CHANGE_RECENT_HISTORY_SHARING":
+      return "Recent history sharing settings changed.";
+    case "CHANGE_EPHEMERAL_SETTING":
+    case "DISAPPEARING_MODE": {
+      const seconds = Number(params[0]);
+      if (!params[0] || !Number.isFinite(seconds) || seconds < 0) return "Disappearing message settings changed.";
+      if (seconds === 0) return "Disappearing messages were turned off.";
+      const [divisor, unit] = seconds % 86400 === 0 ? [86400, "day"] : seconds % 3600 === 0 ? [3600, "hour"] : seconds % 60 === 0 ? [60, "minute"] : [1, "second"];
+      const count = seconds / Number(divisor);
+      return `${author ? `${author} set disappearing messages` : "Disappearing messages were set"} to ${count} ${unit}${count === 1 ? "" : "s"}.`;
     }
+    case "EPHEMERAL_SETTING_NOT_APPLIED":
+      return "The disappearing message setting could not be applied.";
+    case "EPHEMERAL_KEEP_IN_CHAT":
+      return "A disappearing message was kept in the chat.";
+    case "COMMUNITY_CREATE":
+      return author ? `${author} created the community.` : "The community was created.";
+    case "COMMUNITY_LINK_PARENT_GROUP":
+    case "COMMUNITY_LINK_PARENT_GROUP_RICH":
+    case "COMMUNITY_LINK_PARENT_GROUP_MEMBERSHIP_APPROVAL":
+    case "COMMUNITY_LINK_SIBLING_GROUP":
+    case "COMMUNITY_LINK_SUB_GROUP":
+      return who ? `${who} was linked to the community.` : "A group was linked to the community.";
+    case "COMMUNITY_UNLINK_PARENT_GROUP":
+    case "COMMUNITY_UNLINK_SIBLING_GROUP":
+    case "COMMUNITY_UNLINK_SUB_GROUP":
+    case "INTEGRITY_UNLINK_PARENT_GROUP":
+      return who ? `${who} was unlinked from the community.` : "A group was unlinked from the community.";
+    case "COMMUNITY_CHANGE_DESCRIPTION":
+      return author ? `${author} changed the community description.` : "The community description changed.";
+    case "COMMUNITY_CHANGE_OWNER":
+      return who ? `${who} is now the community owner.` : "The community owner changed.";
     case "CALL_MISSED":
       return "Missed call";
     case "CALL_MISSED_VOICE":
@@ -60,12 +116,6 @@ export function noticeText(kind: string, params: string[], name: (jid: string) =
     case "CALL_MISSED_VIDEO":
     case "CALL_MISSED_GROUP_VIDEO":
       return "Missed video call";
-    // The caller's number stays out of it: the point of silencing is that they are unknown.
-    case "SILENCED_UNKNOWN_CALLER_AUDIO":
-    case "SILENCED_UNKNOWN_CALLER":
-      return "Silenced voice call from an unknown number";
-    case "SILENCED_UNKNOWN_CALLER_VIDEO":
-      return "Silenced video call from an unknown number";
     default:
       return null;
   }

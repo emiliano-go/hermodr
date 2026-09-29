@@ -268,16 +268,19 @@ impl Inbound {
         if let Some(notice) = web.message_stub_type.and_then(system_kind) {
             let Some(id) = key.id.clone() else { return (false, 0) };
             let notice_kind = notice.clone();
-            let stored = system_row(
+            let mut stored = system_row(
                 chat,
                 id,
                 web.message_timestamp.unwrap_or(0) as i64,
                 notice,
                 web.message_stub_parameters.clone(),
             );
+            stored.header.sender = web.participant.clone().or_else(|| key.participant.clone())
+                .or_else(|| key.from_me.unwrap_or(false).then(|| own.unwrap_or_default().to_owned()))
+                .unwrap_or_default();
             let seen = store.message(chat, &stored.header.id).await.observed().is_some()
                 || store
-                    .has_system_near(chat, &notice_kind, stored.header.timestamp)
+                    .has_system_near(chat, &notice_kind, &stored.system.params, stored.header.timestamp)
                     .await
                     .observed()
                     .unwrap_or(false);

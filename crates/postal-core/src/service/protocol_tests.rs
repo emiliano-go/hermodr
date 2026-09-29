@@ -130,6 +130,64 @@ fn history_chunk(chat: &str, id: &str, session: Option<&str>) -> LazyHistorySync
 }
 
 #[tokio::test]
+async fn group_notices_preserve_distinct_changes_actors_and_history_replay() {
+    use whatsapp_rust::wacore::{stanza::groups::{GroupNotificationAction as A, GroupParticipantInfo}, types::events::GroupUpdate};
+    use wa::web_message_info::StubType;
+    let (inbound, _) = inbound().await;
+    let participant = |jid: &str| GroupParticipantInfo {
+        jid: jid.parse().unwrap(), phone_number: None, display_name: None, r#type: None,
+        lid: None, username: None, join_time: None, group_history_sent_state: None,
+    };
+    let change = |action: A| Event::GroupUpdate(GroupUpdate::builder()
+        .group_jid("1@g.us".parse().unwrap()).participant("100@lid".parse().unwrap())
+        .timestamp("2026-09-27T00:00:00Z".parse().unwrap()).is_lid_addressing_mode(false)
+        .action(Box::new(action)).build());
+    for target in ["200@lid", "300@lid", "200@lid"] {
+        inbound.handle(&change(A::Add { participants: vec![participant(target)], reason: None })).await;
+    }
+    let rows = inbound.store.messages_for("1@g.us", 100).await.unwrap();
+    assert_eq!(rows.len(), 2, "different participants survive; replay stays idempotent");
+    assert!(rows.iter().all(|row| row.header.sender == "100@lid" && row.local.read));
+    for action in [
+        A::Locked { threshold: None }, A::Unlocked, A::Announce, A::NotAnnounce,
+        A::Ephemeral { expiration: 86400, trigger: None },
+        A::MembershipApprovalMode { enabled: true }, A::MembershipApprovalMode { enabled: false },
+        A::MemberAddMode { mode: "admin_add".into() },
+        A::RevokeInvite, A::Delete { reason: None },
+    ] {
+        inbound.handle(&change(action)).await;
+    }
+    assert_eq!(inbound.store.count().await.unwrap(), 12);
+    let web = |id: &str, kind: StubType, params: Vec<String>| wa::HistorySyncMsg {
+        message: MessageField::some(wa::WebMessageInfo {
+            key: MessageField::some(wa::MessageKey { remote_jid: Some("1@g.us".into()), id: Some(id.into()), participant: Some("100@lid".into()), ..Default::default() }),
+            message_timestamp: Some(rows[0].header.timestamp as u64),
+            message_stub_type: Some(kind), message_stub_parameters: params,
+            ..Default::default()
+        }), ..Default::default()
+    };
+    let history = wa::HistorySync {
+        sync_type: wa::history_sync::HistorySyncType::RECENT,
+        conversations: vec![wa::Conversation { id: "1@g.us".into(), messages: vec![
+            web("history-add", StubType::GROUP_PARTICIPANT_ADD, vec!["200@lid".into()]),
+            web("history-number", StubType::INDIVIDUAL_CHANGE_NUMBER, vec!["200@lid".into(), "400@s.whatsapp.net".into()]),
+            web("history-failed", StubType::GROUP_CREATE_FAILED, vec![]),
+        ], ..Default::default() }], ..Default::default()
+    };
+    let raw = history.encode_to_vec();
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+    encoder.write_all(&raw).unwrap();
+    let payload = LazyHistorySync::new(encoder.finish().unwrap().into(), raw.len(), history.sync_type as i32, None, None);
+    inbound.on_history_sync(&payload).await;
+    inbound.on_history_sync(&payload).await;
+    assert_eq!(inbound.store.count().await.unwrap(), 13);
+    let number = inbound.store.message("1@g.us", "history-number").await.unwrap();
+    assert_eq!(number.header.sender, "100@lid");
+    assert_eq!(number.system.params, ["200@lid", "400@s.whatsapp.net"]);
+    assert!(inbound.store.message("1@g.us", "history-failed").await.is_err());
+}
+
+#[tokio::test]
 async fn history_chunks_replay_under_one_chat_after_late_mapping() {
     let (inbound, mut received) = inbound().await;
     let lid = "123@lid";

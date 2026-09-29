@@ -845,9 +845,10 @@ fn missed_calls_reach_the_preview_and_notice_only_chats_stay_listed() {
     s.insert_message(&stranger).unwrap();
     assert!(!s.chats().unwrap().iter().any(|c| c.chat == "b@s"));
     let at = call.header.timestamp;
-    assert!(s.has_system_near("a@s", "CALL_MISSED_VOICE", at + 3).unwrap());
-    assert!(!s.has_system_near("a@s", "CALL_MISSED_VOICE", at + 30).unwrap());
-    assert!(!s.has_system_near("a@s", "GROUP_CREATE", at).unwrap());
+    assert!(s.has_system_near("a@s", "CALL_MISSED_VOICE", &[], at + 3).unwrap());
+    assert!(!s.has_system_near("a@s", "CALL_MISSED_VOICE", &[], at + 30).unwrap());
+    assert!(!s.has_system_near("a@s", "GROUP_CREATE", &[], at).unwrap());
+    assert!(!s.has_system_near("a@s", "CALL_MISSED_VOICE", &["other@s".into()], at).unwrap());
 }
 
 #[test]

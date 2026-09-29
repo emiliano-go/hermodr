@@ -309,7 +309,7 @@
       </button>
     {/if}
     {#if message.system_kind}
-      {@const line = noticeText(message.system_kind, message.system_params, namer)}
+      {@const line = noticeText(message.system_kind, message.system_params, namer, message.sender)}
       {#if line}<p class="system">{line}</p>{/if}
     {:else}
       <MessageBubble {message} vm={vmFor(message, i)} {api} />

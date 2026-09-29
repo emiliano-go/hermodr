@@ -216,14 +216,13 @@ impl MessageStore {
     /// Whether a system line of `kind` already sits within a few seconds of
     /// `timestamp`: the live notification and the history stub for one change
     /// carry different ids but the same server time.
-    // Params are not compared, so two changes of one kind within those seconds collapse into one line.
-    pub fn has_system_near(&self, chat: &str, kind: &str, timestamp: i64) -> Result<bool> {
+    pub fn has_system_near(&self, chat: &str, kind: &str, notice_params: &[String], timestamp: i64) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let chat = &*names::canonical_chat(&conn, chat)?;
         let found = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM messages
-             WHERE chat = ?1 AND system_kind = ?2 AND ABS(timestamp - ?3) <= 5)",
-            params![chat, kind, timestamp],
+             WHERE chat = ?1 AND system_kind = ?2 AND ABS(timestamp - ?3) <= 5 AND COALESCE(system_params, '[]') = ?4)",
+            params![chat, kind, timestamp, serde_json::to_string(notice_params)?],
             |r| r.get::<_, bool>(0),
         )?;
         Ok(found)
@@ -393,10 +392,11 @@ impl StoreWorker {
         self.run(move |store| store.oldest_message(&chat)).await
     }
 
-    pub(crate) async fn has_system_near(&self, chat: &str, kind: &str, timestamp: i64) -> Result<bool> {
+    pub(crate) async fn has_system_near(&self, chat: &str, kind: &str, notice_params: &[String], timestamp: i64) -> Result<bool> {
         let chat = chat.to_owned();
         let kind = kind.to_owned();
-        self.run(move |store| store.has_system_near(&chat, &kind, timestamp)).await
+        let notice_params = notice_params.to_owned();
+        self.run(move |store| store.has_system_near(&chat, &kind, &notice_params, timestamp)).await
     }
 
     pub(crate) async fn chat_of_message(&self, id: &str) -> Result<Option<String>> {

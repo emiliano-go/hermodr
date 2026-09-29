@@ -76,12 +76,32 @@ impl Inbound {
             GroupNotificationAction::Modify { participants } => ("GROUP_PARTICIPANT_CHANGE_NUMBER", jids(participants)),
             GroupNotificationAction::Subject { subject, .. } => ("GROUP_CHANGE_SUBJECT", vec![subject.clone()]),
             GroupNotificationAction::Description { .. } => ("GROUP_CHANGE_DESCRIPTION", vec![]),
+            GroupNotificationAction::Locked { .. } => ("GROUP_CHANGE_RESTRICT", vec!["on".into()]),
+            GroupNotificationAction::Unlocked => ("GROUP_CHANGE_RESTRICT", vec!["off".into()]),
+            GroupNotificationAction::Announce => ("GROUP_CHANGE_ANNOUNCE", vec!["on".into()]),
+            GroupNotificationAction::NotAnnounce => ("GROUP_CHANGE_ANNOUNCE", vec!["off".into()]),
+            GroupNotificationAction::Ephemeral { expiration, .. } => ("CHANGE_EPHEMERAL_SETTING", vec![expiration.to_string()]),
+            GroupNotificationAction::MembershipApprovalMode { enabled } =>
+                ("GROUP_MEMBERSHIP_JOIN_APPROVAL_MODE", vec![if *enabled { "on" } else { "off" }.into()]),
+            GroupNotificationAction::MembershipApprovalRequest { .. } =>
+                ("GROUP_MEMBERSHIP_JOIN_APPROVAL_REQUEST", update.participant.iter().map(|jid| jid.to_non_ad().to_string()).collect()),
+            GroupNotificationAction::CreatedMembershipRequests { requests, .. } =>
+                ("GROUP_MEMBERSHIP_JOIN_APPROVAL_REQUEST", jids(requests)),
+            GroupNotificationAction::MemberAddMode { mode } => ("GROUP_MEMBER_ADD_MODE", vec![mode.clone()]),
+            GroupNotificationAction::Invite { .. } | GroupNotificationAction::RevokeInvite => ("GROUP_CHANGE_INVITE_LINK", vec![]),
+            GroupNotificationAction::LinkedGroupPromote { participants } => ("COMMUNITY_PARTICIPANT_PROMOTE", jids(participants)),
+            GroupNotificationAction::LinkedGroupDemote { participants } => ("COMMUNITY_PARTICIPANT_DEMOTE", jids(participants)),
+            GroupNotificationAction::ChangeNumber { new_owner, .. } =>
+                ("INDIVIDUAL_CHANGE_NUMBER", update.participant.iter().chain(new_owner.iter()).map(|jid| jid.to_non_ad().to_string()).collect()),
             GroupNotificationAction::Create { .. } => ("GROUP_CREATE", vec![]),
             GroupNotificationAction::Delete { .. } => ("GROUP_DELETE", vec![]),
             _ => return,
         };
-        let id = format!("group-{}-{}", update.notification_id.as_deref().unwrap_or("live"), update.action_index);
-        self.store_notice(&chat, id, update.timestamp.timestamp(), kind, params).await;
+        let identity = update.notification_id.clone()
+            .unwrap_or_else(|| format!("{}-{kind}-{}", update.timestamp.timestamp(), params.join(",")));
+        let id = format!("group-{identity}-{}", update.action_index);
+        let sender = update.participant.as_ref().map(|jid| jid.to_non_ad().to_string()).unwrap_or_default();
+        self.store_notice(&chat, id, update.timestamp.timestamp(), kind, params, sender).await;
     }
 
     /// A call nobody answered here. The offer does not say voice or video.
@@ -90,20 +110,21 @@ impl Inbound {
         let at = call.timestamp.timestamp();
         let mut known = false;
         for kind in ["CALL_MISSED_VOICE", "CALL_MISSED_VIDEO"] {
-            if self.store.has_system_near(&chat, kind, at).await.observed().unwrap_or(false) { known = true; break; }
+            if self.store.has_system_near(&chat, kind, &[], at).await.observed().unwrap_or(false) { known = true; break; }
         }
         if !known {
-            self.store_notice(&chat, format!("call-{}", call.call_id), at, "CALL_MISSED", vec![]).await;
+            self.store_notice(&chat, format!("call-{}", call.call_id), at, "CALL_MISSED", vec![], String::new()).await;
         }
     }
 
     /// Stores and announces one system line, unless that change is already drawn.
-    async fn store_notice(&self, chat: &str, id: String, timestamp: i64, kind: &str, params: Vec<String>) {
+    async fn store_notice(&self, chat: &str, id: String, timestamp: i64, kind: &str, params: Vec<String>, sender: String) {
         let Self { store, events, .. } = self;
-        if store.message(chat, &id).await.observed().is_some() || store.has_system_near(chat, kind, timestamp).await.observed().unwrap_or(false) {
+        if store.message(chat, &id).await.observed().is_some() || store.has_system_near(chat, kind, &params, timestamp).await.observed().unwrap_or(false) {
             return;
         }
-        let row = system_row(chat, id, timestamp, kind.to_string(), params);
+        let mut row = system_row(chat, id, timestamp, kind.to_string(), params);
+        row.header.sender = sender;
         match store.insert_message(&row).await {
             Ok(()) => {
                 let _ = events.send(ServiceEvent::hint(&row, false));
@@ -130,6 +151,6 @@ impl Inbound {
             return;
         }
         let now = unix_now();
-        self.store_notice(&chat, format!("notice-{kind}-{now}"), now, kind, vec![user]).await;
+        self.store_notice(&chat, format!("notice-{kind}-{now}"), now, kind, vec![user], String::new()).await;
     }
 }
