@@ -99,7 +99,7 @@ function testModuleLines(lines) {
 
 const violations = [];
 for (const file of roots.flatMap((root) => walk(root))) {
-  if (file.endsWith("bin/service-check.rs")) continue;
+  if (file.replaceAll("\\", "/").endsWith("bin/service-check.rs")) continue;
   const raw = readFileSync(file, "utf8").split("\n");
   const lines = clean(raw);
   const skip = testModuleLines(raw);
