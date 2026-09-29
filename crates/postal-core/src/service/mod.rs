@@ -188,6 +188,12 @@ pub enum ServiceEvent {
     GroupChanged { chat: String },
     /// Reactions, stars or the pinned message of a chat changed.
     Marks { chat: String },
+    /// Store changes were missed (a lagging listener skipped events), so the
+    /// UI should reload the chat list, marks and the open chat. The Android
+    /// companion emits its store changes on its own stream; when that stream
+    /// falls behind, nothing names the affected chats, so this asks for a
+    /// blanket refresh instead.
+    StoreChanged,
     /// Packs, favourites or recents in the sticker library changed.
     StickerLibraryChanged { packs: bool, favorites: bool, recents: bool },
     /// Bytes of an outgoing file sent so far, named by the caller's token.

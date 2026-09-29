@@ -874,6 +874,7 @@ impl Inbound {
                         if let Err(e) = store.keep_view_once(&chat, &id).await {
                             log::warn!("could not keep view-once {id}: {e}");
                         } else if let Some(kept) = store.message(&chat, &id).await.observed() {
+                            log::info!("kept one-time {id} in {chat}");
                             // The mark is gone, so the row reloads as ordinary
                             // media already holding the file.
                             let _ = events.send(ServiceEvent::hint(&kept, false));

@@ -377,6 +377,32 @@ fn widen_media_scope(app: &AppHandle, service: &WhatsAppService) {
     }
 }
 
+/// Store changes the Android instance makes that the main UI must reload
+/// for. Its per-message traffic is catch-up replay the main link reports
+/// itself; forwarding it floods the shared channel and starves these sparse
+/// events, losing exactly the kept one-time media that needs announcing.
+pub(crate) fn instance_store_event(event: &ServiceEvent) -> bool {
+    matches!(
+        event,
+        ServiceEvent::Marks { .. }
+            | ServiceEvent::ChatStateChanged { .. }
+            | ServiceEvent::RetentionApplied { .. }
+    )
+}
+
+/// Events the companion's own sheet reacts to: its link's state and the
+/// store changes it caused.
+pub(crate) fn instance_sheet_event(event: &ServiceEvent) -> bool {
+    instance_store_event(event)
+        || matches!(
+            event,
+            ServiceEvent::QrCode { .. }
+                | ServiceEvent::Connected
+                | ServiceEvent::Disconnected
+                | ServiceEvent::LoggedOut
+        )
+}
+
 /// Its own event stream drives the pairing sheet and forwards the store
 /// changes the main UI must reload for. Held weakly so a stop drops it.
 fn spawn_instance_events(
@@ -420,21 +446,31 @@ fn spawn_instance_events(
                         }
                         // The shared store changed under the main session; let
                         // the main UI reload without duplicating the instance's
-                        // connection noise.
-                        ServiceEvent::Message { .. }
-                        | ServiceEvent::MessageHint { .. }
-                        | ServiceEvent::Marks { .. }
-                        | ServiceEvent::ChatStateChanged { .. }
-                        | ServiceEvent::RetentionApplied { .. } => {
+                        // catch-up replay.
+                        _ if instance_store_event(&event) => {
+                            log::debug!("Android companion store change: {event:?}");
                             emit_service_event(&emitter, &event);
                             // A kept one-time clears the demand; re-check soon.
                             emitter.state::<AppState>().once_wake.notify_one();
                         }
-                        _ => {}
+                        _ => {
+                            emitter.state::<AppState>().once_wake.notify_one();
+                        }
                     }
-                    let _ = emitter.emit(ONCE_EVENT, &event);
+                    // The companion sheet only cares about its own link state
+                    // and the store changes it caused; forwarding per-message
+                    // catch-up would make it poll once_state thousands of
+                    // times per wake.
+                    if instance_sheet_event(&event) {
+                        let _ = emitter.emit(ONCE_EVENT, &event);
+                    }
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(dropped)) => {
+                    // The instance's catch-up can outrun this loop, and the
+                    // skipped events name no chat; ask for a blanket reload.
+                    log::warn!("Android companion events fell behind, dropped {dropped} event(s)");
+                    emit_service_event(&emitter, &ServiceEvent::StoreChanged);
+                }
                 Err(_) => break,
             }
         }

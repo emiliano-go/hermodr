@@ -246,6 +246,7 @@ export type ServiceEvent =
   | { kind: "memberLabel"; chat: string; jid: string; label: string }
   | { kind: "groupChanged"; chat: string }
   | { kind: "marks"; chat: string }
+  | { kind: "storeChanged" }
   | { kind: "stickerLibraryChanged"; packs: boolean; favorites: boolean; recents: boolean };
 
 /** A sticker in a pack, or one kept from a message. */
