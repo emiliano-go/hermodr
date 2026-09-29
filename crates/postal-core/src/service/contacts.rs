@@ -78,6 +78,24 @@ pub(super) async fn resolve_chat(
     }
 }
 
+/// Learns a LID's phone form in the background and folds the chat once it is
+/// known. Runs off the message batch: a network lookup under the batch's write
+/// lease would stall every later message behind a dead link.
+pub(super) fn spawn_lid_lookup(client: Option<Arc<Client>>, store: &StoreWorker, chat: &str) {
+    let Some(client) = client else { return };
+    let store = store.clone();
+    let chat = chat.to_string();
+    tokio::spawn(async move {
+        let Ok(jid) = chat.parse::<Jid>() else { return };
+        if let Some(Some(entry)) = client.get_lid_pn_entry(&jid).await.observed() {
+            store
+                .set_lid_pn(&entry.lid.to_string(), &entry.phone_number.to_string())
+                .await
+                .logged();
+        }
+    });
+}
+
 /// The other address form of a bare user JID, from the session or our own record of it.
 pub(super) async fn other_form(client: &Client, store: &StoreWorker, bare: &Jid) -> Option<(String, String)> {
     if let Some(Some(entry)) = client.get_lid_pn_entry(bare).await.observed() {

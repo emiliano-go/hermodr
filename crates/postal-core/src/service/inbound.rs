@@ -385,8 +385,11 @@ impl Inbound {
     async fn resolve_incoming(&self, inbound: &InboundMessage, ctx: &BatchCtx<'_>) -> Option<Incoming> {
         let push_name = inbound.info.push_name.to_string();
         let sender = inbound.info.source.sender.to_string();
+        // The batch holds the store's write lease, so LIDs resolve from what is
+        // already known; an unmapped one keeps its LID form and is looked up
+        // and folded off the batch.
         let chat = canonical_chat(
-            ctx.client.as_deref(),
+            None,
             ctx.store,
             &inbound.info.source.chat,
             &inbound.info.source.sender,
@@ -395,6 +398,9 @@ impl Inbound {
         .await;
         if chat == "status@broadcast" {
             return None;
+        }
+        if chat.ends_with("@lid") {
+            spawn_lid_lookup(ctx.client.clone(), ctx.store, &chat);
         }
         let is_group = inbound.info.source.is_group || chat.ends_with("@g.us");
         let from_me = inbound.info.source.is_from_me;

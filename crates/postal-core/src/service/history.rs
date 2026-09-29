@@ -152,7 +152,7 @@ impl Inbound {
             self.seed_recent_stickers(&history.recent_stickers).await;
             for conversation in &history.conversations {
                 let (chat, learned) = self
-                    .apply_history_conversation(store, conversation, client.as_deref(), own.as_deref())
+                    .apply_history_conversation(store, conversation, client.as_ref(), own.as_deref())
                     .await;
                 names_learned += learned;
                 if let Some(chat) = chat {
@@ -206,7 +206,7 @@ impl Inbound {
         &self,
         store: &StoreWorker,
         conversation: &wa::Conversation,
-        client: Option<&Client>,
+        client: Option<&Arc<Client>>,
         own: Option<&str>,
     ) -> (Option<String>, usize) {
         if conversation.id == "status@broadcast" {
@@ -216,11 +216,17 @@ impl Inbound {
             .pair_history_addresses(store, conversation.lid_jid.as_deref(), conversation.pn_jid.as_deref())
             .await;
         let Some(jid) = conversation.id.parse::<Jid>().observed() else { return (None, 0) };
-        let chat = resolve_chat(client, store, &jid).await;
+        // The sync holds the store's write lease; the conversation's own LID/PN
+        // pair was just recorded, so the chat resolves from the store alone.
+        let chat = resolve_chat(None, store, &jid).await;
+        if chat.ends_with("@lid") {
+            spawn_lid_lookup(client.cloned(), store, &chat);
+        }
         self.name_history_chat(store, &chat, conversation).await;
         let mut added = false;
         for entry in &conversation.messages {
-            let (row_added, learned) = self.apply_history_message(store, &chat, entry, client, own).await;
+            let (row_added, learned) =
+                self.apply_history_message(store, &chat, entry, client.map(|c| c.as_ref()), own).await;
             added |= row_added;
             names_learned += learned;
         }
