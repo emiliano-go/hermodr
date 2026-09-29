@@ -4,9 +4,15 @@
 
   let {
     count,
+    onforward,
     ondelete,
     oncancel,
-  }: { count: number; ondelete: () => void; oncancel: () => void } = $props();
+  }: {
+    count: number;
+    onforward: () => void;
+    ondelete: () => void;
+    oncancel: () => void;
+  } = $props();
 </script>
 
 <svelte:window onkeydown={(e) => e.key === "Escape" && oncancel()} />
@@ -16,6 +22,9 @@
     <Icon name="x" size={18} />
   </button>
   <span class="count">{count} selected</span>
+  <button class="forward" disabled={count === 0} onclick={onforward}>
+    <Icon name="forward" size={16} /> Forward
+  </button>
   <button class="delete" disabled={count === 0} onclick={ondelete}>
     <Icon name="trash" size={16} /> Delete
   </button>
@@ -52,6 +61,7 @@
     color: var(--text);
     font-size: 14px;
   }
+  .forward,
   .delete {
     display: flex;
     align-items: center;
@@ -60,14 +70,21 @@
     border: 0;
     border-radius: 999px;
     background: var(--raised);
-    color: var(--danger);
+    color: var(--text);
     font: inherit;
     font-weight: 600;
     cursor: pointer;
   }
+  .forward:hover:not(:disabled) {
+    background: var(--raised-2);
+  }
+  .delete {
+    color: var(--danger);
+  }
   .delete:hover:not(:disabled) {
     background: var(--danger-soft, var(--raised));
   }
+  .forward:disabled,
   .delete:disabled {
     opacity: 0.5;
     cursor: default;

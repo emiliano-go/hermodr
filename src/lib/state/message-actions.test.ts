@@ -11,6 +11,11 @@ async function withApp(run: (app: {
   menuItems: (m: StoredMessage, openChat: (chat: string) => Promise<void>) => Item[];
   deleteSelected: (everyone: boolean) => Promise<void>;
   canDeletePickedForEveryone: () => boolean;
+  pickedInOrder: (
+    picking: Record<string, true> | null,
+    ordered: StoredMessage[],
+  ) => StoredMessage[];
+  forwardMessages: (batch: StoredMessage[], targets: string[]) => Promise<void>;
   messages: {
     messages: StoredMessage[];
     marks: { reactions: { target: string; sender: string; emoji: string }[] };
@@ -21,6 +26,7 @@ async function withApp(run: (app: {
     removeMember: { chat: string; jid: string; name: string } | null;
     picking: Record<string, true> | null;
     bulkDelete: string[] | null;
+    forwarding: StoredMessage[] | null;
   };
   members: {
     participants: { jid: string; name: string; admin: boolean; owner: boolean; number: string | null; username: string | null; label: string | null }[];
@@ -51,6 +57,8 @@ async function withApp(run: (app: {
       menuItems,
       deleteSelected: messageActions.deleteSelected,
       canDeletePickedForEveryone: messageActions.canDeletePickedForEveryone,
+      pickedInOrder: messageActions.pickedInOrder,
+      forwardMessages: messageActions.forwardMessages,
       messages, ui, members, session, composer, chats, calls,
     });
   } finally {
@@ -248,5 +256,49 @@ test("admin powers follow the core's read, and the roster's number form", async 
     assert.ok(!canDeletePickedForEveryone());
     members.chatGroup = { admin: true };
     assert.ok(canDeletePickedForEveryone());
+  });
+});
+
+test("picked messages come back in the chat's order, not the pick order", async () => {
+  await withApp(async ({ pickedInOrder }) => {
+    const message = (id: string) => ({ chat: "99@g.us", id }) as StoredMessage;
+    const ordered = [message("a"), message("b"), message("c")];
+    assert.deepEqual(
+      pickedInOrder({ c: true, a: true }, ordered).map((m) => m.id),
+      ["a", "c"],
+    );
+    // Unknown ids are ignored, and no selection means nothing to send.
+    assert.deepEqual(pickedInOrder({ missing: true }, ordered), []);
+    assert.deepEqual(pickedInOrder(null, ordered), []);
+  });
+});
+
+test("forwarding sends every message to every chosen chat, in order", async () => {
+  await withApp(async ({ forwardMessages, ui, calls }) => {
+    const message = (id: string) => ({ chat: "99@g.us", id, sender: "1@s", from_me: false }) as StoredMessage;
+    const batch = [message("older"), message("newer")];
+    ui.picking = { older: true, newer: true };
+    await forwardMessages(batch, ["x@s", "y@s"]);
+    const sent = calls.filter((call) => call.command === "forward_message").map((call) => call.args);
+    assert.deepEqual(sent, [
+      { chat: "99@g.us", id: "older", to: "x@s" },
+      { chat: "99@g.us", id: "newer", to: "x@s" },
+      { chat: "99@g.us", id: "older", to: "y@s" },
+      { chat: "99@g.us", id: "newer", to: "y@s" },
+    ]);
+    assert.equal(ui.picking, null, "the selection ends once the batch is out");
+    assert.ok(calls.some((call) => call.command === "chats"), "the list refreshes");
+  });
+});
+
+test("the message menu forwards one message, and Select starts picking", async () => {
+  await withApp(async ({ menuItems, ui }) => {
+    const message = { chat: "99@g.us", id: "a", sender: "1@s", from_me: false,
+      text: "hi", revoked: false } as StoredMessage;
+    const items = menuItems(message, async () => {});
+    items.find((item) => item.label === "Forward")!.action();
+    assert.deepEqual(ui.forwarding, [message]);
+    items.find((item) => item.label === "Select messages")!.action();
+    assert.deepEqual(ui.picking, { a: true });
   });
 });

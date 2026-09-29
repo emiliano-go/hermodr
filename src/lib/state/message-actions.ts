@@ -139,7 +139,7 @@ const MENU_BUILDERS: Record<MenuId, MenuBuilder> = {
   },
   forward: ({ m }) =>
     !m.revoked
-      ? { label: "Forward", icon: "forward", action: () => (ui.forwarding = m) }
+      ? { label: "Forward", icon: "forward", action: () => (ui.forwarding = [m]) }
       : null,
   pin: ({ m }) =>
     !m.revoked
@@ -274,6 +274,26 @@ export async function deleteSelected(everyone: boolean) {
     await messages.reloadMessages(chat);
     await chats.refreshChats();
   });
+}
+
+/** The picked messages in the chat's own order, oldest first. */
+export function pickedInOrder(
+  picking: Record<string, true> | null,
+  ordered: StoredMessage[],
+): StoredMessage[] {
+  if (!picking) return [];
+  return ordered.filter((m) => picking[m.id]);
+}
+
+/** Forwards one chat's messages to every chosen chat, in the batch's order. */
+export async function forwardMessages(batch: StoredMessage[], targets: string[]) {
+  for (const to of targets) {
+    for (const m of batch) {
+      await composer.enqueue(() => invoke("forward_message", { chat: m.chat, id: m.id, to }));
+    }
+  }
+  ui.picking = null;
+  await chats.refreshChats();
 }
 
 /** Whether we may delete this message for everyone: ours, or ours to moderate. */

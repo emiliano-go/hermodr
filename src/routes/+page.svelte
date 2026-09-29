@@ -4,7 +4,7 @@
   import { addAccount, chooseAccount, connect, reconnect, removeAccount, switchTo, syncState } from "$lib/state/accounts";
   import { onDrop, onPaste } from "$lib/state/attachments";
   import { openPings, openStarred, searchChat } from "$lib/state/finder";
-  import { act, canDeleteForEveryone, canDeletePickedForEveryone, deleteMessage, deleteSelected, eventFields, menuItems as messageMenuItems, saveEvent, target } from "$lib/state/message-actions";
+  import { act, canDeleteForEveryone, canDeletePickedForEveryone, deleteMessage, deleteSelected, eventFields, forwardMessages, menuItems as messageMenuItems, pickedInOrder, saveEvent, target } from "$lib/state/message-actions";
   import { onMount, tick, untrack } from "svelte";
   import { invoke } from "$lib/utils/ipc";
   import { listen } from "@tauri-apps/api/event";
@@ -1161,6 +1161,10 @@
         {#if ui.picking}
           <SelectionBar
             count={Object.keys(ui.picking).length}
+            onforward={() => {
+              const batch = pickedInOrder(ui.picking, messages.ordered);
+              if (batch.length > 0) ui.forwarding = batch;
+            }}
             ondelete={() => (ui.bulkDelete = Object.keys(ui.picking ?? {}))}
             oncancel={() => {
               ui.picking = null;
@@ -1308,14 +1312,11 @@
 {/if}
 
 {#if ui.forwarding}
-  {@const m = ui.forwarding}
+  {@const batch = ui.forwarding}
   <ChatPicker
-    title="Forward message to"
+    title={batch.length > 1 ? `Forward ${batch.length} messages to` : "Forward message to"}
     chats={chats.chats.map((c) => ({ jid: c.chat, label: chats.chatLabel(c), avatar: chats.avatars[c.chat] ?? null }))}
-    onpick={async (to) => {
-      await composer.enqueue(() => invoke("forward_message", { chat: m.chat, id: m.id, to }));
-      await chats.refreshChats();
-    }}
+    onforward={(targets) => forwardMessages(batch, targets)}
     onclose={() => (ui.forwarding = null)} />
 {/if}
 

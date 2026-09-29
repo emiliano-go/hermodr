@@ -11,33 +11,43 @@
   let {
     title,
     chats,
-    onpick,
+    onforward,
     onclose,
   }: {
     title: string;
     chats: PickerChat[];
-    onpick: (jid: string) => Promise<void>;
+    /** Forwards to every chosen chat; thrown errors show in the dialog. */
+    onforward: (jids: string[]) => Promise<void>;
     onclose: () => void;
   } = $props();
 
   let query = $state("");
-  let busy = $state<string | null>(null);
+  let busy = $state(false);
   let failed = $state<string | null>(null);
+  let chosen = $state<Record<string, true>>({});
   const shown = $derived(
     chats.filter((c) => c.label.toLowerCase().includes(query.trim().toLowerCase())),
   );
+  const picked = $derived(Object.keys(chosen));
 
-  async function pick(jid: string) {
-    if (busy) return;
-    busy = jid;
+  function toggle(jid: string) {
+    const next = { ...chosen };
+    if (next[jid]) delete next[jid];
+    else next[jid] = true;
+    chosen = next;
+  }
+
+  async function forward() {
+    if (busy || picked.length === 0) return;
+    busy = true;
     failed = null;
     try {
-      await onpick(jid);
+      await onforward(picked);
       onclose();
     } catch (e) {
       failed = String(e);
     } finally {
-      busy = null;
+      busy = false;
     }
   }
 </script>
@@ -64,18 +74,29 @@
     <ul>
       {#each shown as chat (chat.jid)}
         <li>
-          <button class="row" disabled={!!busy} onclick={() => pick(chat.jid)}>
+          <button
+            class="row"
+            class:chosen={chosen[chat.jid]}
+            disabled={busy}
+            onclick={() => toggle(chat.jid)}>
             {#if chat.avatar}
               <img class="avatar" src={convertFileSrc(chat.avatar)} alt="" />
             {:else}
               <span class="avatar placeholder">{chat.label.slice(0, 1).toUpperCase()}</span>
             {/if}
             <span class="label">{chat.label}</span>
-            {#if busy === chat.jid}<span class="sending">Sending…</span>{/if}
+            <span class="check" class:on={chosen[chat.jid]} aria-hidden="true">
+              {#if chosen[chat.jid]}<Icon name="check" size={14} />{/if}
+            </span>
           </button>
         </li>
       {/each}
     </ul>
+    <footer>
+      <button class="go" disabled={busy || picked.length === 0} onclick={forward}>
+        {busy ? "Forwarding…" : `Forward${picked.length > 0 ? ` (${picked.length})` : ""}`}
+      </button>
+    </footer>
   </div>
 </div>
 
@@ -172,6 +193,9 @@
   .row:hover:not(:disabled) {
     background: var(--surface);
   }
+  .row.chosen {
+    background: var(--raised);
+  }
   .row:disabled {
     cursor: progress;
   }
@@ -195,8 +219,41 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .sending {
-    font-size: 12.5px;
-    color: var(--accent);
+  .check {
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    box-sizing: border-box;
+    border: 2px solid var(--faint);
+    border-radius: 50%;
+    color: var(--accent-text);
+    flex: none;
+  }
+  .check.on {
+    border-color: var(--accent);
+    background: var(--accent);
+  }
+  footer {
+    display: flex;
+    justify-content: flex-end;
+    padding: 8px 16px 14px;
+  }
+  .go {
+    padding: 8px 18px;
+    border: 0;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--accent-text);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .go:hover:not(:disabled) {
+    filter: brightness(1.06);
+  }
+  .go:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
 </style>

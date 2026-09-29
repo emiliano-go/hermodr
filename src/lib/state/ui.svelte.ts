@@ -28,7 +28,8 @@ export class UiState {
 
   /** Message context menu anchor. */
   menu = $state<{ x: number; y: number; message: StoredMessage } | null>(null);
-  forwarding = $state<StoredMessage | null>(null);
+  /** Messages waiting for a target chat, one or many from a selection. */
+  forwarding = $state<StoredMessage[] | null>(null);
   deleting = $state<StoredMessage | null>(null);
   /** A group member whose removal is waiting for confirmation. */
   removeMember = $state<{ chat: string; jid: string; name: string } | null>(null);
