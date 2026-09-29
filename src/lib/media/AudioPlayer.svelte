@@ -67,7 +67,9 @@
         heard = true;
         onplayed?.();
       },
-      onended,
+      // A player with nothing to chain to (a recovered one-time note) closes
+      // itself once the audio reaches the end.
+      onended: onended ?? (() => player.stop()),
       onpaused,
     };
   }

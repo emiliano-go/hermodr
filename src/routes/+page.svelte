@@ -1127,7 +1127,9 @@
           onnextvoice={(m) => {
             // A note left playing in another chat has nothing to chain to.
             if (chats.selectedChat === m.chat && messages.playNextVoice(m)) return;
+            // The queue is done: play the falling cue, then close the player.
             player.playCue("end");
+            player.stop();
           }}
           onpausevoice={() => (messages.autoplayId = null)}
           onreplymenu={(e, m) => {
