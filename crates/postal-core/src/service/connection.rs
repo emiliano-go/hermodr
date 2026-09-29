@@ -1,6 +1,8 @@
 //! Connection lifecycle: pairing, startup maintenance and the readiness gate.
 
 use super::*;
+use whatsapp_rust::wacore::iq::keepalive::KeepaliveSpec;
+use whatsapp_rust::wacore::iq::spec::IqSpec;
 
 /// What this device asks for when it links. `android` links as an Android
 /// tablet, which is what makes WhatsApp send view-once media here; external
@@ -527,30 +529,97 @@ fn spawn_regular_low_resync(client: Arc<Client>) {
     });
 }
 
-/// System sleep leaves a half-open socket that the library's keepalive may
-/// never surface, after which the app neither sends nor receives until
-/// restarted. Wall-clock jumps across a suspend, so a large gap between ticks
-/// means the machine woke up; drop the transport so the run loop reconnects.
+/// How often the link is sampled: wall clock, frame counters and silence.
+const WATCHDOG_TICK: Duration = Duration::from_secs(30);
+/// A wall-clock gap this large across one tick means the machine slept.
+const RESUME_GAP: Duration = Duration::from_secs(120);
+/// No transport frames for this long while "connected" means the link is
+/// likely half-open: NAT mappings expire, the peer stops answering, and
+/// nothing raises an error. The library's keepalive should catch it, but it
+/// was observed silent after an automatic reconnect, so Postal probes too.
+const LINK_SILENT: Duration = Duration::from_secs(180);
+/// A probe that does not answer within this is a dead link.
+const LINK_PROBE_TIMEOUT: Duration = Duration::from_secs(20);
+/// A reconnect that has not finished within this is abandoned and retried on
+/// the next check, instead of pinning the single-flight flag forever.
+const RECONNECT_ABANDON: Duration = Duration::from_secs(60);
+
+/// What one watchdog tick decided.
+#[derive(Debug, PartialEq, Eq)]
+enum LinkAction {
+    None,
+    /// The machine slept, or the link is stale enough to redo it.
+    Reconnect,
+    /// Nothing is moving; ask the server a question that must be answered.
+    Probe,
+}
+
+/// Decide from one tick's observations. Pure, so the rules are testable.
+fn link_action(connected: bool, wall_gap: Duration, frames_moved: bool, silent_for: Duration) -> LinkAction {
+    if !connected {
+        return LinkAction::None;
+    }
+    if wall_gap > RESUME_GAP {
+        return LinkAction::Reconnect;
+    }
+    if frames_moved || silent_for < LINK_SILENT {
+        return LinkAction::None;
+    }
+    LinkAction::Probe
+}
+
+/// Keeps the link honest: a wall-clock jump after a suspend forces a
+/// reconnect, and a link that has moved no transport frames for minutes is
+/// probed, so a half-open socket cannot leave the app silently offline.
 fn spawn_resume_watchdog(client: &Arc<Client>, reconnecting: &Arc<AtomicBool>) {
     let client = client.clone();
     let reconnecting = reconnecting.clone();
     let shutdown = client.shutdown_signal();
     tokio::spawn(async move {
-        let mut tick = tokio::time::interval(Duration::from_secs(30));
+        let mut tick = tokio::time::interval(WATCHDOG_TICK);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        let mut last = std::time::SystemTime::now();
+        let mut last_wall = std::time::SystemTime::now();
+        let mut last_frames = client.stats().frames_received;
+        let mut last_movement = std::time::Instant::now();
         loop {
             tokio::select! {
                 _ = tick.tick() => {
-                    let now = std::time::SystemTime::now();
-                    let gap = now.duration_since(last).unwrap_or_default();
-                    last = now;
-                    if gap > Duration::from_secs(120) && client.is_connected() {
-                        log::warn!(
-                            "resumed after {:.1} min; forcing reconnect",
-                            gap.as_secs_f64() / 60.0
-                        );
-                        force_reconnect(&client, &reconnecting);
+                    let now_wall = std::time::SystemTime::now();
+                    let gap = now_wall.duration_since(last_wall).unwrap_or_default();
+                    last_wall = now_wall;
+                    let frames = client.stats().frames_received;
+                    let moved = frames != last_frames;
+                    if moved {
+                        last_frames = frames;
+                        last_movement = std::time::Instant::now();
+                    }
+                    match link_action(client.is_connected(), gap, moved, last_movement.elapsed()) {
+                        LinkAction::None => {}
+                        LinkAction::Reconnect => {
+                            log::warn!(
+                                "resumed after {:.1} min; forcing reconnect",
+                                gap.as_secs_f64() / 60.0
+                            );
+                            last_movement = std::time::Instant::now();
+                            force_reconnect(&client, &reconnecting);
+                        }
+                        LinkAction::Probe => {
+                            log::warn!(
+                                "link silent for {:.1} min; probing it",
+                                last_movement.elapsed().as_secs_f64() / 60.0
+                            );
+                            let iq = KeepaliveSpec::with_timeout(LINK_PROBE_TIMEOUT).build_iq();
+                            let outcome = client.send_iq(iq).await;
+                            last_frames = client.stats().frames_received;
+                            last_movement = std::time::Instant::now();
+                            match outcome {
+                                Ok(_) => log::info!("link probe answered"),
+                                Err(e) => {
+                                    log::warn!("link probe failed ({e}); forcing reconnect");
+                                    force_reconnect(&client, &reconnecting);
+                                }
+                            }
+                        }
                     }
                 }
                 _ = whatsapp_rust::wacore::runtime::wait_for_shutdown(&shutdown) => {
@@ -703,6 +772,8 @@ impl WhatsAppService {
 
 /// Forces one reconnect, single-flight: a stall can be seen by several callers
 /// at once, and a resume watchdog tick lands while a previous drop is settling.
+/// A reconnect that does not settle within [`RECONNECT_ABANDON`] is abandoned
+/// and the flag cleared, so the next check retries instead of waiting forever.
 fn force_reconnect(client: &Arc<Client>, reconnecting: &Arc<AtomicBool>) {
     if reconnecting.swap(true, Ordering::SeqCst) {
         return;
@@ -710,7 +781,28 @@ fn force_reconnect(client: &Arc<Client>, reconnecting: &Arc<AtomicBool>) {
     let client = client.clone();
     let reconnecting = reconnecting.clone();
     tokio::spawn(async move {
-        client.reconnect_immediately().await;
+        if tokio::time::timeout(RECONNECT_ABANDON, client.reconnect_immediately()).await.is_err() {
+            log::warn!(
+                "reconnect did not finish within {}s; abandoning it for a retry",
+                RECONNECT_ABANDON.as_secs()
+            );
+        }
         reconnecting.store(false, Ordering::SeqCst);
     });
+}
+
+#[cfg(test)]
+mod link_tests {
+    use super::*;
+
+    #[test]
+    fn link_actions_cover_sleep_staleness_and_life() {
+        let gap = RESUME_GAP + Duration::from_secs(1);
+        let silent = LINK_SILENT + Duration::from_secs(1);
+        assert_eq!(link_action(false, gap, false, silent), LinkAction::None);
+        assert_eq!(link_action(true, gap, true, Duration::ZERO), LinkAction::Reconnect);
+        assert_eq!(link_action(true, Duration::ZERO, true, silent), LinkAction::None);
+        assert_eq!(link_action(true, Duration::ZERO, false, Duration::ZERO), LinkAction::None);
+        assert_eq!(link_action(true, Duration::ZERO, false, silent), LinkAction::Probe);
+    }
 }

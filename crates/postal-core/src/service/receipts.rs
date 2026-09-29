@@ -134,6 +134,9 @@ impl WhatsAppService {
     async fn sync_chat_read(&self, chat: &str, range: Option<whatsapp_rust::SyncActionMessageRange>) {
         let Ok(jid) = chat.parse::<Jid>() else { return };
         if let Err(e) = self.client.chat_actions().mark_chat_as_read(&jid, true, range).await {
+            // The one operation a returning user triggers without sending:
+            // a timeout here is the first sign of a half-open link.
+            self.note_error(&e);
             log::warn!("could not sync the read mark for {chat}: {e}");
         }
     }
