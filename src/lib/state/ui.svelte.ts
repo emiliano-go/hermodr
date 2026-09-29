@@ -1,8 +1,8 @@
 // UI-domain state: transient notices, open dialogs/overlays and view flags.
 // These are shared between the route (which orchestrates flows) and the views
 // (which render them), so they live here instead of in +page.svelte.
-import type { ChatEvent, FoundItem, StarredItem, StoredMessage } from "$lib/models";
-import type { Section } from "$lib/Settings.svelte";
+import type { ChatEvent, FoundItem, StarredItem, StoredMessage } from "$lib/utils/models";
+import type { Section } from "$lib/settings/Settings.svelte";
 
 /** Mentions of us (everywhere or in one chat), or a search inside one chat. */
 export type Finder = {

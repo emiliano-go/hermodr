@@ -2,7 +2,7 @@
   import { MessagesState } from "$lib/state/messages.svelte";
   import { ui } from "$lib/state/ui.svelte";
   import { windowFixture } from "./ipc";
-  import type { StoredMessage } from "$lib/models";
+  import type { StoredMessage } from "$lib/utils/models";
   const pager = new MessagesState();
   let scroller: HTMLDivElement;
   let metrics = $state("");

@@ -27,6 +27,10 @@ Single source of truth for where application state lives. The rule:
   `members` uses `session` plus messages state (first-seen push names);
   `chats` uses `ui`, `members` and `session`; `composer` uses all of those;
   `events`, workflows and the route may use everything. Keep it that way.
+- **Views live in domain folders mirroring state.**
+  `chat/`, `messages/` (+ `messages/cards/`), `composer/`, `media/`,
+  `contacts/`, `settings/`; dumb primitives in `ui/` (must not import
+  siblings); pure helpers in `utils/`. Tests stay flat at `src/lib/*.test.ts`.
 - **Never pass a domain method bare** (e.g. `onclick={chats.togglePin}`):
   `this` is lost. Wrap in an arrow, or export a plain function.
   Element access a domain cannot own (textarea, scroller) arrives via an

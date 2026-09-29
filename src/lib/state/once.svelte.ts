@@ -2,8 +2,8 @@
 // stays external; this instance only wakes when a one-time message arrives,
 // fetches it, and goes dormant. Pairing is its own short session, since
 // enabling the companion requires an existing link.
-import { invoke } from "$lib/ipc";
-import type { OnceState } from "$lib/models";
+import { invoke } from "$lib/utils/ipc";
+import type { OnceState } from "$lib/utils/models";
 import { ui } from "./ui.svelte";
 
 class OnceInstance {

@@ -1,6 +1,6 @@
 // Voice-note playback. The engine lives outside the message list, so a note
 // keeps playing when its chat is left; AudioPlayer and NowPlaying drive it.
-import { invoke } from "$lib/ipc";
+import { invoke } from "$lib/utils/ipc";
 
 export const BARS = 42;
 const RATES = [1, 1.5, 2];

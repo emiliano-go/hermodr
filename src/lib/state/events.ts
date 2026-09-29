@@ -3,10 +3,10 @@
 // members, composer, ui) visibly cover the stream. View callbacks the
 // dispatcher cannot own (scrolling, reconnecting) arrive via host.
 import { tick } from "svelte";
-import { invoke } from "$lib/ipc";
-import { bare } from "$lib/message";
-import type { MessagePage } from "$lib/message-window";
-import type { ServiceEvent, StoredMessage } from "$lib/models";
+import { invoke } from "$lib/utils/ipc";
+import { bare } from "$lib/utils/message";
+import type { MessagePage } from "$lib/utils/message-window";
+import type { ServiceEvent, StoredMessage } from "$lib/utils/models";
 import {
   groupNotificationBody,
   isChatMuted,
@@ -14,8 +14,8 @@ import {
   notificationTitle,
   shouldNotify,
   showChatNotification,
-} from "$lib/notifications";
-import { isPlaceholder } from "$lib/phone";
+} from "$lib/utils/notifications";
+import { isPlaceholder } from "$lib/utils/phone";
 import { chats } from "./chats.svelte";
 import { composer } from "./composer.svelte";
 import { members } from "./members.svelte";

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { MessageWindow } from "./message-window.ts";
-import type { StoredMessage } from "./models.ts";
+import { MessageWindow } from "./utils/message-window.ts";
+import type { StoredMessage } from "./utils/models.ts";
 import { createServer } from "vite";
 import { fileURLToPath } from "node:url";
 

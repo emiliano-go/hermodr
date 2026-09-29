@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { noticeText } from "./notices.ts";
+import { noticeText } from "./utils/notices.ts";
 
 test("encryption history stubs do not duplicate the chat's fixed notice", () => {
   assert.equal(noticeText("E2E_ENCRYPTED", [], () => "Alice"), null);

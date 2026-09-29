@@ -1,5 +1,5 @@
-import { invoke } from "$lib/ipc";
-import type { FoundItem, StoredMessage } from "$lib/models";
+import { invoke } from "$lib/utils/ipc";
+import type { FoundItem, StoredMessage } from "$lib/utils/models";
 import { chats } from "./chats.svelte";
 import { members } from "./members.svelte";
 import { messages } from "./messages.svelte";

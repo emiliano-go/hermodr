@@ -1,6 +1,6 @@
-import type { StorageFile, StorageReport, StorageCleanup } from "../../src/lib/storage";
-import type { StoredMessage } from "../../src/lib/models";
-import type { MessageCursor } from "../../src/lib/message-window";
+import type { StorageFile, StorageReport, StorageCleanup } from "../../src/lib/utils/storage";
+import type { StoredMessage } from "../../src/lib/utils/models";
+import type { MessageCursor } from "../../src/lib/utils/message-window";
 export const windowFixture = {
   archive: Array.from({ length: 350 }, (_, n) => ({ chat: "window@s", id: String(n).padStart(4, "0"), timestamp: 100, text: `Message ${n}` }) as StoredMessage),
   phoneRequests: 0, failure: false, deferNext: false, pending: [] as (() => void)[],

@@ -1,6 +1,6 @@
 <script lang="ts">
-  import Settings, { type UiSettings } from "$lib/Settings.svelte";
-  import ChatSettings from "$lib/ChatSettings.svelte";
+  import Settings, { type UiSettings } from "$lib/settings/Settings.svelte";
+  import ChatSettings from "$lib/chat/ChatSettings.svelte";
   import { fixture } from "./ipc";
   let chatOpen = $state(false);
   let globalOpen = $state(false);

@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 test("large attachments use bounded chunks, clean up failures, and respect account cancellation and send order", async () => {
   const server = await createServer({ configFile: fileURLToPath(new URL("../../tests/browser/vite.config.ts", import.meta.url)), cacheDir: fileURLToPath(new URL("../../node_modules/.vite-tests/upload", import.meta.url)), ssr: { optimizeDeps: { noDiscovery: true, include: [] } }, server: { middlewareMode: true, ws: false } });
   try {
-    const { sendAttachment, UPLOAD_CHUNK_BYTES } = await server.ssrLoadModule(fileURLToPath(new URL("./upload.ts", import.meta.url)));
+    const { sendAttachment, UPLOAD_CHUNK_BYTES } = await server.ssrLoadModule(fileURLToPath(new URL("./utils/upload.ts", import.meta.url)));
     const { uploadFixture: fixture } = await server.ssrLoadModule("/ipc.ts");
     class BoundedFile extends File {
       override async arrayBuffer(): Promise<ArrayBuffer> { throw new Error("must not read the whole large file"); }

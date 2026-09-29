@@ -1,7 +1,7 @@
 <script lang="ts">
-  import ChatSidebar from "$lib/ChatSidebar.svelte";
+  import ChatSidebar from "$lib/chat/ChatSidebar.svelte";
   import type { ComponentProps } from "svelte";
-  import type { ChatSummary } from "$lib/models";
+  import type { ChatSummary } from "$lib/utils/models";
   let selected = $state<string | null>(null);
   const quiet: ChatSummary = {
     chat: "quiet@s.whatsapp.net", display_name: "Quiet contact",

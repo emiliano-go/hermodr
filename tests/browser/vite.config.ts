@@ -7,7 +7,7 @@ export default defineConfig({
   plugins: [svelte({ configFile: false })],
   resolve: {
     alias: [
-      { find: "$lib/ipc", replacement: fileURLToPath(new URL("./ipc.ts", import.meta.url)) },
+      { find: "$lib/utils/ipc", replacement: fileURLToPath(new URL("./ipc.ts", import.meta.url)) },
       { find: "$lib", replacement: fileURLToPath(new URL("../../src/lib", import.meta.url)) },
     ],
   },

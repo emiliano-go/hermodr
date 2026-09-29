@@ -1,59 +1,59 @@
 <script lang="ts">
-  import "$lib/legacy";
-  import ThemeLayers from "$lib/ThemeLayers.svelte";
+  import "$lib/utils/legacy";
+  import ThemeLayers from "$lib/settings/ThemeLayers.svelte";
   import { addAccount, chooseAccount, connect, reconnect, removeAccount, switchTo, syncState } from "$lib/state/accounts";
   import { onDrop, onPaste } from "$lib/state/attachments";
   import { openPings, openStarred, searchChat } from "$lib/state/finder";
   import { act, canDeleteForEveryone, canDeletePickedForEveryone, deleteMessage, deleteSelected, eventFields, menuItems as messageMenuItems, saveEvent, target } from "$lib/state/message-actions";
   import { onMount, tick, untrack } from "svelte";
-  import { invoke } from "$lib/ipc";
+  import { invoke } from "$lib/utils/ipc";
   import { listen } from "@tauri-apps/api/event";
-  import StarredList from "$lib/StarredList.svelte";
-  import MessageFinder from "$lib/MessageFinder.svelte";
-  import ChatSettings from "$lib/ChatSettings.svelte";
-  import type { ChatRetention } from "$lib/models";
-  import ProfileCard from "$lib/ProfileCard.svelte";
-  import ContactInfo from "$lib/ContactInfo.svelte";
-  import MessageInfo from "$lib/MessageInfo.svelte";
-  import { isPlaceholder } from "$lib/phone";
+  import StarredList from "$lib/messages/StarredList.svelte";
+  import MessageFinder from "$lib/messages/MessageFinder.svelte";
+  import ChatSettings from "$lib/chat/ChatSettings.svelte";
+  import type { ChatRetention } from "$lib/utils/models";
+  import ProfileCard from "$lib/contacts/ProfileCard.svelte";
+  import ContactInfo from "$lib/contacts/ContactInfo.svelte";
+  import MessageInfo from "$lib/messages/MessageInfo.svelte";
+  import { isPlaceholder } from "$lib/utils/phone";
   import { polyfillCountryFlagEmojis } from "country-flag-emoji-polyfill";
   import flagFont from "country-flag-emoji-polyfill/dist/TwemojiCountryFlags.woff2?url";
 
   // Windows has no flag glyphs and draws the two letters instead. The font is
   // bundled, so nothing is fetched at runtime; elsewhere this is a no-op.
   polyfillCountryFlagEmojis("Twemoji Country Flags", flagFont);
-  import Icon from "$lib/Icon.svelte";
-  import Button from "$lib/Button.svelte";
-  import Spinner from "$lib/Spinner.svelte";
-  import ConfirmDialog from "$lib/ConfirmDialog.svelte";
-  import PairingView from "$lib/PairingView.svelte";
-  import ChatSidebar from "$lib/ChatSidebar.svelte";
-  import ChatHeader from "$lib/ChatHeader.svelte";
-  import MessageList from "$lib/MessageList.svelte";
-  import ComposerBar from "$lib/ComposerBar.svelte";
-  import SelectionBar from "$lib/SelectionBar.svelte";
-  import { hue } from "$lib/avatar";
-  import { bare, captionOf, dayKey, dayLabel, formatTime, isSvg, MEDIA_LABELS } from "$lib/message";
+  import Icon from "$lib/ui/Icon.svelte";
+  import Button from "$lib/ui/Button.svelte";
+  import Spinner from "$lib/ui/Spinner.svelte";
+  import ConfirmDialog from "$lib/ui/ConfirmDialog.svelte";
+  import PairingView from "$lib/settings/PairingView.svelte";
+  import ChatSidebar from "$lib/chat/ChatSidebar.svelte";
+  import ChatHeader from "$lib/chat/ChatHeader.svelte";
+  import MessageList from "$lib/messages/MessageList.svelte";
+  import ComposerBar from "$lib/composer/ComposerBar.svelte";
+  import SelectionBar from "$lib/messages/SelectionBar.svelte";
+  import { hue } from "$lib/utils/avatar";
+  import { bare, captionOf, dayKey, dayLabel, formatTime, isSvg, MEDIA_LABELS } from "$lib/utils/message";
   import { chats } from "$lib/state/chats.svelte";
   import { composer } from "$lib/state/composer.svelte";
   import { dispatchServiceEvent, queueRefreshChats } from "$lib/state/events";
   import { members } from "$lib/state/members.svelte";
   import { messages } from "$lib/state/messages.svelte";
-  import type { MessagePage } from "$lib/message-window";
+  import type { MessagePage } from "$lib/utils/message-window";
   import { once } from "$lib/state/once.svelte";
   import { player } from "$lib/state/player.svelte";
   import { session } from "$lib/state/session.svelte";
   import { ui } from "$lib/state/ui.svelte";
-  import Settings, { type Section } from "$lib/Settings.svelte";
-  import GroupInfo, { type AdminReport } from "$lib/GroupInfo.svelte";
-  import MediaViewer, { type ViewerItem } from "$lib/MediaViewer.svelte";
-  import MessageMenu, { type MenuItem } from "$lib/MessageMenu.svelte";
-  import ChatPicker from "$lib/ChatPicker.svelte";
-  import ReactionList from "$lib/ReactionList.svelte";
-  import { keybinds, matches } from "$lib/keybinds.svelte";
-  import CreateDialog from "$lib/CreateDialog.svelte";
-  import { plain } from "$lib/format";
-  import { customization, lensMap } from "$lib/theme.svelte";
+  import Settings, { type Section } from "$lib/settings/Settings.svelte";
+  import GroupInfo, { type AdminReport } from "$lib/chat/GroupInfo.svelte";
+  import MediaViewer, { type ViewerItem } from "$lib/media/MediaViewer.svelte";
+  import MessageMenu, { type MenuItem } from "$lib/messages/MessageMenu.svelte";
+  import ChatPicker from "$lib/chat/ChatPicker.svelte";
+  import ReactionList from "$lib/messages/ReactionList.svelte";
+  import { keybinds, matches } from "$lib/utils/keybinds.svelte";
+  import CreateDialog from "$lib/chat/CreateDialog.svelte";
+  import { plain } from "$lib/utils/format";
+  import { customization, lensMap } from "$lib/utils/theme.svelte";
 
   import type {
     ChatPrivacy,
@@ -61,8 +61,8 @@
     SearchResult,
     ServiceEvent,
     StoredMessage,
-  } from "$lib/models";
-  import { changeText } from "$lib/group-actions";
+  } from "$lib/utils/models";
+  import { changeText } from "$lib/utils/group-actions";
 
   function openSettings(section: Section) {
     ui.settingsSection = section;
@@ -855,7 +855,7 @@
   {/each}
 </svg>
 
-<!-- Avatar rendering lives in $lib/Avatar.svelte (initials/hue in $lib/avatar.ts). -->
+<!-- Avatar rendering lives in $lib/ui/Avatar.svelte (initials/hue in $lib/utils/avatar.ts). -->
 
 <!-- Window-level so a paste/drop anywhere cannot navigate the webview. -->
 <svelte:window
@@ -1794,7 +1794,7 @@
     box-shadow: var(--shadow);
     font-size: 13px;
   }
-  /* Dismiss buttons live in $lib/Button.svelte (icon variant, already muted). */
+  /* Dismiss buttons live in $lib/ui/Button.svelte (icon variant, already muted). */
   :global(.intro-settings) {
     margin-left: auto;
   }
@@ -1869,7 +1869,7 @@
     height: 40px;
     font-size: 14px;
   }
-  /* Message text lives in $lib/MessageText.svelte. The mention avatar sizes
+  /* Message text lives in $lib/messages/MessageText.svelte. The mention avatar sizes
      stay global so they reach inside it. */
   :global(.mention-pill img),
   :global(.mention-initials) {
@@ -1938,7 +1938,7 @@
     text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
     pointer-events: none;
   }
-  /* Chat filter pills live in $lib/Button.svelte (chip variant). */
+  /* Chat filter pills live in $lib/ui/Button.svelte (chip variant). */
   /* Beside the first bubble of a run, outside the tail. */
   /* Sender names and avatars render in MessageBubble and TypingIndicator. */
   :global(.sender-avatar) {
@@ -1970,7 +1970,7 @@
   }
   /* Half-lit: online, but only contacts can see it. */
   /* Discord's invisible: a hollow grey ring. */
-  /* Menu rows live in $lib/Button.svelte (menu variant). */
+  /* Menu rows live in $lib/ui/Button.svelte (menu variant). */
   :global(.menu-avatar) {
     display: grid;
     place-items: center;
@@ -2053,7 +2053,7 @@
   }
   /* Discord-style completion list over the composer. */
   /* WhatsApp's reaction pill, hanging off the bubble's bottom edge. */
-  /* Confirm sheets live in $lib/ConfirmDialog.svelte. */
+  /* Confirm sheets live in $lib/ui/ConfirmDialog.svelte. */
   .placeholder {
     margin: auto;
     display: flex;
@@ -2097,7 +2097,7 @@
   .jump:hover {
     background: var(--line-strong);
   }
-  /* Shared button shapes live in $lib/Button.svelte. The attach button keeps
+  /* Shared button shapes live in $lib/ui/Button.svelte. The attach button keeps
      its composer box here since it arrives through Button's `cls`. */
   :global(.attach) {
     width: 42px;

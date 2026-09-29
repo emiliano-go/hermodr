@@ -2,11 +2,11 @@
 // presence labels, and the open group's info. Moved out of +page.svelte.
 // Reads messages state (first-seen push names) and session (connection, self);
 // never the reverse, so the domain graph stays acyclic.
-import { invoke } from "$lib/ipc";
-import { plain } from "$lib/format";
-import { bare } from "$lib/message";
-import type { GroupInfo, Member, StoredMessage } from "$lib/models";
-import { displayName as phoneName, isPlaceholder } from "$lib/phone";
+import { invoke } from "$lib/utils/ipc";
+import { plain } from "$lib/utils/format";
+import { bare } from "$lib/utils/message";
+import type { GroupInfo, Member, StoredMessage } from "$lib/utils/models";
+import { displayName as phoneName, isPlaceholder } from "$lib/utils/phone";
 import { messages } from "./messages.svelte";
 import { session } from "./session.svelte";
 

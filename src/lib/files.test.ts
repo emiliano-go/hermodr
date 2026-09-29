@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { base64Of } from "./files.ts";
+import { base64Of } from "./utils/files.ts";
 
 test("attachment encoding preserves empty and binary data across chunk boundaries", async () => {
   for (const size of [0, 1, 255, 32768, 32769, 65537]) {

@@ -1,5 +1,5 @@
-import { invoke } from "$lib/ipc";
-import type { ConnectionState } from "$lib/models";
+import { invoke } from "$lib/utils/ipc";
+import type { ConnectionState } from "$lib/utils/models";
 import { chats } from "./chats.svelte";
 import { composer } from "./composer.svelte";
 import { refreshResolvedNames } from "./events";

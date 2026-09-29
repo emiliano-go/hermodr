@@ -1,17 +1,17 @@
 // Chats domain: the conversation list, selection, search, pins, avatars and
 // the group-info panel. Moved out of +page.svelte. Reads members (names) and
 // session (self, accounts); cross-domain flows (openChat) stay in the route.
-import { invoke } from "$lib/ipc";
-import { plain } from "$lib/format";
-import { bare, MEDIA_LABELS } from "$lib/message";
-import type { IconName } from "$lib/Icon.svelte";
+import { invoke } from "$lib/utils/ipc";
+import { plain } from "$lib/utils/format";
+import { bare, MEDIA_LABELS } from "$lib/utils/message";
+import type { IconName } from "$lib/ui/Icon.svelte";
 import type {
   Account,
   ChatFilter,
   ChatSummary,
   GroupInfo,
   SearchResult,
-} from "$lib/models";
+} from "$lib/utils/models";
 import { members } from "./members.svelte";
 import { session } from "./session.svelte";
 import { ui } from "./ui.svelte";

@@ -1,6 +1,6 @@
 // Session state; cross-domain connection flows live in accounts.ts.
-import { invoke } from "$lib/ipc";
-import type { Account, ConnectionState, UiSettings } from "$lib/models";
+import { invoke } from "$lib/utils/ipc";
+import type { Account, ConnectionState, UiSettings } from "$lib/utils/models";
 import { ui } from "./ui.svelte";
 
 /** Device memory of the notification kill switch, backing backends that drop it. */

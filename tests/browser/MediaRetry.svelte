@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import MessageBubble from "$lib/MessageBubble.svelte";
+  import MessageBubble from "$lib/messages/MessageBubble.svelte";
   import { MessagesState, MAX_DOWNLOAD_TRIES } from "$lib/state/messages.svelte";
-  import type { BubbleApi, BubbleVm, StoredMessage } from "$lib/models";
+  import type { BubbleApi, BubbleVm, StoredMessage } from "$lib/utils/models";
   import { mediaFixture, windowFixture } from "./ipc";
   const pager = new MessagesState();
   const seed = { chat: "media@s", id: "retry-fixture", sender: "sender@s", text: "Synthetic caption", timestamp: 100, from_me: false,

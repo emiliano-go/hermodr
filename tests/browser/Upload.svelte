@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { sendAttachment } from "$lib/upload";
+  import { sendAttachment } from "$lib/utils/upload";
   import { uploadFixture } from "./ipc";
   let result = $state("");
   let error = $state("");

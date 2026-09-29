@@ -3,10 +3,10 @@
 // Depends only on ui (failure reporting); cross-domain flows (openChat, send,
 // event dispatch) live in the route and state/events.ts.
 import { tick } from "svelte";
-import { invoke } from "$lib/ipc";
-import type { Marks, Reaction, ReactionGroup, StoredMessage } from "$lib/models";
+import { invoke } from "$lib/utils/ipc";
+import type { Marks, Reaction, ReactionGroup, StoredMessage } from "$lib/utils/models";
 import { ui } from "./ui.svelte";
-import { MessageWindow, DEFAULT_MESSAGE_WINDOW, cursorOf, type MessagePage } from "$lib/message-window";
+import { MessageWindow, DEFAULT_MESSAGE_WINDOW, cursorOf, type MessagePage } from "$lib/utils/message-window";
 
 const PAGE = 200;
 export const MAX_DOWNLOAD_TRIES = 3;

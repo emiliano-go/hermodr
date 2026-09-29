@@ -6,7 +6,7 @@ import {
   notificationBody,
   notificationTitle,
   shouldNotify,
-} from "./notifications.ts";
+} from "./utils/notifications.ts";
 
 const NOW = 1_700_000_000;
 

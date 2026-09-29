@@ -1,5 +1,5 @@
 <script lang="ts">
-  import PluginManager from "$lib/PluginManager.svelte";
+  import PluginManager from "$lib/settings/PluginManager.svelte";
   import { pluginFixture } from "./ipc";
 </script>
 

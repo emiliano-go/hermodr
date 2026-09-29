@@ -1,11 +1,11 @@
 <script lang="ts">
-  import BooleanProps from "$lib/BooleanProps.svelte";
+  import BooleanProps from "$lib/ui/BooleanProps.svelte";
   import ChatMetadata from "./ChatMetadata.svelte";
   import RetentionSettings from "./RetentionSettings.svelte";
-  import StorageManager from "$lib/StorageManager.svelte";
+  import StorageManager from "$lib/settings/StorageManager.svelte";
   import MessageWindow from "./MessageWindow.svelte";
   import MediaRetry from "./MediaRetry.svelte";
-  import ArchiveManager from "$lib/ArchiveManager.svelte";
+  import ArchiveManager from "$lib/settings/ArchiveManager.svelte";
   import Upload from "./Upload.svelte";
   import { archiveFixture } from "./ipc";
   import { session } from "$lib/state/session.svelte";

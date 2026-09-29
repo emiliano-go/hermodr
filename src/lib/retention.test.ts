@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { limitKey, limitValue, parseLimit } from "./retention.ts";
+import { limitKey, limitValue, parseLimit } from "./utils/retention.ts";
 
 test("retention keeps inheritance, unlimited and a zero limit distinct", () => {
   for (const key of ["inherit", "unlimited", "0", "24", "500", "4294967295"]) {

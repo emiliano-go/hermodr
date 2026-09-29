@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createServer } from "vite";
 import { fileURLToPath } from "node:url";
-import type { StoredMessage } from "../models.ts";
+import type { StoredMessage } from "../utils/models.ts";
 
 type Item = { label: string; action: () => unknown };
 

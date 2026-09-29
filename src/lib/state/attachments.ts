@@ -1,4 +1,4 @@
-import { invoke } from "$lib/ipc";
+import { invoke } from "$lib/utils/ipc";
 import { composer } from "./composer.svelte";
 import { ui } from "./ui.svelte";
 

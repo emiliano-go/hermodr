@@ -4,14 +4,14 @@
 // (settings) and ui (notices); element access (focus, scrolling) arrives via
 // host callbacks the route registers, so flows move verbatim.
 import { tick } from "svelte";
-import { invoke } from "$lib/ipc";
-import { loadEmojis, rememberEmoji, searchEmojis, type Emoji } from "$lib/emoji";
-import type { PickerTab } from "$lib/ExpressionPicker.svelte";
-import { base64Of, imagePreview, rasterizeSvg } from "$lib/files";
-import { sendAttachment } from "$lib/upload";
-import { keybinds, matches } from "$lib/keybinds.svelte";
-import type { Recording } from "$lib/VoiceRecorder.svelte";
-import type { ChatPrivacy, Outgoing, PendingMedia, StoredMessage } from "$lib/models";
+import { invoke } from "$lib/utils/ipc";
+import { loadEmojis, rememberEmoji, searchEmojis, type Emoji } from "$lib/utils/emoji";
+import type { PickerTab } from "$lib/composer/ExpressionPicker.svelte";
+import { base64Of, imagePreview, rasterizeSvg } from "$lib/utils/files";
+import { sendAttachment } from "$lib/utils/upload";
+import { keybinds, matches } from "$lib/utils/keybinds.svelte";
+import type { Recording } from "$lib/composer/VoiceRecorder.svelte";
+import type { ChatPrivacy, Outgoing, PendingMedia, StoredMessage } from "$lib/utils/models";
 import { chats } from "./chats.svelte";
 import { members } from "./members.svelte";
 import { messages } from "./messages.svelte";

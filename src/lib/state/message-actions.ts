@@ -1,7 +1,7 @@
-import { invoke } from "$lib/ipc";
-import { bare, captionOf } from "$lib/message";
-import type { ChatEvent, StoredMessage } from "$lib/models";
-import type { MenuItem } from "$lib/MessageMenu.svelte";
+import { invoke } from "$lib/utils/ipc";
+import { bare, captionOf } from "$lib/utils/message";
+import type { ChatEvent, StoredMessage } from "$lib/utils/models";
+import type { MenuItem } from "$lib/messages/MessageMenu.svelte";
 import { chats } from "./chats.svelte";
 import { composer } from "./composer.svelte";
 import { members } from "./members.svelte";
