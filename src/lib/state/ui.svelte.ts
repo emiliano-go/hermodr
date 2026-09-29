@@ -30,6 +30,8 @@ export class UiState {
   menu = $state<{ x: number; y: number; message: StoredMessage } | null>(null);
   forwarding = $state<StoredMessage | null>(null);
   deleting = $state<StoredMessage | null>(null);
+  /** A group member whose removal is waiting for confirmation. */
+  removeMember = $state<{ chat: string; jid: string; name: string } | null>(null);
   reporting = $state<StoredMessage | null>(null);
   /** Our message whose delivery and reads are shown. */
   infoFor = $state<StoredMessage | null>(null);

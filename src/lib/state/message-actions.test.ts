@@ -13,7 +13,9 @@ async function withApp(run: (app: {
     marks: { reactions: { target: string; sender: string; emoji: string }[] };
     reactorsFor: Map<string, { emoji: string; senders: string[] }[]>;
   };
-  ui: { reactionsFor: StoredMessage | null };
+  ui: { reactionsFor: StoredMessage | null; removeMember: { chat: string; jid: string; name: string } | null };
+  members: { participants: { jid: string; name: string; admin: boolean; owner: boolean; number: string | null; username: string | null; label: string | null }[] };
+  session: { me: string | null };
   calls: { command: string; args: unknown }[];
 }) => Promise<void>) {
   const calls: { command: string; args: unknown }[] = [];
@@ -27,7 +29,9 @@ async function withApp(run: (app: {
     const { menuItems } = await server.ssrLoadModule("/src/lib/state/message-actions.ts");
     const { messages } = await server.ssrLoadModule("/src/lib/state/messages.svelte.ts");
     const { ui } = await server.ssrLoadModule("/src/lib/state/ui.svelte.ts");
-    await run({ menuItems, messages, ui, calls });
+    const { members } = await server.ssrLoadModule("/src/lib/state/members.svelte.ts");
+    const { session } = await server.ssrLoadModule("/src/lib/state/session.svelte.ts");
+    await run({ menuItems, messages, ui, members, session, calls });
   } finally {
     await server.close();
     Reflect.deleteProperty(globalThis, "window");
@@ -76,5 +80,31 @@ test("a message somebody reacted to offers its reactor list, and one without doe
       { emoji: "👍", senders: ["59897504482@s.whatsapp.net"] },
       { emoji: "❤️", senders: ["@me"] },
     ]);
+  });
+});
+
+test("a group admin can remove a member from their message, but not the owner", async () => {
+  await withApp(async ({ menuItems, members, session, ui }) => {
+    session.me = "59897504482@s.whatsapp.net";
+    const member = (jid: string, name: string, admin: boolean, owner: boolean) => ({
+      jid, name, admin, owner, number: jid.split("@")[0], username: null, label: null,
+    });
+    members.participants = [
+      member(session.me, "Me", true, false),
+      member("111@s.whatsapp.net", "Ana", false, false),
+      member("222@s.whatsapp.net", "Owner", true, true),
+    ];
+    const from = (sender: string) => ({ chat: "99@g.us", id: "x", sender, from_me: false,
+      text: "hello", revoked: false } as StoredMessage);
+    const remove = menuItems(from("111@s.whatsapp.net"), async () => {})
+      .find((item) => item.label.startsWith("Remove "));
+    assert.equal(remove?.label, "Remove Ana from group");
+    remove!.action();
+    assert.deepEqual(ui.removeMember, { chat: "99@g.us", jid: "111@s.whatsapp.net", name: "Ana" });
+    const onOwner = menuItems(from("222@s.whatsapp.net"), async () => {});
+    assert.ok(!onOwner.some((item) => item.label.startsWith("Remove ")));
+    session.me = null;
+    const notAdmin = menuItems(from("111@s.whatsapp.net"), async () => {});
+    assert.ok(!notAdmin.some((item) => item.label.startsWith("Remove ")));
   });
 });

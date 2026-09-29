@@ -168,6 +168,19 @@ export type GroupInfo = {
   parent_name: string | null;
   admin: boolean;
   can_send: boolean;
+  /** Members may add participants, not just admins. */
+  members_can_add: boolean;
+};
+
+/** The server's answer for one person of a group member change. */
+export type ParticipantChange = {
+  jid: string;
+  ok: boolean;
+  /** The server's code, such as `403` or `409`, when it refused. */
+  code: string | null;
+  error: string | null;
+  /** The add was accepted but still needs an admin's approval. */
+  pending: boolean;
 };
 export type RetentionLimit = { kind: "inherit" } | { kind: "unlimited" } | { kind: "limited"; value: number };
 export type DiskRetention = {
@@ -275,6 +288,8 @@ export type Member = {
   username: string | null;
   label: string | null;
   admin: boolean;
+  /** The group's creator, who cannot be removed or demoted. */
+  owner: boolean;
 };
 
 export type Marks = {

@@ -56,10 +56,12 @@
 
   import type {
     ChatPrivacy,
+    ParticipantChange,
     SearchResult,
     ServiceEvent,
     StoredMessage,
   } from "$lib/models";
+  import { changeText } from "$lib/group-actions";
 
   function openSettings(section: Section) {
     ui.settingsSection = section;
@@ -1326,6 +1328,34 @@
   </ConfirmDialog>
 {/if}
 
+{#if ui.removeMember}
+  {@const member = ui.removeMember}
+  <ConfirmDialog
+    label="Remove from group"
+    title={`Remove ${member.name}?`}
+    hint="They leave the group on every linked device. You can add them again later."
+    onclose={() => (ui.removeMember = null)}>
+    {#snippet actions()}
+      <button
+        class="danger"
+        onclick={async () => {
+          ui.removeMember = null;
+          try {
+            const changes = await invoke<ParticipantChange[]>("remove_group_participants", {
+              chat: member.chat,
+              jids: [member.jid],
+            });
+            const refused = changes.map(changeText).find((text) => !!text);
+            if (refused) ui.fail(refused);
+          } catch (e) {
+            ui.fail(e);
+          }
+        }}>Remove</button>
+      <button onclick={() => (ui.removeMember = null)}>Cancel</button>
+    {/snippet}
+  </ConfirmDialog>
+{/if}
+
 {#if ui.infoFor}
   {@const m = ui.infoFor}
   <MessageInfo
@@ -1477,6 +1507,11 @@
     namer={(name, jid) => members.displayName(name, jid)}
     onreports={() => invoke<AdminReport[]>("admin_reports", { chat: selectedChat })}
     onallowreports={(allow) => invoke("set_allow_admin_reports", { chat: selectedChat, allow })}
+    onadd={(jids) => invoke<ParticipantChange[]>("add_group_participants", { chat: selectedChat, jids })}
+    onremove={(jids) => invoke<ParticipantChange[]>("remove_group_participants", { chat: selectedChat, jids })}
+    onpromote={(jids) => invoke<ParticipantChange[]>("promote_group_participants", { chat: selectedChat, jids })}
+    ondemote={(jids) => invoke<ParticipantChange[]>("demote_group_participants", { chat: selectedChat, jids })}
+    onmembersadd={(allow) => invoke("set_members_can_add", { chat: selectedChat, allow })}
     onjump={(id) => {
       chats.showGroupInfo = false;
       if (chats.selectedChat) void jumpTo(chats.selectedChat, id);

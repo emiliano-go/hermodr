@@ -24,6 +24,8 @@
     parent_name: string | null;
     admin: boolean;
     can_send: boolean;
+    /** Members may add participants, not just admins. */
+    members_can_add: boolean;
   };
   export type AdminReport = {
     id: string;
@@ -38,6 +40,10 @@
   import Icon from "$lib/Icon.svelte";
   import Lightbox from "$lib/Lightbox.svelte";
   import Panel from "$lib/Panel.svelte";
+  import AddMembers from "$lib/AddMembers.svelte";
+  import ConfirmDialog from "$lib/ConfirmDialog.svelte";
+  import { changeText } from "$lib/group-actions";
+  import type { ParticipantChange } from "$lib/models";
   import { displayName, phoneLabel } from "$lib/phone";
 
   let {
@@ -58,6 +64,11 @@
     namer = displayName,
     onreports,
     onallowreports,
+    onadd,
+    onremove,
+    onpromote,
+    ondemote,
+    onmembersadd,
     onjump,
     onclose,
   }: {
@@ -83,6 +94,16 @@
     /** Messages members reported to the admins; only admins may ask. */
     onreports: () => Promise<AdminReport[]>;
     onallowreports: (allow: boolean) => Promise<void>;
+    /** Adds people to the group; the server answers per person. */
+    onadd: (jids: string[]) => Promise<ParticipantChange[]>;
+    /** Removes people from the group. */
+    onremove: (jids: string[]) => Promise<ParticipantChange[]>;
+    /** Gives people admin rights. */
+    onpromote: (jids: string[]) => Promise<ParticipantChange[]>;
+    /** Takes admin rights back. */
+    ondemote: (jids: string[]) => Promise<ParticipantChange[]>;
+    /** Whether members, or only admins, may add people. */
+    onmembersadd: (allow: boolean) => Promise<void>;
     /** Shows a reported message in the conversation. */
     onjump: (id: string) => void;
     onclose: () => void;
@@ -129,6 +150,57 @@
       .then((r) => (reports = r))
       .catch((e) => (reportsError = String(e)));
   });
+
+  /** The add-members rule is saving. */
+  let addModeBusy = $state(false);
+  async function setMembersAdd(allow: boolean) {
+    addModeBusy = true;
+    memberError = null;
+    try {
+      await onmembersadd(allow);
+      if (info) info.members_can_add = allow;
+    } catch (e) {
+      memberError = String(e);
+    } finally {
+      addModeBusy = false;
+    }
+  }
+
+  /** The add-participants dialog. */
+  let adding = $state(false);
+  /** Selection mode for the member list, for remove/promote/demote. */
+  let selecting = $state(false);
+  let selected = $state<Record<string, true>>({});
+  let memberBusy = $state(false);
+  let memberError = $state<string | null>(null);
+  let confirmRemove = $state(false);
+  const selectedList = $derived(Object.keys(selected));
+
+  function toggleSelect(jid: string) {
+    const next = { ...selected };
+    if (next[jid]) delete next[jid];
+    else next[jid] = true;
+    selected = next;
+  }
+
+  /** Runs a member change for the selection, reporting the server's refusals. */
+  async function runMemberAction(action: (jids: string[]) => Promise<ParticipantChange[]>) {
+    const jids = selectedList;
+    if (jids.length === 0) return;
+    memberBusy = true;
+    memberError = null;
+    try {
+      const changes = await action(jids);
+      const refusals = changes.map(changeText).filter((text): text is string => !!text);
+      if (refusals.length > 0) memberError = refusals.join(" ");
+      selected = {};
+      selecting = false;
+    } catch (e) {
+      memberError = String(e);
+    } finally {
+      memberBusy = false;
+    }
+  }
 
   let allowBusy = $state(false);
   async function setAllow(allow: boolean) {
@@ -281,6 +353,27 @@
         <span class="setting-desc">{info.locked ? "Only admins." : "Everyone in the group."}</span>
       </div>
     </div>
+    <div class="setting">
+      <div>
+        <span class="setting-title">Who can add members</span>
+        <span class="setting-desc">
+          {info.members_can_add
+            ? info.admin
+              ? "Everyone in the group."
+              : "Everyone in the group, including you."
+            : "Only admins."}
+        </span>
+      </div>
+      {#if info.admin}
+        <input
+          class="switch"
+          type="checkbox"
+          checked={info.members_can_add}
+          disabled={addModeBusy}
+          aria-label="Members may add people"
+          onchange={(e) => setMembersAdd(e.currentTarget.checked)} />
+      {/if}
+    </div>
 
     <div class="setting stack">
       <div>
@@ -358,7 +451,32 @@
       </ul>
     {/if}
   {:else}
-    <h2>Members</h2>
+    <div class="members-head">
+      <h2>Members</h2>
+      {#if info.admin}
+        <button
+          class="link-button"
+          onclick={() => {
+            selecting = !selecting;
+            selected = {};
+            memberError = null;
+          }}>{selecting ? "Done" : "Select"}</button>
+      {/if}
+      {#if info.admin || info.members_can_add}
+        <button class="button" onclick={() => (adding = true)}>
+          <Icon name="plus" size={14} /> Add
+        </button>
+      {/if}
+    </div>
+    {#if memberError}<p class="error-text">{memberError}</p>{/if}
+    {#if selecting && selectedList.length > 0}
+      <div class="member-actions">
+        <span class="muted">{selectedList.length} selected</span>
+        <button class="button" disabled={memberBusy} onclick={() => runMemberAction(onpromote)}>Make admin</button>
+        <button class="button" disabled={memberBusy} onclick={() => runMemberAction(ondemote)}>Dismiss as admin</button>
+        <button class="button danger" disabled={memberBusy} onclick={() => (confirmRemove = true)}>Remove</button>
+      </div>
+    {/if}
     <label class="member-search">
       <Icon name="search" size={15} />
       <input placeholder="Search by name, number or username" bind:value={query} />
@@ -374,6 +492,15 @@
             member.username ? `@${member.username}` : null,
           ].filter(Boolean)}
           <li class="member">
+            {#if selecting}
+              <input
+                class="pick"
+                type="checkbox"
+                checked={!!selected[member.jid]}
+                disabled={member.isSelf || member.owner}
+                aria-label="Select {member.display}"
+                onchange={() => toggleSelect(member.jid)} />
+            {/if}
             {@render avatar(member.jid, member.display, 38)}
             <span class="member-text">
               <span class="member-name">
@@ -406,6 +533,35 @@
     {/each}
   {/if}
 </Panel>
+
+{#if adding && info}
+  <AddMembers
+    title={info.subject ?? title}
+    members={info.participants}
+    {avatars}
+    {me}
+    {onavatar}
+    {onadd}
+    onclose={() => (adding = false)} />
+{/if}
+
+{#if confirmRemove}
+  <ConfirmDialog
+    label="Remove from group"
+    title={`Remove ${selectedList.length} member${selectedList.length === 1 ? "" : "s"}?`}
+    hint="They leave the group on every linked device. You can add them again later."
+    onclose={() => (confirmRemove = false)}>
+    {#snippet actions()}
+      <button
+        class="danger"
+        onclick={() => {
+          confirmRemove = false;
+          void runMemberAction(onremove);
+        }}>Remove</button>
+      <button onclick={() => (confirmRemove = false)}>Cancel</button>
+    {/snippet}
+  </ConfirmDialog>
+{/if}
 
 {#if enlarged}
   <Lightbox {jid} preview={enlarged} alt={title} onclose={() => (enlarged = null)} />
@@ -493,6 +649,74 @@
     outline: none;
     color: var(--text);
     font: inherit;
+  }
+  .members-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .members-head h2 {
+    flex: 1;
+    margin: 0;
+  }
+  .members-head .button {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border: 0;
+    border-radius: 6px;
+    background: var(--raised);
+    color: var(--text);
+    font: inherit;
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  .link-button {
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  .link-button:hover {
+    color: var(--text);
+  }
+  .member-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 4px 0 8px;
+    padding: 6px 8px;
+    background: var(--raised);
+    border-radius: 8px;
+  }
+  .member-actions .muted {
+    flex: 1;
+    font-size: 12.5px;
+  }
+  .member-actions .button {
+    padding: 4px 8px;
+    border: 0;
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .member-actions .button.danger {
+    color: var(--danger, #f15c6d);
+  }
+  .member-actions .button:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+  .pick {
+    flex: none;
+    accent-color: var(--accent, #00a884);
   }
   .members,
   .reports {

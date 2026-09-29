@@ -44,6 +44,20 @@ export function menuItems(m: StoredMessage, openChat: (chat: string) => Promise<
   if (m.from_me) {
     items.push({ label: "Message info", icon: "check", action: () => (ui.infoFor = m) });
   }
+  // Admins can remove a member straight from their message; the owner can
+  // never be removed, and we cannot remove ourselves this way.
+  const selfParticipant = session.me ? members.memberOf(session.me) : undefined;
+  const senderParticipant = m.sender ? members.memberOf(m.sender) : undefined;
+  if (other && selfParticipant?.admin && !senderParticipant?.owner) {
+    items.push({
+      label: `Remove ${members.senderLabel(m)} from group`,
+      icon: "trash",
+      danger: true,
+      separated: true,
+      action: () =>
+        (ui.removeMember = { chat: m.chat, jid: bare(m.sender), name: members.senderLabel(m) }),
+    });
+  }
   if (other) {
     items.push(
       {
