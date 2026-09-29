@@ -48,6 +48,7 @@
   import GroupInfo, { type AdminReport } from "$lib/chat/GroupInfo.svelte";
   import MediaViewer, { type ViewerItem } from "$lib/media/MediaViewer.svelte";
   import MessageMenu, { type MenuItem } from "$lib/messages/MessageMenu.svelte";
+  import ExpressionPicker from "$lib/composer/ExpressionPicker.svelte";
   import ChatPicker from "$lib/chat/ChatPicker.svelte";
   import ReactionList from "$lib/messages/ReactionList.svelte";
   import { keybinds, matches } from "$lib/utils/keybinds.svelte";
@@ -655,6 +656,31 @@
   }
 
   const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+
+  /**
+   * Full-emoji reaction flow. These deriveds use optional chaining on purpose:
+   * `{@const em = ui.emojiFor.message}` threw `null.message` when the picker
+   * closed, because an `{#if}` block's consts can re-evaluate during teardown.
+   */
+  const emojiChat = $derived(ui.emojiFor?.message.chat ?? "");
+  const emojiAnchor = $derived(ui.emojiFor ? { x: ui.emojiFor.x, y: ui.emojiFor.y } : null);
+  function openEmojiFor() {
+    const anchor = ui.menu;
+    if (anchor) ui.emojiFor = { message: anchor.message, x: anchor.x, y: anchor.y };
+  }
+  function pickCustomReaction(emoji: string) {
+    const em = ui.emojiFor?.message;
+    ui.emojiFor = null;
+    if (!em) return;
+    const mine = messages.reactionsFor.get(em.id)?.find((r) => r.mine)?.emoji ?? null;
+    act(() => invoke("react", { target: target(em), emoji: mine === emoji ? "" : emoji }));
+  }
+  /** Takes back our own reaction from the Reactions dialog. */
+  function removeOwnReaction() {
+    const m = ui.reactionsFor;
+    if (!m) return;
+    act(() => invoke("react", { target: target(m), emoji: "" }));
+  }
   // Later readers in a group change no status, so the open info refreshes itself.
   $effect(() => {
     if (!ui.infoFor) return;
@@ -1096,6 +1122,7 @@
             if (event) return saveEvent(m.chat, m.id, { ...eventFields(event), canceled: true });
           }}
           onreact={(m, emoji) => act(() => invoke("react", { target: target(m), emoji }))}
+          onopenreactions={(m) => (ui.reactionsFor = m)}
           onmarkplayed={(m) => messages.markPlayed(m)}
           onnextvoice={(m) => {
             // A note left playing in another chat has nothing to chain to.
@@ -1224,8 +1251,23 @@
     reactions={QUICK_REACTIONS}
     current={messages.reactionsFor.get(m.id)?.find((r) => r.mine)?.emoji ?? null}
     onreact={(emoji) => act(() => invoke("react", { target: target(m), emoji }))}
+    onmore={openEmojiFor}
     onclose={() => (ui.menu = null)} />
   {/key}
+{/if}
+
+{#if ui.emojiFor}
+  <ExpressionPicker
+    chat={emojiChat}
+    tab="emoji"
+    enqueue={<T>(task: (signal: AbortSignal) => Promise<T>) => composer.enqueue(task)}
+    takereply={() => ({})}
+    onemoji={pickCustomReaction}
+    onsent={() => {}}
+    onerror={(message) => (ui.error = message)}
+    onclose={() => (ui.emojiFor = null)}
+    emojiOnly
+    anchor={emojiAnchor} />
 {/if}
 
 {#if ui.reactionsFor}
@@ -1246,6 +1288,7 @@
       }),
     }))}
     onprofile={openProfile}
+    onremove={removeOwnReaction}
     onclose={() => (ui.reactionsFor = null)} />
 {/if}
 

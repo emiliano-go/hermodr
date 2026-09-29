@@ -3,7 +3,7 @@ import type { Account, BubbleApi, BubbleVm, ChatSummary, StoredMessage } from ".
 import type { MenuItem } from "../messages/MessageMenuPanel.svelte";
 
 export const noop = () => {};
-export const account: Account = { id: "preview", label: "WhatsApp", jid: "59897504482@s.whatsapp.net" };
+export const account: Account = { id: "preview", label: "WhatsApp", jid: "598123456789@s.whatsapp.net" };
 export const selectedChat = "design@g.us";
 
 const rows = [
@@ -57,7 +57,7 @@ export const messages = [
   message(2, "You", "On it, it looks tight on mobile", {
     reply_to_id: "1", reply_to_sender: "Ana", reply_to_text: "Can someone check the header spacing?",
   }),
-  message(3, "Diego", "@59897504482 could you check the colors too?", { mentioned: true }),
+  message(3, "Diego", "@598123456789 could you check the colors too?", { mentioned: true }),
   message(4, "Laura", "The brief is here: https://example.com/design"),
   message(5, "You", "Will do 👍", { status: "delivered" }),
 ];
@@ -88,7 +88,7 @@ export const bubbleApi: BubbleApi = {
   onprofile: noop, onopenurl: noop, onreplydraft: noop, onmenu: noop, onpick: noop,
   onjumpquoted: noop, onrecoverquote: noop, recovering: {}, ondownload: noop,
   onopenviewer: noop, onopenmedia: noop, onopenquote: noop, onvote: noop,
-  onrespond: noop, oneditrequest: noop, oncancelevent: noop, onreact: noop,
+  onrespond: noop, oneditrequest: noop, oncancelevent: noop, onreact: noop, onopenreactions: noop,
   onmarkplayed: noop, onnextvoice: noop, onpausevoice: noop, onreplymenu: noop,
   ononce: noop, oncloseonce: noop, onrevealonce: noop, oninviteopen: noop,
 };

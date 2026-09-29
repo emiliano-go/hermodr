@@ -4,7 +4,7 @@ import { createServer } from "vite";
 import { fileURLToPath } from "node:url";
 import type { StoredMessage } from "../utils/models.ts";
 
-type Item = { label: string; action: () => unknown };
+type Item = { label: string; separated?: boolean; action: () => unknown };
 
 /** Loads the state modules behind just enough of a window for the IPC layer. */
 async function withApp(run: (app: {
@@ -60,6 +60,44 @@ async function withApp(run: (app: {
   }
 }
 
+/** Menu labels in sorted order, so assertions never pin down the sequence. */
+const labels = (items: Item[]) => items.map((item) => item.label).sort();
+
+test("the group and DM menus offer their entries, dividers never first", async () => {
+  await withApp(async ({ menuItems, messages, members, session }) => {
+    session.me = "59897504482@s.whatsapp.net";
+    members.participants = [
+      { jid: session.me, name: "Me", admin: true, owner: false, number: "59897504482", username: null, label: null },
+      { jid: "111@s.whatsapp.net", name: "Ana", admin: false, owner: false, number: "111", username: null, label: null },
+    ];
+    messages.marks = { ...messages.marks, reactions: [
+      { target: "hello", sender: "59897504482@s.whatsapp.net", emoji: "👍" },
+    ] };
+    const message = { chat: "99@g.us", id: "hello", sender: "111@s.whatsapp.net", from_me: false,
+      text: "Hi", revoked: false } as StoredMessage;
+    const items = menuItems(message, async () => {});
+    assert.deepEqual(labels(items), [
+      "Copy", "Delete", "Forward", "Message Ana", "Pin", "Reactions",
+      "Remove Ana from group", "Reply", "Reply privately", "Report to admins",
+      "Select messages", "Star",
+    ]);
+    // In a 1:1 chat the group-only entries drop out and ours appear.
+    const own = { chat: "123@s.whatsapp.net", id: "mine", sender: session.me, from_me: true,
+      text: "Hello", revoked: false } as StoredMessage;
+    const dm = menuItems(own, async () => {});
+    assert.deepEqual(labels(dm), [
+      "Copy", "Delete", "Edit", "Forward", "Message info", "Pin",
+      "Reply", "Select messages", "Star",
+    ]);
+    // A divider draws above an entry, never above the first one, and each
+    // shape does carry at least one.
+    for (const menu of [items, dm]) {
+      assert.ok(!menu[0].separated);
+      assert.ok(menu.some((item, i) => i > 0 && item.separated));
+    }
+  });
+});
+
 test("image menu exports originals by message ID and protects deleted and view-once media", async () => {
   await withApp(async ({ menuItems, calls }) => {
     const message = { chat: "123@s.whatsapp.net", id: "photo", from_me: false,
@@ -93,8 +131,9 @@ test("a message somebody reacted to offers its reactor list, and one without doe
       { target: "hello", sender: "@me", emoji: "❤️" },
     ] };
     const items = menuItems(message, async () => {});
-    assert.equal(items[0].label, "Reactions");
-    items[0].action();
+    const reactions = items.find((item) => item.label === "Reactions");
+    assert.ok(reactions);
+    reactions.action();
     assert.equal(ui.reactionsFor, message);
     // Emoji groups keep the order they arrived in, and ours leads its own.
     assert.deepEqual(messages.reactorsFor.get("hello"), [

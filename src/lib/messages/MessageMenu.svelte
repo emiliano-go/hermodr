@@ -15,6 +15,7 @@
     reactions,
     current,
     onreact,
+    onmore,
     onclose,
   }: {
     x: number;
@@ -25,6 +26,8 @@
     /** Our current reaction, which a second click takes back. */
     current: string | null;
     onreact: (emoji: string) => void;
+    /** Opens the full emoji picker for more reactions. */
+    onmore: () => void;
     onclose: () => void;
   } = $props();
 
@@ -95,4 +98,4 @@
 </script>
 
 <MessageMenuPanel bind:element={menu} left={pos.left} top={pos.top} {closing}
-  {items} {reactions} {current} {onreact} onclose={close} />
+  {items} {reactions} {current} {onreact} {onmore} onclose={close} />

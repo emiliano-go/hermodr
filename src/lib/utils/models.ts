@@ -403,6 +403,8 @@ export type BubbleApi = {
   oneditrequest: (m: StoredMessage) => void;
   oncancelevent: (m: StoredMessage) => void;
   onreact: (m: StoredMessage, emoji: string) => void;
+  /** Opens the Reactions dialog for a message, from its pill or menu. */
+  onopenreactions: (m: StoredMessage) => void;
   onmarkplayed: (m: StoredMessage) => void;
   onnextvoice: (m: StoredMessage) => void;
   onpausevoice: () => void;
