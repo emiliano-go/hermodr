@@ -10,12 +10,15 @@ type Item = { label: string; action: () => unknown };
 async function withApp(run: (app: {
   menuItems: (m: StoredMessage, openChat: (chat: string) => Promise<void>) => Item[];
   messages: {
+    messages: StoredMessage[];
     marks: { reactions: { target: string; sender: string; emoji: string }[] };
     reactorsFor: Map<string, { emoji: string; senders: string[] }[]>;
   };
   ui: { reactionsFor: StoredMessage | null; removeMember: { chat: string; jid: string; name: string } | null };
   members: { participants: { jid: string; name: string; admin: boolean; owner: boolean; number: string | null; username: string | null; label: string | null }[] };
   session: { me: string | null };
+  composer: { editing: { chat: string; id: string; original: string } | null; startEditing: (m?: StoredMessage) => void };
+  chats: { selectedChat: string | null };
   calls: { command: string; args: unknown }[];
 }) => Promise<void>) {
   const calls: { command: string; args: unknown }[] = [];
@@ -31,7 +34,9 @@ async function withApp(run: (app: {
     const { ui } = await server.ssrLoadModule("/src/lib/state/ui.svelte.ts");
     const { members } = await server.ssrLoadModule("/src/lib/state/members.svelte.ts");
     const { session } = await server.ssrLoadModule("/src/lib/state/session.svelte.ts");
-    await run({ menuItems, messages, ui, members, session, calls });
+    const { composer } = await server.ssrLoadModule("/src/lib/state/composer.svelte.ts");
+    const { chats } = await server.ssrLoadModule("/src/lib/state/chats.svelte.ts");
+    await run({ menuItems, messages, ui, members, session, composer, chats, calls });
   } finally {
     await server.close();
     Reflect.deleteProperty(globalThis, "window");
@@ -106,5 +111,25 @@ test("a group admin can remove a member from their message, but not the owner", 
     session.me = null;
     const notAdmin = menuItems(from("111@s.whatsapp.net"), async () => {});
     assert.ok(!notAdmin.some((item) => item.label.startsWith("Remove ")));
+  });
+});
+
+test("Edit targets the picked message, and Ctrl+Up the newest own one", async () => {
+  await withApp(async ({ menuItems, messages, composer, chats }) => {
+    chats.selectedChat = "99@g.us";
+    const own = (id: string, text: string, media_kind: string | null = null) => ({
+      chat: "99@g.us", id, sender: "111@s.whatsapp.net", from_me: true,
+      media_kind, text, revoked: false,
+    }) as StoredMessage;
+    // Newest first, as the store returns them.
+    messages.messages = [own("new", "newest"), own("mid", "older"), own("photo", "caption", "image")];
+    composer.startEditing();
+    assert.deepEqual(composer.editing, { chat: "99@g.us", id: "new", original: "newest" });
+    const edit = menuItems(own("mid", "older"), async () => {}).find((item) => item.label === "Edit");
+    assert.ok(edit);
+    edit.action();
+    assert.deepEqual(composer.editing, { chat: "99@g.us", id: "mid", original: "older" });
+    assert.ok(!menuItems(own("photo", "caption", "image"), async () => {})
+      .some((item) => item.label === "Edit"));
   });
 });

@@ -42,6 +42,9 @@ export function menuItems(m: StoredMessage, openChat: (chat: string) => Promise<
     },
   });
   if (m.from_me) {
+    if (!m.revoked && !m.deleted && !m.media_kind && m.text.trim()) {
+      items.push({ label: "Edit", icon: "edit", action: () => composer.startEditing(m) });
+    }
     items.push({ label: "Message info", icon: "check", action: () => (ui.infoFor = m) });
   }
   // Admins can remove a member straight from their message; the owner can

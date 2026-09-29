@@ -289,14 +289,21 @@ export class ComposerState {
     input.setSelectionRange(position, position);
   }
 
-  /** Loads our last editable text message into the composer. */
-  startEditing() {
-    if (!chats.selectedChat) return;
-    const candidate = [...messages.messages]
-      .reverse()
-      .find((m) => m.from_me && !m.media_kind && m.text.trim() && !m.revoked);
+  /**
+   * Loads a chosen message into the composer for editing, defaulting to our
+   * last editable text message. The loaded list is newest-first, so the first
+   * match is the most recent one.
+   */
+  startEditing(message?: StoredMessage) {
+    const chat = chats.selectedChat;
+    if (!chat) return;
+    const candidate =
+      message ??
+      messages.messages.find(
+        (m) => m.from_me && !m.media_kind && !m.deleted && m.text.trim() && !m.revoked,
+      );
     if (!candidate) return;
-    this.editing = { chat: candidate.chat, id: candidate.id, original: candidate.text };
+    this.editing = { chat, id: candidate.id, original: candidate.text };
     this.replyingTo = null;
     this.draft = candidate.text;
     this.resetHistory();
