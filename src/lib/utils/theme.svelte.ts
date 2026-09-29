@@ -462,6 +462,9 @@ export const BUILT_IN: Theme[] = [
 ];
 
 const KEY = "postal.customization";
+const systemScheme = typeof matchMedia === "function" ? matchMedia("(prefers-color-scheme: dark)") : null;
+let systemDark = $state(systemScheme?.matches ?? false);
+systemScheme?.addEventListener("change", (event) => { systemDark = event.matches; });
 
 function load(): Saved {
   try {
@@ -470,7 +473,7 @@ function load(): Saved {
   } catch {
     // Unreadable storage falls back to the defaults.
   }
-  return { theme: "dark", themes: [], extensions: [] };
+  return { theme: "system", themes: [], extensions: [] };
 }
 
 export const customization: Saved = $state(load());
@@ -480,7 +483,8 @@ const legacyPicture = customization.background?.image;
 if (legacyPicture) void setAppPicture(legacyPicture).catch(() => {});
 
 export function allThemes(): Theme[] {
-  return [...BUILT_IN, ...customization.themes];
+  const preset = BUILT_IN.find((theme) => theme.id === (systemDark ? "dark" : "light"))!;
+  return [{ ...preset, id: "system", name: "System" }, ...BUILT_IN, ...customization.themes];
 }
 
 export function activeTheme(): Theme {
@@ -488,7 +492,7 @@ export function activeTheme(): Theme {
 }
 
 export function isBuiltIn(theme: Theme) {
-  return BUILT_IN.some((t) => t.id === theme.id);
+  return theme.id === "system" || BUILT_IN.some((t) => t.id === theme.id);
 }
 
 export function newId(prefix: string) {
