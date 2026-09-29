@@ -6,7 +6,6 @@ import { chats } from "./chats.svelte";
 import { composer } from "./composer.svelte";
 import { members } from "./members.svelte";
 import { messages } from "./messages.svelte";
-import { session } from "./session.svelte";
 import { ui } from "./ui.svelte";
 
 export function target(m: StoredMessage) {
@@ -49,9 +48,8 @@ export function menuItems(m: StoredMessage, openChat: (chat: string) => Promise<
   }
   // Admins can remove a member straight from their message; the owner can
   // never be removed, and we cannot remove ourselves this way.
-  const selfParticipant = session.me ? members.memberOf(session.me) : undefined;
   const senderParticipant = m.sender ? members.memberOf(m.sender) : undefined;
-  if (other && selfParticipant?.admin && !senderParticipant?.owner) {
+  if (other && members.isAdmin() && !senderParticipant?.owner) {
     items.push({
       label: `Remove ${members.senderLabel(m)} from group`,
       icon: "trash",
@@ -173,7 +171,7 @@ export async function deleteSelected(everyone: boolean) {
 export function canDeleteForEveryone(m: StoredMessage) {
   if (m.revoked) return false;
   if (m.from_me) return true;
-  return !!session.me && !!members.memberOf(session.me)?.admin;
+  return members.isAdmin();
 }
 
 export async function deleteMessage(everyone: boolean) {

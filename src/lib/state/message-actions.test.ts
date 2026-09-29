@@ -22,7 +22,10 @@ async function withApp(run: (app: {
     picking: Record<string, true> | null;
     bulkDelete: string[] | null;
   };
-  members: { participants: { jid: string; name: string; admin: boolean; owner: boolean; number: string | null; username: string | null; label: string | null }[] };
+  members: {
+    participants: { jid: string; name: string; admin: boolean; owner: boolean; number: string | null; username: string | null; label: string | null }[];
+    chatGroup: { admin: boolean } | null;
+  };
   session: { me: string | null };
   composer: { editing: { chat: string; id: string; original: string } | null; startEditing: (m?: StoredMessage) => void };
   chats: { selectedChat: string | null };
@@ -183,6 +186,28 @@ test("bulk delete is offered for everyone only when every pick qualifies", async
       number: "111", username: null, label: null,
     }];
     session.me = "111@s.whatsapp.net";
+    assert.ok(canDeletePickedForEveryone());
+  });
+});
+
+test("admin powers follow the core's read, and the roster's number form", async () => {
+  await withApp(async ({ canDeletePickedForEveryone, messages, members, session, ui }) => {
+    const theirs = { chat: "99@g.us", id: "t", sender: "222@s.whatsapp.net", from_me: false,
+      text: "y", revoked: false } as StoredMessage;
+    messages.messages = [theirs];
+    ui.picking = { t: true };
+    assert.ok(!canDeletePickedForEveryone());
+    session.me = "59897504482@s.whatsapp.net";
+    // LID-addressed rosters key us by LID and carry our number separately.
+    members.participants = [{
+      jid: "11111@lid", name: "Me", admin: true, owner: false,
+      number: "59897504482", username: null, label: null,
+    }];
+    assert.ok(canDeletePickedForEveryone());
+    // The core's own answer wins over the roster either way.
+    members.chatGroup = { admin: false };
+    assert.ok(!canDeletePickedForEveryone());
+    members.chatGroup = { admin: true };
     assert.ok(canDeletePickedForEveryone());
   });
 });

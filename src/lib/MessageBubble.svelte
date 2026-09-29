@@ -529,7 +529,8 @@ import VideoPlayer from "$lib/VideoPlayer.svelte";
     content: "";
     position: absolute;
     top: 50%;
-    left: var(--pad-l);
+    /* Clear of the 38px the sender avatar hangs left of its bubble. */
+    left: 8px;
     width: 20px;
     height: 20px;
     margin-top: -10px;

@@ -93,7 +93,18 @@ export class MembersState {
 
   /** The group member a sender is, matched by LID or by phone number. */
   memberOf(jid: string) {
-    return this.memberByAddress.get(bare(jid));
+    const b = bare(jid);
+    return this.memberByAddress.get(b) ?? this.memberByAddress.get(b.split("@")[0]);
+  }
+
+  /**
+   * Whether we are an admin in the open group. The core's read is
+   * authoritative; the roster is the fallback while it loads.
+   */
+  isAdmin() {
+    if (this.chatGroup) return this.chatGroup.admin;
+    const me = session.me;
+    return !!me && !!this.memberOf(me)?.admin;
   }
 
   senderLabel(message: StoredMessage) {
