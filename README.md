@@ -92,9 +92,12 @@ does the same with messages, one delivery at a time. More in
 crates/postal-core/    protocol client, storage, retention
   history.rs            which history-sync chunks to accept
   store/                SQLite repository and explicit DiskRetentionManager
-  service.rs            connection lifecycle, typed event stream
+  service/              connection lifecycle, protocol handlers, typed events
+crates/postal-plugins/   sidecar lifecycle, consent, bounded event delivery
 src-tauri/              Tauri shell: commands and event forwarding
-src/                    Svelte 5 UI (chat list, conversation, pairing)
+src/lib/state/          Svelte 5 state and IPC coordination
+src/lib/                chat, composer, messages, media, settings, UI and utilities
+src/routes/+page.svelte application layout and component wiring
 ```
 
 `postal-core` is built on [`whatsapp-rust`](https://github.com/oxidezap/whatsapp-rust),
@@ -260,13 +263,17 @@ Downloaded media is written to the folder set in Settings, which defaults to the
 app data directory. The asset protocol is scoped to whatever folder is
 configured, so a custom location is served to the UI as well.
 
-Attachments are read in the webview and sent base64-encoded, because a webview
-cannot hand out a real filesystem path. That is fine for the images and
-documents a picker is normally used for, but it is not a good fit for very large
-files.
+Small attachments use one base64 IPC call. Files larger than 1 MiB use bounded
+256 KiB chunks, account-owned staging files and file-backed uploads. Downloads
+stream to verified temporary files before publication. This bounds transfer
+buffers; browser preview decoding, sticker conversion and playback fallbacks
+can still buffer media.
 
 ## Security
 
+- Message and protocol-session databases, downloaded media and backups are
+  plaintext on disk. WhatsApp transport encryption does not encrypt these
+  local files. OS database encryption and password-locked chats remain open work.
 - The UI runs under a content security policy: scripts only from the app, no
   remote fonts, images or connections. Media uses explicit asset, blob and data
   sources. Inline styles remain allowed for Svelte and user themes; inline
@@ -288,8 +295,10 @@ files.
 cargo test --locked --workspace
 pnpm check
 pnpm test
-node --experimental-strip-types src/lib/format.ts
-node --experimental-strip-types src/lib/phone.ts
+node --experimental-strip-types src/lib/utils/format.ts
+node --experimental-strip-types src/lib/utils/phone.ts
+pnpm check:tauri-acl
+pnpm check:fn-length
 pnpm build
 cargo test --locked --manifest-path src-tauri/Cargo.toml
 ```
@@ -303,6 +312,9 @@ or reading application accounts. Native dialogs, desktop portals, keychains,
 notifications, and playback still require interactive platform verification.
 
 ## Status
+
+This describes current `master`. Tagged release notes describe their release;
+the latest download can lack changes listed here.
 
 Working:
 
@@ -318,15 +330,22 @@ Working:
 - Live locations update in place with their map snapshot, accuracy, speed and heading,
   show how fresh the last position is, and keep it as ended once the share stops
 - Delivery and read receipts, message info, typing and presence
-- Group info with member tags and admin reports, profiles, privacy settings
+- Group creation, participant add/remove/promote/demote, subject/photo/description
+  editing, admin-only settings, member tags and admin reports; profiles and privacy
+  settings
+- Stored system notices for group membership, permissions, disappearing messages,
+  security changes and missed calls
 - A mentions inbox, starred messages and search within a chat
 - Retention with per-chat overrides, clearing history, in-memory-only history,
   on-demand download of older messages
-- Themes (Dark, Light, Midnight, Liquid Glass, Material 3), a theme editor with
+- Themes (System, Dark, Light, Midnight, Liquid Glass, Material 3), a theme editor with
   live previews, CSS extensions, background pictures per app or per chat,
   density, text size and animation settings
 - Desktop notifications for direct messages and groups, with per-chat mutes
   and a global toggle under settings/notifications
+- Multi-message selection, ordered forwarding to several chats, bulk local deletion
+  and eligible delete-for-everyone actions
+- JSON conversation export and local backup/restore into a separate account
 
 Not yet: calls, the tray icon, status updates,
 communities and channel management, broadcast lists and albums. The issue
