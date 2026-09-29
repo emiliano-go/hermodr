@@ -23,6 +23,22 @@ impl MediaInfo {
     }
 }
 
+/// The file extension an audio message's mimetype implies. WhatsApp sends
+/// voice notes as Ogg Opus and forwarded audio as AAC/MP4, and saving one
+/// under the other's name makes a forward re-send the wrong container.
+fn audio_extension(mimetype: Option<&str>) -> Option<String> {
+    let base = mimetype?.split(';').next()?.trim().to_ascii_lowercase();
+    let extension = match base.as_str() {
+        "audio/mp4" | "audio/m4a" | "audio/x-m4a" => "m4a",
+        "audio/mpeg" | "audio/mp3" => "mp3",
+        "audio/aac" | "audio/aacp" | "audio/x-aac" => "aac",
+        "audio/wav" | "audio/wave" | "audio/x-wav" => "wav",
+        "audio/ogg" | "audio/opus" => "ogg",
+        _ => return None,
+    };
+    Some(extension.to_string())
+}
+
 /// A safe file extension from a document's name, or its MIME type for an SVG.
 fn document_extension(document: &wa::message::DocumentMessage) -> Option<String> {
     let from_name = document
@@ -77,7 +93,7 @@ pub(super) fn detect_media(message: &wa::Message) -> Option<MediaInfo> {
             downloadable: Box::new(audio.clone()),
             thumb: None,
             duration: audio.seconds,
-            ext: None,
+            ext: audio_extension(audio.mimetype.as_deref()),
         });
     }
     if let Some(document) = message.document_message.as_option() {
@@ -201,4 +217,38 @@ pub(super) fn mime_for(extension: &str) -> Option<&'static str> {
         "wav" => "audio/wav",
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn audio(mimetype: Option<&str>) -> wa::Message {
+        wa::Message {
+            audio_message: MessageField::some(wa::message::AudioMessage {
+                mimetype: mimetype.map(str::to_string),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn audio_extensions_follow_the_mimetype() {
+        assert_eq!(audio_extension(Some("audio/mp4")).as_deref(), Some("m4a"));
+        assert_eq!(audio_extension(Some("audio/ogg; codecs=opus")).as_deref(), Some("ogg"));
+        assert_eq!(audio_extension(Some("audio/mpeg")).as_deref(), Some("mp3"));
+        assert_eq!(audio_extension(Some("audio/aac")).as_deref(), Some("aac"));
+        assert_eq!(audio_extension(Some("audio/wav")).as_deref(), Some("wav"));
+        assert_eq!(audio_extension(Some("audio/amr")), None);
+        assert_eq!(audio_extension(None), None);
+    }
+
+    #[test]
+    fn an_audio_message_keeps_its_container_as_extension() {
+        assert_eq!(detect_media(&audio(Some("audio/mp4"))).unwrap().extension(), "m4a");
+        assert_eq!(detect_media(&audio(Some("audio/ogg; codecs=opus"))).unwrap().extension(), "ogg");
+        // Older PTT without a mimetype keeps the Ogg Opus default.
+        assert_eq!(detect_media(&audio(None)).unwrap().extension(), "ogg");
+    }
 }
