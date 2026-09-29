@@ -15,7 +15,7 @@ use anyhow::Result;
 pub use aliases::AliasStore;
 pub use history::HistoryPolicy;
 pub use service::{
-    AdminReport, GroupInfo, GroupKind, InviteInfo, UserProfile, Participant, Profile, SearchResult, SendOptions, WhatsAppService, ServiceConfig,
+    AdminReport, GroupInfo, GroupKind, InviteInfo, UserProfile, Participant, ParticipantChange, Profile, SearchResult, SendOptions, WhatsAppService, ServiceConfig,
     ServiceEvent, VoiceNote, StickerLibrary, StickerResyncReport,
 };
 pub use store::{

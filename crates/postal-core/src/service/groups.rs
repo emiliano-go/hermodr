@@ -1,6 +1,8 @@
 //! Groups and communities: names, members, invites and admin tools.
 
 use super::*;
+use whatsapp_rust::wacore::iq::groups::ParticipantChangeResponse;
+use whatsapp_rust::wacore::types::wire_enums::MemberAddMode;
 
 /// Fetches a group's subject over the `w:g2` namespace.
 ///
@@ -113,6 +115,7 @@ impl WhatsAppService {
             parent_name,
             admin,
             can_send: !metadata.is_parent_group && (!metadata.is_announcement || admin),
+            members_can_add: metadata.member_add_mode == Some(MemberAddMode::AllMemberAdd),
         };
         self.group_cache.lock().unwrap().insert(chat.to_string(), info.clone());
         Ok(info)
@@ -299,6 +302,85 @@ impl WhatsAppService {
         (owner, owner_jid)
     }
 
+    /// Adds participants, returning the server's answer for each.
+    pub async fn add_group_participants(&self, chat: &str, jids: &[String]) -> Result<Vec<ParticipantChange>> {
+        let group: Jid = chat.parse()?;
+        let participants = parse_jids(jids)?;
+        let results = self
+            .client
+            .groups()
+            .add_participants(&group, &participants)
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        self.after_group_change(chat);
+        Ok(results.iter().map(change_of).collect())
+    }
+
+    /// Removes participants; a community's parent group also removes them from
+    /// its subgroups, which is what the phone's own UI does.
+    pub async fn remove_group_participants(&self, chat: &str, jids: &[String]) -> Result<Vec<ParticipantChange>> {
+        let group: Jid = chat.parse()?;
+        let participants = parse_jids(jids)?;
+        let groups = self.client.groups();
+        let linked = self.group_info(chat).await.is_ok_and(|info| info.community);
+        let results = if linked {
+            groups.remove_participants_including_linked_groups(&group, &participants).await
+        } else {
+            groups.remove_participants(&group, &participants).await
+        }
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        self.after_group_change(chat);
+        Ok(results.iter().map(change_of).collect())
+    }
+
+    /// Gives participants admin rights.
+    pub async fn promote_group_participants(&self, chat: &str, jids: &[String]) -> Result<Vec<ParticipantChange>> {
+        let group: Jid = chat.parse()?;
+        let participants = parse_jids(jids)?;
+        let results = self
+            .client
+            .groups()
+            .promote_participants(&group, &participants)
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        self.after_group_change(chat);
+        Ok(results.iter().map(change_of).collect())
+    }
+
+    /// Takes admin rights back.
+    pub async fn demote_group_participants(&self, chat: &str, jids: &[String]) -> Result<Vec<ParticipantChange>> {
+        let group: Jid = chat.parse()?;
+        let participants = parse_jids(jids)?;
+        let results = self
+            .client
+            .groups()
+            .demote_participants(&group, &participants)
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        self.after_group_change(chat);
+        Ok(results.iter().map(change_of).collect())
+    }
+
+    /// Sets whether members, or only admins, may add people.
+    pub async fn set_members_can_add(&self, chat: &str, allow: bool) -> Result<()> {
+        let group: Jid = chat.parse()?;
+        let mode = if allow { MemberAddMode::AllMemberAdd } else { MemberAddMode::AdminAdd };
+        self.client
+            .groups()
+            .set_member_add_mode(&group, mode)
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        self.after_group_change(chat);
+        Ok(())
+    }
+
+    /// Drops the cached roster and tells the UI, so an open panel reloads
+    /// without waiting for the server's own notification.
+    fn after_group_change(&self, chat: &str) {
+        self.group_cache.lock().unwrap().remove(chat);
+        let _ = self.events.send(ServiceEvent::GroupChanged { chat: chat.to_string() });
+    }
+
     /// A group invite link's group, without joining it.
     pub async fn invite_info(&self, link: &str) -> Result<InviteInfo> {
         let group = self
@@ -454,5 +536,48 @@ impl WhatsAppService {
             }
         }
         Ok(())
+    }
+}
+
+/// Parses the addresses a command sends; one bad address fails the call
+/// rather than silently dropping whoever it named.
+fn parse_jids(jids: &[String]) -> Result<Vec<Jid>> {
+    jids.iter()
+        .map(|jid| jid.parse::<Jid>().map_err(|e| anyhow::anyhow!("bad participant address {jid}: {e}")))
+        .collect()
+}
+
+/// The UI shape of one server answer.
+fn change_of(response: &ParticipantChangeResponse) -> ParticipantChange {
+    participant_change(
+        response.jid.to_string(),
+        response.status.clone(),
+        response.error.clone(),
+        response.add_request.is_some() && response.is_ok(),
+    )
+}
+
+#[cfg(test)]
+mod participant_tests {
+    use super::*;
+
+    #[test]
+    fn changes_report_ok_refusal_and_pending() {
+        let ok = participant_change("1@s".into(), Some("200".into()), None, false);
+        assert!(ok.ok && !ok.pending && ok.code.as_deref() == Some("200"));
+
+        let refused = participant_change("2@s".into(), Some("409".into()), Some("conflict".into()), false);
+        assert!(!refused.ok);
+        assert_eq!(refused.error.as_deref(), Some("conflict"));
+
+        let pending = participant_change("3@s".into(), Some("200".into()), None, true);
+        assert!(pending.ok && pending.pending);
+    }
+
+    #[test]
+    fn addresses_are_parsed_or_the_call_fails() {
+        let good = parse_jids(&["59899000000@s.whatsapp.net".into()]).unwrap();
+        assert_eq!(good.len(), 1);
+        assert!(parse_jids(&["not a jid".into()]).is_err());
     }
 }

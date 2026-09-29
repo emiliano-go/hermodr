@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-members-can-add"
+description = "Enables the set_members_can_add command without any pre-configured scope."
+commands.allow = ["set_members_can_add"]
+
+[[permission]]
+identifier = "deny-set-members-can-add"
+description = "Denies the set_members_can_add command without any pre-configured scope."
+commands.deny = ["set_members_can_add"]

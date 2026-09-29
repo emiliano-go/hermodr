@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-demote-group-participants"
+description = "Enables the demote_group_participants command without any pre-configured scope."
+commands.allow = ["demote_group_participants"]
+
+[[permission]]
+identifier = "deny-demote-group-participants"
+description = "Denies the demote_group_participants command without any pre-configured scope."
+commands.deny = ["demote_group_participants"]

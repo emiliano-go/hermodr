@@ -308,6 +308,34 @@ pub struct GroupInfo {
     pub admin: bool,
     /// We may send messages here.
     pub can_send: bool,
+    /// Members may add participants, not just admins.
+    pub members_can_add: bool,
+}
+
+/// The server's answer for one participant of an add, remove, promote or
+/// demote request.
+#[derive(Debug, Clone, Serialize)]
+pub struct ParticipantChange {
+    pub jid: String,
+    /// Whether the server accepted this participant.
+    pub ok: bool,
+    /// The server's code, such as `403` or `409`, when it did not.
+    pub code: Option<String>,
+    /// The server's text for the refusal.
+    pub error: Option<String>,
+    /// The add was accepted but still needs an admin's approval.
+    pub pending: bool,
+}
+
+/// Builds the UI shape from the parts of a server response. Also used by the
+/// tests, since the response type cannot be built outside the library.
+pub fn participant_change(
+    jid: String,
+    status: Option<String>,
+    error: Option<String>,
+    pending: bool,
+) -> ParticipantChange {
+    ParticipantChange { jid, ok: error.is_none(), code: status, error, pending }
 }
 
 /// How a group sits in a community, for the chat list.

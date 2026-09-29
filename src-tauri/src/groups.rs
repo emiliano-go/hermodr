@@ -1,5 +1,6 @@
 use tauri::State;
 use crate::AppState;
+use crate::connection::command_error;
 
 /// Messages reported to a group's admins.
 #[tauri::command]
@@ -44,6 +45,77 @@ pub(crate) async fn group_kinds(
     state: State<'_, AppState>,
 ) -> Result<std::collections::HashMap<String, postal_core::GroupKind>, String> {
     Ok(state.service()?.group_kinds().await)
+}
+
+/// Adds participants to a group.
+#[tauri::command]
+pub(crate) async fn add_group_participants(
+    state: State<'_, AppState>,
+    chat: String,
+    jids: Vec<String>,
+) -> Result<Vec<postal_core::ParticipantChange>, String> {
+    let service = state.service()?;
+    service
+        .add_group_participants(&chat, &jids)
+        .await
+        .map_err(|e| command_error(&service, e))
+}
+
+/// Removes participants from a group; a community parent also removes them
+/// from its subgroups.
+#[tauri::command]
+pub(crate) async fn remove_group_participants(
+    state: State<'_, AppState>,
+    chat: String,
+    jids: Vec<String>,
+) -> Result<Vec<postal_core::ParticipantChange>, String> {
+    let service = state.service()?;
+    service
+        .remove_group_participants(&chat, &jids)
+        .await
+        .map_err(|e| command_error(&service, e))
+}
+
+/// Gives participants admin rights.
+#[tauri::command]
+pub(crate) async fn promote_group_participants(
+    state: State<'_, AppState>,
+    chat: String,
+    jids: Vec<String>,
+) -> Result<Vec<postal_core::ParticipantChange>, String> {
+    let service = state.service()?;
+    service
+        .promote_group_participants(&chat, &jids)
+        .await
+        .map_err(|e| command_error(&service, e))
+}
+
+/// Takes admin rights back.
+#[tauri::command]
+pub(crate) async fn demote_group_participants(
+    state: State<'_, AppState>,
+    chat: String,
+    jids: Vec<String>,
+) -> Result<Vec<postal_core::ParticipantChange>, String> {
+    let service = state.service()?;
+    service
+        .demote_group_participants(&chat, &jids)
+        .await
+        .map_err(|e| command_error(&service, e))
+}
+
+/// Sets whether members, or only admins, may add people.
+#[tauri::command]
+pub(crate) async fn set_members_can_add(
+    state: State<'_, AppState>,
+    chat: String,
+    allow: bool,
+) -> Result<(), String> {
+    let service = state.service()?;
+    service
+        .set_members_can_add(&chat, allow)
+        .await
+        .map_err(|e| command_error(&service, e))
 }
 
 /// Leaves a group.
