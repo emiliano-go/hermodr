@@ -47,6 +47,17 @@ import VideoPlayer from "$lib/media/VideoPlayer.svelte";
   }
 </script>
 
+{#snippet metadata()}
+  {#if vm.isStarred}<span class="star"><Icon name="star" size={11} /></span>{/if}
+  {#if vm.isEdited}<span class="edited-mark">Edited</span>{/if}
+  {api.formatTime(message.timestamp)}
+  {#if message.from_me}
+    <span class="ticks" class:read={message.status === "read"} title={message.status ?? "pending"}>
+      {#if message.status === "pending"}<Icon name="clock" size={11} />{:else}{statusMark(message.status)}{/if}
+    </span>
+  {/if}
+{/snippet}
+
 <!-- The whole row answers double-click and right-click, not just the bubble. -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -108,7 +119,7 @@ import VideoPlayer from "$lib/media/VideoPlayer.svelte";
 
   {#if message.revoked && !vm.hasBody}
     <!-- Nothing local to keep: only a revoke we heard about, never the message. -->
-    <span class="revoked">This message was deleted<span class="meta-spacer"></span></span>
+    <span class="revoked">This message was deleted<span class="meta-spacer" aria-hidden="true">{@render metadata()}</span></span>
   {:else}
     {#if vm.isForwarded}
       <span class="forwarded-mark"><Icon name="forward" size={13} /> Forwarded</span>
@@ -374,6 +385,7 @@ import VideoPlayer from "$lib/media/VideoPlayer.svelte";
         <MessageText
           text={message.text}
           mine={message.from_me}
+          meta={vm.inlineMeta ? metadata : undefined}
           toWire={api.toWire}
           targetOf={api.targetOf}
           avatarOf={api.avatarOf}
@@ -391,6 +403,7 @@ import VideoPlayer from "$lib/media/VideoPlayer.svelte";
       <MessageText
         text={message.text}
         mine={message.from_me}
+        meta={vm.inlineMeta ? metadata : undefined}
         toWire={api.toWire}
         targetOf={api.targetOf}
         avatarOf={api.avatarOf}
@@ -417,6 +430,7 @@ import VideoPlayer from "$lib/media/VideoPlayer.svelte";
       <MessageText
         text={vm.caption}
         mine={message.from_me}
+        meta={vm.inlineMeta ? metadata : undefined}
         toWire={api.toWire}
         targetOf={api.targetOf}
         avatarOf={api.avatarOf}
@@ -459,19 +473,7 @@ import VideoPlayer from "$lib/media/VideoPlayer.svelte";
     onclick={(e) => api.onreplymenu(e, message)}><Icon name="chevronDown" size={16} /></button
   >
   <span class="meta">
-    {#if vm.isStarred}<span class="star"><Icon name="star" size={11} /></span>{/if}
-    {#if vm.isEdited}<span class="edited-mark">Edited</span>{/if}
-    {api.formatTime(message.timestamp)}
-    {#if message.from_me}
-      <span
-        class="ticks"
-        class:read={message.status === "read"}
-        title={message.status ?? "pending"}
-        >{#if message.status === "pending"}<Icon name="clock" size={11} />{:else}{statusMark(
-            message.status,
-          )}{/if}</span
-      >
-    {/if}
+    {@render metadata()}
   </span>
   {#if vm.reactions}
     <button
@@ -947,7 +949,7 @@ import VideoPlayer from "$lib/media/VideoPlayer.svelte";
     color: color-mix(in srgb, var(--text) 60%, transparent);
     white-space: nowrap;
   }
-  .meta {
+  .meta, :global(.meta-spacer) {
     font-size: 11px;
     line-height: 15px;
     font-variant-numeric: tabular-nums;
@@ -957,6 +959,13 @@ import VideoPlayer from "$lib/media/VideoPlayer.svelte";
     align-items: center;
     gap: 3px;
     white-space: nowrap;
+  }
+  :global(.meta-spacer) {
+    display: inline-flex;
+    padding-left: 8px;
+    height: 1px;
+    visibility: hidden;
+    pointer-events: none;
   }
   .reply-btn {
     position: absolute;

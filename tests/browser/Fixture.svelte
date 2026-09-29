@@ -1,4 +1,5 @@
 <script lang="ts">
+  import MetaLayout from "./MetaLayout.svelte";
   import BooleanProps from "$lib/ui/BooleanProps.svelte";
   import ChatMetadata from "./ChatMetadata.svelte";
   import RetentionSettings from "./RetentionSettings.svelte";
@@ -15,6 +16,7 @@
   let cleanupCalls = $state(0);
 </script>
 
+<MetaLayout />
 <h1>Synthetic flag diagnostics</h1>
 <p>No backend, account, database, network service or native IPC.</p>
 <button onclick={() => { fixture.updated = true; }}>Apply synthetic delta</button>

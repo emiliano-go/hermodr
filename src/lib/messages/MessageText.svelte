@@ -2,12 +2,14 @@
   time's reserved space after the last line. Moved out of +page.svelte. -->
 <script lang="ts">
   import Avatar from "$lib/ui/Avatar.svelte";
+  import type { Snippet } from "svelte";
   import { blocks, type Inline } from "$lib/utils/format";
   import type { MentionTarget } from "$lib/utils/models";
 
   let {
     text,
     mine,
+    meta,
     toWire,
     targetOf,
     avatarOf,
@@ -16,6 +18,7 @@
   }: {
     text: string;
     mine: boolean;
+    meta?: Snippet;
     /** Rewrites `@Name` tokens to the wire's `@<number>` form. */
     toWire: (text: string) => string;
     /** Who an `@<user>` token names. */
@@ -66,10 +69,10 @@
           {#each block.items as item, j (j)}<li>{@render runs(item)}</li>{/each}
         </ol>{:else}<ul class="fmt-list">
           {#each block.items as item, j (j)}<li>{@render runs(item)}</li>{/each}
-        </ul>{/if}{:else}{#if i > 0}<br />{/if}{@render lines(block.lines)}{/if}{/each}<span
+        </ul>{/if}{:else}{#if i > 0}<br />{/if}{@render lines(block.lines)}{/if}{/each}{#if meta}<span
     class="meta-spacer"
-    class:mine></span
-  ></span
+    class:mine
+    aria-hidden="true">{@render meta()}</span>{/if}</span
 >
 
 <style>
