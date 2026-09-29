@@ -149,24 +149,35 @@ media. Switching accounts cancels queued sends and unfinished attachment staging
 
 ## Installing
 
-Releases ship an AppImage. Download it from the releases page, or run:
+Releases are on hold until they cover every platform Postal supports, so the
+installer builds from the tip of `master` on this machine:
 
 ```console
 curl -fsSL https://raw.githubusercontent.com/emiliano-go/postal/master/scripts/install.sh | sh
 ```
 
-The installer pins the release tag and checks the AppImage against the release's
-`SHA256SUMS` and GitHub's own digest before replacing anything; set
-`POSTAL_VERSION=v0.1.0` to install a specific release.
+It fetches the source, builds it with the local toolchain, and puts the binary
+in `~/.local/bin` along with a desktop entry. Set `POSTAL_REF=v0.1.0` to pin a
+tag or commit, and pass `--debug` for a quicker, unoptimized build:
+
+```console
+curl -fsSL https://raw.githubusercontent.com/emiliano-go/postal/master/scripts/install.sh | sh -s -- --debug
+```
+
+There is no Windows shell installer yet; build from a clone as below.
 
 ## Building
 
 To build from a clone:
 
 ```console
-scripts/install-dev.sh          # build a release and install it
-scripts/install-dev.sh --dev    # start the dev server
+scripts/install-dev.sh --release   # optimized build and install (Linux, macOS)
+scripts/install-dev.sh             # quicker unoptimized build
+scripts/install-dev.sh --dev       # start the dev server
 ```
+
+On Windows, run `pnpm install` then `pnpm tauri build` in the clone; the
+installers land in `src-tauri/target/release/bundle/`.
 
 The release bundles, AppImage included, are built with `scripts/build-release.sh`,
 which sets the two environment variables the AppImage tooling needs on current

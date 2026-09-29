@@ -33,8 +33,9 @@ say "building the release bundles"
 cd "$ROOT"
 pnpm tauri build "$@"
 
-# The files to upload to the GitHub release, named as scripts/install.sh expects,
-# with the SHA256SUMS it verifies them against.
+# The files to upload to a GitHub release, with a SHA256SUMS beside them.
+# Releases are paused until they cover every platform; scripts/install.sh
+# builds from the tip of master in the meantime.
 APPIMAGE="$(ls -t src-tauri/target/release/bundle/appimage/*.AppImage 2>/dev/null | head -n1 || true)"
 if [ -n "$APPIMAGE" ]; then
   OUT="$ROOT/dist"
