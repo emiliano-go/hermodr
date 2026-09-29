@@ -39,8 +39,10 @@ export class UiState {
   reporting = $state<StoredMessage | null>(null);
   /** Our message whose delivery and reads are shown. */
   infoFor = $state<StoredMessage | null>(null);
-  /** The message whose reactors are listed, opened from its menu. */
+  /** The message whose reactors are listed, opened from its menu or pill. */
   reactionsFor = $state<StoredMessage | null>(null);
+  /** The message a full-emoji reaction is being picked for, with the menu anchor. */
+  emojiFor = $state<{ message: StoredMessage; x: number; y: number } | null>(null);
   /** Bumped so the open info reloads on new receipts. */
   infoVersion = $state(0);
 

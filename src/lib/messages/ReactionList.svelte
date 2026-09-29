@@ -1,5 +1,6 @@
 <!-- Who reacted to one message, a section per emoji. Opened from the bubble's
-     menu; the pill under a message only ever takes back our own reaction. -->
+     menu or by clicking the pill under a message. Your own section carries an
+     X that takes your reaction back, since the pill no longer does that. -->
 <script lang="ts" module>
   export type Reactor = { jid: string; label: string; avatar: string | null; self: boolean };
   export type ReactorGroup = { emoji: string; people: Reactor[] };
@@ -14,12 +15,15 @@
   let {
     groups,
     onprofile,
+    onremove,
     onclose,
   }: {
     /** In the order the emoji first arrived; ours leads its own group. */
     groups: ReactorGroup[];
     /** Opens someone's contact card at the click, as the member lists do. */
     onprofile: (jid: string, name: string, event: MouseEvent, self?: boolean) => void;
+    /** Takes back our own reaction; a sender only ever holds one. */
+    onremove: () => void;
     onclose: () => void;
   } = $props();
 
@@ -50,7 +54,16 @@
       <div class="body">
         {#each groups as group (group.emoji)}
           <section>
-            <h3><span class="emoji">{group.emoji}</span><span class="n">{group.people.length}</span></h3>
+            <h3>
+              <span class="emoji">{group.emoji}</span><span class="n">{group.people.length}</span>
+              {#if group.people.some((p) => p.self)}
+                <button
+                  class="remove"
+                  title="Remove your reaction"
+                  aria-label="Remove your reaction"
+                  onclick={onremove}><Icon name="x" size={14} /></button>
+              {/if}
+            </h3>
             <ul>
               {#each group.people as person (person.jid)}
                 <li>
@@ -151,6 +164,22 @@
   }
   .emoji {
     font-size: 15px;
+  }
+  .remove {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    margin-left: auto;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .remove:hover {
+    background: var(--raised);
+    color: var(--text);
   }
   ul {
     list-style: none;

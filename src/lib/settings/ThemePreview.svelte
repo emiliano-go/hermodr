@@ -71,7 +71,7 @@
       </div>
       {#if scene === "menu"}
         <MessageMenuPanel left={640} top={180} items={menuItems}
-          reactions={["👍", "❤️", "😂", "😮", "😢", "🙏"]} current="❤️" onreact={noop} onclose={noop} />
+          reactions={["👍", "❤️", "😂", "😮", "😢", "🙏"]} current="❤️" onreact={noop} onmore={noop} onclose={noop} />
       {:else if scene === "dialog"}
         <ConfirmDialog label="Delete message" title="Delete message?"
           hint="Delete it for everyone in this chat, or only from your devices." onclose={noop}>

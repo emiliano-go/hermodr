@@ -15,7 +15,7 @@
 
   let {
     element = $bindable(), left, top, closing = false,
-    items, reactions, current, onreact, onclose,
+    items, reactions, current, onreact, onmore, onclose,
   }: {
     element?: HTMLDivElement;
     left: number;
@@ -25,6 +25,7 @@
     reactions: string[];
     current: string | null;
     onreact: (emoji: string) => void;
+    onmore: () => void;
     onclose: () => void;
   } = $props();
 </script>
@@ -42,6 +43,15 @@
           onreact(current === emoji ? "" : emoji);
         }}>{emoji}</button>
     {/each}
+    <button
+      class="reaction more"
+      role="menuitem"
+      aria-label="More reactions"
+      title="More reactions"
+      onclick={() => {
+        onclose();
+        onmore();
+      }}><Icon name="plus" size={18} /></button>
   </div>
   {#each items as item (item.label)}
     {#if item.separated}<div class="sep"></div>{/if}
@@ -115,6 +125,14 @@
   }
   .reaction.mine {
     background: var(--accent-soft);
+  }
+  .reaction.more {
+    display: grid;
+    place-items: center;
+    color: var(--muted);
+  }
+  .reaction.more:hover {
+    color: var(--text);
   }
   .item {
     flex-shrink: 0;

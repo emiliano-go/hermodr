@@ -474,11 +474,11 @@ import VideoPlayer from "$lib/media/VideoPlayer.svelte";
     {/if}
   </span>
   {#if vm.reactions}
-    {@const mine = vm.reactions.find((r) => r.mine)?.emoji ?? null}
     <button
       class="reactions"
-      title={mine ? "Tap to remove your reaction" : "Reactions"}
-      onclick={() => mine && api.onreact(message, "")}>
+      title="Show reactions"
+      aria-label="Show reactions"
+      onclick={() => api.onopenreactions(message)}>
       {#each vm.reactions.slice(0, 3) as r (r.emoji)}<span>{r.emoji}</span>{/each}
       {#if vm.reactions.reduce((n, r) => n + r.count, 0) > 1}
         <span class="reaction-count">{vm.reactions.reduce((n, r) => n + r.count, 0)}</span>

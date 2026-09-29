@@ -32,6 +32,10 @@
     onsent,
     onerror,
     onclose,
+    /** Reaction mode: emoji grid only, no GIF/sticker tabs or send paths. */
+    emojiOnly = false,
+    /** Fixed anchor for reaction mode; without it the picker hangs off the composer. */
+    anchor = null,
   }: {
     chat: string;
     tab?: PickerTab;
@@ -43,6 +47,8 @@
     onsent: () => void;
     onerror: (message: string) => void;
     onclose: () => void;
+    emojiOnly?: boolean;
+    anchor?: { x: number; y: number } | null;
   } = $props();
 
   let query = $state("");
@@ -86,6 +92,26 @@
   );
   let resizing: { x: number; y: number; w: number; h: number } | null = null;
 
+  /**
+   * Reaction-mode anchor: the picker is fixed at the menu's spot, clamped to
+   * the viewport after paint (same approach as MessageMenu's own clamp).
+   */
+  let pickerEl: HTMLDivElement | undefined = $state();
+  let anchorPos = $state({ left: 0, top: 0 });
+  $effect(() => {
+    if (!emojiOnly || !anchor) return;
+    void size;
+    requestAnimationFrame(() => {
+      const rect = pickerEl?.getBoundingClientRect();
+      const w = rect?.width ?? 360;
+      const h = rect?.height ?? 440;
+      anchorPos = {
+        left: Math.max(8, Math.min(anchor.x, window.innerWidth - w - 8)),
+        top: Math.max(8, Math.min(anchor.y, window.innerHeight - h - 8)),
+      };
+    });
+  });
+
   /** The picker hangs from its bottom-right corner, so the handle grows it up and left. */
   function onResizeDown(e: PointerEvent) {
     resizing = { x: e.clientX, y: e.clientY, ...size };
@@ -109,7 +135,7 @@
 
   $effect(() => {
     const changed = stickerEvents.version;
-    if (tab === "emoji") return;
+    if (emojiOnly || tab === "emoji") return;
     void changed;
     const kind = tab;
     invoke<string[]>("media_library", { kind, prefer: kind === "sticker" ? untrack(() => favourites) : [] })
@@ -338,27 +364,33 @@
 {/snippet}
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
-<div class="catcher" role="presentation" onclick={onclose}></div>
+<div class="catcher" class:anchored={emojiOnly && anchor} role="presentation" onclick={onclose}></div>
 <div
   class="picker"
+  class:anchored={emojiOnly && anchor}
   role="dialog"
-  aria-label="Emoji, GIFs and stickers"
-  style="width: min({size.w}px, calc(100vw - 32px)); height: min({size.h}px, calc(100vh - 120px)); --picker-h: {size.h}px"
+  aria-label={emojiOnly ? "Choose a reaction" : "Emoji, GIFs and stickers"}
+  bind:this={pickerEl}
+  style={emojiOnly && anchor
+    ? `left: ${anchorPos.left}px; top: ${anchorPos.top}px; width: min(360px, calc(100vw - 32px)); height: min(440px, calc(100vh - 120px));`
+    : `width: min(${size.w}px, calc(100vw - 32px)); height: min(${size.h}px, calc(100vh - 120px)); --picker-h: ${size.h}px`}
   transition:fly={{ y: 8, duration: motion(140) }}>
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div
-    class="resize"
-    title="Drag to resize"
-    onpointerdown={onResizeDown}
-    onpointermove={onResizeMove}
-    onpointerup={onResizeUp}></div>
-  <div class="tabs" role="tablist">
-    <button role="tab" class:active={tab === "gif"} aria-selected={tab === "gif"} onclick={() => (tab = "gif")}>GIFs</button>
-    <button role="tab" class:active={tab === "sticker"} aria-selected={tab === "sticker"} onclick={() => (tab = "sticker")}>Stickers</button>
-    <button role="tab" class:active={tab === "emoji"} aria-selected={tab === "emoji"} onclick={() => (tab = "emoji")}>Emoji</button>
-  </div>
+  {#if !emojiOnly}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="resize"
+      title="Drag to resize"
+      onpointerdown={onResizeDown}
+      onpointermove={onResizeMove}
+      onpointerup={onResizeUp}></div>
+    <div class="tabs" role="tablist">
+      <button role="tab" class:active={tab === "gif"} aria-selected={tab === "gif"} onclick={() => (tab = "gif")}>GIFs</button>
+      <button role="tab" class:active={tab === "sticker"} aria-selected={tab === "sticker"} onclick={() => (tab = "sticker")}>Stickers</button>
+      <button role="tab" class:active={tab === "emoji"} aria-selected={tab === "emoji"} onclick={() => (tab = "emoji")}>Emoji</button>
+    </div>
+  {/if}
 
-  {#if tab === "emoji"}
+  {#if emojiOnly || tab === "emoji"}
     <label class="search">
       <Icon name="search" size={15} />
       <!-- svelte-ignore a11y_autofocus -->
@@ -553,6 +585,10 @@
     inset: 0;
     z-index: 60;
   }
+  /* Reaction mode floats above the message menu (271) and its scrim. */
+  .catcher.anchored {
+    z-index: 276;
+  }
   .picker {
     position: absolute;
     right: 12px;
@@ -565,6 +601,12 @@
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow);
     overflow: hidden;
+  }
+  .picker.anchored {
+    position: fixed;
+    right: auto;
+    bottom: auto;
+    z-index: 277;
   }
   .maker {
     flex: 1;

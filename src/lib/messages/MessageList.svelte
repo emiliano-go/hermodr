@@ -82,6 +82,7 @@
     oneditrequest,
     oncancelevent,
     onreact,
+    onopenreactions,
     onmarkplayed,
     onnextvoice,
     onpausevoice,
@@ -160,6 +161,7 @@
     oneditrequest: (m: StoredMessage) => void;
     oncancelevent: (m: StoredMessage) => void;
     onreact: (m: StoredMessage, emoji: string) => void;
+    onopenreactions: (m: StoredMessage) => void;
     onmarkplayed: (m: StoredMessage) => void;
     onnextvoice: (m: StoredMessage) => void;
     onpausevoice: () => void;
@@ -195,6 +197,7 @@
     oneditrequest,
     oncancelevent,
     onreact,
+    onopenreactions,
     onmarkplayed,
     onnextvoice,
     onpausevoice,
