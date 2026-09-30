@@ -4514,7 +4514,6 @@ dependencies = [
  "symphonia-codec-pcm",
  "symphonia-codec-vorbis",
  "symphonia-core",
- "symphonia-format-caf",
  "symphonia-format-isomp4",
  "symphonia-format-mkv",
  "symphonia-format-ogg",
@@ -4623,17 +4622,6 @@ dependencies = [
  "num-complex",
  "rustfft",
  "smallvec",
-]
-
-[[package]]
-name = "symphonia-format-caf"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab64327ee1920531c5bf86cf7e9cd1a599d57013ddc30691da62683cefc65191"
-dependencies = [
- "log",
- "symphonia-common",
- "symphonia-core",
 ]
 
 [[package]]

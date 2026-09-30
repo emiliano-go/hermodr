@@ -30,7 +30,10 @@ base64 = "0.22"
 sha2 = "0.11"
 # Decodes any stored audio to PCM WAV for playback, so the web view never
 # depends on system codecs (Linux GStreamer ships without AAC, for one).
-symphonia = { version = "0.6", features = ["all"] }
+symphonia = { version = "0.6", features = [
+    "aac", "alac", "flac", "mp3", "pcm", "vorbis",
+    "isomp4", "ogg", "wav",
+] }
 # Ogg Opus voice notes: symphonia has no Opus, and WhatsApp PTT is Ogg Opus.
 opus-pure = "0.2"
 

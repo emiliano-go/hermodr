@@ -36,6 +36,12 @@ stop_app() {
 stop_app
 sleep 1
 
+# Repeated builds share compiled dependencies through sccache when present.
+if command -v sccache >/dev/null 2>&1; then
+  say "using sccache for compiled dependencies"
+  export RUSTC_WRAPPER=sccache
+fi
+
 say "installing node dependencies"
 (cd "$ROOT" && pnpm install)
 
@@ -53,8 +59,24 @@ if [ "${1:-}" = "--release" ] || [ "${2:-}" = "--release" ]; then
   profile="release"
   flag=""
 fi
+# The frontend only needs rebuilding when its sources moved since the last
+# build. It is built here, and Tauri's own hook is always told to do nothing:
+# keeping the cargo command line identical between runs stops freshness from
+# invalidating fingerprints (a switched flag recompiles postal-core).
+frontend_current() {
+  [ -f "$ROOT/build/index.html" ] &&
+    [ -z "$(find "$ROOT/src" "$ROOT/static" "$ROOT/svelte.config.js" "$ROOT/vite.config.js" \
+      "$ROOT/package.json" "$ROOT/pnpm-lock.yaml" -newer "$ROOT/build/index.html" -print -quit 2>/dev/null)" ]
+}
+if frontend_current; then
+  say "frontend is up to date; skipping its build"
+else
+  say "building the frontend"
+  (cd "$ROOT" && pnpm build)
+fi
+
 say "building ($profile)"
-(cd "$ROOT" && pnpm tauri build --no-bundle $flag)
+(cd "$ROOT" && pnpm tauri build --no-bundle $flag --config '{"build":{"beforeBuildCommand":"true"}}')
 
 say "installing the desktop entry"
 BIN_DIR="$HOME/.local/bin"

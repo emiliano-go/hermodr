@@ -5,6 +5,14 @@ members = ["crates/postal-core", "crates/postal-plugins"]
 exclude = ["src-tauri"]
 resolver = "2"
 
+[profile.dev]
+# Match the app's dev profile: line tables for our crates, none for deps.
+debug = 1
+split-debuginfo = "unpacked"
+
+[profile.dev.package."*"]
+debug = false
+
 [workspace.package]
 version = "0.1.0"
 edition = "2021"

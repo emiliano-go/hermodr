@@ -8,7 +8,10 @@ edition = "2021"
 
 [lib]
 name = "postal_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# Desktop only: rlib is all the binary needs. Tauri's mobile targets also want
+# staticlib and cdylib, which cost a multi-gigabyte archive and a full shared
+# link on every build; add them back the day mobile exists.
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -41,6 +44,16 @@ log = "0.4"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
+[profile.dev]
+# Full debuginfo is what made the debug binary ~900 MB and every link slow;
+# line tables are enough for readable backtraces. Dependencies carry none.
+debug = 1
+# Keep debuginfo out of the linked binary; the linker no longer packs it.
+split-debuginfo = "unpacked"
+
+[profile.dev.package."*"]
+debug = false
 
 [profile.release]
 # Thin LTO and parallel codegen keep the build around a minute instead of the

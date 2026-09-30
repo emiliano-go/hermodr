@@ -199,6 +199,13 @@ packages; it prints what the build needs. On Linux, `ffmpeg` on `PATH` also
 lets videos play when the system's GStreamer cannot decode their AAC audio:
 the file is remuxed to H.264 + Opus under the media cache on first play.
 
+Builds are tuned for iteration: dev binaries carry line tables only and
+dependencies none, the scripts skip the frontend build when it is current,
+and installs from HEAD build at `opt-level = 3` without LTO unless
+`--release` asks for the thin-LTO profile. `sccache` on `PATH` is picked up
+automatically and shares compiled dependencies across builds; `mold` can
+replace `lld` for linking (`RUSTFLAGS="-C link-arg=-fuse-ld=mold"`).
+
 On Wayland, WebKitGTK's DMA-BUF renderer fails with `Gdk Error 71`. The app sets
 `WEBKIT_DISABLE_DMABUF_RENDERER=1` itself, so no manual configuration is needed.
 

@@ -11,6 +11,9 @@
 #
 #   curl -fsSL .../install.sh | sh -s -- --debug
 #
+# The default optimized build skips LTO: its bitcode pass over every
+# dependency dominates a cold build. Pass --release for the thin-LTO profile.
+#
 # The build needs Rust, Node with pnpm, and the system packages Tauri wants;
 # scripts/install-dev.sh prints what is missing. Nothing is looked up over the
 # GitHub API and no prebuilt artifact is trusted: the code is built here.
@@ -42,9 +45,16 @@ for candidate in "$WORK"/*/; do
 done
 [ -n "$ROOT" ] && [ -x "$ROOT/scripts/install-dev.sh" ] || die "the archive did not look like Postal"
 
+# Dedupe dependency compiles across runs when sccache is installed.
+if command -v sccache >/dev/null 2>&1; then
+  export RUSTC_WRAPPER=sccache
+fi
+
 # An install should be optimized; --debug is there for a quick round trip.
+# The default release skips LTO for speed, --release asks for the full profile.
 ARGS=("$@")
 if [ "${#ARGS[@]}" -eq 0 ]; then
   ARGS=(--release)
+  export CARGO_PROFILE_RELEASE_LTO=false
 fi
 "$ROOT/scripts/install-dev.sh" "${ARGS[@]}"
