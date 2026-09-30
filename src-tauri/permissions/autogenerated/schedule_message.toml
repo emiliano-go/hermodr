@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-schedule-message"
+description = "Enables the schedule_message command without any pre-configured scope."
+commands.allow = ["schedule_message"]
+
+[[permission]]
+identifier = "deny-schedule-message"
+description = "Denies the schedule_message command without any pre-configured scope."
+commands.deny = ["schedule_message"]

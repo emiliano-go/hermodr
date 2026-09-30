@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-group-history-offer"
+description = "Enables the group_history_offer command without any pre-configured scope."
+commands.allow = ["group_history_offer"]
+
+[[permission]]
+identifier = "deny-group-history-offer"
+description = "Denies the group_history_offer command without any pre-configured scope."
+commands.deny = ["group_history_offer"]

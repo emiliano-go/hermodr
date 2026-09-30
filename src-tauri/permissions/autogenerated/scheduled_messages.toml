@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-scheduled-messages"
+description = "Enables the scheduled_messages command without any pre-configured scope."
+commands.allow = ["scheduled_messages"]
+
+[[permission]]
+identifier = "deny-scheduled-messages"
+description = "Denies the scheduled_messages command without any pre-configured scope."
+commands.deny = ["scheduled_messages"]

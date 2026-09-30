@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-retry-group-history"
+description = "Enables the retry_group_history command without any pre-configured scope."
+commands.allow = ["retry_group_history"]
+
+[[permission]]
+identifier = "deny-retry-group-history"
+description = "Denies the retry_group_history command without any pre-configured scope."
+commands.deny = ["retry_group_history"]

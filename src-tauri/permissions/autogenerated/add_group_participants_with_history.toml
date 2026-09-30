@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-add-group-participants-with-history"
+description = "Enables the add_group_participants_with_history command without any pre-configured scope."
+commands.allow = ["add_group_participants_with_history"]
+
+[[permission]]
+identifier = "deny-add-group-participants-with-history"
+description = "Denies the add_group_participants_with_history command without any pre-configured scope."
+commands.deny = ["add_group_participants_with_history"]

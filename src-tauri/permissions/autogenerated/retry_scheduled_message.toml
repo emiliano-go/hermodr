@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-retry-scheduled-message"
+description = "Enables the retry_scheduled_message command without any pre-configured scope."
+commands.allow = ["retry_scheduled_message"]
+
+[[permission]]
+identifier = "deny-retry-scheduled-message"
+description = "Denies the retry_scheduled_message command without any pre-configured scope."
+commands.deny = ["retry_scheduled_message"]

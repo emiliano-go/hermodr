@@ -12,6 +12,7 @@ impl TypeVisitor for Types {
         if !self.seen.insert(TypeId::of::<T>()) { return; }
         if T::output_path().is_some() {
             let declaration = format!("export {}\n", T::decl(&self.config));
+            let declaration = declaration.lines().map(str::trim_end).collect::<Vec<_>>().join("\n") + "\n";
             if let Some(previous) = self.declarations.insert(T::ident(&self.config), declaration.clone()) {
                 assert_eq!(previous, declaration, "wire type name collision");
             }
