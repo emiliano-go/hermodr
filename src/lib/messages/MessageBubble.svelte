@@ -22,7 +22,6 @@ import VideoPlayer from "$lib/media/VideoPlayer.svelte";
     DRAWN_KINDS,
     VIEW_ONCE_LABEL,
     replyIcon,
-    statusMark,
   } from "$lib/utils/message";
   import type { BubbleApi, BubbleVm, StoredMessage } from "$lib/utils/models";
 
@@ -53,7 +52,12 @@ import VideoPlayer from "$lib/media/VideoPlayer.svelte";
   {api.formatTime(message.timestamp)}
   {#if message.from_me}
     <span class="ticks" class:read={message.status === "read"} title={message.status ?? "pending"}>
-      {#if message.status === "pending"}<Icon name="clock" size={11} />{:else}{statusMark(message.status)}{/if}
+      {#if message.status === "pending"}
+        <Icon name="clock" size={14} />
+      {:else if message.status === "sent"}
+        <Icon name="check" size={14} />
+      {:else if message.status}
+        <Icon name="checks" size={14} />{/if}
     </span>
   {/if}
 {/snippet}
@@ -1050,8 +1054,12 @@ import VideoPlayer from "$lib/media/VideoPlayer.svelte";
     display: inline-flex;
   }
   .ticks {
-    font-size: 10px;
-    letter-spacing: -2px;
+    display: inline-flex;
+    align-items: center;
+    /* Same height as the meta line so swapping pending/sent/delivered
+       never stretches the row. */
+    height: 15px;
+    line-height: 0;
   }
   .ticks.read {
     color: var(--link);

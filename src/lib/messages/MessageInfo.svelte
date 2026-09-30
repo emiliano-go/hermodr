@@ -106,9 +106,9 @@
       <p class="muted">Loading…</p>
     {:else if !group}
       <ul class="timeline">
-        <li><span class="mark sent">✓</span>Sent<span class="at">{when(sentAt)}</span></li>
-        <li><span class="mark">✓✓</span>Delivered<span class="at">{when(single?.delivered_at ?? null)}</span></li>
-        <li><span class="mark read">✓✓</span>Read<span class="at">{when(single?.read_at ?? null)}</span></li>
+        <li><span class="mark sent"><Icon name="check" size={16} /></span>Sent<span class="at">{when(sentAt)}</span></li>
+        <li><span class="mark"><Icon name="checks" size={16} /></span>Delivered<span class="at">{when(single?.delivered_at ?? null)}</span></li>
+        <li><span class="mark read"><Icon name="checks" size={16} /></span>Read<span class="at">{when(single?.read_at ?? null)}</span></li>
         {#if voice}
           <li><span class="mark read"><Icon name="mic" size={13} /></span>Played<span class="at">{when(single?.played_at ?? null)}</span></li>
         {/if}
@@ -122,14 +122,14 @@
           </section>
         {/if}
         <section>
-          <h3><span class="mark read">✓✓</span> Read by <span class="count">{read.length}</span></h3>
+          <h3><span class="mark read"><Icon name="checks" size={16} /></span> Read by <span class="count">{read.length}</span></h3>
           <ul>
             {#each read as r (r.recipient)}{@render person(r, r.read_at)}{/each}
             {#if read.length === 0}<li class="empty">No one yet</li>{/if}
           </ul>
         </section>
         <section>
-          <h3><span class="mark">✓✓</span> Delivered to <span class="count">{delivered.length}</span></h3>
+          <h3><span class="mark"><Icon name="checks" size={16} /></span> Delivered to <span class="count">{delivered.length}</span></h3>
           <ul>
             {#each delivered as r (r.recipient)}{@render person(r, r.delivered_at)}{/each}
             {#if delivered.length === 0}<li class="empty">No one else</li>{/if}
