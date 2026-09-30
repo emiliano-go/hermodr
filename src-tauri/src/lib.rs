@@ -5,7 +5,7 @@ use postal_core::WhatsAppService;
 use tauri::{Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 use account_store::{AccountsFile, load_accounts};
-use desktop::is_hyprland;
+use desktop::is_tiling;
 use logging::{init_logging, log_path};
 use migration::{migrate_bundle_id, migrate_media};
 use settings::load_settings;
@@ -242,7 +242,7 @@ macro_rules! postal_commands {
 pub fn run() {
     // Before any app path resolves, adopt an install from before the rename.
     migrate_bundle_id();
-    disable_dmabuf_renderer();
+    webkit_renderer_workaround();
 
     let builder = app_builder();
     // A second launch hands its arguments to the running instance and exits,
@@ -258,21 +258,45 @@ pub fn run() {
         .run(handle_run_event);
 }
 
-/// WebKitGTK's DMA-BUF renderer fails to create GBM buffers under Wayland
-/// (Hyprland), aborting with "Gdk Error 71". This affects our own UI webview
-/// as much as it did the old one.
-fn disable_dmabuf_renderer() {
+/// WebKitGTK's DMA-BUF renderer trips over Wayland and aborts with
+/// "Gdk Error 71". Disabling it costs hardware acceleration and makes the
+/// whole webview CPU-painted, so on NVIDIA — where the failure comes from
+/// explicit sync — keep the renderer and turn explicit sync off instead.
+/// Other Wayland drivers keep the older workaround. X11 needs neither.
+fn webkit_renderer_workaround() {
     #[cfg(target_os = "linux")]
     {
-        // WebKitGTK's DMA-BUF renderer trips over Wayland (Gdk Error 71) on
-        // some drivers, NVIDIA included. X11 has no such trouble, so it keeps
-        // the accelerated path.
         let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some()
             || std::env::var("XDG_SESSION_TYPE").is_ok_and(|session| session == "wayland");
-        if wayland && std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        if !wayland {
+            return;
+        }
+        if nvidia_loaded() {
+            if std::env::var_os("__NV_DISABLE_EXPLICIT_SYNC").is_none() {
+                std::env::set_var("__NV_DISABLE_EXPLICIT_SYNC", "1");
+            }
+            return;
+        }
+        if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
             std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
         }
     }
+}
+
+/// Whether an NVIDIA (or nouveau) kernel module is loaded, read from
+/// `/proc/modules`. The text is a parameter so the check is unit-testable.
+#[cfg(target_os = "linux")]
+fn nvidia_loaded() -> bool {
+    nvidia_module_loaded(&std::fs::read_to_string("/proc/modules").unwrap_or_default())
+}
+
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn nvidia_module_loaded(modules: &str) -> bool {
+    modules.lines().any(|line| {
+        line.split_whitespace().next().is_some_and(|name| {
+            name == "nvidia" || name == "nouveau" || name.starts_with("nvidia_")
+        })
+    })
 }
 
 fn app_builder() -> tauri::Builder<tauri::Wry> {
@@ -326,7 +350,7 @@ fn build_main_window(app: &tauri::AppHandle) -> tauri::Result<WebviewWindow> {
         .title("Postal")
         .inner_size(1000.0, 720.0)
         .min_inner_size(480.0, 360.0)
-        .decorations(!is_hyprland())
+        .decorations(!is_tiling())
         .enable_clipboard_access();
     // WebView2 only delivers dropped files to the page's drop handler
     // when Tauri's own drag and drop handler is off.

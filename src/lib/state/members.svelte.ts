@@ -12,7 +12,8 @@ import { session } from "./session.svelte";
 import type { ContactIdentity } from "$lib/utils/wire";
 
 export class MembersState {
-  participants = $state<Member[]>([]);
+  /** Replaced wholesale on load; raw so a 500-member roster is not proxied. */
+  participants = $state.raw<Member[]>([]);
   /** Last member list per group, shown while a switch reloads it so the header does not flash. */
   memberCache: Record<string, Member[]> = {};
   /** The open group's info: members, and whether we may send (announcement mode, communities). */
@@ -52,6 +53,7 @@ export class MembersState {
 
   /** Memo for asWireMentions, cleared when the roster or aliases change. */
   #wireCache = new Map<string, string>();
+  #wireTokens: { token: string; user: string }[] = [];
   #wireRoster: Member[] | null = null;
   #wireAliases: Record<string, string[]> | null = null;
 
@@ -215,18 +217,16 @@ export class MembersState {
   /** Who an `@<user>` token names: us, a group member, or whichever address form the core knows. */
   mentionTarget(user: string): { jid: string; name: string; self: boolean } {
     const own = session.me ? bare(session.me) : null;
-    const member = this.participants.find(
-      (p) => p.jid.split("@")[0] === user || p.number === user,
-    );
+    // The address map already keys members by local part and number, so the
+    // per-mention scan over the roster is not needed.
+    const member = this.memberByAddress.get(user);
     if (own && (own.split("@")[0] === user || member?.number === own.split("@")[0])) {
       // Our own contact card may be saved under a nickname; show our push name.
       return { jid: own, name: this.displayName(null, own).replace(/^@/, ""), self: true };
     }
     if (member) {
       // A push name seen on any of their messages here beats the member list's bare number.
-      const spoken = messages.messages.find(
-        (m) => m.sender_name && !isPlaceholder(m.sender_name) && this.memberOf(m.sender) === member,
-      )?.sender_name;
+      const spoken = this.memberNames.get(member.jid);
       const named = spoken ?? (isPlaceholder(member.name) ? null : member.name);
       return { jid: member.jid, name: this.displayName(named, member.jid).replace(/^@/, ""), self: false };
     }
@@ -275,22 +275,25 @@ export class MembersState {
       this.#wireRoster = this.participants;
       this.#wireAliases = this.aliases;
       this.#wireCache.clear();
+      // The token list depends on the roster alone, so it is built once per
+      // roster rather than once per text that mentions someone.
+      const tokens: { token: string; user: string }[] = [];
+      for (const p of this.participants) {
+        if (p.name.length > 1 && !isPlaceholder(p.name)) {
+          tokens.push({ token: `@${p.name}`, user: p.jid.split("@")[0] });
+        }
+      }
+      // An alias is stored without a space, so it is always a whole token.
+      for (const { alias, jid } of this.groupAliases) {
+        tokens.push({ token: `@${alias}`, user: jid.split("@")[0] });
+      }
+      tokens.sort((a, b) => b.token.length - a.token.length);
+      this.#wireTokens = tokens;
     }
     const cached = this.#wireCache.get(text);
     if (cached !== undefined) return cached;
-    const tokens: { token: string; user: string }[] = [];
-    for (const p of this.participants) {
-      if (p.name.length > 1 && !isPlaceholder(p.name)) {
-        tokens.push({ token: `@${p.name}`, user: p.jid.split("@")[0] });
-      }
-    }
-    // An alias is stored without a space, so it is always a whole token.
-    for (const { alias, jid } of this.groupAliases) {
-      tokens.push({ token: `@${alias}`, user: jid.split("@")[0] });
-    }
-    tokens.sort((a, b) => b.token.length - a.token.length);
     let out = text;
-    for (const { token, user } of tokens) {
+    for (const { token, user } of this.#wireTokens) {
       if (out.includes(token)) out = out.split(token).join(`@${user}`);
     }
     if (this.#wireCache.size >= 512) this.#wireCache.clear();
@@ -359,14 +362,28 @@ export class MembersState {
   setTyping(chat: string, sender: string, state: string) {
     const key = `${chat} ${sender}`;
     clearTimeout(this.typingTimers.get(key));
-    const others = (this.typing[chat] ?? []).filter((t) => t.sender !== sender);
-    this.typing[chat] = state === "paused" ? others : [...others, { sender, state }];
+    const current = (this.typing[chat] ?? []).find((t) => t.sender === sender);
+    // Repeated "composing" updates only need their expiry pushed out.
+    if (!current && state === "paused") return;
+    if (current?.state !== state) {
+      const others = (this.typing[chat] ?? []).filter((t) => t.sender !== sender);
+      this.typing[chat] = state === "paused" ? others : [...others, { sender, state }];
+    }
     if (state !== "paused") {
       this.typingTimers.set(
         key,
         setTimeout(() => this.setTyping(chat, sender, "paused"), 10000),
       );
+    } else {
+      this.typingTimers.delete(key);
     }
+  }
+
+  /** Stores a presence change only when it differs, so repeats do not re-render. */
+  setPresence(jid: string, online: boolean, last_seen: number | null) {
+    const current = this.presence[jid];
+    if (current && current.online === online && current.last_seen === last_seen) return;
+    this.presence[jid] = { online, last_seen };
   }
 
   presenceLabel(chat: string) {

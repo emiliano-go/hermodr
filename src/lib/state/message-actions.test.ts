@@ -25,6 +25,15 @@ async function withApp(run: (app: {
     messages: StoredMessage[];
     marks: { reactions: { target: string; sender: string; emoji: string }[] };
     reactorsFor: Map<string, { emoji: string; senders: string[] }[]>;
+    acceptMessages: (rows: StoredMessage[]) => void;
+    atLatest: boolean;
+    setStatus: (chat: string, id: string, status: string) => void;
+    append: (row: StoredMessage) => void;
+    patch: (row: StoredMessage) => void;
+    refreshRow: (chat: string, id: string, mayAppend: boolean) => Promise<void>;
+    reloadMessages: (chat: string) => Promise<boolean>;
+    prepareChat: (chat: string) => void;
+    resetAccount: () => void;
   };
   ui: {
     reactionsFor: StoredMessage | null;
@@ -40,7 +49,13 @@ async function withApp(run: (app: {
   };
   session: { me: string | null; activeAccount: string | null };
   composer: { editing: { chat: string; id: string; original: string } | null; startEditing: (m?: StoredMessage) => void; resetAccount: () => void };
-  chats: { selectedChat: string | null };
+  chats: {
+    selectedChat: string | null;
+    searchQuery: string;
+    searchResults: unknown[];
+    runSearch: () => void;
+    resetAccount: () => void;
+  };
   calls: { command: string; args: unknown }[];
 }) => Promise<void>, beforeInvoke?: (command: string, args: unknown) => unknown) {
   const calls: { command: string; args: unknown }[] = [];
@@ -88,6 +103,89 @@ async function withApp(run: (app: {
 
 /** Menu labels in sorted order, so assertions never pin down the sequence. */
 const labels = (items: Item[]) => items.map((item) => item.label).sort();
+
+test("status and pending search updates stay inside their account and chat", async () => {
+  await withApp(async ({ messages, chats, calls }) => {
+    messages.acceptMessages([
+      { chat: "open@s", id: "same-id", timestamp: 2, status: "sent" } as StoredMessage,
+      { chat: "other@s", id: "same-id", timestamp: 1, status: "pending" } as StoredMessage,
+    ]);
+    messages.setStatus("other@s", "same-id", "read");
+    assert.equal(messages.messages.find((m) => m.chat === "open@s")?.status, "sent");
+    assert.equal(messages.messages.find((m) => m.chat === "other@s")?.status, "read");
+
+    chats.searchQuery = "old account query";
+    chats.runSearch();
+    chats.resetAccount();
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.equal(calls.some((call) => call.command === "search"), false);
+    assert.equal(chats.searchQuery, "");
+    assert.deepEqual(chats.searchResults, []);
+  });
+});
+
+test("message fetches reject stale account and row data without losing independent updates", async () => {
+  type Page = { messages: StoredMessage[] };
+  const pending: ((page: Page) => void)[] = [];
+  const chat = "same@s";
+  const id = "same-id";
+  const row = (text: string, extra: Partial<StoredMessage> = {}) => ({
+    chat, id, timestamp: 1, status: "sent", spoiler: false, text, ...extra,
+  }) as StoredMessage;
+
+  await withApp(async ({ messages }) => {
+    messages.prepareChat(chat);
+    messages.acceptMessages([row("old account")]);
+    const oldAccount = messages.refreshRow(chat, id, false);
+    messages.resetAccount();
+    messages.prepareChat(chat);
+    messages.acceptMessages([row("new account", { spoiler: true })]);
+    pending.shift()!({ messages: [row("stale account result")] });
+    await oldAccount;
+    assert.equal(messages.messages[0].text, "new account");
+    assert.equal(messages.messages[0].spoiler, true);
+
+    messages.prepareChat(chat);
+    messages.acceptMessages([row("base")]);
+    const older = messages.refreshRow(chat, id, false);
+    const newer = messages.refreshRow(chat, id, false);
+    pending.pop()!({ messages: [row("newer result", { spoiler: true })] });
+    await newer;
+    pending.shift()!({ messages: [row("older result")] });
+    await older;
+    assert.equal(messages.messages[0].text, "newer result");
+    assert.equal(messages.messages[0].spoiler, true);
+
+    const independent = messages.refreshRow(chat, id, false);
+    messages.append({ ...row("other"), id: "other-id" });
+    pending.shift()!({ messages: [row("patched target")] });
+    await independent;
+    assert.equal(messages.messages.find((m) => m.id === id)?.text, "patched target");
+    assert.equal(messages.messages.some((m) => m.id === "other-id"), true);
+
+    const fullReload = messages.reloadMessages(chat);
+    messages.patch({ ...messages.messages.find((m) => m.id === id)!, text: "inline edit", spoiler: true });
+    pending.shift()!({ messages: [row("old full snapshot")] });
+    assert.equal(await fullReload, false);
+    assert.equal(messages.messages.find((m) => m.id === id)?.text, "inline edit");
+    assert.equal(messages.messages.find((m) => m.id === id)?.spoiler, true);
+
+    const content = messages.refreshRow(chat, id, false);
+    messages.setStatus(chat, id, "read");
+    pending.shift()!({ messages: [row("new content", { status: "sent" })] });
+    await content;
+    assert.equal(messages.messages.find((m) => m.id === id)?.text, "new content");
+    assert.equal(messages.messages.find((m) => m.id === id)?.status, "read");
+    messages.atLatest = false;
+    const ids = messages.messages.map((m) => m.id);
+    messages.append(row("outside window", { id: "outside", timestamp: 10 }));
+    assert.deepEqual(messages.messages.map((m) => m.id), ids);
+    messages.append({ ...messages.messages.find((m) => m.id === id)!, text: "loaded row update" });
+    assert.equal(messages.messages.find((m) => m.id === id)?.text, "loaded row update");
+  }, (command) => command === "message_page"
+    ? new Promise<Page>((resolve) => pending.push(resolve))
+    : undefined);
+});
 
 test("the group and DM menus offer their entries, dividers never first", async () => {
   await withApp(async ({ menuItems, messages, members, session }) => {

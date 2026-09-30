@@ -81,8 +81,8 @@ impl WhatsAppService {
                 color: p.color.clone(),
             };
         }
-        self.store.insert_message(&message).await?;
-        let _ = self.events.send(ServiceEvent::hint(&message, true));
+        let message = self.store.insert_message_row(&message).await?;
+        let _ = self.events.send(ServiceEvent::arrival(&message));
         Ok(())
     }
 
@@ -398,8 +398,8 @@ impl WhatsAppService {
                 let result = self.client.send_message(to, content).await?;
                 self.store.set_forwarded(to_chat, &result.message_id).await?;
                 let stored = self.own_message(to_chat, &result.message_id, message.text, "", to_self);
-                self.store.insert_message(&stored).await?;
-                let _ = self.events.send(ServiceEvent::hint(&stored, true));
+                let stored = self.store.insert_message_row(&stored).await?;
+                let _ = self.events.send(ServiceEvent::arrival(&stored));
             }
         }
         Ok(())
@@ -559,8 +559,8 @@ impl WhatsAppService {
         let mut stored = self.own_message(chat, &result.message_id, text, "", to_self);
         stored.quote = self.local_quote(&quoted_chat.to_string(), reply_to_id, reply_to_sender, sender.to_string() == self.own_jid()).await;
         stored.quote.chat = quote_chat.map(str::to_string);
-        self.store.insert_message(&stored).await?;
-        let _ = self.events.send(ServiceEvent::hint(&stored, true));
+        let stored = self.store.insert_message_row(&stored).await?;
+        let _ = self.events.send(ServiceEvent::arrival(&stored));
         Ok(())
     }
 

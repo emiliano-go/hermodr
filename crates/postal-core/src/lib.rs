@@ -21,7 +21,7 @@ pub use service::{
     GroupHistoryOffer, GroupHistoryResult, GroupMemberAddResult,
     GroupJoinRequest,
     AdminReport, GroupInfo, GroupKind, InviteInfo, UserProfile, Participant, ParticipantChange, Profile, SearchResult, SendOptions, WhatsAppService, ServiceConfig,
-    ServiceEvent, VoiceNote, StickerLibrary, StickerResyncReport,
+    HintChange, ServiceEvent, VoiceNote, StickerLibrary, StickerResyncReport,
 };
 pub use store::{
     ChatMarks, ChatRetention, ChatSummary, MessageReceipt, MessageStore, NewEvent, DiskRetention, RetentionLimit, StoredMessage,

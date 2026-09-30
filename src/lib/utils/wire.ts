@@ -155,6 +155,7 @@ members_can_add: boolean, };
 export type GroupJoinRequest = { jid: string, name: string, request_time: number | null, };
 export type GroupKind = { community: boolean, announcements: boolean, parent: string | null, };
 export type GroupMemberAddResult = { participants: Array<ParticipantChange>, history: GroupHistoryResult, };
+export type HintChange = "arrival" | "content" | "status";
 export type HostMessage<E = JsonValue> = { "type": "hello", api_version: number, capabilities: Array<string>, } | { "type": "event", seq: number, event: E, } | { "type": "error", id: JsonValue, error: string, } | { "type": "transcribe", id: number, provider: string, chat: string, message_id: string, mime: string, duration_ms: number, audio: string, config: TranscriptionConfig, } | { "type": "install_model", id: number, url: string, sha256: string, filename: string, data_directory: string, };
 export type InviteInfo = { jid: string, subject: string | null, description: string | null, size: number, created_at: number | null,
 /**
@@ -314,7 +315,15 @@ has_messages: boolean,
  * group: an alias addresses a person, not a room.
  */
 aliases: Array<string>, };
-export type ServiceEvent = { "kind": "qrCode", code: string, } | { "kind": "connected" } | { "kind": "disconnected" } | { "kind": "loggedOut" } | { "kind": "message", message: StoredMessage, } | { "kind": "messageHint", chat: string, id: string, sender: string, from_me: boolean, fresh: boolean, } | { "kind": "retentionApplied", removed: number, } | { "kind": "namesUpdated", count: number, } | { "kind": "chatStateChanged", chat: string, } | { "kind": "chatPinRemoved", chat: string, } | { "kind": "syncing", pending: number, applied: number, } | { "kind": "initialSyncComplete", messages: number, chats: number, } | { "kind": "synced" } | { "kind": "historyLoaded", chats: Array<string>, } | { "kind": "historyProgress", percent: number, } | { "kind": "backfill", done: number, total: number, } | { "kind": "avatarChanged", jid: string, } | { "kind": "typing", chat: string, sender: string, state: string, } | { "kind": "presence", jid: string, online: boolean, last_seen: number | null, } | { "kind": "memberLabel", chat: string, jid: string, label: string, } | { "kind": "groupChanged", chat: string, } | { "kind": "favoritesChanged" } | { "kind": "marks", chat: string, } | { "kind": "storeChanged" } | { "kind": "stickerLibraryChanged", packs: boolean, favorites: boolean, recents: boolean, } | { "kind": "uploadProgress", token: string, sent: number, total: number, };
+export type ServiceEvent = { "kind": "qrCode", code: string, } | { "kind": "connected" } | { "kind": "disconnected" } | { "kind": "loggedOut" } | { "kind": "message", message: StoredMessage, } | { "kind": "messageHint", chat: string, id: string, sender: string, from_me: boolean, fresh: boolean,
+/**
+ * What changed, so the UI knows whether a refetch is needed.
+ */
+change: HintChange,
+/**
+ * The delivery state a [`HintChange::Status`] change carries.
+ */
+status: string | null, } | { "kind": "retentionApplied", removed: number, } | { "kind": "namesUpdated", count: number, } | { "kind": "chatStateChanged", chat: string, } | { "kind": "chatPinRemoved", chat: string, } | { "kind": "syncing", pending: number, applied: number, } | { "kind": "initialSyncComplete", messages: number, chats: number, } | { "kind": "synced" } | { "kind": "historyLoaded", chats: Array<string>, } | { "kind": "historyProgress", percent: number, } | { "kind": "backfill", done: number, total: number, } | { "kind": "avatarChanged", jid: string, } | { "kind": "typing", chat: string, sender: string, state: string, } | { "kind": "presence", jid: string, online: boolean, last_seen: number | null, } | { "kind": "memberLabel", chat: string, jid: string, label: string, } | { "kind": "groupChanged", chat: string, } | { "kind": "favoritesChanged" } | { "kind": "marks", chat: string, } | { "kind": "storeChanged" } | { "kind": "stickerLibraryChanged", packs: boolean, favorites: boolean, recents: boolean, } | { "kind": "uploadProgress", token: string, sent: number, total: number, };
 export type Sticker = {
 /**
  * Base64 SHA-256 of the decrypted file: the app-state index key.

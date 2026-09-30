@@ -647,9 +647,7 @@ pub(crate) async fn set_chat_auto_transcribe(
 }
 
 pub(crate) fn schedule_auto(app: &AppHandle, account_id: &str, event: &postal_core::ServiceEvent) {
-    let postal_core::ServiceEvent::MessageHint { chat, id, .. } = event else {
-        return;
-    };
+    let Some((chat, id)) = transcription_target(event) else { return };
     if app
         .state::<TranscriptionState>()
         .config
@@ -666,4 +664,34 @@ pub(crate) fn schedule_auto(app: &AppHandle, account_id: &str, event: &postal_co
     tauri::async_runtime::spawn(async move {
         let _ = run(&app, account_id, chat, id, false, true).await;
     });
+}
+
+fn transcription_target(event: &postal_core::ServiceEvent) -> Option<(&String, &String)> {
+    Some(match event {
+        postal_core::ServiceEvent::Message { message } => (&message.header.chat, &message.header.id),
+        postal_core::ServiceEvent::MessageHint { chat, id, change, .. } if *change != postal_core::HintChange::Status => (chat, id),
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auto_transcription_targets_live_rows_and_content_hints_not_receipts() {
+        let mut message = postal_core::StoredMessage::default();
+        message.header.chat = "synthetic@invalid".into();
+        message.header.id = "note".into();
+        let row = postal_core::ServiceEvent::Message { message: Box::new(message) };
+        let expected = Some(("synthetic@invalid", "note"));
+        assert_eq!(transcription_target(&row).map(|(chat,id)| (chat.as_str(),id.as_str())), expected);
+        let mut hint = postal_core::ServiceEvent::MessageHint {
+            chat: "synthetic@invalid".into(), id: "note".into(), sender: "synthetic@invalid".into(),
+            from_me: false, fresh: false, change: postal_core::HintChange::Content, status: None,
+        };
+        assert_eq!(transcription_target(&hint).map(|(chat,id)| (chat.as_str(),id.as_str())), expected);
+        if let postal_core::ServiceEvent::MessageHint { change, .. } = &mut hint { *change = postal_core::HintChange::Status; }
+        assert!(transcription_target(&hint).is_none());
+    }
 }

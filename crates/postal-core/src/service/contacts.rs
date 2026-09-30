@@ -616,7 +616,7 @@ mod contact_identity_tests {
                 username: Some("actual_username".into()), ..Default::default()
             })).build();
         assert!(apply_contact_identity(&store, &update).await.unwrap());
-        let identity = store.contact_identity("77@lid").await.unwrap();
+        let identity = store.run(|store| store.contact_identity("77@lid")).await.unwrap();
         assert_eq!(identity.number.as_deref(), Some("59891954564"));
         assert_eq!(identity.username.as_deref(), Some("actual_username"));
         assert!(identity.saved_name.is_none());
@@ -626,10 +626,10 @@ mod contact_identity_tests {
         update.action.pn_jid = Some("447911123456@s.whatsapp.net".into());
         update.action.username = Some("second_username".into());
         assert!(apply_contact_identity(&store, &update).await.unwrap());
-        assert_eq!(store.contact_identity("447911123456@s.whatsapp.net").await.unwrap().username.as_deref(), Some("second_username"));
+        assert_eq!(store.run(|store| store.contact_identity("447911123456@s.whatsapp.net")).await.unwrap().username.as_deref(), Some("second_username"));
         update.jid = "99@lid".parse().unwrap();
         update.action.pn_jid = Some("447911123456@g.us".into());
         apply_contact_identity(&store, &update).await.unwrap();
-        assert!(store.contact_identity("99@lid").await.unwrap().number.is_none());
+        assert!(store.run(|store| store.contact_identity("99@lid")).await.unwrap().number.is_none());
     }
 }

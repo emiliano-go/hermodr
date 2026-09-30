@@ -71,6 +71,24 @@ export function queueRefreshChats() {
   }, 500);
 }
 
+/**
+ * Coalesces read marks for the open chat: each live message used to invoke
+ * `mark_read` on its own, and a burst of ten meant ten store writes and ten
+ * chat-list reloads.
+ */
+let markReadQueued: string | null = null;
+function queueMarkRead(chat: string) {
+  if (markReadQueued === chat) return;
+  markReadQueued = chat;
+  setTimeout(() => {
+    if (markReadQueued === chat) markReadQueued = null;
+    if (chat !== chats.selectedChat || ui.scrolledUp || !document.hasFocus()) return;
+    invoke("mark_read", { chat })
+      .then(() => queueRefreshChats())
+      .catch(() => {});
+  }, 300);
+}
+
 /** The same for the open chat; `markRead` marks what arrived as seen if the window has focus. */
 let messagesQueued: { chat: string; follow: boolean; markRead: boolean } | null = null;
 function queueReloadMessages(
@@ -96,10 +114,7 @@ function queueReloadMessages(
     // Decide the follow at fire time: the reader may have scrolled up while
     // the reload was in flight, and must not be yanked back down.
     if (queued.follow && messages.atLatest && !ui.scrolledUp) host.scrollToBottom();
-    if (queued.markRead && !ui.scrolledUp && document.hasFocus()) {
-      await invoke("mark_read", { chat: queued.chat }).catch(() => {});
-      queueRefreshChats();
-    }
+    if (queued.markRead) queueMarkRead(queued.chat);
   }, 100);
 }
 
@@ -174,6 +189,8 @@ async function notifyForHint(chat: string, id: string, fresh: boolean) {
   if (!fresh || !notificationsOn()) return;
   if (isOpenChat(chat)) return;
   if (isChatMuted(mutedUntilOf(chat))) return;
+  const account = session.activeAccount;
+  const generation = messages.accountGeneration;
   let message: StoredMessage | null = null;
   try {
     const page = await invoke<MessagePage>("message_page", {
@@ -182,10 +199,11 @@ async function notifyForHint(chat: string, id: string, fresh: boolean) {
       anchorId: id,
       direction: "through",
     });
-    message = page.messages.find((m) => m.id === id) ?? null;
+    message = page.messages.find((m) => m.chat === chat && m.id === id) ?? null;
   } catch {
     message = null;
   }
+  if (account !== session.activeAccount || generation !== messages.accountGeneration) return;
   if (message) {
     notifyForMessage(message, true);
     return;
@@ -232,6 +250,13 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       break;
     case "message":
     case "messageHint": {
+      // Only the delivery state changed: patch the loaded row and stop.
+      // Refetching it and refreshing the chat list per receipt is what made
+      // a busy account's read receipts cost as much as its messages.
+      if (payload.kind === "messageHint" && payload.change === "status") {
+        if (payload.status) messages.setStatus(payload.chat, payload.id, payload.status);
+        break;
+      }
       const chat = payload.kind === "message" ? payload.message.chat : payload.chat;
       const sender = payload.kind === "message" ? payload.message.sender : payload.sender;
       const fromMe = payload.kind === "message" ? payload.message.from_me : payload.from_me;
@@ -260,10 +285,7 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
           // updates never follow or mark.
           if (fresh && !ui.scrolledUp) {
             if (messages.atLatest) host.scrollToBottom();
-            if (!fromMe && document.hasFocus()) {
-              void invoke("mark_read", { chat }).catch(() => {});
-              queueRefreshChats();
-            }
+            if (!fromMe) queueMarkRead(chat);
           }
         }
       }
@@ -401,7 +423,7 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       members.setTyping(payload.chat, payload.sender, payload.state);
       break;
     case "presence":
-      members.presence[payload.jid] = { online: payload.online, last_seen: payload.last_seen };
+      members.setPresence(payload.jid, payload.online, payload.last_seen);
       break;
     case "marks":
       if (payload.chat === chats.selectedChat) {
@@ -426,8 +448,12 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
     case "memberLabel":
       if (payload.chat === chats.selectedChat) {
         const label = payload.label || null;
-        const member = members.participants.find((p) => p.jid === payload.jid);
-        if (member) member.label = label;
+        // The roster is raw, so the changed member replaces its entry.
+        if (members.participants.some((p) => p.jid === payload.jid)) {
+          members.participants = members.participants.map((p) =>
+            p.jid === payload.jid ? { ...p, label } : p,
+          );
+        }
         const info = chats.groupInfo?.participants.find((p) => p.jid === payload.jid);
         if (info) info.label = label;
       }

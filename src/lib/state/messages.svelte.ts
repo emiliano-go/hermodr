@@ -19,6 +19,8 @@ export class MessagesState {
   private refreshPending = false;
   private marksSeq = 0;
   private accountSeq = 0;
+  private rowRequestSeq = 0;
+  private rowRequests = new Map<string, number>();
   loadingOlder = $state(false);
   olderTimer: ReturnType<typeof setTimeout> | undefined = undefined;
   /** Set while a "load older" answer is in flight; its `historyLoaded` is the flush. */
@@ -33,9 +35,15 @@ export class MessagesState {
    */
   recall: { chat: string; until: number; rounds: number; auto: boolean } | null = null;
 
-  messages: StoredMessage[] = $state([]);
+  /**
+   * The open chat's rows, newest first. Raw: replaced wholesale on every
+   * update, so deep proxying only costs time on a list this size.
+   */
+  messages: StoredMessage[] = $state.raw([]);
   /** Newest-first request id; a slow `messages` response must not win over a newer one. */
   messagesSeq = 0;
+
+  get accountGeneration() { return this.accountSeq; }
 
   /** Invalidates in-flight reloads; the holder compares its id against {@link messagesSeq}. */
   nextSeq() {
@@ -44,8 +52,11 @@ export class MessagesState {
   /** Oldest first, the order the conversation is drawn in. */
   ordered = $derived(this.messages.slice().reverse());
 
-  /** Reactions, stars, the pinned message, polls and events of the open chat. */
-  marks = $state<Marks>(structuredClone(NO_MARKS));
+  /**
+   * Reactions, stars, the pinned message, polls and events of the open chat.
+   * Replaced wholesale, so raw like the message list.
+   */
+  marks = $state.raw<Marks>(structuredClone(NO_MARKS));
 
   /** Per message: each emoji with its count, and whether one of them is ours. */
   reactionsFor = $derived.by(() => {
@@ -159,13 +170,40 @@ export class MessagesState {
     return true;
   }
 
-  acceptMessages(rows: StoredMessage[]) { this.messages = this.window.replace(rows); }
+  acceptMessages(rows: StoredMessage[]) {
+    this.rowRequests.clear();
+    this.messages = this.window.replace(rows);
+  }
 
   /** Folds one changed row in, so only its bubble re-renders. */
-  patch(row: StoredMessage) { this.messages = this.window.patch(row); }
+  patch(row: StoredMessage) {
+    if (row.chat !== this.chat) return;
+    const key = JSON.stringify([row.chat, row.id]);
+    const next = this.window.patch(row);
+    if (next === this.messages) return;
+    this.rowRequests.delete(key);
+    this.messagesSeq++;
+    this.messages = next;
+  }
+
+  /** Applies a delivery-state change to a loaded row without a refetch. */
+  setStatus(chat: string, id: string, status: string) {
+    const row = this.messages.find((m) => m.chat === chat && m.id === id);
+    if (!row || row.status === status) return;
+    const next = this.window.patch({ ...row, status });
+    if (next === this.messages) return;
+    this.messagesSeq++;
+    this.messages = next;
+  }
 
   /** Adds a row that just arrived, or refreshes it when already loaded. */
-  append(row: StoredMessage) { this.messages = this.window.insert(row); }
+  append(row: StoredMessage) {
+    if (row.chat !== this.chat) return;
+    if (!this.atLatest && !this.messages.some((loaded) => loaded.chat === row.chat && loaded.id === row.id)) return;
+    this.rowRequests.delete(JSON.stringify([row.chat, row.id]));
+    this.messagesSeq++;
+    this.messages = this.window.insert(row);
+  }
 
   /**
    * Fetches one row and folds it in without reloading the window. A full
@@ -175,8 +213,15 @@ export class MessagesState {
    */
   async refreshRow(chat: string, id: string, mayAppend: boolean) {
     if (chat !== this.chat) return;
-    const known = this.messages.some((m) => m.id === id);
+    const known = this.messages.some((m) => m.chat === chat && m.id === id);
     if (!known && !(mayAppend && this.atLatest)) return;
+    const key = JSON.stringify([chat, id]);
+    const request = ++this.rowRequestSeq;
+    const account = this.accountSeq;
+    const window = this.window;
+    const status = this.messages.find((m) => m.chat === chat && m.id === id)?.status;
+    this.rowRequests.set(key, request);
+    this.messagesSeq++;
     try {
       const page = await invoke<MessagePage>("message_page", {
         chat,
@@ -184,12 +229,17 @@ export class MessagesState {
         anchorId: id,
         direction: "through",
       });
-      const row = page.messages.find((m) => m.id === id);
+      if (account !== this.accountSeq || window !== this.window || chat !== this.chat || this.rowRequests.get(key) !== request) return;
+      let row = page.messages.find((m) => m.chat === chat && m.id === id);
       if (!row) return;
+      const current = this.messages.find((m) => m.chat === chat && m.id === id);
+      if (current && current.status !== status) row = { ...row, status: current.status };
       if (known) this.patch(row);
       else this.append(row);
     } catch {
       // A later full reload covers a failed one-row fetch.
+    } finally {
+      if (this.rowRequests.get(key) === request) this.rowRequests.delete(key);
     }
   }
 
@@ -202,6 +252,7 @@ export class MessagesState {
   resizeWindow(limit: number) {
     this.messageLimit = limit;
     this.window = new MessageWindow(limit);
+    this.rowRequests.clear();
     this.messages = this.window.retain(this.messages, this.atLatest ? "newer" : "older");
   }
 
@@ -210,6 +261,7 @@ export class MessagesState {
       .find((row) => row.getBoundingClientRect().bottom > el.getBoundingClientRect().top) : undefined;
     const id = anchor?.dataset.id;
     const top = anchor?.getBoundingClientRect().top ?? 0;
+    if (mode === "replace") this.rowRequests.clear();
     this.messages = mode === "replace" ? this.window.replace(rows) : this.window.retain(rows, mode);
     if (el && id) {
       await tick();
@@ -309,7 +361,9 @@ export class MessagesState {
       await invoke("download_media", { chat, id: message.id });
       if (account !== this.accountSeq) return;
       delete this.downloadTries[message.id];
-      await this.reloadMessages(chat);
+      // Fold the fetched path into its row instead of reloading the window;
+      // a chat full of stickers used to reload once per file.
+      await this.refreshRow(chat, message.id, true);
     } catch (e) {
       // The core already asked the sender to upload it again; what is left is shown on the message.
       if (account !== this.accountSeq) return;
@@ -461,6 +515,7 @@ export class MessagesState {
     this.chat = chat;
     this.messageLimit = limit;
     this.window = new MessageWindow(limit);
+    this.rowRequests.clear();
     this.messages = [];
     this.atLatest = true;
     this.refreshPending = false;
@@ -488,6 +543,7 @@ export class MessagesState {
     this.marksSeq++;
     this.messagesSeq++;
     this.window.evict();
+    this.rowRequests.clear();
     this.recall = null;
     this.loadingOlder = false;
     this.historyActive = false;

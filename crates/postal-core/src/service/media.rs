@@ -196,8 +196,8 @@ impl WhatsAppService {
             chat, &chat_jid, &result.message_id, caption.unwrap_or_default(), kind, to_self,
             view_once, stored_path, locator, voice_seconds, reply.as_ref(),
         ).await?;
-        self.store.insert_message(&stored).await?;
-        let _ = self.events.send(ServiceEvent::hint(&stored, true));
+        let stored = self.store.insert_message_row(&stored).await?;
+        let _ = self.events.send(ServiceEvent::arrival(&stored));
         Ok(warning)
     }
 
@@ -454,13 +454,13 @@ impl WhatsAppService {
         if let Some(reply) = &reply {
             stored.quote = self.reply_quote(chat, reply).await?;
         }
-        self.store.insert_message(&stored).await?;
+        let stored = self.store.insert_message_row(&stored).await?;
         if let Err(e) = record_sticker(&self.store, &stored).await {
             log::warn!("could not record a sent sticker: {e}");
         }
         let now = unix_now();
         let _ = self.store.set_sticker_recent(filehash, Some(now), now).await;
-        let _ = self.events.send(ServiceEvent::hint(&stored, true));
+        let _ = self.events.send(ServiceEvent::arrival(&stored));
         Ok(())
     }
 

@@ -47,9 +47,10 @@ export class UiState {
   /** Bumped so the open info reloads on new receipts. */
   infoVersion = $state(0);
 
-  starredItems = $state<StarredItem[] | null>(null);
+  /** Replaced wholesale when loaded or filtered, so raw like other long lists. */
+  starredItems = $state.raw<StarredItem[] | null>(null);
   showStarred = $state(false);
-  finder = $state<Finder | null>(null);
+  finder = $state.raw<Finder | null>(null);
 
   viewerIndex = $state<number | null>(null);
   /** The view-once message being shown; closing it spends it. */

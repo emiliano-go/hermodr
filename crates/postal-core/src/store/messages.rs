@@ -83,6 +83,12 @@ impl MessageStore {
         Ok(())
     }
 
+    /// Inserts and returns the effective stored row.
+    pub(crate) fn insert_message_row(&self, message: &StoredMessage) -> Result<StoredMessage> {
+        self.insert_message(message)?;
+        self.message(&message.header.chat, &message.header.id)
+    }
+
     /// The upsert behind every insert; see `insert_message` for the
     /// state rules it enforces.
     pub(super) fn insert_row(conn: &Connection, message: &StoredMessage) -> Result<()> {
@@ -376,6 +382,11 @@ impl MessageStore {
 }
 
 impl StoreWorker {
+    pub(crate) async fn insert_message_row(&self, message: &StoredMessage) -> Result<StoredMessage> {
+        let message = message.clone();
+        self.run(move |store| store.insert_message_row(&message)).await
+    }
+
     pub(crate) async fn insert_message(&self, message: &StoredMessage) -> Result<()> {
         let message = message.clone();
         self.run(move |store| store.insert_message(&message)).await

@@ -43,7 +43,7 @@ pub fn wire_types() -> String {
 }
 
 pub fn wire_fixture() -> String {
-    use postal_core::{ServiceEvent, StoredMessage};
+    use postal_core::{HintChange, ServiceEvent, StoredMessage};
     let mut message = StoredMessage::default();
     message.history_shareable = true;
     message.header.chat = "synthetic@invalid".into();
@@ -58,6 +58,7 @@ pub fn wire_fixture() -> String {
     let event = ServiceEvent::MessageHint {
         chat: message.header.chat.clone(), id: message.header.id.clone(),
         sender: "synthetic@invalid".into(), from_me: true, fresh: false,
+        change: HintChange::Status, status: Some("read".into()),
     };
     let plugin = postal_plugins::wire_fixture(serde_json::to_value(&event).unwrap());
     let archive = postal_core::store::archive::ArchiveReport {

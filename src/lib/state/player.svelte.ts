@@ -52,22 +52,22 @@ function mime(path: string) {
   return "audio/ogg";
 }
 
+// One decode context for the session: creating and closing one per note was
+// pure overhead, and a suspended context still decodes.
+let decodeContext: AudioContext | null = null;
+
 async function shapeOf(bytes: Uint8Array): Promise<VoiceShape> {
-  const context = new AudioContext();
-  try {
-    const buffer = await context.decodeAudioData(bytes.slice().buffer);
-    const data = buffer.getChannelData(0);
-    const step = Math.max(1, Math.floor(data.length / BARS));
-    const peaks = Array.from({ length: BARS }, (_, i) => {
-      let sum = 0;
-      for (let j = i * step; j < Math.min(data.length, (i + 1) * step); j++) sum += data[j] * data[j];
-      return Math.sqrt(sum / step);
-    });
-    const top = Math.max(...peaks, 1e-6);
-    return { peaks: peaks.map((p) => Math.max(0.08, p / top)), duration: buffer.duration };
-  } finally {
-    void context.close();
-  }
+  if (!decodeContext || decodeContext.state === "closed") decodeContext = new AudioContext();
+  const buffer = await decodeContext.decodeAudioData(bytes.slice().buffer);
+  const data = buffer.getChannelData(0);
+  const step = Math.max(1, Math.floor(data.length / BARS));
+  const peaks = Array.from({ length: BARS }, (_, i) => {
+    let sum = 0;
+    for (let j = i * step; j < Math.min(data.length, (i + 1) * step); j++) sum += data[j] * data[j];
+    return Math.sqrt(sum / step);
+  });
+  const top = Math.max(...peaks, 1e-6);
+  return { peaks: peaks.map((p) => Math.max(0.08, p / top)), duration: buffer.duration };
 }
 
 class PlayerState {
@@ -80,7 +80,7 @@ class PlayerState {
   /** Decoded length once the waveform is ready; the stored one covers before that. */
   duration = $state(0);
   /** Decoded shape per file, so scrolling back does not decode again. */
-  shapes = $state<Record<string, VoiceShape>>({});
+  shapes = $state.raw<Record<string, VoiceShape>>({});
 
   #audio: HTMLAudioElement | null = null;
   #url: string | null = null;
@@ -290,7 +290,7 @@ class PlayerState {
   async #decodeShape(path: string, bytes: Uint8Array) {
     try {
       const shape = await shapeOf(bytes);
-      this.shapes[path] = shape;
+      this.shapes = { ...this.shapes, [path]: shape };
       if (this.track?.path === path) this.duration = shape.duration;
     } catch {
       // The stored length still covers the note.

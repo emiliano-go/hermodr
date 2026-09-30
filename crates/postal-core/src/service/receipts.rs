@@ -41,13 +41,13 @@ impl Inbound {
                     store.set_delivery_state(&chat, id.as_str(), status).await.observed()
                 {
                     if let Some(updated) = store.message(&chat, id.as_str()).await.observed() {
-                        let _ = events.send(ServiceEvent::hint(&updated, false));
+                        let _ = events.send(ServiceEvent::status(&updated, status));
                     }
                 } else if let Some(updated) =
                     store.set_delivery_state_by_id(id.as_str(), status).await.observed()
                 {
                     for message in updated {
-                        let _ = events.send(ServiceEvent::hint(&message, false));
+                        let _ = events.send(ServiceEvent::status(&message, status));
                     }
                 }
             }
@@ -70,7 +70,7 @@ impl Inbound {
                 if let Some(true) = store.set_delivery_state(&chat, &ack.id, "sent").await.observed()
                 {
                     if let Some(updated) = store.message(&chat, &ack.id).await.observed() {
-                        let _ = events.send(ServiceEvent::hint(&updated, false));
+                        let _ = events.send(ServiceEvent::status(&updated, "sent"));
                     }
                     done = true;
                 }
@@ -80,7 +80,7 @@ impl Inbound {
                     store.set_delivery_state_by_id(&ack.id, "sent").await.observed()
                 {
                     for message in updated {
-                        let _ = events.send(ServiceEvent::hint(&message, false));
+                        let _ = events.send(ServiceEvent::status(&message, "sent"));
                     }
                 }
             }

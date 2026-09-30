@@ -8,12 +8,14 @@ export const fixture = {
     "missing_attachments": 0
   },
   "event": {
+    "change": "status",
     "chat": "synthetic@invalid",
     "fresh": false,
     "from_me": true,
     "id": "fixture",
     "kind": "messageHint",
-    "sender": "synthetic@invalid"
+    "sender": "synthetic@invalid",
+    "status": "read"
   },
   "message": {
     "chat": "synthetic@invalid",
@@ -56,12 +58,14 @@ export const fixture = {
   },
   "plugin": {
     "event": {
+      "change": "status",
       "chat": "synthetic@invalid",
       "fresh": false,
       "from_me": true,
       "id": "fixture",
       "kind": "messageHint",
-      "sender": "synthetic@invalid"
+      "sender": "synthetic@invalid",
+      "status": "read"
     },
     "seq": 7,
     "type": "event"
@@ -75,7 +79,7 @@ export const fixture = {
     "keep_archived": true,
     "keep_history": true,
     "media_dir": null,
-    "message_window_size": 500,
+    "message_window_size": 250,
     "notifications_enabled": true,
     "request_full_history": false,
     "retention": {

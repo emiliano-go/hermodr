@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fixture } from "./wire.fixture.ts";
+import { DEFAULT_MESSAGE_WINDOW } from "./message-window.ts";
 
 test("Rust Serde fixture keeps flattened DTO fields and v1 plugin/archive keys", () => {
   assert.equal(fixture.message.from_me, true);
@@ -15,6 +16,6 @@ test("Rust Serde fixture keeps flattened DTO fields and v1 plugin/archive keys",
   assert.equal("fromMe" in fixture.event, false);
   assert.equal(fixture.plugin.type, "event");
   assert.deepEqual(fixture.plugin.event, fixture.event);
-  assert.equal(fixture.settings.message_window_size, 500);
+  assert.equal(fixture.settings.message_window_size, DEFAULT_MESSAGE_WINDOW);
   assert.equal(fixture.archive.missing_attachments, 0);
 });

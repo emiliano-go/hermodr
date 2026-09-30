@@ -80,13 +80,6 @@
   class:mine={message.from_me}
   class:picking={vm.picking}
   class:picked={vm.picked}
-  onclickcapture={(event) => {
-    if (vm.picking || ((event.ctrlKey || event.metaKey) && !message.revoked)) {
-      event.preventDefault();
-      event.stopPropagation();
-      api.onpick(message);
-    }
-  }}
   ondblclick={() => {
     if (!vm.picking) api.onreplydraft(message);
   }}
@@ -543,7 +536,7 @@
     display: flex;
     flex-direction: column;
     padding: 1px var(--pad-l) 1px var(--pad-r);
-    transition: background-color calc(0.6s * var(--motion-scale)) var(--ease);
+    transition: background-color calc(0.15s * var(--motion-scale)) var(--ease);
   }
   .msg-row:hover {
     background: var(--row-hover);
@@ -614,6 +607,8 @@
     flex-shrink: 0;
     align-self: flex-start;
     position: relative;
+    /* A bubble's paint and layout never affect its neighbours. */
+    contain: layout style;
     max-width: 65%;
     background: var(--bubble);
     border-radius: var(--radius-sm);

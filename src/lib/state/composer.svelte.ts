@@ -46,8 +46,8 @@ export class ComposerState {
   /** Mentions picked from the autocomplete, used to convert the text on send. */
   chosenMentions = $state<{ name: string; jid: string }[]>([]);
 
-  // `:name` completion, as Discord does it.
-  emojiTable = $state<Emoji[]>([]);
+  // `:name` completion, as Discord does it. Replaced once, then read only.
+  emojiTable = $state.raw<Emoji[]>([]);
   emojiToken = $state<{ query: string; start: number } | null>(null);
   emojiIndex = $state(0);
   pickerTab = $state<PickerTab | null>(null);
