@@ -20,22 +20,6 @@ export function replyIcon(kind: string | null) {
   return "\u{1F4CE}";
 }
 
-/** Human-readable delivery state for a message we sent. */
-export function statusMark(status: string | null) {
-  switch (status) {
-    case "pending":
-      return "🕓";
-    case "sent":
-      return "✓";
-    case "delivered":
-      return "✓✓";
-    case "read":
-      return "✓✓";
-    default:
-      return "";
-  }
-}
-
 /** A media message's caption. Uncaptioned media is stored as `[kind]`. */
 export function captionOf(message: StoredMessage) {
   const text = message.text.trim();
