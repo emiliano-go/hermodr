@@ -33,7 +33,11 @@ export class MessagesState {
    */
   recall: { chat: string; until: number; rounds: number; auto: boolean } | null = null;
 
-  messages: StoredMessage[] = $state([]);
+  /**
+   * The open chat's rows, newest first. Raw: replaced wholesale on every
+   * update, so deep proxying only costs time on a list this size.
+   */
+  messages: StoredMessage[] = $state.raw([]);
   /** Newest-first request id; a slow `messages` response must not win over a newer one. */
   messagesSeq = 0;
 
@@ -44,8 +48,11 @@ export class MessagesState {
   /** Oldest first, the order the conversation is drawn in. */
   ordered = $derived(this.messages.slice().reverse());
 
-  /** Reactions, stars, the pinned message, polls and events of the open chat. */
-  marks = $state<Marks>(structuredClone(NO_MARKS));
+  /**
+   * Reactions, stars, the pinned message, polls and events of the open chat.
+   * Replaced wholesale, so raw like the message list.
+   */
+  marks = $state.raw<Marks>(structuredClone(NO_MARKS));
 
   /** Per message: each emoji with its count, and whether one of them is ours. */
   reactionsFor = $derived.by(() => {
@@ -163,6 +170,13 @@ export class MessagesState {
 
   /** Folds one changed row in, so only its bubble re-renders. */
   patch(row: StoredMessage) { this.messages = this.window.patch(row); }
+
+  /** Applies a delivery-state change to a loaded row without a refetch. */
+  setStatus(id: string, status: string) {
+    const row = this.messages.find((m) => m.id === id);
+    if (!row || row.status === status) return;
+    this.messages = this.window.patch({ ...row, status });
+  }
 
   /** Adds a row that just arrived, or refreshes it when already loaded. */
   append(row: StoredMessage) { this.messages = this.window.insert(row); }
@@ -309,7 +323,9 @@ export class MessagesState {
       await invoke("download_media", { chat, id: message.id });
       if (account !== this.accountSeq) return;
       delete this.downloadTries[message.id];
-      await this.reloadMessages(chat);
+      // Fold the fetched path into its row instead of reloading the window;
+      // a chat full of stickers used to reload once per file.
+      await this.refreshRow(chat, message.id, true);
     } catch (e) {
       // The core already asked the sender to upload it again; what is left is shown on the message.
       if (account !== this.accountSeq) return;

@@ -22,7 +22,8 @@ function bareJid(jid: string) {
 }
 
 export class ChatsState {
-  chats: ChatSummary[] = $state([]);
+  /** The list, replaced wholesale on refresh; raw to avoid proxy overhead. */
+  chats: ChatSummary[] = $state.raw([]);
   /** Chat list only: cheap, local, never blocks on the network. */
   chatsSeq = 0;
   selectedChat = $state<string | null>(null);
@@ -30,10 +31,12 @@ export class ChatsState {
   chatFilter = $state<ChatFilter>("all");
 
   searchQuery = $state("");
-  searchResults = $state<SearchResult[]>([]);
+  searchResults = $state.raw<SearchResult[]>([]);
+  searchTimer: ReturnType<typeof setTimeout> | undefined = undefined;
+  searchSeq = 0;
 
   /** Communities and their subgroups among our groups, for the chat list. */
-  groupKinds = $state<
+  groupKinds = $state.raw<
     Record<string, { community: boolean; announcements: boolean; parent: string | null }>
   >({});
 
@@ -128,21 +131,30 @@ export class ChatsState {
     }
   }
 
-  /** Runs the chat/contact/group search. */
-  async runSearch() {
+  /** Runs the chat/contact/group search, debounced while the user types. */
+  runSearch() {
+    clearTimeout(this.searchTimer);
+    this.searchTimer = setTimeout(() => void this.searchNow(), 200);
+  }
+
+  private async searchNow() {
+    const seq = ++this.searchSeq;
     const query = this.searchQuery.trim();
     if (!query) {
       this.searchResults = [];
       return;
     }
     try {
-      this.searchResults = await invoke<SearchResult[]>("search", { query });
+      const results = await invoke<SearchResult[]>("search", { query });
+      if (seq === this.searchSeq) this.searchResults = results;
     } catch (e) {
-      ui.fail(e);
+      if (seq === this.searchSeq) ui.fail(e);
     }
   }
 
   clearSearch() {
+    clearTimeout(this.searchTimer);
+    this.searchSeq++;
     this.searchQuery = "";
     this.searchResults = [];
   }

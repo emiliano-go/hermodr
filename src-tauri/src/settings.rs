@@ -71,7 +71,7 @@ impl Default for UiSettings {
     fn default() -> Self {
         Self {
             retention: DiskRetention::default(),
-            message_window_size: 500,
+            message_window_size: 250,
             request_full_history: false,
             auto_download_media: true,
             media_dir: None,
@@ -222,6 +222,6 @@ mod tests {
         assert!(!parse_settings(r#"{"verbose_whatsapp_logs":false}"#).unwrap().verbose_whatsapp_logs);
         assert!(parse_settings(legacy).unwrap().freeze_chat_list_on_hover);
         assert!(!parse_settings(r#"{"freeze_chat_list_on_hover":false}"#).unwrap().freeze_chat_list_on_hover);
-        assert_eq!(bounded.message_window_size, 500);
+        assert_eq!(bounded.message_window_size, 250);
     }
 }

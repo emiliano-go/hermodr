@@ -44,8 +44,9 @@ export async function openPings(chat: string | null) {
   ui.finder = { mode: "pings", chat, items: null };
   try {
     const got = await invoke<StoredMessage[]>("pings", { chat });
-    if (ui.finder?.mode === "pings" && ui.finder.chat === chat) {
-      ui.finder.items = got.map((m) => found(m, chat === null));
+    const current = ui.finder;
+    if (current?.mode === "pings" && current.chat === chat) {
+      ui.finder = { ...current, items: got.map((m) => found(m, chat === null)) };
     }
   } catch (e) {
     ui.finder = null;
@@ -58,26 +59,31 @@ export async function openPings(chat: string | null) {
  * previous 24 hours of the chat, then searches again over everything kept.
  */
 export async function searchChat(query: string, more = false) {
-  const current = ui.finder;
+  let current = ui.finder;
   const chat = current?.chat;
   if (!current || !chat) return;
   if (more && chat === chats.selectedChat) await messages.recallDay(chat);
   if (ui.finder !== current) return;
   const reach = messages.messages.at(-1)?.timestamp ?? null;
   if (!query.trim()) {
-    Object.assign(current, { items: [], query, reach, more: false });
+    ui.finder = { ...current, items: [], query, reach, more: false };
     return;
   }
-  if (!more) current.items = null;
+  if (!more) {
+    // The finder is raw, so clearing rows replaces the object.
+    current = { ...current, items: null };
+    ui.finder = current;
+  }
   try {
     const got = await invoke<StoredMessage[]>("search_messages", { chat, query, limit: SEARCH_LIMIT });
     if (ui.finder !== current) return;
-    Object.assign(current, {
+    ui.finder = {
+      ...current,
       items: got.map((m) => found(m, false)),
       query,
       reach,
       more: !messages.olderExhausted,
-    });
+    };
   } catch (e) {
     ui.fail(e);
   }

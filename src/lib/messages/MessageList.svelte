@@ -242,6 +242,21 @@
   const typerItems = $derived(
     typers.map((t) => ({ ...t, label: typerLabelOf(t.sender), hue: hue(t.sender) })),
   );
+
+  // One capture listener for the list instead of one per row: picking and
+  // ctrl-click intercept before any inner button sees the click.
+  function captureClick(event: MouseEvent) {
+    const row = (event.target as HTMLElement | null)?.closest?.(".msg-row");
+    const id = row?.querySelector<HTMLElement>(".bubble[data-id]")?.dataset.id;
+    if (!id) return;
+    const message = messages.find((m) => m.id === id);
+    if (!message || message.revoked) return;
+    if (picking || event.ctrlKey || event.metaKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      onpick(message);
+    }
+  }
 </script>
 
 <div
@@ -249,6 +264,7 @@
   class:switching
   class:group={isGroup}
   bind:this={scroller}
+  onclickcapture={captureClick}
   onscroll={onscroll}>
   {#if messages.length > 0}
     <button class="load-older" onclick={onloadolder} disabled={loadingOlder}>

@@ -329,15 +329,22 @@
    * loads. Runs only until the height holds still, or the user scrolls.
    */
   function pinUnreadDivider(chat: string) {
-    let frames = 0;
+    // Polling replaces a per-frame measure loop: a chat open used to force
+    // layout on every frame for up to five seconds while media above the
+    // divider settled. Checking close together while the height still moves,
+    // then backing off, costs the same result for a fraction of the work.
+    const deadline = Date.now() + 5000;
     let settled = 0;
     let lastHeight = -1;
     let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const cancel = () => (cancelled = true);
     const el = scroller;
     el?.addEventListener("wheel", cancel, { passive: true });
     el?.addEventListener("touchstart", cancel, { passive: true });
     const finish = () => {
+      cancelled = true;
+      clearTimeout(timer);
       el?.removeEventListener("wheel", cancel);
       el?.removeEventListener("touchstart", cancel);
     };
@@ -352,13 +359,15 @@
       const moved = Math.abs(next - scroller.scrollTop) > 0.5;
       if (moved) scroller.scrollTop = next;
       // Any height change above the divider invalidates the position.
-      settled = !moved && height === lastHeight ? settled + 1 : 0;
+      const grew = height !== lastHeight;
+      settled = !moved && !grew ? settled + 1 : 0;
       lastHeight = height;
-      // Three quarters of a second of stillness is enough for local media.
-      if (settled >= 45 || ++frames >= 300) return finish();
-      requestAnimationFrame(pin);
+      // Five quiet checks: about the three quarters of a second the
+      // per-frame loop waited, without the per-frame cost.
+      if (settled >= 5 || Date.now() > deadline) return finish();
+      timer = setTimeout(pin, moved || grew ? 50 : 200);
     };
-    requestAnimationFrame(pin);
+    timer = setTimeout(pin, 0);
   }
 
   /** Jumps to the next unread mention, oldest to newest, wrapping around. */
@@ -464,20 +473,29 @@
     if (messages.atLatest && !untrack(() => ui.scrolledUp)) scrollToBottom();
   });
 
+  // Scroll events can outpace frames; the handler measures layout, so one
+  // run per frame is all that is useful.
+  let scrollQueued = false;
   function onScroll() {
-    if (!scroller) return;
-    const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-    ui.scrolledUp = !messages.atLatest || distance > 120;
-    if (
-      scroller.scrollTop < 80 &&
-      messages.loadOnScroll &&
-      !messages.olderExhausted &&
-      !messages.loadingOlder &&
-      messages.messages.length > 0
-    ) {
-      void messages.loadOlder(chats.selectedChat, true, scroller);
-    }
-    scheduleReadMarking();
+    if (scrollQueued) return;
+    scrollQueued = true;
+    requestAnimationFrame(() => {
+      scrollQueued = false;
+      if (!scroller) return;
+      const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+      const scrolledUp = !messages.atLatest || distance > 120;
+      if (ui.scrolledUp !== scrolledUp) ui.scrolledUp = scrolledUp;
+      if (
+        scroller.scrollTop < 80 &&
+        messages.loadOnScroll &&
+        !messages.olderExhausted &&
+        !messages.loadingOlder &&
+        messages.messages.length > 0
+      ) {
+        void messages.loadOlder(chats.selectedChat, true, scroller);
+      }
+      scheduleReadMarking();
+    });
   }
 
   /**
@@ -492,25 +510,27 @@
       if (!scroller || !chats.selectedChat || !document.hasFocus()) return;
       const chat = chats.selectedChat;
       const bottom = scroller.getBoundingClientRect().bottom;
-      let candidate: StoredMessage | null = null;
-      for (const message of messages.ordered) {
-        const el = scroller.querySelector(`[data-id="${message.id}"]`) as HTMLElement | null;
-        if (!el) continue;
-        if (el.getBoundingClientRect().top < bottom) candidate = message;
-        else break;
+      // One pass over the rendered bubbles in draw order; the old form ran a
+      // querySelector per message, which is quadratic on a long chat.
+      let candidate: string | null = null;
+      const rows = scroller.querySelectorAll<HTMLElement>(".bubble[data-id]");
+      for (const row of rows) {
+        if (row.getBoundingClientRect().top >= bottom) break;
+        candidate = row.dataset.id ?? null;
       }
-      if (!candidate || candidate.id === messages.lastMarkedId) return;
-      messages.lastMarkedId = candidate.id;
+      if (!candidate || candidate === messages.lastMarkedId) return;
+      messages.lastMarkedId = candidate;
+      const ids = messages.ordered;
       const firstIdx = messages.firstUnreadId
-        ? messages.ordered.findIndex((m) => m.id === messages.firstUnreadId)
+        ? ids.findIndex((m) => m.id === messages.firstUnreadId)
         : -1;
       // Without a recorded newest unread, fall back to the first.
       const lastIdx = messages.lastUnreadId
-        ? messages.ordered.findIndex((m) => m.id === messages.lastUnreadId)
+        ? ids.findIndex((m) => m.id === messages.lastUnreadId)
         : -1;
       const targetIdx = lastIdx >= 0 ? lastIdx : firstIdx;
-      const markedIdx = messages.ordered.findIndex((m) => m.id === candidate.id);
-      invoke<number>("mark_read_until", { chat, id: candidate.id })
+      const markedIdx = ids.findIndex((m) => m.id === candidate);
+      invoke<number>("mark_read_until", { chat, id: candidate })
         .then((changed) => {
           if (changed > 0) queueRefreshChats();
           // The divider stays until the newest unread is read too, so it does
@@ -618,9 +638,11 @@
   const autoFetched = new Set<string>();
   $effect(() => {
     if (!session.connected) return;
+    // A Set, not a scan per message: the list can hold thousands of rows.
+    const onceIds = new Set(messages.marks.view_once.map((v) => v.id));
     for (const m of messages.messages) {
       if (m.media_path || !(m.media_kind === "sticker" || m.media_kind === "audio" || isSvg(m))) continue;
-      if (autoFetched.has(m.id) || messages.marks.view_once.some((v) => v.id === m.id)) continue;
+      if (autoFetched.has(m.id) || onceIds.has(m.id)) continue;
       autoFetched.add(m.id);
       void untrack(() => messages.downloadMedia(chats.selectedChat, m, true));
     }
@@ -1617,9 +1639,14 @@
     onlabel={async (label) => {
       await invoke("set_member_label", { chat: selectedChat, label });
       const user = session.me?.split("@")[0];
-      for (const list of [chats.groupInfo?.participants ?? [], members.participants]) {
-        const self = list.find((p) => p.jid === session.me || p.number === user);
-        if (self) self.label = label || null;
+      const info = chats.groupInfo?.participants.find((p) => p.jid === session.me || p.number === user);
+      if (info) info.label = label || null;
+      // The roster is raw, so the changed entry replaces its member.
+      const self = members.participants.find((p) => p.jid === session.me || p.number === user);
+      if (self) {
+        members.participants = members.participants.map((p) =>
+          p.jid === self.jid ? { ...p, label: label || null } : p,
+        );
       }
     }}
     onclose={() => (chats.showGroupInfo = false)} />
