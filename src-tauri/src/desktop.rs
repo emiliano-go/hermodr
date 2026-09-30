@@ -82,3 +82,14 @@ pub(crate) fn is_hyprland() -> bool {
             .map(|v| v.eq_ignore_ascii_case("hyprland"))
             .unwrap_or(false)
 }
+
+pub(crate) fn is_sway() -> bool {
+    std::env::var("SWAYSOCK").is_ok()
+        || std::env::var("XDG_CURRENT_DESKTOP")
+            .map(|v| v.eq_ignore_ascii_case("sway"))
+            .unwrap_or(false)
+}
+
+pub(crate) fn is_tiling() -> bool {
+    is_hyprland() || is_sway()
+}
