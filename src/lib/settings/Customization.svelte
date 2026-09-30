@@ -14,6 +14,7 @@
     pictureDataUrl,
     removeAppPicture,
     setAppPicture,
+    themeCss,
     type Density,
     type Theme,
   } from "$lib/utils/theme.svelte";
@@ -39,7 +40,7 @@
   let importing = $state(false);
   let importText = $state("");
   let importError = $state<string | null>(null);
-  let copied = $state(false);
+  let copied = $state<"json" | "css" | null>(null);
 
   const theme = $derived(activeTheme());
   const builtIn = $derived(isBuiltIn(theme));
@@ -144,11 +145,16 @@
     if (customization.theme === id) customization.theme = "dark";
   }
 
-  async function exportTheme() {
+  async function exportTheme(format: "json" | "css") {
     const { name, tokens, css, wallpaper } = theme;
-    await navigator.clipboard.writeText(JSON.stringify({ name, tokens, css, wallpaper }, null, 2));
-    copied = true;
-    setTimeout(() => (copied = false), 1500);
+    importError = null;
+    try {
+      await navigator.clipboard.writeText(format === "css" ? themeCss(theme) : JSON.stringify({ name, tokens, css, wallpaper }, null, 2));
+      copied = format;
+      setTimeout(() => (copied = null), 1500);
+    } catch (e) {
+      importError = `Could not copy theme: ${String(e)}`;
+    }
   }
 
   function importTheme() {
@@ -240,7 +246,8 @@
     {/if}
     <span class="spacer"></span>
     <Button variant="ghost" onclick={() => duplicate(theme)}><Icon name="copy" size={14} /> Duplicate</Button>
-    <Button variant="ghost" onclick={exportTheme}>{copied ? "Copied" : "Export"}</Button>
+    <Button variant="ghost" onclick={() => exportTheme("json")}>{copied === "json" ? "Copied" : "Export"}</Button>
+    <Button variant="ghost" onclick={() => exportTheme("css")}>{copied === "css" ? "Copied CSS" : "Copy CSS"}</Button>
     <Button variant="ghost" active={importing} onclick={() => (importing = !importing)}>Import</Button>
     {#if !builtIn}
       <Button variant="ghost" danger onclick={() => removeTheme(theme.id)}>
@@ -249,6 +256,7 @@
     {/if}
   </div>
 
+  {#if importError && !importing}<p class="error-text" role="alert">{importError}</p>{/if}
   {#if importing}
     <div class="import">
       <textarea

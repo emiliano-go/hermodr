@@ -1,5 +1,6 @@
 <script lang="ts">
   import MetaLayout from "./MetaLayout.svelte";
+  import Customization from "$lib/settings/Customization.svelte";
   import BooleanProps from "$lib/ui/BooleanProps.svelte";
   import ChatMetadata from "./ChatMetadata.svelte";
   import RetentionSettings from "./RetentionSettings.svelte";
@@ -17,6 +18,7 @@
 </script>
 
 <MetaLayout />
+<details><summary>Theme export fixture</summary><Customization /></details>
 <h1>Synthetic flag diagnostics</h1>
 <p>No backend, account, database, network service or native IPC.</p>
 <button onclick={() => { fixture.updated = true; }}>Apply synthetic delta</button>

@@ -495,6 +495,12 @@ export function isBuiltIn(theme: Theme) {
   return theme.id === "system" || BUILT_IN.some((t) => t.id === theme.id);
 }
 
+export function themeCss(theme: Theme): string {
+  const variables = TOKENS.filter(({ key }) => theme.tokens[key])
+    .map(({ key }) => `  --${key}: ${theme.tokens[key]} !important;`).join("\n");
+  return `:root {\n${variables}\n}\n${theme.css ?? ""}`;
+}
+
 export function newId(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }

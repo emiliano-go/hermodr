@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createServer } from "vite";
+import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { fileURLToPath } from "node:url";
 import type { StoredMessage } from "../utils/models.ts";
 
@@ -43,7 +44,15 @@ async function withApp(run: (app: {
     __TAURI_INTERNALS__: { invoke: async (command: string, args: unknown) => { calls.push({ command, args }); } },
   } });
   Object.defineProperty(globalThis, "document", { configurable: true, value: { addEventListener() {} } });
-  const server = await createServer({ cacheDir: fileURLToPath(new URL("../../../node_modules/.vite-tests/message-actions", import.meta.url)), ssr: { optimizeDeps: { noDiscovery: true, include: [] } }, server: { middlewareMode: true, ws: false } });
+  const server = await createServer({
+    configFile: false,
+    plugins: [svelte({ configFile: false, prebundleSvelteLibraries: false })],
+    resolve: { alias: { $lib: fileURLToPath(new URL("..", import.meta.url)) } },
+    cacheDir: fileURLToPath(new URL("../../../node_modules/.vite-tests/message-actions", import.meta.url)),
+    optimizeDeps: { noDiscovery: true, include: [], exclude: ["svelte"] },
+    ssr: { optimizeDeps: { noDiscovery: true, include: [], exclude: ["svelte"] } },
+    server: { middlewareMode: true, ws: false, watch: null },
+  });
   try {
     const messageActions = await server.ssrLoadModule("/src/lib/state/message-actions.ts");
     const { menuItems } = messageActions;
