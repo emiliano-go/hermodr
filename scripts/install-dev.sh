@@ -75,6 +75,15 @@ else
   (cd "$ROOT" && pnpm build)
 fi
 
+# The transcription sidecar is staged by Tauri's beforeBuildCommand, which the
+# config below turns off, so stage it here the same way.
+say "staging the transcription credential helper"
+if [ "$profile" = "release" ]; then
+  (cd "$ROOT" && node scripts/build-transcription-helper.mjs --release)
+else
+  (cd "$ROOT" && node scripts/build-transcription-helper.mjs)
+fi
+
 say "building ($profile)"
 (cd "$ROOT" && pnpm tauri build --no-bundle $flag --config '{"build":{"beforeBuildCommand":"true"}}')
 
