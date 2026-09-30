@@ -110,21 +110,6 @@ impl WhatsAppService {
         Ok(())
     }
 
-    /// Pins or unpins a chat, mirroring it to the account.
-    pub async fn set_pinned(&self, chat: &str, pinned: bool) -> Result<()> {
-        let jid: Jid = chat.parse()?;
-        let key = resolve_chat(Some(self.client.as_ref()), &self.store, &jid).await;
-        let jid: Jid = key.parse()?;
-        self.store.set_pinned(&key, pinned).await?;
-        let actions = self.client.chat_actions();
-        let result = if pinned {
-            actions.pin_chat(&jid).await
-        } else {
-            actions.unpin_chat(&jid).await
-        };
-        result.map_err(|e| anyhow::anyhow!(e.to_string()))
-    }
-
     /// The message range WhatsApp Web attaches to an archive action, so the
     /// receiving devices can resolve conflicts. Built from the chat's newest
     /// messages; `None` when there are none to name.
@@ -308,8 +293,11 @@ impl WhatsAppService {
         } else {
             self.client.unpin_message(jid, key).await
         };
-        sent.map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        self.store.set_message_pin(chat, pinned.then_some(id)).await?;
+        let sent = sent.map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let pin = history_pins::live_message_pin(sent.message.as_ref(), unix_now() * 1000)?
+            .ok_or_else(|| anyhow::anyhow!("pin confirmation contains no target"))?;
+        let chat_key = chat.to_owned();
+        self.store.run(move |store| store.apply_message_pin_update(&chat_key, &pin, false)).await?;
         let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
         Ok(())
     }
@@ -371,6 +359,7 @@ impl WhatsAppService {
     /// Sends a copy of a stored message to another chat.
     pub async fn forward(&self, from_chat: &str, id: &str, to_chat: &str) -> Result<()> {
         let message = self.store.message(from_chat, id).await?;
+        anyhow::ensure!(!message.spoiler, "spoiler forwarding is unavailable until every media path preserves its wrapper");
         // Uncaptioned media is stored as `[kind]`, which must not become a caption.
         let placeholder = message.media.kind.as_ref().map(|kind| format!("[{kind}]"));
         let text = message.text.trim();
@@ -589,6 +578,9 @@ impl WhatsAppService {
     /// the recipient to resolve from its own history, which is what it does
     /// with a reply whose quoted content was withheld.
     pub(super) async fn quoted_message(&self, chat: &str, id: &str, text: &str) -> Option<wa::Message> {
+        if self.store.message(chat, id).await.observed().is_some_and(|row| row.spoiler) {
+            return Some(wa::Message::text("[Spoiler]"));
+        }
         if let Some(bytes) = self.store.media_ref_for(chat, id).await.observed().flatten() {
             if let Ok(message) = <wa::Message as buffa::Message>::decode(&mut bytes.as_slice()) {
                 if detect_media(&message).is_some() {
@@ -630,7 +622,7 @@ impl WhatsAppService {
         let kind = row.as_ref().and_then(|m| m.media.kind.clone());
         let text = row
             .as_ref()
-            .map(|m| m.text.clone())
+            .map(|m| if m.spoiler { "[Spoiler]".into() } else { m.text.clone() })
             .filter(|t| !t.trim().is_empty())
             .or_else(|| {
                 let once = once?;
@@ -651,7 +643,7 @@ impl WhatsAppService {
             text: Some(text),
             sender: Some(if is_me { "@me".to_string() } else { sender.to_string() }),
             kind,
-            thumb: row.and_then(|m| m.media.thumb),
+            thumb: row.and_then(|m| (!m.spoiler).then_some(m.media.thumb).flatten()),
             view_once: once.unwrap_or(true),
             recoverable: false,
             ..Default::default()

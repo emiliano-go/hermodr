@@ -162,6 +162,9 @@ impl WhatsAppService {
                 .or_else(|| mention.ends_with("@s.whatsapp.net").then(|| mention.clone()))
                 .map(|j| j.split('@').next().unwrap_or(&j).to_string());
             let username = member.username.as_ref().map(|u| u.to_string());
+            if let Some(username) = &username {
+                if self.store.set_username(&mention, username).await.observed() == Some(true) { let _ = self.events.send(ServiceEvent::NamesUpdated { count: 1 }); }
+            }
             // WhatsApp's masked number for a member whose phone is hidden
             // ("+598∙∙∙∙∙27"). Only a label of last resort; never stored as a
             // name, or it would overwrite the member's real push name.
@@ -220,6 +223,9 @@ impl WhatsAppService {
             if p.username.is_none() {
                 p.username = info.username.as_ref().map(|u| u.to_string());
             }
+            if let Some(username) = &p.username {
+                if self.store.set_username(&p.jid, username).await.observed() == Some(true) { let _ = self.events.send(ServiceEvent::NamesUpdated { count: 1 }); }
+            }
             if numeric(&p.name) {
                 if let Some(better) = info
                     .verified_name
@@ -234,7 +240,7 @@ impl WhatsAppService {
     }
 
     /// Whether we are an admin, matched in whichever form the group lists us.
-    fn is_group_admin(&self, metadata: &whatsapp_rust::GroupMetadata) -> bool {
+    pub(super) fn is_group_admin(&self, metadata: &whatsapp_rust::GroupMetadata) -> bool {
         let own: Vec<String> = [self.client.pn(), self.client.lid()]
             .into_iter()
             .flatten()

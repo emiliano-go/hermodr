@@ -2,7 +2,7 @@ use crate::AppState;
 use postal_core::ServiceEvent;
 use postal_plugins::{PluginHost, PluginInfo};
 use std::sync::Arc;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 pub(crate) struct Plugins {
     pub host: Option<Arc<PluginHost>>,
@@ -70,7 +70,7 @@ pub(crate) fn publish(plugins: &Plugins, event: &ServiceEvent) {
     let Some(host) = &plugins.host else {
         return;
     };
-    if !host.has_enabled() {
+    if !host.has_event_readers() {
         return;
     }
     let result = public_event(event)
@@ -102,6 +102,7 @@ pub(crate) fn list_plugins(state: State<'_, AppState>) -> PluginsView {
 
 #[tauri::command]
 pub(crate) async fn set_plugin_enabled(
+    app: AppHandle,
     state: State<'_, AppState>,
     id: String,
     enabled: bool,
@@ -114,7 +115,9 @@ pub(crate) async fn set_plugin_enabled(
         .ok_or("plugin host unavailable")?;
     host.set_enabled(&id, enabled, capabilities)
         .await
-        .map_err(|e| format!("{e:#}"))
+        .map_err(|e| format!("{e:#}"))?;
+    let _ = app.emit("transcription-settings-changed", ());
+    Ok(())
 }
 
 #[cfg(test)]

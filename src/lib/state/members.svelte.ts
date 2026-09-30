@@ -9,6 +9,7 @@ import type { GroupInfo, Member, StoredMessage } from "$lib/utils/models";
 import { displayName as phoneName, isPlaceholder } from "$lib/utils/phone";
 import { messages } from "./messages.svelte";
 import { session } from "./session.svelte";
+import type { ContactIdentity } from "$lib/utils/wire";
 
 export class MembersState {
   participants = $state<Member[]>([]);
@@ -22,6 +23,8 @@ export class MembersState {
    * quote author), fetched in batches for JIDs rendered without one.
    */
   learnedNames = $state<Record<string, string>>({});
+  identities = $state<Record<string, ContactIdentity>>({});
+  private nameEpoch = 0;
   requestedNames = new Set<string>();
   queuedNames: string[] = [];
   nameTimer: ReturnType<typeof setTimeout> | undefined = undefined;
@@ -134,10 +137,15 @@ export class MembersState {
     return jid === "@me" ? "You" : this.senderName(jid);
   }
 
-  /** A name for a JID, asking the core when the given one is missing or a bare number. */
+  /** Resolves a label using stored contact provenance. */
   displayName(name: string | null | undefined, jid: string) {
+    const key = bare(jid);
+    if (key.endsWith("@lid") || key.endsWith("@s.whatsapp.net")) {
+      this.requestName(key);
+      const identity = this.identities[key];
+      if (identity) return phoneName(name, key, identity);
+    }
     if (!name || isPlaceholder(name)) {
-      const key = bare(jid);
       const learned = this.learnedNames[key];
       if (learned) return phoneName(learned, key);
       this.requestName(key);
@@ -212,7 +220,7 @@ export class MembersState {
     );
     if (own && (own.split("@")[0] === user || member?.number === own.split("@")[0])) {
       // Our own contact card may be saved under a nickname; show our push name.
-      return { jid: own, name: this.displayName(null, own), self: true };
+      return { jid: own, name: this.displayName(null, own).replace(/^@/, ""), self: true };
     }
     if (member) {
       // A push name seen on any of their messages here beats the member list's bare number.
@@ -220,17 +228,19 @@ export class MembersState {
         (m) => m.sender_name && !isPlaceholder(m.sender_name) && this.memberOf(m.sender) === member,
       )?.sender_name;
       const named = spoken ?? (isPlaceholder(member.name) ? null : member.name);
-      return { jid: member.jid, name: this.displayName(named, member.jid), self: false };
+      return { jid: member.jid, name: this.displayName(named, member.jid).replace(/^@/, ""), self: false };
     }
     // Cached names only: one message can mention hundreds of numbers, and a
     // lookup for each would flood the core and lag the whole app.
     const lid = `${user}@lid`;
     const pn = `${user}@s.whatsapp.net`;
     const lidName = this.learnedNames[lid];
+    if (this.identities[lid]) return { jid: lid, name: phoneName(lidName, lid, this.identities[lid]).replace(/^@/, ""), self: false };
+    if (this.identities[pn]) return { jid: pn, name: phoneName(this.learnedNames[pn], pn, this.identities[pn]).replace(/^@/, ""), self: false };
     const lidKnown = !!lidName && !/^\d+$/.test(lidName);
     return lidKnown
-      ? { jid: lid, name: phoneName(lidName, lid), self: false }
-      : { jid: pn, name: phoneName(null, pn), self: false };
+      ? { jid: lid, name: phoneName(lidName, lid).replace(/^@/, ""), self: false }
+      : { jid: pn, name: user, self: false };
   }
 
   mentionName(user: string) {
@@ -290,6 +300,7 @@ export class MembersState {
 
   /** Label for a media message with no caption, used in reply previews. */
   replyPreviewText(message: StoredMessage) {
+    if (message.spoiler) return "[Spoiler]";
     // Media stores a "[image]" style placeholder when it has no caption.
     if (message.text && !message.text.startsWith("[")) {
       return plain(message.text, (user) => this.mentionName(user));
@@ -309,30 +320,40 @@ export class MembersState {
   }
 
   requestName(jid: string) {
-    if (!session.connected || this.requestedNames.has(jid) || !jid.includes("@")) return;
+    if (!session.started || !session.activeAccount || this.requestedNames.has(jid) || (!jid.endsWith("@lid") && !jid.endsWith("@s.whatsapp.net"))) return;
     this.requestedNames.add(jid);
     this.queuedNames.push(jid);
     clearTimeout(this.nameTimer);
     this.nameTimer = setTimeout(async () => {
       const jids = this.queuedNames;
       this.queuedNames = [];
+      const epoch = this.nameEpoch;
+      const account = session.activeAccount;
       try {
-        Object.assign(this.learnedNames, await invoke<Record<string, string>>("names", { jids }));
+        const identities = await invoke<Record<string, ContactIdentity>>("contact_identities", { account, jids });
+        if (epoch !== this.nameEpoch || account !== session.activeAccount) return;
+        Object.assign(this.identities, identities);
+        for (const [jid, identity] of Object.entries(identities)) {
+          const name = identity.saved_name ?? identity.push_name ?? identity.username;
+          if (name) this.learnedNames[jid] = name;
+        }
+        const unknown = Object.keys(identities).filter((jid) => jid.endsWith("@lid") && !identities[jid].saved_name && !identities[jid].number && !identities[jid].username);
+        if (session.connected && unknown.length) void invoke("names", { account, jids: unknown }).catch(() => {});
       } catch {
+        if (epoch !== this.nameEpoch) return;
         for (const jid of jids) this.requestedNames.delete(jid);
       }
     }, 30);
   }
 
-  /** Asks again for every JID the core had no name for, once it may have learned some. */
+  /** Drops cached identities when stored contact data changes. */
   forgetUnresolvedNames() {
-    const kept: Record<string, string> = {};
-    for (const [jid, name] of Object.entries(this.learnedNames)) {
-      if (isPlaceholder(name)) this.requestedNames.delete(jid);
-      else kept[jid] = name;
-    }
-    for (const jid of this.requestedNames) if (!(jid in kept)) this.requestedNames.delete(jid);
-    this.learnedNames = kept;
+    this.nameEpoch++;
+    clearTimeout(this.nameTimer);
+    this.queuedNames = [];
+    this.requestedNames.clear();
+    this.identities = {};
+    this.learnedNames = {};
   }
 
   setTyping(chat: string, sender: string, state: string) {
@@ -373,7 +394,7 @@ export class MembersState {
     if (who.length > 1) return `${who.length} people are ${verb}…`;
     const person = this.memberOf(who[0].sender);
     const name = person && !isPlaceholder(person.name) ? person.name : null;
-    return `${name ?? this.senderName(who[0].sender)} is ${verb}…`;
+    return `${this.displayName(name, who[0].sender)} is ${verb}…`;
   }
 
   async loadChatGroup(chat: string, isCurrent: () => boolean) {
@@ -412,8 +433,10 @@ export class MembersState {
     }
   }
 
-  /** Mirrors resetUi: the roster is dropped, caches survive for the next switch. */
+  /** Drops rosters and identities when the account changes. */
   resetAccount() {
+    this.forgetUnresolvedNames();
+    this.memberCache = {};
     this.participants = [];
     // Aliases are per account, not per chat, so they cannot survive the switch.
     this.aliases = {};

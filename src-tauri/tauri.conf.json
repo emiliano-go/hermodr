@@ -4,9 +4,10 @@
   "version": "0.1.0",
   "identifier": "com.postal.app",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "node scripts/build-transcription-helper.mjs && pnpm dev",
+    "additionalWatchFolders": ["../crates/postal-core", "../crates/postal-plugins"],
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "node scripts/build-transcription-helper.mjs --release && pnpm build",
     "frontendDist": "../build",
     "removeUnusedCommands": true
   },
@@ -53,6 +54,7 @@
     }
   },
   "bundle": {
+    "externalBin": ["binaries/postal-transcription-key"],
     "active": true,
     "targets": "all",
     "icon": [

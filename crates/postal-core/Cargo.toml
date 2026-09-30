@@ -10,6 +10,7 @@ description = "WhatsApp protocol core for Postal, built on whatsapp-rust"
 wire-types = ["dep:ts-rs"]
 
 [dependencies]
+url = "2"
 ts-rs = { workspace = true, optional = true }
 whatsapp-rust = { workspace = true }
 tokio = { workspace = true }

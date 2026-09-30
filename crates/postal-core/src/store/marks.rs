@@ -35,19 +35,9 @@ impl MessageStore {
     }
 
     /// The chat's pinned message, or none.
-    // One pin per chat; WhatsApp allows three, add a rank column if needed.
+    // ponytail: one message pin per chat; add ranks for multiple pins.
     pub fn set_message_pin(&self, chat: &str, id: Option<&str>) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        let chat = &*names::canonical_chat(&conn, chat)?;
-        match id {
-            Some(id) => conn.execute(
-                "INSERT INTO message_pins (chat, id) VALUES (?1, ?2)
-                 ON CONFLICT(chat) DO UPDATE SET id = excluded.id",
-                params![chat, id],
-            )?,
-            None => conn.execute("DELETE FROM message_pins WHERE chat = ?1", params![chat])?,
-        };
-        Ok(())
+        self.mirror_message_pin(chat, id)
     }
 
     /// Reactions, stars and the pin for one chat.
@@ -215,12 +205,6 @@ impl StoreWorker {
         self.run(move |store| store.set_starred(&chat, &id, starred)).await
     }
 
-    pub(crate) async fn set_message_pin(&self, chat: &str, id: Option<&str>) -> Result<()> {
-        let chat = chat.to_owned();
-        let id = id.map(str::to_owned);
-        self.run(move |store| store.set_message_pin(&chat, id.as_deref())).await
-    }
-
     pub(crate) async fn marks(&self, chat: &str) -> Result<ChatMarks> {
         let chat = chat.to_owned();
         self.run(move |store| store.marks(&chat)).await
@@ -329,10 +313,7 @@ impl MarksScope<'_> {
     }
 
     fn pinned(&self) -> Result<Option<String>> {
-        Ok(self
-            .conn
-            .query_row("SELECT id FROM message_pins WHERE chat = ?1", params![self.chat], |r| r.get(0))
-            .optional()?)
+        super::history_pins::pinned(self.conn, &self.chat)
     }
 
     fn polls_with_votes(&self) -> Result<Vec<Poll>> {

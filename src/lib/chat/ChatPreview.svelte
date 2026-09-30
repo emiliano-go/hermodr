@@ -3,7 +3,7 @@
   import type { MessagePage } from "$lib/utils/message-window";
   import type { StoredMessage } from "$lib/utils/models";
   import { captionOf } from "$lib/utils/message";
-  import { phoneLabel } from "$lib/utils/phone";
+  import { members } from "$lib/state/members.svelte";
 
   let { chat, account, name, x, y }: { chat: string; account: string | null; name: string; x: number; y: number } = $props();
   let rows = $state<StoredMessage[] | null>(null);
@@ -46,7 +46,7 @@
     {:else}
       <ul>
         {#each rows as message (message.id)}
-          <li><b>{message.from_me ? "You" : message.sender_name || phoneLabel(message.sender.split("@")[0]) || message.sender}:</b> {snippet(message)}</li>
+          <li><b>{message.from_me ? "You" : members.displayName(message.sender_name, message.sender)}:</b> {snippet(message)}</li>
         {/each}
       </ul>
     {/if}

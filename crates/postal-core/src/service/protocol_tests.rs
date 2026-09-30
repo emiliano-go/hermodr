@@ -13,7 +13,7 @@ async fn inbound() -> (Inbound, broadcast::Receiver<ServiceEvent>) {
         group_cache: Arc::default(), groups_cache: Arc::default(), older_waits: Arc::default(),
         downloads: Arc::new(tokio::sync::Semaphore::new(1)), sync_progress: Arc::default(),
         auto_download_default: false, keep_archived: Arc::default(), keep_view_once: Arc::default(),
-        one_time_only: false, tally: Arc::default(),
+        one_time_only: false, tally: Arc::default(), secret_edits: Default::default(),
     }, received)
 }
 

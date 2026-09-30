@@ -1,6 +1,22 @@
 use super::*;
 
 #[test]
+fn spoiler_edit_updates_flags_and_text_together() {
+    let store = MessageStore::open(Path::new(":memory:")).unwrap();
+    let mut message = StoredMessage::default();
+    message.header.chat = "spoiler@g.us".into();
+    message.header.id = "edit".into();
+    message.text = "plain".into();
+    store.insert_message(&message).unwrap();
+    store.update_message_spoiler(&message.header.chat, "edit", "hidden", true).unwrap();
+    let updated = store.message(&message.header.chat, "edit").unwrap();
+    assert!(updated.spoiler);
+    assert_eq!(updated.text, "hidden");
+    store.update_message_content(&message.header.chat, "edit", "still hidden").unwrap();
+    assert!(store.message(&message.header.chat, "edit").unwrap().spoiler);
+}
+
+#[test]
 fn optional_rows_do_not_hide_database_failures() {
     let reads: &[(&str, fn(&MessageStore) -> Result<()>)] = &[
         ("names", |s| s.name_for("absent").map(|_| ())),
@@ -82,7 +98,7 @@ fn new_mappings_merge_immediately_and_survive_reopen() {
         let store = MessageStore::open(&path).unwrap();
         let conn = store.conn.lock().unwrap();
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
-        assert_eq!(version, 13);
+        assert_eq!(version, schema::MIGRATIONS.len() as i64);
         drop(conn);
         let messages = store.messages_for("5989@s.whatsapp.net", 10).unwrap();
         assert_eq!(messages.len(), 1);

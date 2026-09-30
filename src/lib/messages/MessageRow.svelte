@@ -44,6 +44,7 @@
       !viewOnce &&
       (message.media_kind === "image" ||
         message.media_kind === "video" ||
+        message.media_kind === "round_video" ||
         message.media_kind === "gif") &&
       !!(message.media_path || message.media_thumb);
     const caption = visual ? ctx.captionOf(message) : "";

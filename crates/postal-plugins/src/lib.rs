@@ -1,9 +1,14 @@
 mod manifest;
 mod process;
 mod protocol;
+pub mod transcription;
 
 use anyhow::{ensure, Context, Result};
 pub use manifest::{Activation, Manifest};
+pub use transcription::{
+    ProviderKind, Transcript, TranscriptionConfig, TranscriptionContribution,
+    TranscriptionProvider, TranscriptionRequest,
+};
 
 #[cfg(feature = "wire-types")]
 pub fn visit_wire_types(visitor: &mut impl ts_rs::TypeVisitor) {
@@ -80,8 +85,14 @@ pub struct PluginHost(Arc<Inner>);
 
 struct Envelope {
     seq: u64,
-    bytes: Arc<Vec<u8>>,
-    done: Option<oneshot::Sender<std::result::Result<(), String>>>,
+    bytes: Arc<zeroize::Zeroizing<Vec<u8>>>,
+    done: Option<oneshot::Sender<std::result::Result<Value, String>>>,
+    transcription: Option<(RequestKind, Duration, Option<u64>)>,
+}
+
+pub(crate) enum RequestKind {
+    Transcribe(String),
+    InstallModel(String),
 }
 
 fn status(runtime: &Mutex<Runtime>, state: &str, error: Option<String>) {
@@ -204,6 +215,16 @@ impl PluginHost {
             .any(|entry| entry.grant.enabled)
     }
 
+    pub fn has_event_readers(&self) -> bool {
+        self.0
+            .registry
+            .lock()
+            .unwrap()
+            .entries
+            .values()
+            .any(|entry| entry.grant.enabled && entry.grant.capabilities == ["events:read"])
+    }
+
     pub async fn start_enabled(&self) -> Result<()> {
         let enabled: Vec<_> = self
             .0
@@ -227,10 +248,14 @@ impl PluginHost {
         enabled: bool,
         capabilities: Vec<String>,
     ) -> Result<()> {
-        ensure!(
-            !enabled || capabilities == ["events:read"],
-            "explicit events:read consent required"
-        );
+        {
+            let registry = self.0.registry.lock().unwrap();
+            let entry = registry.entries.get(id).context("unknown plugin")?;
+            ensure!(
+                !enabled || capabilities == entry.plugin.manifest.capabilities,
+                "explicit consent for every declared capability required"
+            );
+        }
         let _change = self.0.changes.lock().await;
         let task = {
             let mut registry = self.0.registry.lock().unwrap();
@@ -295,9 +320,16 @@ impl PluginHost {
     /// Queues a read-only event without blocking the service event loop.
     pub fn publish(&self, event: Value) -> Result<()> {
         let mut registry = self.0.registry.lock().unwrap();
+        if !registry
+            .entries
+            .values()
+            .any(|entry| entry.grant.enabled && entry.grant.capabilities == ["events:read"])
+        {
+            return Ok(());
+        }
         let (seq, bytes) = envelope(&mut registry, event)?;
         for entry in registry.entries.values() {
-            if !entry.grant.enabled {
+            if !entry.grant.enabled || entry.grant.capabilities != ["events:read"] {
                 continue;
             }
             if let Some(sender) = &entry.events {
@@ -306,6 +338,7 @@ impl PluginHost {
                         seq,
                         bytes: bytes.clone(),
                         done: None,
+                        transcription: None,
                     })
                     .is_err()
                 {
@@ -326,6 +359,10 @@ impl PluginHost {
             let (seq, bytes) = envelope(&mut registry, event)?;
             let entry = registry.entries.get(id).context("unknown plugin")?;
             ensure!(entry.grant.enabled, "plugin disabled");
+            ensure!(
+                entry.grant.capabilities == ["events:read"],
+                "events:read not granted"
+            );
             entry
                 .events
                 .as_ref()
@@ -334,13 +371,172 @@ impl PluginHost {
                     seq,
                     bytes,
                     done: Some(done),
+                    transcription: None,
                 })
                 .map_err(|_| anyhow::anyhow!("event queue full or stopped"))?;
         }
         result
             .await
             .context("plugin stopped before acknowledgement")?
+            .map(|_| ())
             .map_err(anyhow::Error::msg)
+    }
+
+    pub fn transcription_data_directory(&self, id: &str) -> Result<PathBuf> {
+        let registry = self.0.registry.lock().unwrap();
+        let entry = registry.entries.get(id).context("unknown plugin")?;
+        ensure!(
+            entry.plugin.manifest.capabilities == ["transcribe"],
+            "not a transcription plugin"
+        );
+        let path = entry.plugin.directory.join("data");
+        std::fs::create_dir_all(&path)?;
+        let path = path.canonicalize()?;
+        ensure!(
+            path.starts_with(&entry.plugin.directory),
+            "plugin data directory escapes installation"
+        );
+        Ok(path)
+    }
+
+    /// Activates an approved sidecar and waits for its matching transcript.
+    pub async fn transcribe(
+        &self,
+        plugin_id: &str,
+        request: TranscriptionRequest,
+    ) -> Result<Transcript> {
+        request.validate()?;
+        let (done, result) = oneshot::channel();
+        {
+            let mut registry = self.0.registry.lock().unwrap();
+            let entry = registry.entries.get(plugin_id).context("unknown plugin")?;
+            ensure!(
+                entry.grant.enabled && entry.grant.capabilities == ["transcribe"],
+                "transcribe not granted"
+            );
+            let provider = entry
+                .plugin
+                .manifest
+                .contributes
+                .transcription
+                .as_ref()
+                .and_then(|c| c.providers.iter().find(|p| p.id == request.provider))
+                .context("provider not declared by plugin")?;
+            ensure!(
+                !provider.transmits_audio || request.config.cloud_consent,
+                "explicit cloud provider consent required"
+            );
+            ensure!(
+                !provider.requires_key
+                    || request
+                        .config
+                        .api_key
+                        .as_ref()
+                        .is_some_and(|k| !k.trim().is_empty()),
+                "cloud provider key required"
+            );
+            registry.seq = registry
+                .seq
+                .checked_add(1)
+                .context("plugin sequence exhausted")?;
+            let seq = registry.seq;
+            let options = (
+                RequestKind::Transcribe(request.provider.clone()),
+                Duration::from_secs(request.config.timeout_secs.unwrap_or(300)),
+                request.config.idle_timeout_secs,
+            );
+            let mut bytes = serde_json::to_vec(&protocol::HostMessage::<Value>::Transcribe {
+                id: seq,
+                request,
+            })?;
+            bytes.push(b'\n');
+            ensure!(
+                bytes.len() <= protocol::MAX_LINE,
+                "transcription request exceeds 1 MiB"
+            );
+            registry
+                .entries
+                .get(plugin_id)
+                .unwrap()
+                .events
+                .as_ref()
+                .context("plugin stopped")?
+                .try_send(Envelope {
+                    seq,
+                    bytes: Arc::new(zeroize::Zeroizing::new(bytes)),
+                    done: Some(done),
+                    transcription: Some(options),
+                })
+                .map_err(|_| anyhow::anyhow!("plugin queue full or stopped"))?;
+        }
+        let value = result
+            .await
+            .context("plugin stopped before transcription")?
+            .map_err(anyhow::Error::msg)?;
+        serde_json::from_value(value).context("invalid transcript result")
+    }
+
+    pub async fn install_model(
+        &self,
+        plugin_id: &str,
+        url: String,
+        sha256: String,
+        filename: String,
+    ) -> Result<()> {
+        let data_directory = self.transcription_data_directory(plugin_id)?;
+        let request = transcription::ModelDownload {
+            url,
+            sha256,
+            filename: filename.clone(),
+            data_directory,
+        };
+        request.validate()?;
+        let (done, result) = oneshot::channel();
+        {
+            let mut registry = self.0.registry.lock().unwrap();
+            let entry = registry.entries.get(plugin_id).context("unknown plugin")?;
+            ensure!(
+                entry.grant.enabled && entry.grant.capabilities == ["transcribe"],
+                "transcribe not granted"
+            );
+            registry.seq = registry
+                .seq
+                .checked_add(1)
+                .context("plugin sequence exhausted")?;
+            let seq = registry.seq;
+            let mut bytes = serde_json::to_vec(&protocol::HostMessage::<Value>::InstallModel {
+                id: seq,
+                request,
+            })?;
+            bytes.push(b'\n');
+            ensure!(
+                bytes.len() <= protocol::MAX_LINE,
+                "model request exceeds size limit"
+            );
+            registry
+                .entries
+                .get(plugin_id)
+                .unwrap()
+                .events
+                .as_ref()
+                .context("plugin stopped")?
+                .try_send(Envelope {
+                    seq,
+                    bytes: Arc::new(zeroize::Zeroizing::new(bytes)),
+                    done: Some(done),
+                    transcription: Some((
+                        RequestKind::InstallModel(filename),
+                        Duration::from_secs(600),
+                        None,
+                    )),
+                })
+                .map_err(|_| anyhow::anyhow!("plugin queue full or stopped"))?;
+        }
+        result
+            .await
+            .context("plugin stopped before model installation")?
+            .map_err(anyhow::Error::msg)?;
+        Ok(())
     }
 
     pub async fn shutdown(&self) {
@@ -365,7 +561,10 @@ impl PluginHost {
     }
 }
 
-fn envelope(registry: &mut Registry, event: Value) -> Result<(u64, Arc<Vec<u8>>)> {
+fn envelope(
+    registry: &mut Registry,
+    event: Value,
+) -> Result<(u64, Arc<zeroize::Zeroizing<Vec<u8>>>)> {
     registry.seq = registry
         .seq
         .checked_add(1)
@@ -377,7 +576,7 @@ fn envelope(registry: &mut Registry, event: Value) -> Result<(u64, Arc<Vec<u8>>)
         bytes.len() <= protocol::MAX_LINE,
         "plugin event exceeds 1 MiB"
     );
-    Ok((seq, Arc::new(bytes)))
+    Ok((seq, Arc::new(zeroize::Zeroizing::new(bytes))))
 }
 
 async fn supervise(
@@ -403,6 +602,11 @@ async fn supervise(
         } else {
             None
         };
+        if pending.as_ref().is_some_and(|e| {
+            e.transcription.is_some() && e.done.as_ref().is_some_and(|d| d.is_closed())
+        }) {
+            continue;
+        }
         status(&runtime, "starting", None);
         let mut session = match Session::spawn(&plugin) {
             Ok(session) => session,
@@ -461,10 +665,10 @@ async fn run_session(
     events: &mut mpsc::Receiver<Envelope>,
     plugin: &manifest::Plugin,
 ) -> Result<()> {
-    let linger = Duration::from_secs(plugin.manifest.idle_timeout_secs.unwrap_or(0));
+    let mut linger = Duration::from_secs(plugin.manifest.idle_timeout_secs.unwrap_or(0));
     let mut idle_at = tokio::time::Instant::now() + linger;
     loop {
-        let event = if let Some(event) = pending.take() {
+        let mut event = if let Some(event) = pending.take() {
             event
         } else {
             let idle = async {
@@ -481,12 +685,30 @@ async fn run_session(
                 reply = session.next() => { reply?; continue; }
             }
         };
-        let result = tokio::time::timeout(Duration::from_secs(10), session.deliver(&event))
-            .await
-            .context("plugin event acknowledgement timed out")
-            .and_then(|r| r);
+        let timeout = event
+            .transcription
+            .as_ref()
+            .map_or(Duration::from_secs(10), |(_, t, _)| *t);
+        if let Some((_, _, idle)) = &event.transcription {
+            linger = Duration::from_secs(idle.unwrap_or(0));
+        }
+        let cancelled = async {
+            if event.transcription.is_some() {
+                if let Some(done) = &mut event.done {
+                    done.closed().await;
+                }
+            } else {
+                std::future::pending::<()>().await;
+            }
+        };
+        let result = tokio::select! {
+            biased;
+            _ = cancelled => { session.cancel(event.seq).await?; return Ok(()); }
+            result = tokio::time::timeout(timeout, session.deliver(event.seq, &event.bytes, event.transcription.as_ref().map(|o| &o.0))) =>
+                result.context("plugin request timed out").and_then(|r| r),
+        };
         if let Some(done) = event.done {
-            let _ = done.send(result.as_ref().map(|_| ()).map_err(|e| format!("{e:#}")));
+            let _ = done.send(result.as_ref().cloned().map_err(|e| format!("{e:#}")));
         }
         result?;
         idle_at = tokio::time::Instant::now() + linger;

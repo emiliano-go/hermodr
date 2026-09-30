@@ -148,7 +148,7 @@
 
 {#if replyingTo}
   <div class="reply-preview">
-    {#if replyingTo.media_kind === "image" && replyingTo.media_path}
+    {#if !replyingTo.spoiler && replyingTo.media_kind === "image" && replyingTo.media_path}
       <img
         class="reply-thumb"
         src={convertFileSrc(replyingTo.media_path)}

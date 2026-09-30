@@ -15,7 +15,7 @@ impl MessageStore {
         let start = now.saturating_sub(window.min(7 * 86400) as i64);
         let mut stmt = conn.prepare(&format!("SELECT {MESSAGE_COLUMNS} FROM messages m
             LEFT JOIN names n ON n.jid = m.sender
-            WHERE m.chat = ?1 AND m.timestamp BETWEEN ?2 AND ?3 AND m.history_shareable = 1
+            WHERE m.chat = ?1 AND m.timestamp BETWEEN ?2 AND ?3 AND m.history_shareable = 1 AND m.spoiler = 0
               AND m.revoked = 0 AND m.deleted = 0 AND m.media_kind IS NULL AND m.system_kind IS NULL
               AND LENGTH(CAST(m.text AS BLOB)) BETWEEN 1 AND 65536
               AND (m.from_me = 0 OR m.status IN ('sent', 'delivered', 'read'))
@@ -81,8 +81,9 @@ mod tests {
             ("future", "1@g.us", 101, true, false, None), ("pending", "1@g.us", 100, true, true, Some("pending")),
             ("revoked", "1@g.us", 100, true, false, None), ("deleted", "1@g.us", 100, true, false, None),
             ("edited", "1@g.us", 100, true, false, None),
+            ("spoiler", "1@g.us", 100, true, false, None),
         ] {
-            store.insert_message(&StoredMessage { history_shareable: known, text: id.into(),
+            store.insert_message(&StoredMessage { history_shareable: known, spoiler: id == "spoiler", text: id.into(),
                 header: MessageHeader { chat: chat.into(), id: id.into(), timestamp: at, from_me, ..Default::default() },
                 local: LocalState { status: status.map(str::to_owned), ..Default::default() }, ..Default::default() }).unwrap();
         }

@@ -15,7 +15,6 @@
   import ProfileCard from "$lib/contacts/ProfileCard.svelte";
   import ContactInfo from "$lib/contacts/ContactInfo.svelte";
   import MessageInfo from "$lib/messages/MessageInfo.svelte";
-  import { isPlaceholder } from "$lib/utils/phone";
   import { polyfillCountryFlagEmojis } from "country-flag-emoji-polyfill";
   import flagFont from "country-flag-emoji-polyfill/dist/TwemojiCountryFlags.woff2?url";
 
@@ -37,6 +36,8 @@
   import { bare, captionOf, dayKey, dayLabel, formatTime, isSvg, MEDIA_LABELS } from "$lib/utils/message";
   import { chats } from "$lib/state/chats.svelte";
   import { composer } from "$lib/state/composer.svelte";
+  import { favorites } from "$lib/state/favorites.svelte";
+  import { transcription } from "$lib/state/transcription.svelte";
   import { dispatchServiceEvent, queueRefreshChats } from "$lib/state/events";
   import { members } from "$lib/state/members.svelte";
   import { messages } from "$lib/state/messages.svelte";
@@ -48,6 +49,7 @@
   import Settings, { type Section } from "$lib/settings/Settings.svelte";
   import GroupInfo, { type AdminReport } from "$lib/chat/GroupInfo.svelte";
   import MediaViewer, { type ViewerItem } from "$lib/media/MediaViewer.svelte";
+  import Gallery from "$lib/media/Gallery.svelte";
   import MessageMenu, { type MenuItem } from "$lib/messages/MessageMenu.svelte";
   import ExpressionPicker from "$lib/composer/ExpressionPicker.svelte";
   import ChatPicker from "$lib/chat/ChatPicker.svelte";
@@ -58,10 +60,10 @@
   import { customization, lensMap } from "$lib/utils/theme.svelte";
 
   import type {
-    ChatPrivacy,
     ParticipantChange,
     GroupHistoryResult,
     GroupMemberAddResult,
+    GroupJoinRequest,
     SearchResult,
     ServiceEvent,
     StoredMessage,
@@ -79,6 +81,9 @@
   });
 
   let composerInput: HTMLTextAreaElement | undefined = $state();
+  let galleryChat = $state<string | null>(null);
+  $effect(() => { session.activeAccount; galleryChat = null; });
+  onMount(() => transcription.start());
   // The composer module reads the element at event time; synced here.
   $effect(() => {
     composer.inputEl = composerInput;
@@ -247,10 +252,10 @@
 
   /** Chat label for a confirm sheet: list name, override or raw JID. */
   function confirmChatLabel(chat: string) {
-    return (
+    return members.displayName(
       chats.chats.find((c) => c.chat === chat)?.display_name ??
       (chat === chats.selectedChat ? chats.titleOverride : null) ??
-      members.displayName(null, chat)
+      null, chat
     );
   }
 
@@ -932,6 +937,9 @@
       visibleChats={chats.visibleChats}
       selectedChat={chats.selectedChat}
       chatFilter={chats.chatFilter}
+      favoriteChats={favorites.chats}
+      favoriteBusy={favorites.busy !== null}
+      ontogglefavorite={(chat) => void act(() => composer.enqueue(() => favorites.toggle(chat.chat)))}
       onfilter={(filter) => (chats.chatFilter = filter)}
       unreadChats={chats.unreadChats}
       unreadPings={chats.unreadPings}
@@ -987,9 +995,7 @@
       {#if chats.selectedChat}
         {@const selectedChat = chats.selectedChat}
         {@const title =
-          chats.chats.find((c) => c.chat === selectedChat)?.display_name ??
-          chats.titleOverride ??
-          members.displayName(null, selectedChat)}
+          members.displayName(chats.chats.find((c) => c.chat === selectedChat)?.display_name ?? chats.titleOverride, selectedChat)}
         {@const typingNow = members.typingLabel(selectedChat)}
         <ChatHeader
           {selectedChat}
@@ -1014,6 +1020,7 @@
               more: !messages.olderExhausted,
             })}
           onpings={() => openPings(selectedChat)}
+          ongallery={() => (galleryChat = selectedChat)}
           onsettings={() => (ui.chatSettingsOpen = true)}
           onjumpmention={jumpNextMention}
           onpinnedjump={(id) => scrollToMessage(id)}
@@ -1075,8 +1082,7 @@
           typers={members.typing[selectedChat] ?? []}
           typerLabelOf={(sender) => {
             const member = members.memberOf(sender);
-            const name = member && !isPlaceholder(member.name) ? member.name : null;
-            return name ?? members.senderName(sender);
+            return members.displayName(member?.name ?? null, sender);
           }}
           onscroll={onScroll}
           toWire={(text) => members.asWireMentions(text)}
@@ -1457,7 +1463,7 @@
     group={m.chat.endsWith("@g.us")}
     audience={m.chat === chats.selectedChat ? Math.max(0, members.participants.length - 1) : 0}
     version={ui.infoVersion}
-    namer={(name, jid) => (name && !isPlaceholder(name) ? name : members.senderName(jid))}
+    namer={(name, jid) => members.displayName(name, jid)}
     picture={(jid) => chats.pictureOf(bare(jid))}
     onclose={() => (ui.infoFor = null)} />
 {/if}
@@ -1519,6 +1525,24 @@
       void jumpTo(item.chat, item.id);
     }}
     onclose={() => (ui.finder = null)} />
+{/if}
+
+{#if galleryChat && session.activeAccount}
+  {#key session.activeAccount}
+    <Gallery accountKey={session.activeAccount} chat={galleryChat} chats={chats.chats}
+      chatName={(chat) => chats.chatName(chat)} senderName={(message) => members.displayName(message.sender_name, message.sender)}
+      onjump={jumpTo} onopen={openMedia} onclose={() => (galleryChat = null)}
+      onreply={async (message) => {
+        const account = session.activeAccount;
+        await openChat(message.chat);
+        if (session.activeAccount !== account || chats.selectedChat !== message.chat) return;
+        galleryChat = null;
+        composer.editing = null;
+        composer.replyingTo = message;
+        await tick();
+        composerInput?.focus();
+      }} />
+  {/key}
 {/if}
 
 {#if ui.onceOpen && ui.onceOpen.media_kind !== "audio" && ui.onceOpen.media_path}
@@ -1597,6 +1621,11 @@
     me={session.me}
     namer={(name, jid) => members.displayName(name, jid)}
     onreports={() => invoke<AdminReport[]>("admin_reports", { chat: selectedChat })}
+    onrequests={() => invoke<GroupJoinRequest[]>("group_join_requests", { account: session.activeAccount, chat: selectedChat })}
+    onrequestchange={(jids, approve) => {
+      const account = session.activeAccount, chat = selectedChat;
+      return composer.enqueue(() => invoke<ParticipantChange[]>("change_group_join_requests", { account, chat, jids, approve }));
+    }}
     onallowreports={(allow) => invoke("set_allow_admin_reports", { chat: selectedChat, allow })}
     onadd={(jids, optedIn) => {
       const chat = selectedChat, account = session.activeAccount;

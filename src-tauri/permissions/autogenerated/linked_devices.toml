@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-linked-devices"
+description = "Enables the linked_devices command without any pre-configured scope."
+commands.allow = ["linked_devices"]
+
+[[permission]]
+identifier = "deny-linked-devices"
+description = "Denies the linked_devices command without any pre-configured scope."
+commands.deny = ["linked_devices"]

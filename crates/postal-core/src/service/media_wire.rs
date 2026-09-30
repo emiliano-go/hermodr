@@ -71,8 +71,10 @@ pub(super) fn detect_media(message: &wa::Message) -> Option<MediaInfo> {
             ext: None,
         });
     }
-    if let Some(video) = message.video_message.as_option() {
-        let kind = if video.gif_playback.unwrap_or(false) {
+    if let Some(video) = message.video_message.as_option().or(message.ptv_message.as_option()) {
+        let kind = if message.ptv_message.is_set() && message.video_message.is_unset() {
+            "round_video"
+        } else if video.gif_playback.unwrap_or(false) {
             "gif"
         } else {
             "video"
@@ -82,7 +84,7 @@ pub(super) fn detect_media(message: &wa::Message) -> Option<MediaInfo> {
             media_type: MediaType::Video,
             downloadable: Box::new(video.clone()),
             thumb: video.jpeg_thumbnail.clone(),
-            duration: None,
+            duration: (kind == "round_video").then_some(video.seconds).flatten(),
             ext: None,
         });
     }
@@ -138,6 +140,10 @@ pub(super) fn wrap_view_once(message: wa::Message) -> wa::Message {
 /// A view-once of `kind` with no media in it, for quoting one this device never saw.
 pub(super) fn empty_view_once(kind: Option<&str>) -> wa::Message {
     let inner = match kind {
+        Some("round_video") => wa::Message {
+            ptv_message: MessageField::some(wa::message::VideoMessage { view_once: Some(true), ..Default::default() }),
+            ..Default::default()
+        },
         Some("video") | Some("gif") => wa::Message {
             video_message: MessageField::some(wa::message::VideoMessage { view_once: Some(true), ..Default::default() }),
             ..Default::default()
@@ -190,7 +196,7 @@ pub(super) fn avatar_full_path(media_dir: &Path, jid: &str) -> PathBuf {
 fn extension_for(kind: &str, media_type: MediaType) -> &'static str {
     match kind {
         "image" => "jpg",
-        "video" | "gif" => "mp4",
+        "video" | "round_video" | "gif" => "mp4",
         "audio" => "ogg",
         "sticker" => "webp",
         "document" => "bin",

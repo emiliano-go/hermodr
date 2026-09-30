@@ -2,6 +2,7 @@
 // the group-info panel. Moved out of +page.svelte. Reads members (names) and
 // session (self, accounts); cross-domain flows (openChat) stay in the route.
 import { invoke } from "$lib/utils/ipc";
+import { favorites } from "./favorites.svelte";
 import { mergeSummaries } from "$lib/utils/chat-list";
 import { plain } from "$lib/utils/format";
 import { bare, MEDIA_LABELS } from "$lib/utils/message";
@@ -50,7 +51,7 @@ export class ChatsState {
   /** Coalesces an event burst into at most one chat-list reload per 200 ms. */
 
   visibleChats = $derived(
-    this.chats.filter((c) =>
+    this.chatFilter === "favorites" ? favorites.rows(this.chats) : this.chats.filter((c) =>
       this.chatFilter === "archived"
         ? c.archived
         : c.archived
@@ -111,7 +112,7 @@ export class ChatsState {
 
   /** The display name of a chat, for cross chat quotes. */
   chatName(jid: string) {
-    return this.chats.find((c) => c.chat === jid)?.display_name ?? bareJid(jid);
+    return members.displayName(this.chats.find((c) => c.chat === jid)?.display_name ?? null, jid);
   }
 
   async refreshChats() {

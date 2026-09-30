@@ -4,6 +4,7 @@
   import ConfirmDialog from "$lib/ui/ConfirmDialog.svelte";
   import Icon from "$lib/ui/Icon.svelte";
   import Spinner from "$lib/ui/Spinner.svelte";
+  import { members } from "$lib/state/members.svelte";
   import { storageSize, type StorageReport, type StorageCleanup } from "$lib/utils/storage";
   let open = $state(false);
   let report = $state<StorageReport | null>(null);
@@ -63,7 +64,7 @@
       <label>Chat
         <select bind:value={chat} disabled={busy} onchange={() => { offset = 0; void refresh(); }}>
           <option value="">All chats</option>
-          {#each report.chats as row (row.chat)}<option value={row.chat}>{row.name ?? row.chat}</option>{/each}
+          {#each report.chats as row (row.chat)}<option value={row.chat}>{members.displayName(row.name, row.chat)}</option>{/each}
         </select>
       </label>
       <button disabled={busy || !chat} onclick={() => { pending = { action: { kind: "chat_media", chat }, title: "Remove this chat's local attachments?" }; }}>Clean chat media…</button>
@@ -73,7 +74,7 @@
       <table aria-label="Usage by chat">
         <thead><tr><th>Chat</th><th>Videos</th><th>Images</th><th>Documents</th><th>Audio</th><th>Total</th></tr></thead>
         <tbody>{#each usages as row (row.chat)}
-          <tr><td>{row.name ?? row.chat}</td>{#each ["video", "image", "document", "audio"] as kind}<td>{storageSize(row.by_kind[kind] ?? 0)}</td>{/each}<td>{storageSize(row.bytes)}</td></tr>
+          <tr><td>{members.displayName(row.name, row.chat)}</td>{#each ["video", "image", "document", "audio"] as kind}<td>{storageSize(row.by_kind[kind] ?? 0)}</td>{/each}<td>{storageSize(row.bytes)}</td></tr>
         {/each}</tbody>
       </table>
     </div>

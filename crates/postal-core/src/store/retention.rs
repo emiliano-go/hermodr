@@ -160,6 +160,10 @@ fn purge_orphan_state(conn: &Connection) -> Result<()> {
              SELECT 1 FROM messages m WHERE m.chat = poll_votes.chat AND m.id = poll_votes.poll);
          DELETE FROM polls WHERE NOT EXISTS (
              SELECT 1 FROM messages m WHERE m.chat = polls.chat AND m.id = polls.id);
+         DELETE FROM poll_option_hashes WHERE NOT EXISTS (
+             SELECT 1 FROM polls p WHERE p.chat = poll_option_hashes.chat AND p.id = poll_option_hashes.id);
+         DELETE FROM secret_edit_revisions WHERE NOT EXISTS (
+             SELECT 1 FROM messages m WHERE m.chat = secret_edit_revisions.chat AND m.id = secret_edit_revisions.id);
          DELETE FROM event_responses WHERE NOT EXISTS (
              SELECT 1 FROM messages m WHERE m.chat = event_responses.chat AND m.id = event_responses.event);
          DELETE FROM events WHERE NOT EXISTS (
@@ -274,8 +278,9 @@ impl MessageStore {
         let conn = self.conn.lock().unwrap();
         let removed = conn.execute("DELETE FROM messages", [])?;
         conn.execute_batch(
-            "DELETE FROM reactions; DELETE FROM stars; DELETE FROM message_pins;
-             DELETE FROM polls; DELETE FROM poll_votes; DELETE FROM events;
+            "DELETE FROM reactions; DELETE FROM stars; DELETE FROM message_pins; DELETE FROM message_pin_sync;
+             DELETE FROM polls; DELETE FROM poll_votes; DELETE FROM poll_option_hashes;
+             DELETE FROM secret_edit_revisions; DELETE FROM events;
              DELETE FROM event_responses; DELETE FROM view_once; DELETE FROM forwarded;
              DELETE FROM edited; DELETE FROM receipts; DELETE FROM hidden_chats;
              DELETE FROM cleared_chats;",

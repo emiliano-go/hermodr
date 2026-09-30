@@ -94,7 +94,8 @@ muted_until: number,
 marked_unread: boolean, };
 export type CleanupResult = { files: number, bytes: number, };
 export type ConnectionState = { started: boolean, connected: boolean, qr: string | null, };
-export type Contributions = { commands: Array<string>, };
+export type ContactIdentity = { saved_name: string | null, push_name: string | null, username: string | null, number: string | null, own: boolean, };
+export type Contributions = { commands: Array<string>, transcription?: TranscriptionContribution | null, };
 export type DiskRetention = { max_age_hours: RetentionLimit, max_messages_per_chat: RetentionLimit, };
 export type Event = { id: string, name: string, description: string | null, start: number | null, end: number | null, location: string | null, link: string | null, canceled: boolean, responses: Array<EventResponse>, };
 export type EventForm = { name: string, description: string | null, start: number | null, end: number | null, location: string | null, link: string | null, canceled: boolean, };
@@ -103,6 +104,11 @@ export type EventResponse = { responder: string,
  * `going`, `not_going` or `maybe`.
  */
 response: string, };
+export type GalleryCursor = { timestamp: number, sort_order: number, chat: string, id: string, };
+export type GalleryFilter = { chat: string | null, kind: GalleryKind | null, from_me: boolean | null, since: number | null, until: number | null, };
+export type GalleryItem = { message: StoredMessage, urls: Array<string>, };
+export type GalleryKind = "image" | "video" | "audio" | "document" | "sticker" | "gif" | "link";
+export type GalleryPage = { items: Array<GalleryItem>, next_cursor: GalleryCursor | null, };
 export type GroupHistoryOffer = { enabled: boolean, reason: string | null, max_messages: number, time_window_seconds: number, };
 export type GroupHistoryResult = { state: string, message: string, retry_id: string | null, };
 export type GroupInfo = { subject: string | null, description: string | null, created_at: number | null,
@@ -146,9 +152,10 @@ can_send: boolean,
  * Members may add participants, not just admins.
  */
 members_can_add: boolean, };
+export type GroupJoinRequest = { jid: string, name: string, request_time: number | null, };
 export type GroupKind = { community: boolean, announcements: boolean, parent: string | null, };
 export type GroupMemberAddResult = { participants: Array<ParticipantChange>, history: GroupHistoryResult, };
-export type HostMessage<E = JsonValue> = { "type": "hello", api_version: number, capabilities: Array<string>, } | { "type": "event", seq: number, event: E, } | { "type": "error", id: JsonValue, error: string, };
+export type HostMessage<E = JsonValue> = { "type": "hello", api_version: number, capabilities: Array<string>, } | { "type": "event", seq: number, event: E, } | { "type": "error", id: JsonValue, error: string, } | { "type": "transcribe", id: number, provider: string, chat: string, message_id: string, mime: string, duration_ms: number, audio: string, config: TranscriptionConfig, } | { "type": "install_model", id: number, url: string, sha256: string, filename: string, data_directory: string, };
 export type InviteInfo = { jid: string, subject: string | null, description: string | null, size: number, created_at: number | null,
 /**
  * Joining needs an admin's approval.
@@ -164,6 +171,7 @@ export type Joined = { jid: string,
  */
 pending: boolean, };
 export type JsonValue = number | string | boolean | Array<JsonValue> | { [key in string]: JsonValue } | null;
+export type LinkedDevice = { jid: string, device_id: number, is_current: boolean, can_unlink: boolean, };
 export type LiveLocation = { lat: number, lng: number,
 /**
  * The sender's own accuracy estimate, in metres.
@@ -258,7 +266,7 @@ error: string | null,
  */
 pending: boolean, };
 export type PluginInfo = { enabled: boolean, state: string, error: string | null, id: string, name: string, version: string, api_version: number, entrypoint: string, activation: Activation, idle_timeout_secs: number | null, capabilities: Array<string>, contributes: Contributions, };
-export type PluginReply = { "type": "ready", name: string, } | { "type": "ack", seq: number, } | { "type": "log", level: string, message: string, } | { "type": "call", id: JsonValue, } | { "type": "event", };
+export type PluginReply = { "type": "ready", name: string, } | { "type": "ack", seq: number, } | { "type": "log", level: string, message: string, } | { "type": "call", id: JsonValue, } | { "type": "event", } | { "type": "transcript", id: number, provider: string, text: string, language: string | null, } | { "type": "transcribe_error", id: number, message: string, } | { "type": "model_installed", id: number, filename: string, } | { "type": "model_error", id: number, message: string, };
 export type PluginsView = { plugins: Array<PluginInfo>, directory: string, errors: Array<string>, };
 export type Poll = { id: string, name: string, options: Array<string>,
 /**
@@ -279,6 +287,8 @@ username_reserved: boolean,
  * Privacy category (`last`, `profile`, `readreceipts`, …) to its value.
  */
 privacy: { [key in string]: string }, };
+export type ProviderConsent = { plugin_id: string, provider: string, };
+export type ProviderKind = "local" | "cloud";
 export type Reaction = { target: string, sender: string, emoji: string, };
 export type RetentionLimit = { "kind": "inherit" } | { "kind": "unlimited" } | { "kind": "limited", "value": number };
 export type ScheduledMessage = { id: string, chat: string, text: string, mentions: Array<string>, due_at: number, status: string, error: string | null, attempted: boolean, };
@@ -304,7 +314,7 @@ has_messages: boolean,
  * group: an alias addresses a person, not a room.
  */
 aliases: Array<string>, };
-export type ServiceEvent = { "kind": "qrCode", code: string, } | { "kind": "connected" } | { "kind": "disconnected" } | { "kind": "loggedOut" } | { "kind": "message", message: StoredMessage, } | { "kind": "messageHint", chat: string, id: string, sender: string, from_me: boolean, fresh: boolean, } | { "kind": "retentionApplied", removed: number, } | { "kind": "namesUpdated", count: number, } | { "kind": "chatStateChanged", chat: string, } | { "kind": "syncing", pending: number, applied: number, } | { "kind": "initialSyncComplete", messages: number, chats: number, } | { "kind": "synced" } | { "kind": "historyLoaded", chats: Array<string>, } | { "kind": "historyProgress", percent: number, } | { "kind": "backfill", done: number, total: number, } | { "kind": "avatarChanged", jid: string, } | { "kind": "typing", chat: string, sender: string, state: string, } | { "kind": "presence", jid: string, online: boolean, last_seen: number | null, } | { "kind": "memberLabel", chat: string, jid: string, label: string, } | { "kind": "groupChanged", chat: string, } | { "kind": "marks", chat: string, } | { "kind": "storeChanged" } | { "kind": "stickerLibraryChanged", packs: boolean, favorites: boolean, recents: boolean, } | { "kind": "uploadProgress", token: string, sent: number, total: number, };
+export type ServiceEvent = { "kind": "qrCode", code: string, } | { "kind": "connected" } | { "kind": "disconnected" } | { "kind": "loggedOut" } | { "kind": "message", message: StoredMessage, } | { "kind": "messageHint", chat: string, id: string, sender: string, from_me: boolean, fresh: boolean, } | { "kind": "retentionApplied", removed: number, } | { "kind": "namesUpdated", count: number, } | { "kind": "chatStateChanged", chat: string, } | { "kind": "chatPinRemoved", chat: string, } | { "kind": "syncing", pending: number, applied: number, } | { "kind": "initialSyncComplete", messages: number, chats: number, } | { "kind": "synced" } | { "kind": "historyLoaded", chats: Array<string>, } | { "kind": "historyProgress", percent: number, } | { "kind": "backfill", done: number, total: number, } | { "kind": "avatarChanged", jid: string, } | { "kind": "typing", chat: string, sender: string, state: string, } | { "kind": "presence", jid: string, online: boolean, last_seen: number | null, } | { "kind": "memberLabel", chat: string, jid: string, label: string, } | { "kind": "groupChanged", chat: string, } | { "kind": "favoritesChanged" } | { "kind": "marks", chat: string, } | { "kind": "storeChanged" } | { "kind": "stickerLibraryChanged", packs: boolean, favorites: boolean, recents: boolean, } | { "kind": "uploadProgress", token: string, sent: number, total: number, };
 export type Sticker = {
 /**
  * Base64 SHA-256 of the decrypted file: the app-state index key.
@@ -317,7 +327,7 @@ export type StorageCleanup = { "kind": "attachment", chat: string, id: string, q
 export type StorageFile = { chat: string, id: string, kind: string, filename: string, timestamp: number, quoted: boolean, bytes: number, available: boolean, };
 export type StorageOrder = "largest" | "oldest";
 export type StorageReport = { database_bytes: number, attachment_bytes: number, cache_bytes: number, other_bytes: number, total_files: number, chats: Array<ChatStorage>, files: Array<StorageFile>, };
-export type StoredMessage = {
+export type StoredMessage = { spoiler: boolean,
 /**
  * Resolved from `names` when read; never stored on the row.
  */
@@ -422,7 +432,14 @@ system_kind: string | null,
  * The stub's parameters, usually the JIDs it is about.
  */
 system_params: Array<string>, };
+export type StoredTranscript = { chat: string, id: string, text: string, language: string | null, provider: string, created_at: number, };
 export type Target = { chat: string, id: string, sender: string, fromMe: boolean, };
+export type TranscriptionConfig = { data_directory: string | null, whisper_executable: string | null, decoder_executable: string | null, model: string | null, model_sha256: string | null, language: string | null, cloud_consent: boolean, api_key: string | null, timeout_secs: number | null, idle_timeout_secs: number | null, };
+export type TranscriptionContribution = { id: string, providers: Array<TranscriptionProvider>, };
+export type TranscriptionEvent = { account_id: string, chat: string, id: string, status: string, transcript: StoredTranscript | null, error: string | null, };
+export type TranscriptionProvider = { id: string, name: string, kind: ProviderKind, transmits_audio: boolean, requires_key: boolean, };
+export type TranscriptionSettings = { plugin_id: string | null, provider: string, whisper_executable: string | null, decoder_executable: string | null, model: string | null, model_sha256: string | null, language: string | null, idle_timeout_secs: number | null, };
+export type TranscriptionView = { settings: TranscriptionSettings, plugins: Array<PluginInfo>, cloud_consents: Array<ProviderConsent>, key_configured: boolean, data_directory: string | null, errors: Array<string>, };
 export type UiSettings = { retention: DiskRetention, message_window_size: number,
 /**
  * Requests deep history during pairing, independently of disk retention.
@@ -440,7 +457,7 @@ history_dir: string | null,
 /**
  * Whether to download incoming media automatically.
  */
-auto_download_media: boolean,
+auto_download_media: boolean, auto_transcribe: boolean,
 /**
  * Whether to warn when a video goes out without a preview.
  */

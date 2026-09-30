@@ -15,6 +15,15 @@ mod media;
 mod messages;
 pub mod scheduled;
 mod group_history;
+pub mod contact_identity;
+pub(crate) mod favorites;
+pub mod gallery;
+pub mod links;
+pub(crate) mod pins;
+pub(crate) mod history_pins;
+mod secret_edits;
+pub(crate) use secret_edits::{PollOption, PollEdit, EventEdit, SecretEdit, EditRevision};
+pub mod transcription;
 mod paging;
 pub use paging::{MessageCursor, MessagePage, MessagePageDirection, MAX_MESSAGE_PAGE};
 mod names;
@@ -40,9 +49,6 @@ pub fn is_placeholder_name(name: &str) -> bool {
         || (name.starts_with('+') && !name.chars().any(char::is_alphabetic))
 }
 
-/// [`is_placeholder_name`] for the `name` column, as far as GLOB can tell (Latin letters only).
-const PLACEHOLDER_SQL: &str = "(name NOT GLOB '*[^0-9+]*' OR (name GLOB '+*' AND name NOT GLOB '*[A-Za-z]*'))";
-
 /// A stored message, as rows are read and as the UI receives it.
 ///
 /// Each concern is its own type; they serialize flattened, so the IPC shape
@@ -50,6 +56,8 @@ const PLACEHOLDER_SQL: &str = "(name NOT GLOB '*[^0-9+]*' OR (name GLOB '+*' AND
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct StoredMessage {
+    #[serde(default)]
+    pub spoiler: bool,
     #[serde(skip)]
     pub history_shareable: bool,
     #[serde(flatten)]
@@ -271,10 +279,11 @@ const MESSAGE_COLUMNS: &str = "m.chat, m.id, m.sender, m.timestamp, m.from_me, m
     m.reply_to_kind, m.reply_to_thumb, m.media_thumb, m.media_ref, m.reply_to_chat,
     m.preview_site, m.preview_color, m.media_duration, m.system_kind, m.system_params,
     m.reply_to_view_once, m.reply_to_recoverable, m.reply_to_path, m.reply_to_locator,
-  m.media_once_kind, m.sort_order, m.deleted, m.live_location, m.history_shareable";
+  m.media_once_kind, m.sort_order, m.deleted, m.live_location, m.history_shareable, m.spoiler";
 
 fn message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
     Ok(StoredMessage {
+        spoiler: row.get(39)?,
         history_shareable: row.get(38)?,
         header: MessageHeader {
             chat: row.get(0)?,

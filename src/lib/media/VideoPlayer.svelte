@@ -9,6 +9,7 @@
     path,
     gif = false,
     autoplay = true,
+    round = false,
     onerror,
   }: {
     src: string;
@@ -17,6 +18,7 @@
     /** GIFs loop silently and hide the sound controls. */
     gif?: boolean;
     autoplay?: boolean;
+    round?: boolean;
     onerror?: () => void;
   } = $props();
 
@@ -203,6 +205,7 @@
   }
 
   function onKey(e: KeyboardEvent) {
+    if (round && !box?.contains(e.target as Node)) return;
     if ((e.target as HTMLElement).closest?.("input:not([type=range]), textarea")) return;
     const handled = () => {
       e.preventDefault();
@@ -237,6 +240,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="player"
+  class:round
   class:idle
   class:fullscreen
   bind:this={box}
@@ -349,7 +353,7 @@
         aria-label="Loop"
         aria-pressed={looping}
         onclick={() => (looping = !looping)}><Icon name="repeat" size={18} /></button>
-      {#if document.pictureInPictureEnabled}
+      {#if typeof document !== "undefined" && document.pictureInPictureEnabled}
         <button class="control" title="Picture in picture" aria-label="Picture in picture" onclick={togglePip}>
           <Icon name="pip" size={18} />
         </button>
@@ -364,6 +368,9 @@
 </div>
 
 <style>
+  .player.round:not(.fullscreen) { flex-direction: column; width: min(320px, 72vw); background: transparent; overflow: visible; }
+  .player.round:not(.fullscreen) video { width: 240px; height: 240px; max-width: 100%; max-height: none; aspect-ratio: 1; border-radius: 50%; object-fit: cover; align-self: center; }
+  .player.round:not(.fullscreen) .controls { position: static; padding: 6px 0; opacity: 1; pointer-events: auto; background: none; }
   .player {
     position: relative;
     display: flex;

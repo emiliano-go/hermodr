@@ -163,6 +163,7 @@ pub(crate) fn config_for(app: &AppHandle, settings: &UiSettings, account: &str) 
             PathBuf::from(":memory:")
         },
         scheduled_path: base.join("scheduled.db"),
+        favorites_path: base.join("favorites.db"),
         // Aliases outlive the history setting, so they never travel with it.
         aliases_path: base.join("aliases.db"),
         retention: settings.retention,

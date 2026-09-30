@@ -1,7 +1,6 @@
 use crate::{
     manifest::Plugin,
     protocol::{self, Reply},
-    Envelope,
 };
 use anyhow::{bail, Context, Result};
 use std::{process::Stdio, time::Duration};
@@ -19,6 +18,7 @@ pub(crate) struct Session {
     stdout_task: JoinHandle<()>,
     stderr_task: JoinHandle<()>,
     id: String,
+    capabilities: Vec<String>,
 }
 
 impl Session {
@@ -77,12 +77,14 @@ impl Session {
             stdout_task,
             stderr_task,
             id,
+            capabilities: plugin.manifest.capabilities.clone(),
         })
     }
 
     pub async fn handshake(&mut self) -> Result<()> {
         let mut hello = serde_json::to_vec(&protocol::HostMessage::<serde_json::Value>::Hello {
-            api_version: 1, capabilities: vec!["events:read".into()],
+            api_version: 1,
+            capabilities: self.capabilities.clone(),
         })?;
         hello.push(b'\n');
         self.write(&hello).await?;
@@ -116,9 +118,11 @@ impl Session {
                     );
                 }
                 Ok(Reply::Call { id }) => {
-                    let mut response = serde_json::to_vec(&protocol::HostMessage::<serde_json::Value>::Error {
-                        id, error: "host methods are not available in v1".into(),
-                    })?;
+                    let mut response =
+                        serde_json::to_vec(&protocol::HostMessage::<serde_json::Value>::Error {
+                            id,
+                            error: "host methods are not available in v1".into(),
+                        })?;
                     response.push(b'\n');
                     self.write(&response).await?;
                 }
@@ -134,18 +138,71 @@ impl Session {
         }
     }
 
-    pub async fn deliver(&mut self, event: &Envelope) -> Result<()> {
-        self.write(&event.bytes).await?;
+    pub async fn deliver(
+        &mut self,
+        id: u64,
+        bytes: &[u8],
+        kind: Option<&crate::RequestKind>,
+    ) -> Result<serde_json::Value> {
+        self.write(bytes).await?;
         loop {
             match self.next().await? {
-                Reply::Ack { seq } if seq == event.seq => return Ok(()),
+                Reply::Ack { seq } if kind.is_none() && seq == id => {
+                    return Ok(serde_json::Value::Null)
+                }
+                Reply::Transcript {
+                    id: reply_id,
+                    provider: actual,
+                    text,
+                    language,
+                } if matches!(kind, Some(crate::RequestKind::Transcribe(_))) && reply_id == id => {
+                    anyhow::ensure!(
+                        matches!(kind,Some(crate::RequestKind::Transcribe(provider)) if provider==&actual),
+                        "transcript provider mismatch"
+                    );
+                    let transcript = crate::Transcript {
+                        provider: actual,
+                        text,
+                        language,
+                    };
+                    transcript.validate()?;
+                    return Ok(serde_json::to_value(transcript)?);
+                }
+                Reply::ModelInstalled {
+                    id: reply_id,
+                    filename,
+                } if matches!(kind, Some(crate::RequestKind::InstallModel(_)))
+                    && reply_id == id =>
+                {
+                    anyhow::ensure!(
+                        matches!(kind,Some(crate::RequestKind::InstallModel(expected)) if expected==&filename),
+                        "installed model filename mismatch"
+                    );
+                    return Ok(serde_json::Value::Null);
+                }
+                Reply::TranscribeError {
+                    id: reply_id,
+                    message,
+                }
+                | Reply::ModelError {
+                    id: reply_id,
+                    message,
+                } if kind.is_some() && reply_id == id => {
+                    anyhow::ensure!(message.len() <= 4096, "oversized transcription error");
+                    bail!("transcription failed: {message}");
+                }
                 _ => log::warn!(
-                    "plugin {}: unexpected reply while awaiting ack {}",
+                    "plugin {}: unexpected reply while awaiting request {}",
                     self.id,
-                    event.seq
+                    id
                 ),
             }
         }
+    }
+
+    pub async fn cancel(&mut self, id: u64) -> Result<()> {
+        self.write(format!("{{\"type\":\"cancel\",\"id\":{id}}}\n").as_bytes())
+            .await
     }
 
     pub async fn shutdown(&mut self) {

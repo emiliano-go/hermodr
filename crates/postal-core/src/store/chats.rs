@@ -10,9 +10,11 @@ pub(super) fn reconcile_addresses(conn: &Connection) -> Result<()> {
         let mut found = std::collections::BTreeSet::new();
         for (table, column) in [
             ("messages", "chat"),
+            ("message_pin_sync", "chat"),
             ("chats", "jid"),
             ("chat_state", "jid"),
             ("pins", "jid"),
+            ("pin_state", "jid"),
             ("cleared_chats", "jid"),
             ("hidden_chats", "jid"),
         ] {
@@ -106,14 +108,7 @@ impl MessageStore {
 
     /// Mirrors a chat's pin state from the account.
     pub fn set_pinned(&self, jid: &str, pinned: bool) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        let jid = &*names::canonical_chat(&conn, jid)?;
-        if pinned {
-            conn.execute("INSERT OR IGNORE INTO pins (jid) VALUES (?1)", params![jid])?;
-        } else {
-            conn.execute("DELETE FROM pins WHERE jid = ?1", params![jid])?;
-        }
-        Ok(())
+        self.mirror_pin(jid, pinned)
     }
 
     /// Mirrors a chat's archive state from the account.
@@ -186,7 +181,7 @@ impl MessageStore {
             // message would copy the whole table into a temporary sort.
             "SELECT c.jid, COALESCE(g.last_message_at, c.last_message_at), COALESCE(g.message_count, 0),
                     n.name, COALESCE(g.unread_count, 0), COALESCE(g.mention_count, 0), p.jid IS NOT NULL AS pinned,
-                    COALESCE(m.text, ''), COALESCE(m.from_me, 0), s.name, COALESCE(m.sender, ''),
+                    COALESCE(CASE WHEN m.spoiler = 1 THEN '[Spoiler]' ELSE m.text END, ''), COALESCE(m.from_me, 0), s.name, COALESCE(m.sender, ''),
                     CASE WHEN m.system_kind IS NOT NULL THEN 'missed_call' ELSE m.media_kind END,
                     COALESCE(cs.archived, 0), COALESCE(cs.muted_until, 0), COALESCE(cs.marked_unread, 0)
              FROM chats c
@@ -206,7 +201,7 @@ impl MessageStore {
              LEFT JOIN pins p ON p.jid = c.jid
              LEFT JOIN chat_state cs ON cs.jid = c.jid
              WHERE c.jid NOT IN (SELECT jid FROM hidden_chats)
-             ORDER BY pinned DESC, COALESCE(g.last_message_at, c.last_message_at) DESC, m.sort_order DESC, c.jid",
+             ORDER BY pinned DESC, (SELECT timestamp FROM pin_state WHERE jid=c.jid) DESC, COALESCE(g.last_message_at, c.last_message_at) DESC, m.sort_order DESC, c.jid",
         )?;
         let summaries = stmt
             .query_map([], |row| {
@@ -235,12 +230,15 @@ impl MessageStore {
     /// Drops every stored row for one chat, keeping names, pins and settings.
     /// Returns how many messages went. Local-only: the phone keeps its copy.
     fn drop_chat_messages(&self, conn: &rusqlite::Connection, jid: &str) -> Result<usize> {
+        conn.execute("DELETE FROM message_pin_sync WHERE chat = ?1", params![jid])?;
         conn.execute("DELETE FROM receipts WHERE id IN (SELECT id FROM messages WHERE chat = ?1)", params![jid])?;
         conn.execute("DELETE FROM reactions WHERE chat = ?1", params![jid])?;
         conn.execute("DELETE FROM stars WHERE chat = ?1", params![jid])?;
         conn.execute("DELETE FROM message_pins WHERE chat = ?1", params![jid])?;
         conn.execute("DELETE FROM polls WHERE chat = ?1", params![jid])?;
         conn.execute("DELETE FROM poll_votes WHERE chat = ?1", params![jid])?;
+        conn.execute("DELETE FROM poll_option_hashes WHERE chat = ?1", params![jid])?;
+        conn.execute("DELETE FROM secret_edit_revisions WHERE chat = ?1", params![jid])?;
         conn.execute("DELETE FROM events WHERE chat = ?1", params![jid])?;
         conn.execute("DELETE FROM event_responses WHERE chat = ?1", params![jid])?;
         conn.execute("DELETE FROM view_once WHERE chat = ?1", params![jid])?;
@@ -308,7 +306,9 @@ pub(crate) fn fold_chat(conn: &Connection, from: &str, to: &str) -> Result<()> {
     }
     copy_shadowed_messages(conn, from, to)?;
     merge_chat_row(conn, from, to)?;
+    super::secret_edits::merge(conn, from, to)?;
     move_chat_keyed_tables(conn, from, to, MESSAGE_STATE_TABLES, "chat")?;
+    super::history_pins::merge(conn, from, to)?;
     // Messages last, so `to` knows it has history before the state below.
     conn.execute("UPDATE OR IGNORE messages SET chat = ?1 WHERE chat = ?2", params![to, from])?;
     conn.execute("DELETE FROM messages WHERE chat = ?1", params![from])?;
@@ -332,6 +332,7 @@ const MESSAGE_STATE_TABLES: &[&str] = &[
     "message_pins",
     "polls",
     "poll_votes",
+    "transcripts",
     "events",
     "event_responses",
     "view_once",
@@ -404,6 +405,7 @@ fn merge_pin(conn: &Connection, from: &str, to: &str) -> Result<()> {
         conn.execute("INSERT OR IGNORE INTO pins (jid) VALUES (?1)", params![to])?;
     }
     conn.execute("DELETE FROM pins WHERE jid = ?1", params![from])?;
+    super::pins::merge(conn, from, to)?;
     Ok(())
 }
 
@@ -458,11 +460,6 @@ impl StoreWorker {
     pub(crate) async fn set_chat_privacy(&self, jid: &str, typing: Option<bool>, receipts: Option<bool>) -> Result<()> {
         let jid = jid.to_owned();
         self.run(move |store| store.set_chat_privacy(&jid, typing, receipts)).await
-    }
-
-    pub(crate) async fn set_pinned(&self, jid: &str, pinned: bool) -> Result<()> {
-        let jid = jid.to_owned();
-        self.run(move |store| store.set_pinned(&jid, pinned)).await
     }
 
     pub(crate) async fn set_archived(&self, jid: &str, archived: bool) -> Result<()> {

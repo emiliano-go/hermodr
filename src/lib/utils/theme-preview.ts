@@ -38,6 +38,7 @@ export const rowTime = (i: number) => rows[i]?.[2] ?? "";
 
 function message(id: number, author: string, text: string, extra: Partial<StoredMessage> = {}): StoredMessage {
   return {
+    spoiler: false,
     chat: selectedChat, id: String(id), sender: author, sender_name: author, sort_order: id,
     timestamp: 9 * 3600 + (12 + id * 4) * 60, from_me: author === "You", text,
     media_kind: null, media_path: null, media_thumb: null, media_duration: null,

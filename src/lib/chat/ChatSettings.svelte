@@ -15,6 +15,8 @@
   import { invoke } from "$lib/utils/ipc";
   import Button from "$lib/ui/Button.svelte";
   import Icon from "$lib/ui/Icon.svelte";
+  import TranscriptionOverride from "$lib/settings/TranscriptionOverride.svelte";
+  import { session } from "$lib/state/session.svelte";
 
   let {
     chat,
@@ -208,6 +210,7 @@
               checked={autoDownload ?? globalAutoDownload}
               onchange={(e) => (autoDownload = e.currentTarget.checked)} />
           </label>
+          {#if session.activeAccount}<TranscriptionOverride accountId={session.activeAccount} {chat} />{/if}
         </section>
 
         <section>

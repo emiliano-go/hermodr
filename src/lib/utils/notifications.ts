@@ -47,9 +47,10 @@ export function shouldNotify(d: NotifyDecision, nowSec = Math.floor(Date.now() /
 
 /** Short preview of the message, the same wording the chat list shows. */
 export function notificationBody(
-  message: Pick<StoredMessage, "text" | "media_kind">,
+  message: Pick<StoredMessage, "text" | "media_kind"> & { spoiler?: boolean },
   mentionName: (user: string) => string = (u) => u,
 ): string {
+  if (message.spoiler) return "Spoiler message";
   const kind = message.media_kind;
   const text = message.text ?? "";
   if (kind === "poll") return `📊 ${plain(text, mentionName)}`.trim();

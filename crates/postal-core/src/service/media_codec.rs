@@ -73,7 +73,7 @@ pub(super) fn sticker_png_thumbnail(bytes: &[u8]) -> Option<Vec<u8>> {
 pub(super) fn media_thumbnail(kind: &str, bytes: &[u8]) -> Option<Vec<u8>> {
     match kind {
         "image" => image_thumbnail(bytes),
-        "video" | "gif" => video_thumbnail(bytes),
+        "video" | "gif" | "round_video" => video_thumbnail(bytes),
         _ => None,
     }
 }
@@ -85,7 +85,7 @@ pub(super) fn image_thumbnail(bytes: &[u8]) -> Option<Vec<u8>> {
 pub(super) fn media_thumbnail_file(kind: &str, path: &std::path::Path) -> Option<Vec<u8>> {
     match kind {
         "image" => image_thumbnail_reader(image::ImageReader::open(path).ok()?.with_guessed_format().ok()?),
-        "video" | "gif" => video_thumbnail_file(path),
+        "video" | "gif" | "round_video" => video_thumbnail_file(path),
         _ => None,
     }
 }

@@ -26,6 +26,8 @@ required-features = ["wire-types"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+keyring = { version = "=3.6.3", default-features = false, features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust", "vendored"] }
+zeroize = "1"
 ts-rs = { version = "12.0.1", optional = true, features = ["serde-json-impl"] }
 # The native protocol client. This is what replaced the embedded WhatsApp Web
 # webview, and with it the whole class of memory and history problems.

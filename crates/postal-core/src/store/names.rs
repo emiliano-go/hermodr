@@ -12,6 +12,18 @@ pub(super) fn canonical_chat<'a>(conn: &Connection, jid: &'a str) -> Result<std:
     })
 }
 
+pub(super) fn name_forms(store: &MessageStore, jid: &str) -> Result<Vec<String>> {
+    let mut forms = vec![jid.to_owned()];
+    let Some((user, server)) = jid.split_once('@') else { return Ok(forms); };
+    let user = user.split(':').next().unwrap_or(user);
+    forms.push(format!("{user}@{server}"));
+    if let Some((lid, pn)) = store.lid_pn(user)? {
+        forms.push(format!("{lid}@lid")); forms.push(format!("{pn}@s.whatsapp.net"));
+    }
+    forms.sort(); forms.dedup();
+    Ok(forms)
+}
+
 impl MessageStore {
     pub(crate) fn canonical_chat<'a>(&self, jid: &'a str) -> Result<std::borrow::Cow<'a, str>> {
         canonical_chat(&self.conn.lock().unwrap(), jid)
@@ -33,11 +45,9 @@ impl MessageStore {
             return Ok(());
         }
         conn.execute(
-            &format!(
-                "INSERT INTO names (jid, name, saved) VALUES (?1, ?2, 0)
+            "INSERT INTO names (jid, name, saved) VALUES (?1, ?2, 0)
                  ON CONFLICT(jid) DO UPDATE SET name = excluded.name, saved = 0
-                 WHERE saved = 0 OR {PLACEHOLDER_SQL}"
-            ),
+                 WHERE saved = 0",
             params![jid, name],
         )?;
         Ok(())
@@ -50,20 +60,33 @@ impl MessageStore {
         if name.is_empty() || jid.is_empty() {
             return Ok(());
         }
+        let forms = name_forms(self, jid)?;
         let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "INSERT INTO names (jid, name, saved) VALUES (?1, ?2, 1)
-             ON CONFLICT(jid) DO UPDATE SET name = excluded.name, saved = 1",
-            params![jid, name],
-        )?;
+        conn.execute("INSERT INTO names (jid, name, saved) VALUES (?1, ?2, 1)
+            ON CONFLICT(jid) DO UPDATE SET name = excluded.name, saved = 1", params![jid, name])?;
+        for form in forms {
+            conn.execute("UPDATE names SET name = ?2, saved = 1 WHERE jid = ?1", params![form, name])?;
+            if let Some((user, server)) = form.split_once('@') {
+                conn.execute("UPDATE names SET name = ?2, saved = 1 WHERE jid GLOB ?1", params![format!("{user}:*@{server}"), name])?;
+            }
+        }
         Ok(())
     }
 
     /// Drops the address-book flag when a contact is removed, so the name can
     /// later be replaced by a push name.
     pub fn clear_saved_name(&self, jid: &str) -> Result<()> {
+        let forms = name_forms(self, jid)?;
         let conn = self.conn.lock().unwrap();
-        conn.execute("UPDATE names SET saved = 0 WHERE jid = ?1", params![jid])?;
+        for form in forms {
+            let (user, server) = form.split_once('@').unwrap_or((&form, ""));
+            let user = user.split(':').next().unwrap_or(user);
+            let bare = format!("{user}@{server}");
+            conn.execute("UPDATE names SET saved = 0, name = COALESCE(
+                (SELECT push_name FROM contact_identity WHERE contact_identity.jid = names.jid),
+                (SELECT push_name FROM contact_identity WHERE contact_identity.jid = ?3), '') WHERE jid = ?1 OR jid = ?3 OR jid GLOB ?2",
+                params![form, format!("{user}:*@{server}"), bare])?;
+        }
         Ok(())
     }
 
@@ -141,6 +164,8 @@ impl MessageStore {
     ///
     /// Kept here because the session's own mapping is lost when a device re-pairs.
     pub fn set_lid_pn(&self, lid: &str, pn: &str) -> Result<()> {
+        let lid = lid.split('@').next().unwrap_or(lid).split(':').next().unwrap_or(lid);
+        let pn = pn.split('@').next().unwrap_or(pn).split(':').next().unwrap_or(pn);
         let mut conn = self.conn.lock().unwrap();
         let previous: Option<String> = conn.query_row("SELECT pn FROM lid_pn WHERE lid = ?1", [lid], |r| r.get(0)).optional()?;
         if previous.as_deref() == Some(pn) { return Ok(()); }

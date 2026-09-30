@@ -118,7 +118,7 @@ export class ComposerState {
       )
       .map((p) => ({
         ...p,
-        token: p.aliases.find((a) => a.toLowerCase().includes(needle)) ?? p.name,
+        token: p.aliases.find((a) => a.toLowerCase().includes(needle)) ?? p.name.replace(/^@/, ""),
       }))
       .slice(0, 8);
   });

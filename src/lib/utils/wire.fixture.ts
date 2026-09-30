@@ -47,6 +47,7 @@ export const fixture = {
     "sender": "",
     "sender_name": null,
     "sort_order": 7,
+    "spoiler": false,
     "status": null,
     "system_kind": null,
     "system_params": [],
@@ -68,6 +69,7 @@ export const fixture = {
   "settings": {
     "android_instance": false,
     "auto_download_media": true,
+    "auto_transcribe": false,
     "freeze_chat_list_on_hover": true,
     "history_dir": null,
     "keep_archived": true,

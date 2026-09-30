@@ -2,9 +2,37 @@
 
 use super::*;
 
+pub(super) async fn apply_contact_identity(
+    store: &StoreWorker,
+    update: &whatsapp_rust::wacore::types::events::ContactUpdate,
+) -> Result<bool> {
+    let lid = update.action.lid_jid.as_deref().and_then(|jid| jid.parse::<Jid>().ok())
+        .filter(|jid| jid.is_lid()).or_else(|| update.jid.is_lid().then(|| update.jid.clone()));
+    let pn = update.action.pn_jid.as_deref().and_then(|jid| jid.parse::<Jid>().ok())
+        .filter(|jid| jid.is_pn()).or_else(|| update.jid.is_pn().then(|| update.jid.clone()));
+    let jid = update.jid.to_non_ad().to_string();
+    let username = update.action.username.clone();
+    store.run(move |store| {
+        let mut changed = false;
+        if let Some((lid, pn)) = lid.zip(pn) {
+            changed = store.lid_pn(&lid.user)?.as_ref().is_none_or(|(_, known)| known != &pn.user);
+            store.set_lid_pn(&lid.user, &pn.user)?;
+        }
+        if let Some(username) = username {
+            changed |= store.set_username(&jid, &username)?;
+        }
+        Ok(changed)
+    }).await
+}
+
 pub(super) async fn first_stored_name(store: &StoreWorker, forms: &[String]) -> Option<(String, String)> {
     let forms = forms.to_vec();
     store.run(move |store| {
+        for form in &forms {
+            if store.name_is_saved(form)? {
+                if let Some(name) = store.name_for(form)? { return Ok(Some((form.clone(), name))); }
+            }
+        }
         for form in forms {
             if let Some(name) = store.name_for(&form)?.filter(|name| !is_placeholder_name(name)) {
                 return Ok(Some((form, name)));
@@ -99,7 +127,7 @@ pub(super) fn spawn_lid_lookup(client: Option<Arc<Client>>, store: &StoreWorker,
 /// The other address form of a bare user JID, from the session or our own record of it.
 pub(super) async fn other_form(client: &Client, store: &StoreWorker, bare: &Jid) -> Option<(String, String)> {
     if let Some(Some(entry)) = client.get_lid_pn_entry(bare).await.observed() {
-        let (lid, pn) = (entry.lid.to_string(), entry.phone_number.to_string());
+        let (lid, pn) = (user_part(&entry.lid.to_string()), user_part(&entry.phone_number.to_string()));
         store.set_lid_pn(&lid, &pn).await.logged();
         return Some((lid, pn));
     }
@@ -264,6 +292,13 @@ impl WhatsAppService {
             match name.filter(|n| !is_placeholder_name(n)) {
                 Some(name) => {
                     out.insert(jid.clone(), name);
+                    if bare.is_lid() && number.is_none() {
+                        let key = bare.to_string();
+                        if self.store.run(move |store| store.contact_identity(&key)).await.observed()
+                            .is_some_and(|identity| identity.saved_name.is_none() && identity.username.is_none()) {
+                            unknown.push((jid.clone(), bare));
+                        }
+                    }
                 }
                 None => {
                     if let Some(number) = number {
@@ -280,23 +315,13 @@ impl WhatsAppService {
     /// The best stored name and number for a bare JID, trying its other address
     /// form when this one says nothing readable.
     async fn local_name(&self, bare: &Jid) -> (Option<String>, Option<String>) {
-        let mut name = self.store.name_for(&bare.to_string()).await.observed().flatten();
+        let mut forms = vec![bare.to_string()];
         let mut number = bare.is_pn().then(|| bare.user.to_string());
-        if name.as_deref().is_none_or(is_placeholder_name) {
-            if let Some((lid, pn)) = other_form(&self.client, &self.store, bare).await {
-                let other = if bare.is_lid() {
-                    format!("{pn}@s.whatsapp.net")
-                } else {
-                    format!("{lid}@lid")
-                };
-                number = Some(pn);
-                if let Some(found) = self.store.name_for(&other).await.observed().flatten() {
-                    if !is_placeholder_name(&found) {
-                        name = Some(found);
-                    }
-                }
-            }
+        if let Some((lid, pn)) = other_form(&self.client, &self.store, bare).await {
+            forms.push(if bare.is_lid() { format!("{pn}@s.whatsapp.net") } else { format!("{lid}@lid") });
+            number = Some(pn);
         }
+        let name = first_stored_name(&self.store, &forms).await.map(|(_, name)| name);
         (name, number)
     }
 
@@ -325,6 +350,18 @@ impl WhatsAppService {
                             .and_then(|v| v.name.clone())
                             .or_else(|| i.username.as_ref().map(|u| u.to_string()))
                     });
+                    if let Some(info) = info.filter(|info| info.jid.is_pn()) {
+                        if let Some(lid) = &info.lid {
+                            if self.store.set_lid_pn(&lid.user, &info.jid.user).await.observed().is_some() {
+                                let _ = self.events.send(ServiceEvent::NamesUpdated { count: 1 });
+                            }
+                        }
+                    }
+                    if let Some(username) = info.and_then(|i| i.username.as_ref()) {
+                        if self.store.set_username(&jid.to_string(), &username.to_string()).await.observed() == Some(true) {
+                            let _ = self.events.send(ServiceEvent::NamesUpdated { count: 1 });
+                        }
+                    }
                     if let Some(found) = found.filter(|n| !n.trim().is_empty()) {
                         self.store.set_name(&jid.to_string(), &found).await.logged();
                         out.insert(asked.clone(), found);
@@ -357,6 +394,9 @@ impl WhatsAppService {
             if let Some(info) = infos.into_values().next() {
                 profile.about = info.status.filter(|s| !s.is_empty());
                 profile.username = info.username.map(|u| u.to_string());
+                if let Some(username) = &profile.username {
+                    if self.store.set_username(&key, username).await? { let _ = self.events.send(ServiceEvent::NamesUpdated { count: 1 }); }
+                }
                 profile.business = info.verified_name.and_then(|v| v.name);
             }
         }
@@ -366,6 +406,23 @@ impl WhatsAppService {
             .remove(&key)
             .filter(|n| !is_placeholder_name(n));
         Ok(profile)
+    }
+
+    pub async fn contact_identities(&self, jids: &[String]) -> Result<std::collections::HashMap<String, crate::store::contact_identity::ContactIdentity>> {
+        for jid in jids {
+            if let Ok(bare) = jid.parse::<Jid>() { if bare.is_lid() { other_form(&self.client, &self.store, &bare.to_non_ad()).await; } }
+        }
+        let asked = jids.to_vec();
+        let mut identities = self.store.run(move |store| {
+            asked.into_iter().map(|jid| store.contact_identity(&jid).map(|identity| (jid, identity))).collect::<Result<std::collections::HashMap<_, _>>>()
+        }).await?;
+        for (jid, identity) in &mut identities {
+            if jid.parse::<Jid>().ok().is_some_and(|jid| self.is_self_jid(&jid)) {
+                identity.own = true;
+                identity.push_name = Some(self.client.push_name()).filter(|name| !name.is_empty());
+            }
+        }
+        Ok(identities)
     }
 
     /// Chats, contacts and groups matching a query.
@@ -541,5 +598,38 @@ impl SearchIndex {
     /// number say nothing about the query, so it is matched alongside them.
     fn aliases_of(&self, jid: &str) -> Vec<String> {
         self.aliases.get(jid).cloned().unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod contact_identity_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn contact_identity_action_uses_typed_address_forms_and_username() {
+        let store = StoreWorker::open(Path::new(":memory:")).await.unwrap();
+        let mut update = whatsapp_rust::wacore::types::events::ContactUpdate::builder()
+            .jid("59891954564@s.whatsapp.net".parse().unwrap())
+            .timestamp("2026-09-30T00:00:00Z".parse().unwrap()).from_full_sync(true)
+            .action(Box::new(wa::sync_action_value::ContactAction {
+                lid_jid: Some("77:3@lid".into()), pn_jid: Some("59891954564@s.whatsapp.net".into()),
+                username: Some("actual_username".into()), ..Default::default()
+            })).build();
+        assert!(apply_contact_identity(&store, &update).await.unwrap());
+        let identity = store.contact_identity("77@lid").await.unwrap();
+        assert_eq!(identity.number.as_deref(), Some("59891954564"));
+        assert_eq!(identity.username.as_deref(), Some("actual_username"));
+        assert!(identity.saved_name.is_none());
+        assert!(!apply_contact_identity(&store, &update).await.unwrap());
+        update.jid = "88@lid".parse().unwrap();
+        update.action.lid_jid = None;
+        update.action.pn_jid = Some("447911123456@s.whatsapp.net".into());
+        update.action.username = Some("second_username".into());
+        assert!(apply_contact_identity(&store, &update).await.unwrap());
+        assert_eq!(store.contact_identity("447911123456@s.whatsapp.net").await.unwrap().username.as_deref(), Some("second_username"));
+        update.jid = "99@lid".parse().unwrap();
+        update.action.pn_jid = Some("447911123456@g.us".into());
+        apply_contact_identity(&store, &update).await.unwrap();
+        assert!(store.contact_identity("99@lid").await.unwrap().number.is_none());
     }
 }

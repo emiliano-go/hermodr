@@ -19,6 +19,7 @@
     pinned,
     ongroupinfo,
     onsearch,
+    ongallery,
     onpings,
     onsettings,
     onjumpmention,
@@ -39,6 +40,7 @@
     pinned: { id: string; author: string; body: string } | null;
     ongroupinfo: () => void;
     onsearch: () => void;
+    ongallery: () => void;
     onpings: () => void;
     onsettings: () => void;
     onjumpmention: () => void;
@@ -83,6 +85,7 @@
     {/if}
   </div>
   <div class="header-tools">
+    <Button variant="icon" icon="image" iconSize={18} title="Media gallery" aria-label="Media gallery" onclick={ongallery} />
     <Button
       variant="icon"
       icon="search"

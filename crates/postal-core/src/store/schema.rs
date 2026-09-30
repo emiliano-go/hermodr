@@ -353,7 +353,7 @@ mod tests {
     }
 }
 
-const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
+pub(super) const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
     migrate_v1_schema,
     migrate_v2_legacy_data,
     migrate_v3_media_captions,
@@ -367,6 +367,13 @@ const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
     migrate_v11_soft_delete,
     migrate_v12_live_location,
     super::group_history::migrate,
+    super::contact_identity::migrate,
+    migrate_v15_spoiler,
+    super::links::migrate,
+    super::pins::migrate,
+    |conn| Ok(conn.execute_batch(super::secret_edits::SCHEMA)?),
+    super::transcription::migrate,
+    super::history_pins::migrate,
 ];
 
 pub(super) fn migrate(conn: &Connection) -> Result<()> {
@@ -798,6 +805,12 @@ fn migrate_v12_live_location(conn: &Connection) -> Result<()> {
 
 /// Soft delete: the row stays, flagged on this device only. A column added
 /// after v10, so it must probe rather than assume the adoption step ran.
+fn migrate_v15_spoiler(conn: &Connection) -> Result<()> {
+    let exists: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('messages') WHERE name = 'spoiler')", [], |row| row.get(0))?;
+    if !exists { conn.execute_batch("ALTER TABLE messages ADD COLUMN spoiler INTEGER NOT NULL DEFAULT 0 CHECK(spoiler IN (0,1));")?; }
+    Ok(())
+}
+
 fn migrate_v11_soft_delete(conn: &Connection) -> Result<()> {
     let columns = table_columns(conn, "messages")?;
     if !columns.iter().any(|column| column == "deleted") {

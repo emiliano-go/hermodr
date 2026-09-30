@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-message-transcript"
+description = "Enables the message_transcript command without any pre-configured scope."
+commands.allow = ["message_transcript"]
+
+[[permission]]
+identifier = "deny-message-transcript"
+description = "Denies the message_transcript command without any pre-configured scope."
+commands.deny = ["message_transcript"]

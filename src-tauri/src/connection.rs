@@ -70,6 +70,7 @@ pub(crate) async fn boolean_props(state: State<'_, AppState>) -> Result<Vec<post
 /// Starts the service for an account, replacing any running one.
 pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &str) -> Result<(), String> {
     log::info!("starting account {account}");
+    app.state::<crate::transcription::TranscriptionState>().cancel_all();
     // The previous account's instance (and its session) goes first: only the
     // active account's instance may run, and neither link is ever unlinked.
     let _ = stop_once(app, state).await;
@@ -92,10 +93,9 @@ pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &s
     })?;
     let service = Arc::new(service);
     *state.account_service.lock().unwrap() = Some((account.to_owned(), Arc::downgrade(&service)));
+    *state.service.lock().unwrap() = Some(service.clone());
     spawn_main_events(app, &service, account, events);
     widen_media_scope(app, &service);
-
-    *state.service.lock().unwrap() = Some(service);
 
     // The manager decides whether the companion is needed for this account.
     wake_once(app);
@@ -335,19 +335,22 @@ fn spawn_main_events(
     tauri::async_runtime::spawn(async move {
         loop {
             match events.recv().await {
-                Ok(ServiceEvent::LoggedOut) => {
-                    log::warn!("account {account_id} was logged out; its session is dropped");
-                    if let Some(service) = service_for_events.upgrade() {
-                        forget_session(&emitter, &account_id, &service);
-                    }
-                    emit_service_event(&emitter, &ServiceEvent::LoggedOut);
-                    // Holding the service keeps its session database open.
-                    break;
-                }
                 Ok(event) => {
-                    if service_for_events.upgrade().is_none() {
+                    let Some(service) = service_for_events.upgrade() else { break };
+                    let state = emitter.state::<AppState>();
+                    if !current_main_event(&state, &account_id, &service) { break; }
+                    if matches!(event, ServiceEvent::LoggedOut) {
+                        emitter.state::<crate::transcription::TranscriptionState>().cancel_all();
+                        log::warn!("account {account_id} was logged out; its session is dropped");
+                        forget_session(&emitter, &account_id, &service);
+                        emit_service_event(&emitter, &event);
+                        // Holding the service keeps its session database open.
                         break;
                     }
+                    if matches!(event, ServiceEvent::Disconnected) {
+                        emitter.state::<crate::transcription::TranscriptionState>().cancel_all();
+                    }
+                    crate::transcription::schedule_auto(&emitter, &account_id, &event);
                     if matches!(
                         event,
                         ServiceEvent::Message { .. } | ServiceEvent::MessageHint { .. }
@@ -363,12 +366,32 @@ fn spawn_main_events(
                     // messages themselves are in the store to be refetched.
                     log::warn!("UI fell behind, dropped {dropped} service event(s)");
                     let Some(service) = service_for_events.upgrade() else { break };
+                    let state = emitter.state::<AppState>();
+                    if !current_main_event(&state, &account_id, &service) { break; }
                     emit_service_event(&emitter, &resync_event(&service));
                 }
                 Err(_) => break,
             }
         }
     });
+}
+
+fn event_owner_matches(active: Option<&str>, account: &str, slot_matches: bool, binding_matches: bool) -> bool {
+    active == Some(account) && slot_matches && binding_matches
+}
+
+fn current_main_event(state: &AppState, account: &str, service: &Arc<WhatsAppService>) -> bool {
+    let active = active_account(state);
+    let bound = state.account_service.lock().unwrap().as_ref().is_some_and(|(id, weak)|
+        id == account && weak.upgrade().is_some_and(|bound| Arc::ptr_eq(&bound, service)));
+    let slot = state.service.lock().unwrap().as_ref().is_some_and(|current| Arc::ptr_eq(current, service));
+    event_owner_matches(active.as_deref(), account, slot, bound)
+}
+
+fn current_once_event(state: &AppState, account: &str, service: &Arc<WhatsAppService>) -> bool {
+    let active = active_account(state);
+    let slot = state.once_service.lock().unwrap().as_ref().is_some_and(|current| Arc::ptr_eq(current, service));
+    event_owner_matches(active.as_deref(), account, slot, true)
 }
 
 /// The media folder may sit outside the app data directory, so the asset
@@ -421,10 +444,9 @@ fn spawn_instance_events(
         loop {
             match events.recv().await {
                 Ok(event) => {
-                    if service_for_events.upgrade().is_none() {
-                        break;
-                    }
                     let state = emitter.state::<AppState>();
+                    let Some(service) = service_for_events.upgrade() else { break };
+                    if !current_once_event(&state, &account_id, &service) { break; }
                     match &event {
                         ServiceEvent::QrCode { code } => {
                             *state.once_qr.lock().unwrap() = Some(code.clone());
@@ -441,9 +463,7 @@ fn spawn_instance_events(
                             state.once_connected.store(false, Ordering::SeqCst);
                             *state.once_qr.lock().unwrap() = None;
                             set_once_paired(&emitter, &account_id, false);
-                            if let Some(service) = service_for_events.upgrade() {
-                                forget_once_session(&emitter, &account_id, &service);
-                            }
+                            forget_once_session(&emitter, &account_id, &service);
                             let _ = emitter.emit(ONCE_EVENT, &event);
                             break;
                         }
@@ -472,13 +492,18 @@ fn spawn_instance_events(
                     // The instance's catch-up can outrun this loop, and the
                     // skipped events name no chat; ask for a blanket reload.
                     log::warn!("Android companion events fell behind, dropped {dropped} event(s)");
+                    let Some(service) = service_for_events.upgrade() else { break };
+                    let state = emitter.state::<AppState>();
+                    if !current_once_event(&state, &account_id, &service) { break; }
                     emit_service_event(&emitter, &ServiceEvent::StoreChanged);
                 }
                 Err(_) => break,
             }
         }
         let state = emitter.state::<AppState>();
-        state.once_connected.store(false, Ordering::SeqCst);
+        if service_for_events.upgrade().is_some_and(|service| current_once_event(&state, &account_id, &service)) {
+            state.once_connected.store(false, Ordering::SeqCst);
+        }
     });
 }
 
@@ -681,6 +706,17 @@ mod companion_tests {
 
     fn secs(n: u64) -> std::time::Duration {
         std::time::Duration::from_secs(n)
+    }
+
+    #[test]
+    fn stale_main_events_stop_after_account_switch_or_restart() {
+        assert!(!event_owner_matches(Some("new"), "old", true, true));
+        assert!(!event_owner_matches(Some("same"), "same", false, true));
+    }
+
+    #[test]
+    fn old_companion_logout_cannot_mutate_new_account_state() {
+        assert!(!event_owner_matches(Some("new"), "old", false, true));
     }
 
     #[test]

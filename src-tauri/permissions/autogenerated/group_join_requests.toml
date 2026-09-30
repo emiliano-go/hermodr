@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-group-join-requests"
+description = "Enables the group_join_requests command without any pre-configured scope."
+commands.allow = ["group_join_requests"]
+
+[[permission]]
+identifier = "deny-group-join-requests"
+description = "Denies the group_join_requests command without any pre-configured scope."
+commands.deny = ["group_join_requests"]

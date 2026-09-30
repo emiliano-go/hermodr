@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from "$lib/utils/ipc";
   import Icon from "$lib/ui/Icon.svelte";
+  import { members } from "$lib/state/members.svelte";
   import { session } from "$lib/state/session.svelte";
   import type { ChatSummary } from "$lib/utils/models";
   import type { ArchiveReport as Report } from "$lib/utils/wire";
@@ -35,7 +36,7 @@
   <label>Export scope
     <select bind:value={chat} disabled={busy}>
       <option value="">Whole account backup</option>
-      {#each chats as item (item.chat)}<option value={item.chat}>{item.display_name ?? item.chat}</option>{/each}
+      {#each chats as item (item.chat)}<option value={item.chat}>{members.displayName(item.display_name, item.chat)}</option>{/each}
     </select>
   </label>
   <div class="actions">

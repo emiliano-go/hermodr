@@ -79,3 +79,87 @@ fn media_identifiers_cannot_escape_the_download_folder() {
         assert!(media_path(Path::new("media"), id, "jpg").is_err());
     }
 }
+
+#[test]
+fn ptv_reupload_repoints_the_inner_video_without_dropping_spoiler_or_once_flags() {
+    let mut message = wa::Message { spoiler_message: MessageField::some(wa::message::FutureProofMessage {
+        message: MessageField::some(wa::Message { ptv_message: MessageField::some(wa::message::VideoMessage {
+            url: Some("https://old.invalid/video".into()), media_key: Some(vec![9; 32]), view_once: Some(true), ..Default::default()
+        }), ..Default::default() }), ..Default::default()
+    }), ..Default::default() };
+    assert_eq!(media_key(&message), Some(vec![9; 32]));
+    assert!(!has_direct_path(&message));
+    set_direct_path(&mut message, "/reuploaded-video");
+    let decoded = decoded_message(&message);
+    assert!(decoded.spoiler && decoded.view_once);
+    assert!(message.spoiler_message.is_set());
+    assert!(has_direct_path(&message));
+    let video = decoded.message.ptv_message.as_option().unwrap();
+    assert_eq!(video.direct_path.as_deref(), Some("/reuploaded-video"));
+    assert!(video.url.is_none());
+    assert_eq!(video.media_key, Some(vec![9; 32]));
+}
+
+#[tokio::test]
+async fn round_video_retry_persists_ptv_keys_and_the_reuploaded_path() {
+    let directory = std::env::temp_dir().join(format!("postal-ptv-{}-{}", std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    let store = StoreWorker::open(Path::new(":memory:")).await.unwrap();
+    let row = StoredMessage { header: MessageHeader { chat: "test@g.us".into(), id: "ptv".into(), ..Default::default() },
+        media: Media { kind: Some("round_video".into()), thumb: Some("data:image/jpeg;base64,AQ==".into()), ..Default::default() },
+        spoiler: true, ..Default::default() };
+    let locator = wa::Message { ptv_message: MessageField::some(wa::message::VideoMessage {
+        url: Some("https://old.invalid/video".into()), direct_path: Some("/old".into()), media_key: Some(vec![9; 32]), ..Default::default()
+    }), ..Default::default() };
+    store.insert_message(&row).await.unwrap();
+    store.set_media_ref(&row.header.chat, &row.header.id, &locator.encode_to_vec()).await.unwrap();
+    let attempts = AtomicUsize::new(0);
+    let downloads = &attempts;
+    let updated = fetch_stored_media(&store, &directory, &row.header.chat, &row.header.id, locator,
+        |media, mut writer| async move {
+            let attempt = downloads.fetch_add(1, Ordering::SeqCst);
+            assert_eq!(media.kind, "round_video");
+            assert_eq!(media.downloadable.direct_path(), Some(if attempt == 0 { "/old" } else { "/new" }));
+            if attempt == 0 { anyhow::bail!("synthetic stale CDN path"); }
+            writer.write_all(b"synthetic round video")?;
+            Ok(writer)
+        },
+        |message| async move { assert_eq!(media_key(&message), Some(vec![9; 32])); Ok("/new".into()) },
+    ).await.unwrap();
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    assert!(updated.spoiler);
+    assert_eq!(updated.media.kind.as_deref(), Some("round_video"));
+    assert!(updated.media.path.as_deref().unwrap().ends_with("ptv.mp4"));
+    let bytes = store.media_ref_for(&row.header.chat, &row.header.id).await.unwrap().unwrap();
+    let persisted = wa::Message::decode(&mut bytes.as_slice()).unwrap();
+    assert_eq!(persisted.ptv_message.direct_path.as_deref(), Some("/new"));
+    assert_eq!(persisted.ptv_message.media_key, Some(vec![9; 32]));
+    assert!(persisted.ptv_message.url.is_none() && persisted.video_message.is_unset());
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[tokio::test]
+async fn artwork_cache_keeps_the_music_row_and_reports_unavailable_sources() {
+    let mut jpeg = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::new_rgb8(2, 2).write_to(&mut jpeg, image::ImageFormat::Jpeg).unwrap();
+    for (uri, available) in [(Some("https://artwork.invalid/image"), true), (Some("https://artwork.invalid/image"), false), (None, true)] {
+        let store = StoreWorker::open(Path::new(":memory:")).await.unwrap();
+        let row = StoredMessage { header: MessageHeader { chat: "test@g.us".into(), id: "music".into(), ..Default::default() },
+            text: "Synthetic track — Artist".into(), spoiler: true, media: Media { kind: Some("music".into()), ..Default::default() }, ..Default::default() };
+        store.insert_message(&row).await.unwrap();
+        let music = wa::message::MusicMessage { artwork_uri: uri.map(str::to_owned), ..Default::default() };
+        let bytes = jpeg.get_ref().clone();
+        let result = fetch_music_artwork(&store, &row.header.chat, &row.header.id, &music, move |request| {
+            assert_eq!(Some(request), uri, "missing URI must not call the fetcher");
+            available.then_some(bytes)
+        }).await;
+        assert_eq!(result.is_ok(), available && uri.is_some());
+        let updated = store.message(&row.header.chat, &row.header.id).await.unwrap();
+        assert_eq!(updated.text, row.text);
+        assert!(updated.spoiler);
+        assert_eq!(updated.media.kind.as_deref(), Some("music"));
+        assert!(updated.media.path.is_none());
+        assert_eq!(updated.media.thumb.is_some(), available && uri.is_some());
+        if let Some(thumb) = updated.media.thumb { assert!(thumb.starts_with("data:image/jpeg;base64,")); }
+    }
+}

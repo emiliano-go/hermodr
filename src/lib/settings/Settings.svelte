@@ -5,6 +5,8 @@
   export type { Account };
   export type Section =
     | "profile"
+    | "linked"
+    | "transcription"
     | "accounts"
     | "whatsapp"
     | "privacy"
@@ -36,6 +38,9 @@
   import StorageManager from "$lib/settings/StorageManager.svelte";
   import ArchiveManager from "$lib/settings/ArchiveManager.svelte";
   import PluginManager from "$lib/settings/PluginManager.svelte";
+  import LinkedDevices from "$lib/settings/LinkedDevices.svelte";
+  import TranscriptionSettings from "$lib/settings/TranscriptionSettings.svelte";
+  import { session } from "$lib/state/session.svelte";
   import { limitValue, parseLimit } from "$lib/utils/retention";
   import type { NotifPermission } from "$lib/utils/notifications";
   import {
@@ -143,6 +148,7 @@
   // Profile and WhatsApp privacy live on the account, so they wait for pairing.
   const NAV = $derived<{ id: Section; label: string; group: string }[]>([
     ...(me ? [{ id: "profile" as Section, label: "My profile", group: "User settings" }] : []),
+    ...(me ? [{ id: "linked" as Section, label: "Linked devices", group: "User settings" }] : []),
     { id: "accounts", label: "My accounts", group: "User settings" },
     ...(me ? [{ id: "whatsapp" as Section, label: "WhatsApp privacy", group: "User settings" }] : []),
     { id: "privacy", label: "Storage & history", group: "Data & device" },
@@ -150,6 +156,7 @@
     { id: "notifications", label: "Notifications", group: "Messaging" },
     { id: "device", label: "Device", group: "Data & device" },
     { id: "media", label: "Media", group: "Messaging" },
+    { id: "transcription", label: "Transcription", group: "Messaging" },
     { id: "startup", label: "Startup", group: "App settings" },
     { id: "plugins", label: "Plugins", group: "Postal" },
     { id: "keybinds", label: "Keybinds", group: "App settings" },
@@ -332,7 +339,11 @@
   {/snippet}
 
   {#snippet pageHead()}
-    {#if section === "profile"}
+    {#if section === "linked"}
+      <h2>Linked devices</h2>
+    {:else if section === "transcription"}
+      <h2>Transcription</h2>
+    {:else if section === "profile"}
       <h2>My profile</h2>
       <p class="lede">How you appear to others on WhatsApp.</p>
     {:else if section === "whatsapp"}
@@ -856,6 +867,14 @@
             <button class="button danger" onclick={onflush}>Clear media</button>
           </div>
           <StorageManager />
+        {:else if section === "linked"}
+          <LinkedDevices account={active} connected={session.connected} />
+        {:else if section === "transcription"}
+          <TranscriptionSettings autoTranscribe={settings.auto_transcribe} onAutoTranscribe={async (enabled) => {
+            const next = { ...settings, auto_transcribe: enabled };
+            await onsave(next);
+            settings = next;
+          }} />
         {:else if section === "plugins"}
           <PluginManager />
         {:else if section === "startup"}

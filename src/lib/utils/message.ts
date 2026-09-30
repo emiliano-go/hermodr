@@ -13,7 +13,7 @@ export function bare(jid: string) {
 
 export function replyIcon(kind: string | null) {
   if (kind === "audio") return "\u{1F3B5}";
-  if (kind === "video" || kind === "gif") return "\u{1F3AC}";
+  if (kind === "video" || kind === "round_video" || kind === "gif") return "\u{1F3AC}";
   if (kind === "document") return "\u{1F4C4}";
   if (kind === "sticker") return "\u{1F600}";
   if (kind === "image") return "\u{1F5BC}";
@@ -22,6 +22,7 @@ export function replyIcon(kind: string | null) {
 
 /** A media message's caption. Uncaptioned media is stored as `[kind]`. */
 export function captionOf(message: StoredMessage) {
+  if (message.spoiler) return "[Spoiler]";
   const text = message.text.trim();
   return text === `[${message.media_kind}]` ? "" : text;
 }
@@ -54,6 +55,7 @@ export function formatTime(seconds: number) {
 export const MEDIA_LABELS: Record<string, string> = {
   image: "Photo",
   video: "Video",
+  round_video: "Round video",
   gif: "GIF",
   audio: "Audio",
   document: "Document",
@@ -64,6 +66,7 @@ export const MEDIA_LABELS: Record<string, string> = {
 export const DRAWN_KINDS = new Set([
   "image",
   "video",
+  "round_video",
   "gif",
   "audio",
   "document",
@@ -78,11 +81,13 @@ export const CARD_LABELS: Record<string, string> = {
   live_location: "📍 Live location",
   contact: "👤 Contact",
   music: "🎵 Music",
+  unknown: "Unsupported message",
 };
 
 export const VIEW_ONCE_LABEL: Record<string, string> = {
   image: "Photo",
   video: "Video",
+  round_video: "Round video",
   audio: "Voice message",
   gif: "GIF",
   sticker: "Sticker",

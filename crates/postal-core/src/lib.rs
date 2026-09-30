@@ -19,6 +19,7 @@ pub use aliases::AliasStore;
 pub use history::HistoryPolicy;
 pub use service::{
     GroupHistoryOffer, GroupHistoryResult, GroupMemberAddResult,
+    GroupJoinRequest,
     AdminReport, GroupInfo, GroupKind, InviteInfo, UserProfile, Participant, ParticipantChange, Profile, SearchResult, SendOptions, WhatsAppService, ServiceConfig,
     ServiceEvent, VoiceNote, StickerLibrary, StickerResyncReport,
 };

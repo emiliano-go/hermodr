@@ -12,7 +12,7 @@
   import MessageText from "$lib/messages/MessageText.svelte";
   import PollCard from "$lib/messages/cards/PollCard.svelte";
   import Spinner from "$lib/ui/Spinner.svelte";
-import VideoPlayer from "$lib/media/VideoPlayer.svelte";
+  import VideoPlayer from "$lib/media/VideoPlayer.svelte";
   import Avatar from "$lib/ui/Avatar.svelte";
   import { initials } from "$lib/utils/avatar";
   import { mediaSrc } from "$lib/media/MediaViewer.svelte";
@@ -24,11 +24,17 @@ import VideoPlayer from "$lib/media/VideoPlayer.svelte";
     replyIcon,
   } from "$lib/utils/message";
   import type { BubbleApi, BubbleVm, StoredMessage } from "$lib/utils/models";
+  import { session } from "$lib/state/session.svelte";
+  import { transcription } from "$lib/state/transcription.svelte";
+  import Transcript from "$lib/messages/Transcript.svelte";
 
   let { message, vm, api }: { message: StoredMessage; vm: BubbleVm; api: BubbleApi } = $props();
 
   /** A sticker file the renderer cannot draw, such as a Lottie sticker. */
   let stickerBroken = $state(false);
+  let revealedFor = $state<string | null>(null);
+  const revealKey = $derived(JSON.stringify([session.activeAccount, message.chat, message.id, message.text]));
+  const spoilerHidden = $derived(message.spoiler && revealedFor !== revealKey);
 
   /** The media kind a downloaded file's extension implies. */
   function kindOfFile(path: string) {
@@ -130,6 +136,9 @@ import VideoPlayer from "$lib/media/VideoPlayer.svelte";
   {#if message.revoked && !vm.hasBody}
     <!-- Nothing local to keep: only a revoke we heard about, never the message. -->
     <span class="revoked">This message was deleted<span class="meta-spacer" aria-hidden="true">{@render metadata()}</span></span>
+  {:else if spoilerHidden}
+    <button class="spoiler-reveal" onclick={() => { revealedFor = revealKey; }}>Reveal spoiler</button>
+    {#if vm.inlineMeta}<span class="meta">{@render metadata()}</span>{/if}
   {:else}
     {#if vm.isForwarded}
       <span class="forwarded-mark"><Icon name="forward" size={13} /> Forwarded</span>
@@ -265,6 +274,18 @@ import VideoPlayer from "$lib/media/VideoPlayer.svelte";
           </span>
         {/if}
       </button>
+    {:else if message.media_kind === "round_video" && vm.onceKept && !vm.onceRevealed}
+      <button class="round-pending" onclick={() => api.onrevealonce(message)}>
+        <span class="media-fetch"><span class="once-mark">1</span></span>
+        <span>One-time round video · Click to reveal</span>
+      </button>
+    {:else if message.media_kind === "round_video" && message.media_path}
+      <VideoPlayer src={mediaSrc(message.media_path)} path={message.media_path} round autoplay={false} />
+    {:else if message.media_kind === "round_video"}
+      <button class="round-video-pending" disabled={vm.downloading} onclick={() => api.ondownload(message)} aria-label="Download round video">
+        {#if message.media_thumb}<img src={mediaSrc(message.media_thumb)} alt="" />{/if}
+        {#if vm.downloading}<Spinner />{:else}<Icon name="download" size={28} />{/if}
+      </button>
     {:else if ["image", "video", "gif"].includes(message.media_kind ?? "") && !message.media_path}
       <button
         class="media-stub"
@@ -335,6 +356,9 @@ import VideoPlayer from "$lib/media/VideoPlayer.svelte";
           onended={() => api.onnextvoice(message)}
           onpaused={() => api.onpausevoice()}
           initials={initials(message.from_me ? "You" : vm.senderText)} />
+        {#if session.activeAccount && !vm.onceKept}
+          <Transcript accountId={session.activeAccount} chat={message.chat} id={message.id} enabled={transcription.enabled} hidden={spoilerHidden} />
+        {/if}
       {/if}
     {:else if message.media_kind === "audio"}
       <!-- Not downloaded yet: the note's own row, with the download where play will be. -->
@@ -352,6 +376,9 @@ import VideoPlayer from "$lib/media/VideoPlayer.svelte";
           {#each Array(34) as _, i (i)}<span style="height: {20 + ((i * 37) % 60)}%"></span>{/each}
         </span>
       </button>
+      {#if session.activeAccount && !vm.onceKept}
+        <Transcript accountId={session.activeAccount} chat={message.chat} id={message.id} enabled={transcription.enabled} hidden={spoilerHidden} />
+      {/if}
     {:else if message.media_kind === "poll"}
       <PollCard
         poll={vm.poll}
@@ -421,6 +448,13 @@ import VideoPlayer from "$lib/media/VideoPlayer.svelte";
         onopenurl={api.onopenurl} />
     {/if}
 
+    {#if message.media_kind === "music" && !message.media_thumb && !vm.downloadError}
+      <button class="download-failed" disabled={vm.downloading} onclick={() => api.ondownload(message)}>
+        {#if vm.downloading}<Spinner />{:else}<Icon name="download" size={14} />{/if}
+        Load artwork
+      </button>
+    {/if}
+
     {#if vm.downloadError && !vm.downloading}
       <button
         class="download-failed"
@@ -438,7 +472,7 @@ import VideoPlayer from "$lib/media/VideoPlayer.svelte";
 
     {#if vm.caption}
       <MessageText
-        text={vm.caption}
+        text={message.spoiler ? message.text : vm.caption}
         mine={message.from_me}
         meta={vm.inlineMeta ? metadata : undefined}
         toWire={api.toWire}
@@ -501,6 +535,10 @@ import VideoPlayer from "$lib/media/VideoPlayer.svelte";
 </div>
 
 <style>
+  .spoiler-reveal { padding: 8px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--raised); color: var(--text); font: inherit; cursor: pointer; }
+  .round-video-pending { position: relative; display: grid; place-items: center; width: 240px; height: 240px; padding: 0; border: 0; border-radius: 50%; overflow: hidden; background: var(--raised); color: var(--text); cursor: pointer; }
+  .round-video-pending img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .round-video-pending :global(svg) { position: relative; }
   .msg-row {
     display: flex;
     flex-direction: column;

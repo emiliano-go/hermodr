@@ -21,7 +21,7 @@ impl Resolver for Dns {
 
 #[derive(Debug)]
 struct Wire {
-    replies: HashMap<String, String>,
+    replies: HashMap<String, Vec<u8>>,
     requested: Arc<Mutex<Vec<String>>>,
 }
 
@@ -39,7 +39,7 @@ impl Connector for Wire {
 }
 
 #[derive(Debug)]
-struct Reply { bytes: String, buffers: LazyBuffers }
+struct Reply { bytes: Vec<u8>, buffers: LazyBuffers }
 
 impl Transport for Reply {
     fn buffers(&mut self) -> &mut dyn Buffers { &mut self.buffers }
@@ -47,7 +47,7 @@ impl Transport for Reply {
     fn await_input(&mut self, _: NextTimeout) -> Result<bool, Error> {
         if self.bytes.is_empty() { return Ok(false); }
         let size = self.bytes.len();
-        self.buffers.input_append_buf()[..size].copy_from_slice(self.bytes.as_bytes());
+        self.buffers.input_append_buf()[..size].copy_from_slice(&self.bytes);
         self.buffers.input_appended(size);
         self.bytes.clear();
         Ok(true)
@@ -56,6 +56,10 @@ impl Transport for Reply {
 }
 
 fn agent(replies: Vec<(&str, String)>, proxy: Option<ureq::Proxy>) -> (ureq::Agent, Arc<Mutex<Vec<String>>>) {
+    agent_bytes(replies.into_iter().map(|(url, response)| (url, response.into_bytes())).collect(), proxy)
+}
+
+fn agent_bytes(replies: Vec<(&str, Vec<u8>)>, proxy: Option<ureq::Proxy>) -> (ureq::Agent, Arc<Mutex<Vec<String>>>) {
     let requested = Arc::new(Mutex::new(Vec::new()));
     let config = ureq::Agent::config_builder().proxy(proxy).max_redirects(5).build();
     (ureq::Agent::with_parts(config, Wire {
@@ -141,4 +145,35 @@ fn redirect_loops_stop_after_five_hops() {
     let (agent, requested) = agent(vec![("http://public.test/", redirect("/"))], None);
     assert!(fetch_preview_with(&agent, "http://public.test/").is_none());
     assert_eq!(requested.lock().unwrap().len(), 6);
+}
+
+#[test]
+fn artwork_fetch_reuses_public_resolution_and_decodes_the_image_before_caching() {
+    let mut png = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::new_rgb8(2, 2).write_to(&mut png, image::ImageFormat::Png).unwrap();
+    let bytes = png.into_inner();
+    let mut response = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", bytes.len()).into_bytes();
+    response.extend(bytes);
+    let (agent, requested) = agent_bytes(vec![("http://public.test/artwork", response)], None);
+    let thumbnail = fetch_thumbnail_with(&agent, "http://public.test/artwork").unwrap();
+    assert_eq!(image::guess_format(&thumbnail).unwrap(), image::ImageFormat::Jpeg);
+    let decoded = image::load_from_memory(&thumbnail).unwrap();
+    assert!((1..=512).contains(&decoded.width()) && (1..=512).contains(&decoded.height()));
+    assert_eq!(*requested.lock().unwrap(), ["http://public.test/artwork"]);
+}
+
+#[test]
+fn artwork_fetch_refuses_private_redirects_proxies_and_non_images() {
+    let (direct, requested) = agent(vec![("http://public.test/artwork", redirect("http://private.test/artwork"))], None);
+    for uri in ["file:///secret", "data:image/png;base64,AQ==", "http://private.test/artwork"] {
+        assert!(fetch_thumbnail_with(&direct, uri).is_none());
+    }
+    assert!(requested.lock().unwrap().is_empty());
+    assert!(fetch_thumbnail_with(&direct, "http://public.test/artwork").is_none());
+    assert_eq!(*requested.lock().unwrap(), ["http://public.test/artwork"]);
+    let (bad, _) = agent(vec![("http://public.test/artwork", page("not an image"))], None);
+    assert!(fetch_thumbnail_with(&bad, "http://public.test/artwork").is_none());
+    let (proxy, requested) = agent(vec![], Some(ureq::Proxy::new("http://proxy.test:8080").unwrap()));
+    assert!(fetch_thumbnail_with(&proxy, "http://public.test/artwork").is_none());
+    assert!(requested.lock().unwrap().is_empty());
 }

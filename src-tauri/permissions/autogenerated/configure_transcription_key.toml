@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-configure-transcription-key"
+description = "Enables the configure_transcription_key command without any pre-configured scope."
+commands.allow = ["configure_transcription_key"]
+
+[[permission]]
+identifier = "deny-configure-transcription-key"
+description = "Denies the configure_transcription_key command without any pre-configured scope."
+commands.deny = ["configure_transcription_key"]

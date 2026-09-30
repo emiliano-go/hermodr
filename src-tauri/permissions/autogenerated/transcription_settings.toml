@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-transcription-settings"
+description = "Enables the transcription_settings command without any pre-configured scope."
+commands.allow = ["transcription_settings"]
+
+[[permission]]
+identifier = "deny-transcription-settings"
+description = "Denies the transcription_settings command without any pre-configured scope."
+commands.deny = ["transcription_settings"]

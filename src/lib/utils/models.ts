@@ -4,6 +4,7 @@ import type { StoredMessage, Poll, Event as ChatEvent } from "./wire";
 export type {
   Account, ChatRetention, ChatSummary, ConnectionState, DiskRetention, GroupInfo,
   GroupHistoryOffer, GroupHistoryResult, GroupMemberAddResult, LiveLocation, OnceState,
+  GroupJoinRequest,
   ParticipantChange, Poll, RetentionLimit, SearchResult, ServiceEvent, Sticker,
   StickerLibrary, StickerPack, StickerResyncReport, StoredMessage, UiSettings,
   Event as ChatEvent, Participant as Member, ChatMarks as Marks,
@@ -60,7 +61,7 @@ export type Outgoing = {
 export type ChatPrivacy = Pick<import("./wire").ChatSettings, "send_typing" | "send_receipts">;
 
 /** Chat list filter tabs. */
-export type ChatFilter = "all" | "unread" | "groups" | "archived";
+export type ChatFilter = "all" | "unread" | "groups" | "archived" | "favorites";
 
 /** Who an `@<user>` token names. */
 export type MentionTarget = { jid: string; name: string; self: boolean };

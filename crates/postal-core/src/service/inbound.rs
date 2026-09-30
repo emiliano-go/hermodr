@@ -31,6 +31,7 @@ pub(super) struct Inbound {
     pub(super) one_time_only: bool,
     /// What a companion wake has read and kept, for its one summary line.
     pub(super) tally: Arc<CompanionTally>,
+    pub(super) secret_edits: secret_edits::SecretEdits,
 }
 
 /// Counters behind the companion's catch-up summary.
@@ -134,7 +135,6 @@ impl Inbound {
             Event::GroupUpdate(update) => self.on_group_changed(update).await,
             Event::MissedCall(call) => self.on_missed_call(call).await,
             Event::UndecryptableMessage(stub) => self.on_undecryptable(stub),
-            Event::PinUpdate(pin) => self.on_pin_update(pin).await,
             Event::ArchiveUpdate(update) => self.on_archive_update(update).await,
             Event::MuteUpdate(update) => self.on_mute_update(update).await,
             Event::MarkChatAsReadUpdate(update) => self.on_mark_read_update(update).await,
@@ -169,18 +169,25 @@ impl Inbound {
     /// The name the user saved for a contact comes from the address book and
     /// outranks the push name the contact set for themselves.
     async fn on_contact_update(&self, update: &wa_events::ContactUpdate) {
+        let mut changed = contacts::apply_contact_identity(&self.store, update).await.observed().unwrap_or(false);
         let name = update
             .action
             .full_name
             .as_deref()
+            .filter(|name| !name.trim().is_empty())
             .or(update.action.first_name.as_deref());
         if let Some(name) = name.filter(|n| !n.trim().is_empty()) {
-            self.store.set_saved_name(&update.jid.to_string(), name).await.logged();
+            changed |= self.store.set_saved_name(&update.jid.to_string(), name).await.observed().is_some();
+        }
+        if changed {
+            let _ = self.events.send(ServiceEvent::NamesUpdated { count: 1 });
         }
     }
 
     async fn on_contact_removed(&self, removed: &wa_events::ContactRemoved) {
-        self.store.clear_saved_name(&removed.jid.to_string()).await.logged();
+        if self.store.clear_saved_name(&removed.jid.to_string()).await.observed().is_some() {
+            let _ = self.events.send(ServiceEvent::NamesUpdated { count: 1 });
+        }
     }
 
     /// Progress for the initial catch-up, so the UI can show how much of the
@@ -358,14 +365,6 @@ impl Inbound {
         );
     }
 
-    /// Chat pins are account state; mirror them so the list matches the phone.
-    async fn on_pin_update(&self, pin: &wa_events::PinUpdate) {
-        let pinned = pin.action.pinned.unwrap_or(false);
-        let jid = resolve_chat(self.client_for_events.get().map(|c| c.as_ref()), &self.store, &pin.jid).await;
-        self.store.set_pinned(&jid, pinned).await.logged();
-        let _ = self.events.send(ServiceEvent::ChatStateChanged { chat: jid });
-    }
-
     async fn on_archive_update(&self, update: &wa_events::ArchiveUpdate) {
         let archived = update.action.archived.unwrap_or(false);
         let jid = resolve_chat(self.client_for_events.get().map(|c| c.as_ref()), &self.store, &update.jid).await;
@@ -426,7 +425,7 @@ impl Inbound {
             // A companion keeps view-once media only; everything else belongs to
             // the main link, which stored it when it arrived.
             if self.one_time_only {
-                if !inbound.message.is_view_once() {
+                if !decoded_message(&inbound.message).view_once {
                     continue;
                 }
                 ingested += 1;
@@ -434,6 +433,19 @@ impl Inbound {
             let Some(incoming) = self.resolve_incoming(inbound, &ctx).await else {
                 continue;
             };
+            match self.secret_edits.apply(ctx.store, inbound, &incoming.chat, &ctx.own).await {
+                Ok(secret_edits::Outcome::Continue) => {},
+                Ok(secret_edits::Outcome::Applied { id }) => {
+                    if let Some(updated) = ctx.store.message(&incoming.chat, &id).await.observed() {
+                        let _ = self.events.send(ServiceEvent::hint(&updated, false));
+                    }
+                    let _ = self.events.send(ServiceEvent::Marks { chat: incoming.chat.clone() });
+                    ctx.touched.push(incoming.chat.clone());
+                    continue;
+                },
+                Ok(secret_edits::Outcome::Drop) => continue,
+                Err(error) => { log::warn!("secret edit rejected: {error}"); continue; },
+            }
             ctx.touched.push(incoming.chat.clone());
             let author = if incoming.from_me {
                 ctx.own.first().cloned().unwrap_or_else(|| incoming.sender.clone())
@@ -513,8 +525,8 @@ impl Inbound {
         from_me: bool,
         alt: &str,
     ) {
-        let known = ctx.store.name_for(alt).await.observed().flatten().filter(|n| !is_placeholder_name(n));
-        let is_saved = known.is_some();
+        let is_saved = ctx.store.name_is_saved(alt).await.observed().unwrap_or(false);
+        let known = ctx.store.name_for(alt).await.observed().flatten().filter(|n| is_saved || !is_placeholder_name(n));
         // Fall back to the phone number, never the unreadable LID.
         let name = known.unwrap_or_else(|| alt.split('@').next().unwrap_or(alt).to_string());
         if is_saved {
@@ -546,28 +558,29 @@ impl Inbound {
         push_name: &str,
     ) {
         // Push names never override a saved one.
-        ctx.store.set_name(sender, push_name).await.logged();
+        let mut changed = ctx.store.set_push_name(sender, push_name).await.observed().unwrap_or(false);
         // A participant's JID has no device suffix while a message's sender
         // does, so store the bare form too or the group member list cannot find
         // the name.
         if let Some((user, server)) = sender.split_once('@') {
             let bare = format!("{}@{}", user.split(':').next().unwrap_or(user), server);
             if bare != sender {
-                ctx.store.set_name(&bare, push_name).await.logged();
+                changed |= ctx.store.set_push_name(&bare, push_name).await.observed().unwrap_or(false);
             }
         }
         // A one-to-one chat is named after its contact. A group is named by its
         // subject, and a message we sent must never name a chat after us.
         if !is_group && !from_me {
-            ctx.store.set_name(chat, push_name).await.logged();
+            changed |= ctx.store.set_push_name(chat, push_name).await.observed().unwrap_or(false);
         }
+        if changed { let _ = self.events.send(ServiceEvent::NamesUpdated { count: 1 }); }
     }
 
     /// Applies a message that is state for something else rather than a message
     /// of its own: a vote, an RSVP, a reaction, a pin, a label, a revoke, an
     /// edit or a sticker pack. Returns whether it was one.
     async fn apply_control(&self, ctx: &BatchCtx<'_>, inbound: &InboundMessage, incoming: &Incoming) -> bool {
-        let base = inbound.message.get_base_message();
+        let base = decoded_message(&inbound.message).message;
         if let Some(protocol) = base.protocol_message.as_option()
             .filter(|protocol| protocol.r#type == Some(wa::message::protocol_message::Type::EPHEMERAL_SETTING))
         {
@@ -593,7 +606,7 @@ impl Inbound {
             return true;
         }
         if base.pin_in_chat_message.as_option().is_some() {
-            self.apply_message_pin(ctx, &incoming.chat, base).await;
+            self.apply_message_pin(ctx, &incoming.chat, base, inbound.info.timestamp.timestamp_millis()).await;
             return true;
         }
         if let Some(label) = member_label_change(&inbound.message) {
@@ -610,8 +623,8 @@ impl Inbound {
             self.apply_live_location_edit(ctx, &incoming.chat, &target, update).await;
             return true;
         }
-        if let Some((target, text)) = edit_of(&inbound.message) {
-            self.apply_edit(ctx, &incoming.chat, &target, &text).await;
+        if let Some((target, text, spoiler)) = edit_of(&inbound.message) {
+            self.apply_edit(ctx, &incoming.chat, &target, &text, spoiler).await;
             return true;
         }
         if base.sticker_pack_message.is_set() {
@@ -625,8 +638,8 @@ impl Inbound {
     /// addresses, and an LID-addressed group uses the LID form, so every form
     /// either side is known by is tried.
     async fn apply_poll_vote(&self, ctx: &BatchCtx<'_>, inbound: &InboundMessage, incoming: &Incoming) {
-        use whatsapp_rust::wacore::poll::{compute_option_hash, PollVoteCiphertext};
-        let Some(update) = inbound.message.get_base_message().poll_update_message.as_option() else { return };
+        use whatsapp_rust::wacore::poll::PollVoteCiphertext;
+        let Some(update) = decoded_message(&inbound.message).message.poll_update_message.as_option() else { return };
         let chat = &incoming.chat;
         let poll_id = update.poll_creation_message_key.as_option().and_then(|k| k.id.clone());
         let def = match poll_id.as_deref() { Some(id) => ctx.store.poll_secret(chat, id).await.observed().flatten(), None => None };
@@ -661,12 +674,7 @@ impl Inbound {
         }
         match opened {
             Ok(hashes) => {
-                let chosen: Vec<String> = def
-                    .options
-                    .iter()
-                    .filter(|o| hashes.iter().any(|h| h.as_slice() == compute_option_hash(o)))
-                    .cloned()
-                    .collect();
+                let Some(chosen) = ctx.store.poll_option_names(chat, &poll_id, &hashes).await.observed() else { return };
                 let who = if incoming.from_me { "@me".to_string() } else { voter.to_string() };
                 ctx.store.set_poll_vote(chat, &poll_id, &who, &chosen).await.logged();
                 let _ = self.events.send(ServiceEvent::Marks { chat: chat.clone() });
@@ -678,7 +686,7 @@ impl Inbound {
     /// An RSVP to an event. Our own events may have been answered under our
     /// other address, so every creator form is tried.
     async fn apply_event_response(&self, ctx: &BatchCtx<'_>, inbound: &InboundMessage, incoming: &Incoming) {
-        let Some(response) = inbound.message.get_base_message().enc_event_response_message.as_option() else { return };
+        let Some(response) = decoded_message(&inbound.message).message.enc_event_response_message.as_option() else { return };
         let chat = &incoming.chat;
         let event_id = response.event_creation_message_key.as_option().and_then(|k| k.id.clone());
         let def = match event_id.as_deref() { Some(id) => ctx.store.event_secret(chat, id).await.observed().flatten(), None => None };
@@ -710,7 +718,7 @@ impl Inbound {
     }
 
     async fn apply_reaction(&self, ctx: &BatchCtx<'_>, chat: &str, from_me: bool, inbound: &InboundMessage) {
-        let Some(reaction) = inbound.message.get_base_message().reaction_message.as_option() else { return };
+        let Some(reaction) = decoded_message(&inbound.message).message.reaction_message.as_option() else { return };
         let Some(target) = reaction.key.as_option().and_then(|k| k.id.clone()) else { return };
         let who = if from_me {
             "@me".to_string()
@@ -722,13 +730,13 @@ impl Inbound {
         let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
     }
 
-    async fn apply_message_pin(&self, ctx: &BatchCtx<'_>, chat: &str, base: &wa::Message) {
-        use wa::message::pin_in_chat_message::Type;
-        let Some(pin) = base.pin_in_chat_message.as_option() else { return };
-        let target = pin.key.as_option().and_then(|k| k.id.clone());
-        let pinned = pin.r#type == Some(Type::PIN_FOR_ALL);
-        ctx.store.set_message_pin(chat, target.as_deref().filter(|_| pinned)).await.logged();
-        let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
+    async fn apply_message_pin(&self, ctx: &BatchCtx<'_>, chat: &str, base: &wa::Message, timestamp: i64) {
+        let Some(Some(pin)) = history_pins::live_message_pin(base, timestamp).observed() else { return };
+        let chat = chat.to_owned();
+        let event_chat = chat.clone();
+        if ctx.store.run(move |store| store.apply_message_pin_update(&chat, &pin, false)).await.observed() == Some(true) {
+            let _ = self.events.send(ServiceEvent::Marks { chat: event_chat });
+        }
     }
 
     /// A member label change updates the cached participant and tells the UI.
@@ -813,8 +821,8 @@ impl Inbound {
         }
     }
 
-    async fn apply_edit(&self, ctx: &BatchCtx<'_>, chat: &str, target: &str, text: &str) {
-        if let Some(true) = ctx.store.update_message_content(chat, target, text).await.observed() {
+    async fn apply_edit(&self, ctx: &BatchCtx<'_>, chat: &str, target: &str, text: &str, spoiler: bool) {
+        if let Some(true) = ctx.store.update_message_spoiler(chat, target, text, spoiler).await.observed() {
             if let Some(updated) = ctx.store.message(chat, target).await.observed() {
                 let _ = self.events.send(ServiceEvent::hint(&updated, false));
             }
@@ -835,7 +843,7 @@ impl Inbound {
         // Mentions stay `@<number>` as on the wire; the UI resolves them when
         // drawn, so later names apply.
         message.local.mentioned = mentions_me(&inbound.message, &ctx.own);
-        if inbound.message.is_view_once() {
+        if decoded_message(&inbound.message).view_once {
             ctx.store.set_view_once(&incoming.chat, &message.header.id, incoming.from_me).await.logged();
         }
         if is_forwarded(&inbound.message) {
@@ -850,7 +858,7 @@ impl Inbound {
     /// small and read as part of the conversation, so WhatsApp always fetches
     /// them; anything else follows the chat's setting.
     async fn auto_download_for(&self, ctx: &BatchCtx<'_>, inbound: &InboundMessage, chat: &str) -> bool {
-        let base = inbound.message.get_base_message();
+        let base = decoded_message(&inbound.message).message;
         let small = base.sticker_message.is_set()
             || base.audio_message.as_option().is_some_and(|a| a.ptt == Some(true));
         if small {
@@ -1005,5 +1013,37 @@ impl Inbound {
             }
         }
         (removed, pruning)
+    }
+}
+
+#[cfg(test)]
+mod contact_identity_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn alternate_push_name_is_not_promoted_to_a_saved_contact() {
+        let store = StoreWorker::open(Path::new(":memory:")).await.unwrap();
+        let (events, _) = broadcast::channel(16);
+        let inbound = Inbound {
+            store: store.clone(), events, connected: Arc::default(), client_for_events: Arc::default(),
+            disk_retention: Arc::new(DiskRetentionManager::new(DiskRetention::unlimited())),
+            media_dir: None, group_cache: Arc::default(), groups_cache: Arc::default(), older_waits: Arc::default(),
+            downloads: Arc::new(tokio::sync::Semaphore::new(1)), sync_progress: Arc::default(), auto_download_default: false,
+            keep_archived: Arc::default(), keep_view_once: Arc::default(), one_time_only: false, tally: Arc::default(), secret_edits: Default::default(),
+        };
+        let ctx = BatchCtx { store: &store, client: None, own: vec![], media_dir: None, touched: vec![] };
+        store.set_lid_pn("77", "59891954564").await.unwrap();
+        store.set_push_name("59891954564@s.whatsapp.net", "Push").await.unwrap();
+        inbound.remember_alt_name(&ctx, "77@lid", "77@lid", false, false, "59891954564@s.whatsapp.net").await;
+        assert!(!store.name_is_saved("77@lid").await.unwrap());
+        store.set_saved_name("59891954564@s.whatsapp.net", "12345").await.unwrap();
+        inbound.remember_alt_name(&ctx, "77@lid", "77@lid", false, false, "59891954564@s.whatsapp.net").await;
+        assert!(store.name_is_saved("77@lid").await.unwrap());
+        assert_eq!(store.name_for("77@lid").await.unwrap().as_deref(), Some("12345"));
+        let update = wa_events::ContactUpdate::builder().jid("59891954564@s.whatsapp.net".parse().unwrap())
+            .timestamp("2026-09-30T00:00:00Z".parse().unwrap()).from_full_sync(false)
+            .action(Box::new(wa::sync_action_value::ContactAction { full_name: Some(" ".into()), first_name: Some("Saved first name".into()), ..Default::default() })).build();
+        inbound.on_contact_update(&update).await;
+        assert_eq!(store.name_for("77@lid").await.unwrap().as_deref(), Some("Saved first name"));
     }
 }

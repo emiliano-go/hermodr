@@ -2,6 +2,7 @@ import { invoke } from "$lib/utils/ipc";
 import type { ConnectionState } from "$lib/utils/models";
 import { chats } from "./chats.svelte";
 import { composer } from "./composer.svelte";
+import { favorites } from "./favorites.svelte";
 import { refreshResolvedNames } from "./events";
 import { members } from "./members.svelte";
 import { messages } from "./messages.svelte";
@@ -11,6 +12,7 @@ import { ui } from "./ui.svelte";
 
 /** Clears everything tied to the current account before switching. */
 function resetUi() {
+  favorites.reset();
   chats.resetAccount();
   session.resetAccount();
   messages.resetAccount();
@@ -81,6 +83,7 @@ export async function syncState() {
     // the loading screen. A cold start reaches here disconnected, then gates.
     if (!session.connectRequested && !session.gateDone) session.gateDone = true;
     await chats.refreshChats();
+    void favorites.refresh();
     // Aliases need a live service, so they are read on every connect and on
     // every account switch rather than once at boot.
     await members.loadAliases();

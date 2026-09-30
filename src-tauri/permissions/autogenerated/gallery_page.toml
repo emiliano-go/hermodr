@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-gallery-page"
+description = "Enables the gallery_page command without any pre-configured scope."
+commands.allow = ["gallery_page"]
+
+[[permission]]
+identifier = "deny-gallery-page"
+description = "Denies the gallery_page command without any pre-configured scope."
+commands.deny = ["gallery_page"]

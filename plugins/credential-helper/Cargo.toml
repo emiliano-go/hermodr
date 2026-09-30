@@ -1,0 +1,18 @@
+[package]
+name = "postal-transcription-key"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace]
+
+[dependencies]
+keyring = { version = "=3.6.3", default-features = false, features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust", "vendored"] }
+rpassword = "7"
+zeroize = "1"
+
+[profile.dev]
+debug = 1
+
+[profile.dev.package."*"]
+debug = false

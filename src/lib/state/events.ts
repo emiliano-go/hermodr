@@ -18,6 +18,7 @@ import {
 import { isPlaceholder } from "$lib/utils/phone";
 import { chats } from "./chats.svelte";
 import { composer } from "./composer.svelte";
+import { favorites } from "./favorites.svelte";
 import { members } from "./members.svelte";
 import { messages } from "./messages.svelte";
 import { session } from "./session.svelte";
@@ -208,6 +209,7 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       break;
     case "connected":
       session.connected = true;
+      void favorites.refresh();
       // A code was on screen, so this is a fresh link: the phone's history sync starts now.
       if (session.qrSvg) session.historyPercent = 0;
       await session.showQr(null);
@@ -295,7 +297,12 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
     case "chatStateChanged":
       if (!deferRefresh(null)) queueRefreshChats();
       break;
+    case "chatPinRemoved":
+      ui.notify("WhatsApp removed this pin. Postal now matches your account.");
+      if (!deferRefresh(null)) queueRefreshChats();
+      break;
     case "namesUpdated":
+      void favorites.refresh();
       // Address-book names arrived after the initial fetch, so the cached
       // display names are stale until both lists reload.
       members.forgetUnresolvedNames();
@@ -433,6 +440,9 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       }
       void chats.loadGroupKinds();
       void chats.refreshChats();
+      break;
+    case "favoritesChanged":
+      void favorites.refresh();
       break;
   }
 }

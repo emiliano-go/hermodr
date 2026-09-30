@@ -1,6 +1,7 @@
 <!-- The left bar: search, filter pills, chat rows and the account footer.
   Moved out of +page.svelte. -->
 <script lang="ts">
+  import { members } from "$lib/state/members.svelte";
   import Avatar from "$lib/ui/Avatar.svelte";
   import Button from "$lib/ui/Button.svelte";
   import Icon, { type IconName } from "$lib/ui/Icon.svelte";
@@ -13,7 +14,6 @@
     ChatSummary,
     SearchResult,
   } from "$lib/utils/models";
-  import { phoneLabel } from "$lib/utils/phone";
   import { tick } from "svelte";
   import { invoke } from "$lib/utils/ipc";
 
@@ -30,6 +30,9 @@
     visibleChats,
     selectedChat,
     chatFilter,
+    favoriteChats = [],
+    favoriteBusy = false,
+    ontogglefavorite,
     onfilter,
     unreadChats,
     unreadPings,
@@ -73,6 +76,9 @@
     visibleChats: ChatSummary[];
     selectedChat: string | null;
     chatFilter: ChatFilter;
+    favoriteChats?: string[];
+    favoriteBusy?: boolean;
+    ontogglefavorite?: (chat: ChatSummary) => void;
     onfilter: (filter: ChatFilter) => void;
     unreadChats: number;
     unreadPings: number;
@@ -243,6 +249,7 @@
   {#if !searchQuery.trim()}
     <div class="filters" role="tablist" aria-label="Filter chats">
       <Button variant="chip" selected={chatFilter === "all"} onclick={() => onfilter("all")}>All</Button>
+      <Button variant="chip" selected={chatFilter === "favorites"} onclick={() => onfilter("favorites")}>Favorites</Button>
       <Button
         variant="chip"
         selected={chatFilter === "unread"}
@@ -283,17 +290,11 @@
             }}>
             <Avatar
               src={avatars[result.jid] ?? null}
-              label={result.name || result.number || result.jid}
+              label={members.displayName(result.name, result.jid)}
               seed={result.jid}
             />
             <span class="name">
-              {#if result.kind === "group" || result.saved}
-                {result.name}
-              {:else}
-                {phoneLabel(result.number) ?? result.number}{result.name && result.name !== result.number
-                  ? ` - ${result.name}`
-                  : ""}
-              {/if}
+              {members.displayName(result.name, result.jid)}
             </span>
             <span class="preview">
               {result.kind}{result.has_messages ? "" : " · no messages yet"}
@@ -487,6 +488,17 @@
       }}>{menuChat.pinned ? "Unpin" : "Pin"}</Button>
     <Button
       variant="menu"
+      icon="star"
+      iconSize={15}
+      role="menuitem"
+      disabled={favoriteBusy || !ontogglefavorite}
+      onclick={() => {
+        releaseFreeze();
+        if (menuChat) ontogglefavorite?.(menuChat);
+        closeChatMenu();
+      }}>{favoriteChats.includes(menuChat.chat) ? "Remove from favorites" : "Add to favorites"}</Button>
+    <Button
+      variant="menu"
       icon="download"
       iconSize={15}
       role="menuitem"
@@ -678,6 +690,7 @@
   }
   .filters {
     display: flex;
+    flex-wrap: wrap;
     gap: 8px;
     padding: 0 12px 8px;
     flex: none;

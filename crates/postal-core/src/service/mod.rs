@@ -42,6 +42,18 @@ mod storage;
 mod archive;
 pub use storage::{StorageReport, StorageCleanup, CleanupResult, StorageOrder};
 mod groups;
+mod gallery;
+mod devices;
+pub use devices::LinkedDevice;
+mod favorites;
+use favorites::Favorites;
+mod pins;
+mod history_pins;
+use pins::Pins;
+mod secret_edits;
+pub mod transcription;
+mod group_requests;
+pub use group_requests::GroupJoinRequest;
 mod group_history;
 mod group_history_policy;
 mod scheduled;
@@ -160,6 +172,7 @@ pub enum ServiceEvent {
     NamesUpdated { count: usize },
     /// A chat's pin, archive, mute or unread mark changed from another device.
     ChatStateChanged { chat: String },
+    ChatPinRemoved { chat: String },
     /// The offline backlog is draining; `pending` is how many messages the
     /// server announced at the start of the drain, `applied` how many have been
     /// stored so far.
@@ -191,6 +204,7 @@ pub enum ServiceEvent {
     MemberLabel { chat: String, jid: String, label: String },
     /// A group's settings, admins, members or name changed.
     GroupChanged { chat: String },
+    FavoritesChanged,
     /// Reactions, stars or the pinned message of a chat changed.
     Marks { chat: String },
     /// Store changes were missed (a lagging listener skipped events), so the
@@ -415,6 +429,8 @@ pub struct ServiceConfig {
     pub messages_path: PathBuf,
     /// Local outbox, kept even when message history is disabled.
     pub scheduled_path: PathBuf,
+    /// Synced favorites persist independently of message history.
+    pub favorites_path: PathBuf,
     /// Contact alias database. Kept out of the message store so aliases
     /// survive `messages_path` being turned into an in-memory store.
     pub aliases_path: PathBuf,
@@ -451,6 +467,7 @@ impl ServiceConfig {
             session_path: data_dir.join("session.db"),
             messages_path: data_dir.join("messages.db"),
             scheduled_path: data_dir.join("scheduled.db"),
+            favorites_path: data_dir.join("favorites.db"),
             aliases_path: data_dir.join("aliases.db"),
             retention: DiskRetention::default(),
             request_full_history: false,
@@ -468,6 +485,8 @@ impl ServiceConfig {
 ///
 /// Dropping this stops the background task and closes the stores.
 pub struct WhatsAppService {
+    favorites: Favorites,
+    pins: Pins,
     history_shares: group_history::PendingHistoryShares,
     user_info_slots: tokio::sync::Semaphore,
     client: Arc<Client>,

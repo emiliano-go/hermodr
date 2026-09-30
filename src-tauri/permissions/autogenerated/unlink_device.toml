@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-unlink-device"
+description = "Enables the unlink_device command without any pre-configured scope."
+commands.allow = ["unlink_device"]
+
+[[permission]]
+identifier = "deny-unlink-device"
+description = "Denies the unlink_device command without any pre-configured scope."
+commands.deny = ["unlink_device"]

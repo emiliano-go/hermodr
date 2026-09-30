@@ -43,7 +43,7 @@
   } = $props();
 
   const item = $derived(items[index]);
-  const isVideo = $derived(item?.kind === "video" || item?.kind === "gif");
+  const isVideo = $derived(item?.kind === "video" || item?.kind === "gif" || item?.kind === "round_video");
   const isAudio = $derived(item?.kind === "audio");
 
   let zoom = $state(1);
@@ -166,7 +166,8 @@
           <VideoPlayer
             src={convertFileSrc(item.path)}
             path={item.path}
-            gif={item.kind === "gif"} />
+            gif={item.kind === "gif"}
+            round={item.kind === "round_video"} />
         {:else if isAudio}
           <div class="audio"><AudioPlayer path={item.path} play title={item.author} avatar={item.avatar} /></div>
         {:else}
@@ -204,13 +205,13 @@
           class:active={i === index}
           aria-label="Show item {i + 1} of {items.length}"
           onclick={() => (index = i)}>
-          {#if entry.thumb || !(entry.kind === "video" || entry.kind === "gif")}
+          {#if entry.thumb || !(entry.kind === "video" || entry.kind === "gif" || entry.kind === "round_video")}
             <img src={mediaSrc(entry.thumb ?? entry.path)} alt="" />
           {:else}
             <!-- A video without a stored thumbnail shows its first frame. -->
             <video src={convertFileSrc(entry.path)} preload="metadata" muted></video>
           {/if}
-          {#if entry.kind === "video" || entry.kind === "gif"}
+          {#if entry.kind === "video" || entry.kind === "gif" || entry.kind === "round_video"}
             <span class="thumb-badge"><Icon name="video" size={12} /></span>
           {/if}
         </button>

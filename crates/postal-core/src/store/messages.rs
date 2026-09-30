@@ -12,10 +12,10 @@ const INSERT_MESSAGE_SQL: &str = "INSERT INTO messages
       reply_to_kind, reply_to_thumb, media_thumb, media_ref, reply_to_chat,
       preview_site, preview_color, media_duration, system_kind, system_params,
       reply_to_view_once, reply_to_recoverable, reply_to_path, reply_to_locator,
-      media_once_kind, sort_order, live_location, history_shareable)
+      media_once_kind, sort_order, live_location, history_shareable, spoiler)
  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
          ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?29, ?30,
-         ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38)
+         ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39)
  ON CONFLICT(chat, id) DO UPDATE SET
      sort_order = CASE WHEN excluded.sort_order > 0 THEN MIN(messages.sort_order, excluded.sort_order) ELSE messages.sort_order END,
      sender = excluded.sender,
@@ -58,7 +58,8 @@ const INSERT_MESSAGE_SQL: &str = "INSERT INTO messages
       reply_to_locator = COALESCE(excluded.reply_to_locator, reply_to_locator),
       media_once_kind = COALESCE(excluded.media_once_kind, media_once_kind),
       live_location = COALESCE(excluded.live_location, live_location),
-      history_shareable = MIN(history_shareable, excluded.history_shareable)
+      history_shareable = MIN(history_shareable, excluded.history_shareable),
+      spoiler = MAX(spoiler, excluded.spoiler)
   WHERE revoked = 0";
 
 impl MessageStore {
@@ -126,8 +127,10 @@ impl MessageStore {
                 message.local.sort_order,
                 message.live_location.as_ref().map(serde_json::to_string).transpose()?,
                 message.history_shareable,
+                message.spoiler,
             ],
         )?;
+        super::links::refresh(conn, &message.header.chat, &message.header.id)?;
         Ok(())
     }
 
@@ -173,7 +176,7 @@ impl MessageStore {
             "SELECT {MESSAGE_COLUMNS}
              FROM messages m
              LEFT JOIN names n ON n.jid = m.sender
-             WHERE m.chat = ?1 AND lower(m.text) LIKE ?2 ESCAPE '\\' AND m.deleted = 0
+             WHERE m.chat = ?1 AND (lower(m.text) LIKE ?2 ESCAPE '\\' OR lower(m.link_urls) LIKE ?2 ESCAPE '\\') AND m.deleted = 0
              ORDER BY m.timestamp DESC, m.sort_order DESC, m.id DESC LIMIT ?3"
         ))?;
         let rows = stmt.query_map(params![chat, pattern, limit], message_row)?;
@@ -246,16 +249,25 @@ impl MessageStore {
 
     /// Replaces a message's text (its caption, for media) after its sender edited it.
     pub fn update_message_content(&self, chat: &str, id: &str, text: &str) -> Result<bool> {
+        self.update_content(chat, id, text, None)
+    }
+
+    fn update_content(&self, chat: &str, id: &str, text: &str, spoiler: Option<bool>) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let chat = &*names::canonical_chat(&conn, chat)?;
         let changed = conn.execute(
-            "UPDATE messages SET text = ?3 WHERE chat = ?1 AND id = ?2",
-            params![chat, id, text],
+            "UPDATE messages SET text = ?3, spoiler = COALESCE(?4, spoiler), history_shareable = CASE WHEN ?4 = 1 THEN 0 ELSE history_shareable END WHERE chat = ?1 AND id = ?2",
+            params![chat, id, text, spoiler],
         )?;
         if changed > 0 {
             conn.execute("INSERT OR IGNORE INTO edited (chat, id) VALUES (?1, ?2)", params![chat, id])?;
+            super::links::refresh(&conn, chat, id)?;
         }
         Ok(changed > 0)
+    }
+
+    pub(crate) fn update_message_spoiler(&self, chat: &str, id: &str, text: &str, spoiler: bool) -> Result<bool> {
+        self.update_content(chat, id, text, Some(spoiler))
     }
 
     /// Records a live location's last position, and its new map snapshot when
@@ -411,6 +423,11 @@ impl StoreWorker {
         let id = id.to_owned();
         let text = text.to_owned();
         self.run(move |store| store.update_message_content(&chat, &id, &text)).await
+    }
+
+    pub(crate) async fn update_message_spoiler(&self, chat: &str, id: &str, text: &str, spoiler: bool) -> Result<bool> {
+        let (chat, id, text) = (chat.to_owned(), id.to_owned(), text.to_owned());
+        self.run(move |store| store.update_message_spoiler(&chat, &id, &text, spoiler)).await
     }
 
     pub(crate) async fn update_live_location(

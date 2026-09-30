@@ -25,7 +25,14 @@ mod uploads;
 mod plugins;
 mod media_actions;
 mod groups;
+mod gallery;
+mod devices;
+mod favorites;
+mod group_requests;
 mod scheduled;
+mod transcription;
+mod transcription_config;
+mod transcription_credentials;
 mod contacts;
 mod polls;
 mod desktop;
@@ -78,6 +85,17 @@ impl AppState {
 macro_rules! postal_commands {
     () => {
         tauri::generate_handler![
+            transcription::transcription_settings,
+            transcription::set_transcription_settings,
+            transcription::grant_transcription_cloud_consent,
+            transcription::configure_transcription_key,
+            transcription::forget_transcription_key,
+            transcription::install_transcription_model,
+            transcription::transcribe_message,
+            transcription::cancel_transcription,
+            transcription::message_transcript,
+            transcription::chat_auto_transcribe,
+            transcription::set_chat_auto_transcribe,
             connection::connection_state,
             connection::boolean_props,
             connection::connect,
@@ -113,6 +131,14 @@ macro_rules! postal_commands {
             groups::group_history_offer,
             groups::add_group_participants_with_history,
             groups::retry_group_history,
+            favorites::favorite_chats,
+            favorites::set_favorite,
+            group_requests::group_join_requests,
+            group_requests::change_group_join_requests,
+            contacts::contact_identities,
+            gallery::gallery_page,
+            devices::linked_devices,
+            devices::unlink_device,
             scheduled::schedule_message,
             scheduled::scheduled_messages,
             scheduled::update_scheduled_message,
@@ -271,6 +297,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     init_logging(&log_path(app.handle()), load_settings(app.handle()).verbose_whatsapp_logs);
     let accounts = load_accounts(app.handle());
     migrate_media(app.handle(), &accounts);
+    app.manage(transcription::TranscriptionState::load(app.handle())?);
 
     app.manage(AppState {
         account_service: Mutex::new(None),

@@ -47,7 +47,10 @@ pub struct Manifest {
 #[serde(deny_unknown_fields)]
 #[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct Contributions {
+    #[serde(default)]
     pub commands: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcription: Option<crate::TranscriptionContribution>,
 }
 
 #[derive(Clone, Debug)]
@@ -55,6 +58,36 @@ pub(crate) struct Plugin {
     pub manifest: Manifest,
     pub directory: PathBuf,
     pub executable: PathBuf,
+}
+
+impl Manifest {
+    fn validate_capabilities(&self) -> Result<()> {
+        ensure!(
+            self.capabilities == ["events:read"] || self.capabilities == ["transcribe"],
+            "requires exactly events:read or transcribe"
+        );
+        ensure!(
+            self.contributes.commands.is_empty(),
+            "v1 does not support commands"
+        );
+        if self.capabilities == ["transcribe"] {
+            ensure!(
+                self.activation == Activation::Lazy,
+                "transcription must activate lazily"
+            );
+            self.contributes
+                .transcription
+                .as_ref()
+                .context("transcribe requires provider contributions")?
+                .validate()?;
+        } else {
+            ensure!(
+                self.contributes.transcription.is_none(),
+                "transcription requires transcribe capability"
+            );
+        }
+        Ok(())
+    }
 }
 
 impl Plugin {
@@ -87,14 +120,7 @@ impl Plugin {
             "invalid version"
         );
         ensure!(manifest.api_version == 1, "unsupported api_version");
-        ensure!(
-            manifest.capabilities == ["events:read"],
-            "v1 requires exactly events:read"
-        );
-        ensure!(
-            manifest.contributes.commands.is_empty(),
-            "v1 does not support commands"
-        );
+        manifest.validate_capabilities()?;
         ensure!(
             manifest.idle_timeout_secs != Some(0),
             "idle timeout must be positive or null"

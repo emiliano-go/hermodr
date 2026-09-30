@@ -1,3 +1,5 @@
+import type { ContactIdentity } from "./wire";
+
 // ITU calling codes. They are prefix-free, so the longest match is the country.
 // +1 is shared by 25 countries (NANP); telling them apart needs the
 // area code table, so +1 is shown as the code itself.
@@ -56,10 +58,20 @@ export function isPlaceholder(name: string): boolean {
  * A name for someone, falling back to their number with its country when no
  * name is known. Only phone JIDs carry a number; a LID is left as it is.
  */
-export function displayName(name: string | null | undefined, jid: string): string {
+export function displayName(name: string | null | undefined, jid: string, identity?: ContactIdentity): string {
+  if (identity) {
+    if (identity.own && identity.push_name) return identity.push_name;
+    if (identity.saved_name) return identity.saved_name;
+    if (identity.number) {
+      const number = phoneLabel(identity.number) ?? `+${identity.number}`;
+      return identity.push_name ? `${number} · ~${identity.push_name}` : number;
+    }
+    if (identity.username) return `@${identity.username.replace(/^@/, "")}`;
+    if (identity.push_name) return identity.push_name;
+  }
   if (name && !isPlaceholder(name)) return name;
   const user = jid.split("@")[0].split(":")[0];
-  const digits = name?.replace("+", "") ?? (jid.endsWith("@s.whatsapp.net") ? user : null);
+  const digits = jid.endsWith("@s.whatsapp.net") ? (name?.replace("+", "") ?? user) : name?.startsWith("+") ? name.slice(1) : null;
   return (digits && phoneLabel(digits)) || name || user;
 }
 
@@ -75,6 +87,12 @@ if (argv?.[1]?.endsWith("phone.ts")) {
   assert(phoneLabel("12025550123") === "+1 2025550123", "NANP");
   assert(displayName("Joaquin", "598@s.whatsapp.net") === "Joaquin", "name wins");
   assert(displayName(null, "138947158093828@lid") === "138947158093828", "LID untouched");
+  assert(displayName("138947158093828", "138947158093828@lid") === "138947158093828", "numeric LID name never implies a phone number");
   assert(displayName(null, "59891954564:3@s.whatsapp.net") === `${flag("UY")} +598 91954564`, "device suffix");
+  const identity: ContactIdentity = { saved_name: null, push_name: "Push", username: "username", number: "59891954564", own: false };
+  assert(displayName("stale", "77@lid", identity) === `${flag("UY")} +598 91954564 · ~Push`, "noncontact number and push name");
+  assert(displayName("Push", "77@lid", { ...identity, saved_name: "12345" }) === "12345", "saved provenance beats name heuristics");
+  assert(displayName("Push", "77@lid", { ...identity, number: null }) === "@username", "username-only contact never formats a LID as a phone");
+  assert(displayName(null, "77@lid", { ...identity, own: true }) === "Push", "own push name");
   console.log("phone.ts ok");
 }

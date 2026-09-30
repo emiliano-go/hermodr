@@ -44,6 +44,7 @@
         />
         <section class="conversation">
           <ChatHeader
+            ongallery={() => {}}
             {selectedChat} isGroup={true} title="Design team" avatar={null}
             typingNow={null} subtitle="Ana, Diego, Laura, You" groupContext={null} presenceText={null}
             mentionTotal={1} mentionCursor={0} pinned={null}

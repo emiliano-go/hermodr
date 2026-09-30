@@ -180,7 +180,7 @@ impl Inbound {
         let mut names_learned = 0;
         for push in &history.pushnames {
             if let (Some(id), Some(name)) = (&push.id, &push.pushname) {
-                if !name.is_empty() && store.set_name(id, name).await.observed().is_some() {
+                if !name.is_empty() && store.set_push_name(id, name).await.observed().is_some() {
                     names_learned += 1;
                 }
             }
@@ -237,6 +237,9 @@ impl Inbound {
     /// group).
     async fn name_history_chat(&self, store: &StoreWorker, chat: &str, conversation: &wa::Conversation) {
         if !chat.ends_with("@g.us") {
+            if let Some(username) = conversation.username.as_deref() {
+                store.set_username(chat, username).await.logged();
+            }
             let name = conversation
                 .display_name
                 .as_deref()
@@ -264,6 +267,7 @@ impl Inbound {
         own: Option<&str>,
     ) -> (bool, usize) {
         let Some(web) = entry.message.as_option() else { return (false, 0) };
+        self.apply_history_pin(store, chat, web).await;
         let Some(key) = web.key.as_option() else { return (false, 0) };
         if let Some(stub) = web.message_stub_type {
             let Some(notice) = system_kind(stub) else { return (false, 0) };
@@ -306,7 +310,7 @@ impl Inbound {
         // names back from this history.
         let mut learned = 0;
         if let Some(push) = web.push_name.as_deref().filter(|p| !p.is_empty()) {
-            if !from_me && store.set_name(&sender, push).await.observed().is_some() {
+            if !from_me && store.set_push_name(&sender, push).await.observed().is_some() {
                 learned = 1;
             }
         }
@@ -345,7 +349,7 @@ impl Inbound {
         stored.local.read = true;
         match store.insert_message(&stored).await {
             Ok(()) => {
-                if message.is_view_once() {
+                if decoded_message(&message).view_once {
                     store.set_view_once(chat, &stored.header.id, stored.header.from_me).await.logged();
                 }
                 (true, learned)

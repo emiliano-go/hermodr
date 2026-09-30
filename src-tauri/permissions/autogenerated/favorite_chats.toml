@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-favorite-chats"
+description = "Enables the favorite_chats command without any pre-configured scope."
+commands.allow = ["favorite_chats"]
+
+[[permission]]
+identifier = "deny-favorite-chats"
+description = "Denies the favorite_chats command without any pre-configured scope."
+commands.deny = ["favorite_chats"]

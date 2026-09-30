@@ -300,7 +300,6 @@ const WATCHED_EVENTS: &[EventKind] = &[
     EventKind::OfflineSyncPreview,
     EventKind::OfflineSyncCompleted,
     EventKind::OfflineSyncInterrupted,
-    EventKind::PinUpdate,
     EventKind::ArchiveUpdate,
     EventKind::MuteUpdate,
     EventKind::MarkChatAsReadUpdate,
@@ -332,6 +331,7 @@ struct SessionState {
     sync_progress: Arc<Mutex<SyncProgress>>,
     initial_gate_done: Arc<std::sync::atomic::AtomicBool>,
     older_waits: Arc<Mutex<OlderWaits>>,
+    secret_edits: secret_edits::SecretEdits,
 }
 
 impl SessionState {
@@ -358,6 +358,7 @@ impl SessionState {
             // Readiness is announced once per run; a reconnect must not re-gate.
             initial_gate_done: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             older_waits: Arc::default(),
+            secret_edits: Default::default(),
         }
     }
 
@@ -388,6 +389,7 @@ impl SessionState {
             keep_view_once: self.keep_view_once.clone(),
             one_time_only: config.one_time_only,
             tally: Arc::new(CompanionTally::default()),
+            secret_edits: self.secret_edits.clone(),
         }
     }
 
@@ -398,6 +400,8 @@ impl SessionState {
         store: &StoreWorker,
         events: &broadcast::Sender<ServiceEvent>,
         inbound: Inbound,
+        favorites: &Favorites,
+        pins: &Pins,
     ) -> Result<Bot> {
         // A one-time companion wants no history at all: chunks are
         // acknowledged and dropped, so a wake never stores them.
@@ -414,6 +418,9 @@ impl SessionState {
             .with_history_sync_admission(policy)
             .with_device_props(pairing_props(config.request_full_history, config.android_pair))
             .with_cache_config(cache_config_for(&config.retention))
+            .with_event_handler(favorites.handler())
+            .with_event_handler(pins.handler(!config.one_time_only))
+            .with_event_handler(self.secret_edits.handler())
             .on_qr_code({
                 let events = events.clone();
                 let qr_state = self.qr.clone();
@@ -428,6 +435,9 @@ impl SessionState {
                 }
             })
             .on_connected({
+                let favorites = favorites.clone();
+                let pins = pins.clone();
+                let sync_favorites = !config.one_time_only;
                 let events = events.clone();
                 let qr = self.qr.clone();
                 let connected = self.connected.clone();
@@ -437,6 +447,8 @@ impl SessionState {
                 let sync_progress = self.sync_progress.clone();
                 let initial_gate_done = self.initial_gate_done.clone();
                 move |client| {
+                    let favorites = favorites.clone();
+                    let pins = pins.clone();
                     let events = events.clone();
                     let qr = qr.clone();
                     let connected = connected.clone();
@@ -457,7 +469,21 @@ impl SessionState {
                         if !names_resynced.swap(true, Ordering::SeqCst) {
                             spawn_address_book_resync(client.clone(), events.clone(), store.clone(), session_path.clone());
                         }
-                        spawn_regular_low_resync(client.clone());
+                        if sync_favorites {
+                            let client = client.clone();
+                            tokio::spawn(async move {
+                                if let Err(error) = pins.synchronize(&client).await {
+                                    log::warn!("chat pin sync failed: {error}");
+                                }
+                            });
+                        }
+                        if sync_favorites {
+                            tokio::spawn(async move {
+                                if let Err(error) = favorites.synchronize(&client).await {
+                                    log::warn!("favorite chat sync failed: {error}");
+                                }
+                            });
+                        }
                     }
                 }
             })
@@ -514,24 +540,6 @@ fn spawn_address_book_resync(
             Err(e) => {
                 log::warn!("contact resync failed: {e}");
             }
-        }
-    });
-}
-
-/// Pins, archive, mute and read marks all live in regular_low. Resync it on
-/// every connection so the app adopts the account's state after a reconnect or
-/// a conflict, the phone being the authority.
-fn spawn_regular_low_resync(client: Arc<Client>) {
-    tokio::spawn(async move {
-        match client.resync_app_state_collection(WAPatchName::RegularLow).await {
-            Ok(report) if report.all_synced() => {
-                log::debug!("regular_low resync: all collections synced");
-            }
-            Ok(report) => {
-                let stale: Vec<_> = report.unsynced().map(|n| n.as_str()).collect();
-                log::warn!("regular_low resync left collections unsynced: {stale:?}");
-            }
-            Err(e) => log::warn!("regular_low resync failed: {e}"),
         }
     });
 }
@@ -654,14 +662,18 @@ impl WhatsAppService {
         let disk_retention = Arc::new(DiskRetentionManager::new(config.retention));
         let aliases = AliasWorker::open(&config.aliases_path).await?;
         let (events, initial_rx) = broadcast::channel(256);
+        let favorites_path = if config.one_time_only { Path::new(":memory:") } else { &config.favorites_path };
+        let favorites = Favorites::open(favorites_path, events.clone()).await?;
+        let pins = Pins::open(&store, events.clone()).await?;
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
 
         reclaim_secrets(&store, &config).await;
 
         let states = SessionState::new(&config);
         let inbound = states.inbound(&store, &disk_retention, &events, &config);
-        let bot = states.build_bot(&config, &store, &events, inbound).await?;
+        let bot = states.build_bot(&config, &store, &events, inbound, &favorites, &pins).await?;
         let client = bot.client();
+        states.secret_edits.activate(&client);
         // In-memory only, so it is set on every start. Android metadata is what
         // makes the server treat this companion as trusted and hand over
         // view-once media instead of a bare stub; external mode keeps the
@@ -689,6 +701,8 @@ impl WhatsAppService {
                 client,
                 store,
                 scheduled,
+                favorites,
+                pins,
                 disk_retention,
                 aliases,
                 events,

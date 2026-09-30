@@ -122,7 +122,14 @@ pub(crate) async fn user_profile(state: State<'_, AppState>, jid: String) -> Res
 
 /// Best known names for JIDs, keyed by the JID as given.
 #[tauri::command]
-pub(crate) async fn names(state: State<'_, AppState>, jids: Vec<String>,
+pub(crate) async fn names(state: State<'_, AppState>, jids: Vec<String>, account: Option<String>,
 ) -> Result<std::collections::HashMap<String, String>, String> {
-    Ok(state.service()?.names_for(&jids).await)
+    let service = match account { Some(account) => state.account_service(&account)?, None => state.service()? };
+    Ok(service.names_for(&jids).await)
+}
+
+#[tauri::command]
+pub(crate) async fn contact_identities(state: State<'_, AppState>, account: String, jids: Vec<String>)
+    -> Result<std::collections::HashMap<String, postal_core::store::contact_identity::ContactIdentity>, String> {
+    state.account_service(&account)?.contact_identities(&jids).await.map_err(|error| error.to_string())
 }

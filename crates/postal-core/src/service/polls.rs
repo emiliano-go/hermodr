@@ -49,6 +49,7 @@ pub(super) async fn remember_structures(store: &StoreWorker, chat: &str, id: &st
     let secret = message_secret(message);
     if let Some((name, options, multi)) = poll_of(message) {
         store.save_poll(chat, id, creator, &name, &options, multi, secret.as_deref()).await.logged();
+        secret_edits::remember_options(store, chat, id, message).await.logged();
     }
     if let Some(event) = event_of(message) {
         store.save_event(chat, id, creator, &event, secret.as_deref()).await.logged();
@@ -91,13 +92,7 @@ impl WhatsAppService {
             .store
             .poll_secret(chat, id).await?
             .ok_or_else(|| anyhow::anyhow!("this poll arrived without its key, so it cannot be voted on here"))?;
-        let jid: Jid = chat.parse()?;
-        let creator: Jid = def.creator.parse()?;
-        self.client
-            .polls()
-            .vote(jid, id, &creator, &def.secret, &options)
-            .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        secret_edits::vote(&self.store, &self.client, chat, id, &def, &options).await?;
         self.store.set_poll_vote(chat, id, "@me", &options).await?;
         let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
         Ok(())
@@ -170,8 +165,9 @@ impl WhatsAppService {
             .edit_message_encrypted(to, id, &def.secret, content)
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        self.store.save_event(chat, id, &def.creator, &event, None).await?;
-        self.store.update_message_content(chat, id, &event.name).await?;
+        anyhow::ensure!(self.store.replace_event_content(chat, id, &event).await?, "event changed or was removed while sending");
+        let updated = self.store.message(chat, id).await?;
+        let _ = self.events.send(ServiceEvent::hint(&updated, false));
         let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
         Ok(())
     }

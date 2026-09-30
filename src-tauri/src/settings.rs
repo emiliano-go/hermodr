@@ -22,6 +22,8 @@ pub struct UiSettings {
     /// Whether to download incoming media automatically.
     #[serde(default = "default_true")]
     pub auto_download_media: bool,
+    #[serde(default)]
+    pub auto_transcribe: bool,
     /// Whether to warn when a video goes out without a preview.
     #[serde(default = "default_true")]
     pub warn_missing_video_preview: bool,
@@ -74,6 +76,7 @@ impl Default for UiSettings {
             message_window_size: 500,
             request_full_history: false,
             auto_download_media: true,
+            auto_transcribe: false,
             media_dir: None,
             history_dir: None,
             warn_missing_video_preview: true,

@@ -30,6 +30,7 @@ async fn main() -> Result<()> {
         session_path: data_dir.join("session.db"),
         messages_path: data_dir.join("messages.db"),
         scheduled_path: data_dir.join("scheduled.db"),
+        favorites_path: data_dir.join("favorites.db"),
         aliases_path: data_dir.join("aliases.db"),
         retention,
         request_full_history: false,

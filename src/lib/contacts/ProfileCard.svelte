@@ -12,6 +12,7 @@
   import Icon from "$lib/ui/Icon.svelte";
   import Lightbox from "$lib/media/Lightbox.svelte";
   import { phoneLabel } from "$lib/utils/phone";
+  import { members } from "$lib/state/members.svelte";
 
   let {
     jid,
@@ -71,7 +72,7 @@
       .catch(() => (failed = true));
   });
 
-  const shown = $derived(profile?.name ?? profile?.business ?? name);
+  const shown = $derived(members.displayName(profile?.name ?? profile?.business ?? name, jid));
   const number = $derived(profile?.number ? (phoneLabel(profile.number) ?? `+${profile.number}`) : null);
   const hue = $derived([...jid].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 0));
   const letters = $derived(

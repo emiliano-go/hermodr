@@ -10,6 +10,8 @@ mod tests;
 /// A failed or corrupt download asks the sender's phone to upload the file
 /// again, once per call, and keeps the new location for later attempts.
 pub(super) async fn fetch_media(client: &Client, store: &StoreWorker, dir: &Path, chat: &str, id: &str) -> Result<StoredMessage> {
+    let row = store.message(chat, id).await?;
+    if row.media.kind.as_deref() == Some("music") && row.media.thumb.is_some() { return Ok(row); }
     let message = store
         .media_ref_for(chat, id).await?
         .map(|bytes| <wa::Message as buffa::Message>::decode(&mut bytes.as_slice()))
@@ -35,12 +37,27 @@ pub(super) async fn fetch_media(client: &Client, store: &StoreWorker, dir: &Path
         if once {
             anyhow::bail!("this view-once was never sent to this device; open it on your phone");
         }
+        if row.media.kind.as_deref() == Some("music") { anyhow::bail!("this music message has no supported artwork URI"); }
         anyhow::bail!("no stored media reference");
     };
+    if let Some(music) = decoded_message(&message).message.music_message.as_option() {
+        return fetch_music_artwork(store, chat, id, music, fetch_public_thumbnail).await;
+    }
     fetch_stored_media(store, dir, chat, id, message,
         |media, writer| async move { download_file(client, &media, writer).await },
         |message| async move { reupload(client, store, chat, id, &message).await },
     ).await
+}
+
+async fn fetch_music_artwork<F>(store: &StoreWorker, chat: &str, id: &str, music: &wa::message::MusicMessage, fetch: F) -> Result<StoredMessage>
+where F: FnOnce(&str) -> Option<Vec<u8>> + Send + 'static,
+{
+    let uri = music.artwork_uri.clone().filter(|uri| !uri.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("this music message has no supported artwork URI"))?;
+    let thumb = tokio::task::spawn_blocking(move || fetch(&uri)).await?
+        .ok_or_else(|| anyhow::anyhow!("music artwork could not be fetched from a public image URI"))?;
+    store.set_media_thumb(chat, id, &thumb_uri(&thumb)).await?;
+    store.message(chat, id).await
 }
 
 async fn fetch_stored_media<D, DF, R, RF>(
@@ -53,7 +70,7 @@ where
     R: FnOnce(wa::Message) -> RF,
     RF: std::future::Future<Output = Result<String>>,
 {
-    let media = detect_media(&message).ok_or_else(|| anyhow::anyhow!("message carries no media"))?;
+    let media = detect_media(decoded_message(&message).message).ok_or_else(|| anyhow::anyhow!("message carries no media"))?;
     let kind = media.kind;
     let extension = media.extension();
     let path = media_path(dir, id, &extension)?;
@@ -66,7 +83,7 @@ where
             let path = reupload(message.clone()).await.map_err(|e| first.context(e))?;
             set_direct_path(&mut message, &path);
             store.set_media_ref(chat, id, &buffa::Message::encode_to_vec(&message)).await?;
-            let media = detect_media(&message).ok_or_else(|| anyhow::anyhow!("message carries no media"))?;
+            let media = detect_media(decoded_message(&message).message).ok_or_else(|| anyhow::anyhow!("message carries no media"))?;
             let writer = tokio::fs::OpenOptions::new().write(true).truncate(true).open(&temporary.path).await?.into_std().await;
             download(media, writer).await?
         }
@@ -99,11 +116,10 @@ async fn record_thumb(store: &StoreWorker, chat: &str, id: &str, kind: &'static 
 /// The copy arrives complete, with the address the view-once itself lacks, so
 /// this is the only route to the media that does not need the sender's phone.
 async fn fetch_quoted_copy(client: &Client, store: &StoreWorker, dir: &Path, id: &str) -> Result<Option<(MediaInfo, TemporaryFile)>> {
-    use whatsapp_rust::wacore::proto_helpers::MessageExt;
     let Some(source) = store.quote_source_for(id).await? else { return Ok(None) };
     let message = <wa::Message as buffa::Message>::decode(&mut source.locator.as_slice())
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    let media = detect_media(message.get_base_message())
+    let media = detect_media(decoded_message(&message).message)
         .ok_or_else(|| anyhow::anyhow!("the copy inside the reply carries no media"))?;
     let started = std::time::Instant::now();
     let (data, writer) = download_target(dir).await?;
@@ -132,9 +148,11 @@ async fn reupload(client: &Client, store: &StoreWorker, chat: &str, id: &str, me
 }
 
 fn media_key(message: &wa::Message) -> Option<Vec<u8>> {
+    let message = decoded_message(message).message;
     [
         message.image_message.as_option().and_then(|m| m.media_key.clone()),
         message.video_message.as_option().and_then(|m| m.media_key.clone()),
+        message.ptv_message.as_option().and_then(|m| m.media_key.clone()),
         message.audio_message.as_option().and_then(|m| m.media_key.clone()),
         message.document_message.as_option().and_then(|m| m.media_key.clone()),
         message.sticker_message.as_option().and_then(|m| m.media_key.clone()),
@@ -155,7 +173,16 @@ pub(super) fn set_direct_path(message: &mut wa::Message, path: &str) {
             }
         )*};
     }
-    repoint!(image_message, video_message, audio_message, document_message, sticker_message);
+    repoint!(image_message, video_message, ptv_message, audio_message, document_message, sticker_message);
+    if let Some(inner) = message.device_sent_message.as_option_mut().and_then(|wrapper| wrapper.message.as_option_mut()) {
+        set_direct_path(inner, path);
+    }
+    for wrapper in [message.ephemeral_message.as_option_mut(), message.view_once_message.as_option_mut(),
+        message.view_once_message_v2.as_option_mut(), message.view_once_message_v2_extension.as_option_mut(),
+        message.document_with_caption_message.as_option_mut(), message.edited_message.as_option_mut(),
+        message.spoiler_message.as_option_mut()].into_iter().flatten() {
+        if let Some(inner) = wrapper.message.as_option_mut() { set_direct_path(inner, path); }
+    }
 }
 
 /// Whether a media message carries somewhere to fetch its bytes from.
@@ -163,11 +190,11 @@ pub(super) fn set_direct_path(message: &mut wa::Message, path: &str) {
 /// A view-once arrives with its media key but no `direct_path`, so there is
 /// nothing on the CDN to download and nothing to ask a reupload about.
 pub(super) fn has_direct_path(message: &wa::Message) -> bool {
-    use whatsapp_rust::wacore::proto_helpers::MessageExt;
-    let base = message.get_base_message();
+    let base = decoded_message(message).message;
     let url = |path: Option<String>| path.is_some_and(|p| !p.is_empty());
     url(base.image_message.as_option().and_then(|m| m.direct_path.clone()))
         || url(base.video_message.as_option().and_then(|m| m.direct_path.clone()))
+        || url(base.ptv_message.as_option().and_then(|m| m.direct_path.clone()))
         || url(base.audio_message.as_option().and_then(|m| m.direct_path.clone()))
         || url(base.document_message.as_option().and_then(|m| m.direct_path.clone()))
         || url(base.sticker_message.as_option().and_then(|m| m.direct_path.clone()))
@@ -225,9 +252,9 @@ pub(super) async fn fetch_quote_media(
     };
     let message = <wa::Message as buffa::Message>::decode(&mut bytes.as_slice())
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    let media = detect_media(message.get_base_message())
+    let media = detect_media(decoded_message(&message).message)
         .ok_or_else(|| anyhow::anyhow!("the quoted message carries no media"))?;
-    if !has_direct_path(message.get_base_message()) {
+    if !has_direct_path(&message) {
         anyhow::bail!("WhatsApp sent this device no place to fetch that view-once from; open it on your phone");
     }
     let started = std::time::Instant::now();

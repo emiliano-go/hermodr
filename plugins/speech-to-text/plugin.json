@@ -1,0 +1,20 @@
+{
+  "id": "org.postal.speech-to-text",
+  "name": "Speech to Text",
+  "version": "0.1.0",
+  "api_version": 1,
+  "entrypoint": "postal-stt",
+  "activation": "lazy",
+  "idle_timeout_secs": null,
+  "capabilities": ["transcribe"],
+  "contributes": {
+    "transcription": {
+      "id": "stt",
+      "providers": [
+        { "id": "local-whisper", "name": "Local Whisper", "kind": "local", "transmits_audio": false },
+        { "id": "openai", "name": "OpenAI Whisper API", "kind": "cloud", "transmits_audio": true, "requires_key": true },
+        { "id": "deepgram", "name": "Deepgram", "kind": "cloud", "transmits_audio": true, "requires_key": true }
+      ]
+    }
+  }
+}

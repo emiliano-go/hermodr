@@ -14,6 +14,29 @@ fn trace(value: &str) {
     writeln!(file, "{value}").unwrap();
 }
 
+fn transcribe(value: &Value, mode: &str) {
+    trace(&format!("transcribe:{}:{}", value["id"], value["provider"]));
+    if mode == "no-transcript" {
+        return;
+    }
+    if mode == "transcribe-error" {
+        println!(
+            "{}",
+            json!({"type":"transcribe_error","id":value["id"],"message":"synthetic failure"})
+        );
+    } else {
+        println!(
+            "{}",
+            json!({"type":"transcript","id":99999,"provider":value["provider"],"text":"wrong id"})
+        );
+        println!(
+            "{}",
+            json!({"type":"transcript","id":value["id"],"provider":if mode=="wrong-provider"{json!("other")}else{value["provider"].clone()},"text":"synthetic transcript","language":"en"})
+        );
+        trace("transcript");
+    }
+}
+
 fn main() {
     let mode = std::fs::read_to_string("mode").unwrap_or_default();
     trace("start");
@@ -26,7 +49,10 @@ fn main() {
         match value["type"].as_str().unwrap() {
             "hello" => {
                 assert_eq!(value["api_version"], 1);
-                assert_eq!(value["capabilities"], json!(["events:read"]));
+                assert!(
+                    value["capabilities"] == json!(["events:read"])
+                        || value["capabilities"] == json!(["transcribe"])
+                );
                 trace("hello");
                 if mode == "crash" {
                     std::process::exit(7);
@@ -63,6 +89,15 @@ fn main() {
                 }
                 println!("{}", json!({"type":"ack", "seq":value["seq"]}));
                 trace("ack");
+            }
+            "transcribe" => transcribe(&value, &mode),
+            "cancel" => trace("cancel"),
+            "install_model" => {
+                trace("model");
+                println!(
+                    "{}",
+                    json!({"type":"model_installed","id":value["id"],"filename":if mode=="wrong-model"{json!("other.bin")}else{value["filename"].clone()}})
+                );
             }
             "error" => {
                 assert_eq!(value["id"], 7);

@@ -38,7 +38,7 @@ async fn storage_failures_are_logged_and_event_processing_continues() {
         older_waits: Arc::default(), downloads: Arc::new(tokio::sync::Semaphore::new(1)),
         sync_progress: Arc::default(), auto_download_default: false,
         keep_archived: Arc::default(), keep_view_once: Arc::default(),
-        one_time_only: false, tally: Arc::default(),
+        one_time_only: false, tally: Arc::default(), secret_edits: Default::default(),
     };
     let update = |subject: &str| Event::GroupUpdate(GroupUpdate::builder()
         .group_jid("1@g.us".parse().unwrap())
@@ -141,7 +141,7 @@ async fn group_changes_invalidate_fetched_metadata_and_overviews() {
         auto_download_default: false,
         keep_archived: Arc::default(),
         keep_view_once: Arc::default(),
-        one_time_only: false, tally: Arc::default(),
+        one_time_only: false, tally: Arc::default(), secret_edits: Default::default(),
     };
     for action in [
         GroupNotificationAction::Subject {

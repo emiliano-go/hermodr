@@ -147,6 +147,24 @@ fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
     Ok(())
 }
 
+fn edit_metadata(conn: &Connection, chat: &str, ids: &[String]) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>)> {
+    let ids = serde_json::to_string(ids)?;
+    let mut polls = conn.prepare("SELECT id, options, allow_add_option FROM poll_option_hashes
+        WHERE chat = ?1 AND id IN (SELECT value FROM json_each(?2)) ORDER BY id")?;
+    let polls = polls.query_map(params![chat, ids], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, bool>(2)?)))?
+        .map(|row| {
+            let (id, options, allow) = row?;
+            let options: Vec<PollOption> = serde_json::from_str(&options)?;
+            Ok(serde_json::json!({ "id": id, "options": options, "allow_add_option": allow }))
+        }).collect::<Result<Vec<_>>>()?;
+    let mut revisions = conn.prepare("SELECT id, timestamp_ms, message_id FROM secret_edit_revisions
+        WHERE chat = ?1 AND id IN (SELECT value FROM json_each(?2)) ORDER BY id")?;
+    let revisions = revisions.query_map(params![chat, ids], |row| Ok(serde_json::json!({
+        "id": row.get::<_, String>(0)?, "timestamp_ms": row.get::<_, i64>(1)?, "message_id": row.get::<_, String>(2)?
+    })))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok((polls, revisions))
+}
+
 impl MessageStore {
     pub fn export_backup(&self, directory: &Path, media_root: &Path, aliases: &[(String, String)]) -> Result<ArchiveReport> {
         let mut created = NewDirectories::default();
@@ -184,7 +202,7 @@ impl MessageStore {
         let source = self.conn.lock().unwrap();
         let snapshot = source.unchecked_transaction()?;
         let chat = &*super::names::canonical_chat(&snapshot, chat)?;
-        write!(writer, "{{\"format\":\"postal-conversation\",\"version\":1,\"chat\":")?;
+        write!(writer, "{{\"format\":\"postal-conversation\",\"version\":2,\"chat\":")?;
         serde_json::to_writer(&mut writer, chat)?;
         write!(writer, ",\"pages\":[")?;
         let mut statement = snapshot.prepare(&format!("SELECT {MESSAGE_COLUMNS} FROM messages m
@@ -203,9 +221,11 @@ impl MessageStore {
             if messages.is_empty() { break; }
             let ids = messages.iter().map(|m| m.header.id.clone()).collect::<Vec<_>>();
             let marks = Self::marks_on(&snapshot, chat, Some(&ids))?;
+            let (poll_metadata, edit_revisions) = edit_metadata(&snapshot, chat, &ids)?;
             if count > 0 { write!(writer, ",")?; }
             count += messages.len() as u64;
-            serde_json::to_writer(&mut writer, &serde_json::json!({"messages": messages, "marks": marks}))?;
+            serde_json::to_writer(&mut writer, &serde_json::json!({"messages": messages, "marks": marks,
+                "poll_metadata": poll_metadata, "edit_revisions": edit_revisions}))?;
         }
         write!(writer, "]}}")?;
         writer.flush()?;
@@ -251,6 +271,7 @@ pub fn restore_backup(source: &Path, account: &Path, media: &Path) -> Result<Arc
     copy_tables(&original, &mut imported)?;
     drop(imported);
     let restored = MessageStore::open(&database)?;
+    restored.conn.lock().unwrap().execute("UPDATE messages SET history_shareable = 0", [])?;
     let mut count = 0;
     let paths = attachment_paths(&restored.conn.lock().unwrap())?;
     for path in paths {
@@ -276,3 +297,7 @@ pub fn restore_backup(source: &Path, account: &Path, media: &Path) -> Result<Arc
 #[cfg(test)]
 #[path = "archive_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "archive_secret_edits_tests.rs"]
+mod secret_edit_tests;

@@ -9,9 +9,13 @@
   import Lightbox from "$lib/media/Lightbox.svelte";
   import Panel from "$lib/ui/Panel.svelte";
   import AddMembers from "$lib/chat/AddMembers.svelte";
+  import GroupRequests from "$lib/chat/GroupRequests.svelte";
+  import TranscriptionOverride from "$lib/settings/TranscriptionOverride.svelte";
+  import { session } from "$lib/state/session.svelte";
   import ConfirmDialog from "$lib/ui/ConfirmDialog.svelte";
   import { changeText } from "$lib/utils/group-actions";
   import type { GroupHistoryResult, GroupMemberAddResult, ParticipantChange } from "$lib/utils/models";
+  import type { GroupJoinRequest } from "$lib/utils/wire";
   import { displayName, phoneLabel } from "$lib/utils/phone";
 
   let {
@@ -34,6 +38,8 @@
     onallowreports,
     onadd,
     onretryhistory,
+    onrequests,
+    onrequestchange,
     onremove,
     onpromote,
     ondemote,
@@ -66,6 +72,8 @@
     /** Adds people to the group; the server answers per person. */
     onadd: (jids: string[], optedIn: string[]) => Promise<GroupMemberAddResult>;
     onretryhistory: (retryId: string) => Promise<GroupHistoryResult>;
+    onrequests: () => Promise<GroupJoinRequest[]>;
+    onrequestchange: (jids: string[], approve: boolean) => Promise<ParticipantChange[]>;
     /** Removes people from the group. */
     onremove: (jids: string[]) => Promise<ParticipantChange[]>;
     /** Gives people admin rights. */
@@ -100,7 +108,7 @@
     }
   }
 
-  type Section = "overview" | "members" | "reports";
+  type Section = "overview" | "members" | "reports" | "requests";
   let section = $state<Section>("overview");
   const nav = $derived<{ id: Section; label: string; group: string }[]>([
     { id: "overview", label: "Overview", group: title },
@@ -110,6 +118,7 @@
       group: title,
     },
     ...(self?.admin ? [{ id: "reports" as Section, label: "Reports", group: "Admin" }] : []),
+    ...(info?.admin ? [{ id: "requests" as Section, label: "Join requests", group: "Admin" }] : []),
   ]);
 
   let reports = $state<AdminReport[] | null>(null);
@@ -263,7 +272,13 @@
     </div>
   {/snippet}
 
-  {#if !info}
+  {#if section === "requests"}
+    {#if info && !info.admin}
+      <p class="error-text">Only group admins can manage join requests.</p>
+    {:else}
+      <GroupRequests chat={jid} {namer} onload={onrequests} onchange={onrequestchange} />
+    {/if}
+  {:else if !info}
     {#if error}
       <h2>Could not load this group</h2>
       <p class="lede">{error}</p>
@@ -345,6 +360,9 @@
       {/if}
     </div>
 
+    {#if session.activeAccount}
+      <div class="setting stack"><TranscriptionOverride accountId={session.activeAccount} chat={jid} /></div>
+    {/if}
     <div class="setting stack">
       <div>
         <span class="setting-title">Your tag in this group</span>

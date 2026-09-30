@@ -1,5 +1,9 @@
 use super::*;
 
+#[cfg(test)]
+#[path = "message_decode_special_tests.rs"]
+mod special_message_tests;
+
 /// Marks a message context as forwarded, keeping anything already in it (a quote).
 pub(super) fn forwarded_context(context: Option<Box<wa::ContextInfo>>) -> Box<wa::ContextInfo> {
     let mut context = context.unwrap_or_default();
@@ -23,17 +27,18 @@ pub(super) fn member_label_change(message: &wa::Message) -> Option<String> {
     Some(protocol.member_label.as_option()?.label.clone().unwrap_or_default())
 }
 
-/// The edited message's id and its new text (or caption), if this message is an edit.
-pub(super) fn edit_of(message: &wa::Message) -> Option<(String, String)> {
+/// The target, replacement text and spoiler flag of a text edit.
+pub(super) fn edit_of(message: &wa::Message) -> Option<(String, String, bool)> {
     use wa::message::protocol_message::Type;
-    let protocol = message.get_base_message().protocol_message.as_option()?;
+    let protocol = decoded_message(message).message.protocol_message.as_option()?;
     if protocol.r#type != Some(Type::MESSAGE_EDIT) {
         return None;
     }
     let target = protocol.key.as_option()?.id.clone().filter(|id| !id.is_empty())?;
-    let edited = protocol.edited_message.as_option()?;
-    let text = edited.text_content().or_else(|| edited.get_caption())?.to_string();
-    Some((target, text))
+    let edited = decoded_message(protocol.edited_message.as_option()?);
+    let text = edited.message.text_content().or_else(|| edited.message.get_caption())
+        .or_else(|| edited.message.ptv_message.as_option().and_then(|video| video.caption.as_deref()))?.to_string();
+    Some((target, text, edited.spoiler))
 }
 
 /// A live location update, as carried by an edit of the original message.
@@ -163,19 +168,19 @@ pub(super) fn may_take_quote(view_once: bool, author_is_me: bool, is_owner: bool
 /// `viewOnceMessage`, possibly wrapped again in an ephemeral one, and without
 /// that both its media and its flag stay invisible.
 fn quote_of(message: &wa::Message, header: &MessageHeader) -> Option<Quoted> {
-    use whatsapp_rust::wacore::proto_helpers::MessageExt;
     let context = message_context(message)?;
     let id = context.stanza_id.as_ref()?.to_string();
     let sender = quote_author(context, header);
     // The wrapper is read before unwrapping: the flag and the locator ride on
     // it, while the text and media live in the message it wraps.
     let wrapper = context.quoted_message.as_option();
-    let view_once = wrapper.is_some_and(|w| w.is_view_once());
     let none_quoted = wa::Message::text("");
-    let quoted = wrapper.map(|w| w.get_base_message()).unwrap_or(&none_quoted);
+    let decoded = decoded_message(wrapper.unwrap_or(&none_quoted));
+    let view_once = decoded.view_once;
+    let quoted = decoded.message;
     let (kind, name) = quoted_kind_and_name(quoted);
-    let text = quoted_text(quoted, wrapper.is_some(), kind, name.as_deref());
-    let thumb = quoted_thumb(quoted);
+    let text = if decoded.spoiler { "[Spoiler]".into() } else { quoted_text(quoted, wrapper.is_some(), kind, name.as_deref()) };
+    let thumb = if decoded.spoiler { None } else { quoted_thumb(quoted) };
     Some(Quoted {
         id,
         sender,
@@ -212,6 +217,8 @@ fn quoted_kind_and_name(quoted: &wa::Message) -> (&'static str, Option<String>) 
         ("image", None)
     } else if quoted.video_message.as_option().is_some() {
         ("video", None)
+    } else if quoted.ptv_message.is_set() {
+        ("round_video", None)
     } else if quoted.audio_message.as_option().is_some() {
         ("audio", None)
     } else if let Some(document) = quoted.document_message.as_option() {
@@ -235,6 +242,7 @@ fn quoted_text(quoted: &wa::Message, wrapper: bool, kind: &str, name: Option<&st
         .unwrap_or_else(|| match kind {
             "image" => "Photo".to_string(),
             "video" => "Video".to_string(),
+            "round_video" => "Round video".to_string(),
             "audio" => "Voice message".to_string(),
             "document" => name.unwrap_or("Document").to_string(),
             _ => "[media]".to_string(),
@@ -248,6 +256,7 @@ fn quoted_thumb(quoted: &wa::Message) -> Option<Vec<u8>> {
         .as_option()
         .and_then(|m| m.jpeg_thumbnail.clone())
         .or_else(|| quoted.video_message.as_option().and_then(|m| m.jpeg_thumbnail.clone()))
+        .or_else(|| quoted.ptv_message.as_option().and_then(|m| m.jpeg_thumbnail.clone()))
         .or_else(|| quoted.document_message.as_option().and_then(|m| m.jpeg_thumbnail.clone()))
 }
 
@@ -318,10 +327,18 @@ pub(super) async fn stored_message(
     // Wrappers (disappearing, view-once, captioned document, edit) are flags on
     // the outer message; everything read below lives in the innermost one.
     let outer = message;
-    let message = outer.get_base_message();
+    let decoded = decoded_message(outer);
+    let message = decoded.message;
+    if message.protocol_message.is_set() || message.reaction_message.is_set()
+        || message.enc_reaction_message.is_set() || message.poll_update_message.is_set()
+        || message.enc_event_response_message.is_set() || message.pin_in_chat_message.is_set()
+        || message.keep_in_chat_message.is_set() || message.sender_key_distribution_message.is_set() {
+        return None;
+    }
     let mut text = message.text_content().unwrap_or_default().to_string();
-    if text.is_empty() && !outer.is_view_once() {
-        text = message.get_caption().unwrap_or_default().to_string();
+    if text.is_empty() && !decoded.view_once {
+        text = message.get_caption().or_else(|| message.ptv_message.as_option().and_then(|video| video.caption.as_deref()))
+            .unwrap_or_default().to_string();
     }
 
     let mut media_kind = None;
@@ -338,12 +355,12 @@ pub(super) async fn stored_message(
 
         // The thumbnail rides in the message, so it is kept even when the file
         // itself is not downloaded. A view-once thumbnail would show it unopened.
-        media_thumb = media.thumb.as_deref().filter(|_| !outer.is_view_once()).map(thumb_uri);
+        media_thumb = media.thumb.as_deref().filter(|_| !decoded.view_once).map(thumb_uri);
 
         // A view-once has no CDN address, so fetching it here could only fail;
         // the locator is kept instead, so opening the message can ask the
         // sender's phone to upload it again.
-        if auto_download && !outer.is_view_once() {
+        if auto_download && !decoded.view_once {
             // Download when a destination and a client are available. A failure
             // still records the message, so the text and metadata are not lost.
             if let (Some(client), Some(dir)) = (client, media_dir) {
@@ -375,7 +392,7 @@ pub(super) async fn stored_message(
         // again needs the key and nothing else. The kind is rewritten so the row
         // renders as one-time media rather than as an ordinary photo, and the
         // kind it had is kept so a recovered copy is shown by the right player.
-        if outer.is_view_once() && media_kind.is_some() {
+        if decoded.view_once && media_kind.is_some() {
             media_once_kind = media_kind.clone();
             media_kind = Some("view_once".to_string());
         }
@@ -389,12 +406,15 @@ pub(super) async fn stored_message(
             text = event.name;
             media_kind = Some("event".to_string());
         } else if let Some(music) = message.music_message.as_option() {
-            // A music sticker: no media of its own, just the track's details.
-            let music = music.embedded_music.as_option();
-            let title = music.and_then(|m| m.title.clone()).unwrap_or_default();
-            let author = music.and_then(|m| m.author.clone()).unwrap_or_default();
-            text = if author.is_empty() { title } else { format!("{title} — {author}") };
+            let track = music.embedded_music.as_option();
+            let title = track.and_then(|m| m.title.clone()).unwrap_or_default();
+            let author = track.and_then(|m| m.author.clone()).unwrap_or_default();
+            text = if title.is_empty() { author } else if author.is_empty() { title } else { format!("{title} — {author}") };
+            if text.is_empty() { text = "[Music]".into(); }
             media_kind = Some("music".to_string());
+            if music.artwork_uri.as_deref().is_some_and(|uri| uri.starts_with("https://") || uri.starts_with("http://")) {
+                media_ref = Some(media_locator(message));
+            }
         }
     }
 
@@ -409,7 +429,9 @@ pub(super) async fn stored_message(
     }
 
     if text.is_empty() && media_kind.is_none() {
-        return None;
+        if buffa::Message::encode_to_vec(message).is_empty() { return None; }
+        text = "[Unsupported message]".into();
+        media_kind = Some("unknown".into());
     }
 
     // A reply carries the quote in the message context. We do not keep the
@@ -419,6 +441,7 @@ pub(super) async fn stored_message(
     // Names are resolved separately and joined by the store on read; a new
     // message stays unread until its chat is opened.
     Some(StoredMessage {
+        spoiler: decoded.spoiler,
         history_shareable: header.chat.ends_with("@g.us") && group_history::is_shareable_text(outer),
         header,
         text,
@@ -534,9 +557,11 @@ pub(super) fn media_locator(message: &wa::Message) -> Vec<u8> {
     let mut slim = wa::Message {
         image_message: message.image_message.clone(),
         video_message: message.video_message.clone(),
+        ptv_message: message.ptv_message.clone(),
         audio_message: message.audio_message.clone(),
         document_message: message.document_message.clone(),
         sticker_message: message.sticker_message.clone(),
+        music_message: message.music_message.clone(),
         ..Default::default()
     };
     if let Some(m) = slim.image_message.as_option_mut() {
@@ -544,6 +569,10 @@ pub(super) fn media_locator(message: &wa::Message) -> Vec<u8> {
         m.context_info = Default::default();
     }
     if let Some(m) = slim.video_message.as_option_mut() {
+        m.jpeg_thumbnail = None;
+        m.context_info = Default::default();
+    }
+    if let Some(m) = slim.ptv_message.as_option_mut() {
         m.jpeg_thumbnail = None;
         m.context_info = Default::default();
     }
@@ -555,6 +584,9 @@ pub(super) fn media_locator(message: &wa::Message) -> Vec<u8> {
         m.context_info = Default::default();
     }
     if let Some(m) = slim.sticker_message.as_option_mut() {
+        m.context_info = Default::default();
+    }
+    if let Some(m) = slim.music_message.as_option_mut() {
         m.context_info = Default::default();
     }
     buffa::Message::encode_to_vec(&slim)
@@ -585,31 +617,51 @@ fn link_preview(message: &wa::Message) -> LinkCard {
 
 /// The JIDs a message mentions, from whichever message type carries them.
 fn message_context(message: &wa::Message) -> Option<&wa::ContextInfo> {
-    use whatsapp_rust::wacore::proto_helpers::MessageExt;
-    let base = message.get_base_message();
-    base.extended_text_message
-        .as_option()
-        .and_then(|m| m.context_info.as_option())
-        .or_else(|| {
-            base.image_message
-                .as_option()
-                .and_then(|m| m.context_info.as_option())
-        })
-        .or_else(|| {
-            base.video_message
-                .as_option()
-                .and_then(|m| m.context_info.as_option())
-        })
-        .or_else(|| {
-            base.audio_message
-                .as_option()
-                .and_then(|m| m.context_info.as_option())
-        })
-        .or_else(|| {
-            base.document_message
-                .as_option()
-                .and_then(|m| m.context_info.as_option())
-        })
+    context_of(decoded_message(message).message)
+}
+
+pub(super) struct DecodedMessage<'a> {
+    pub message: &'a wa::Message,
+    pub spoiler: bool,
+    pub view_once: bool,
+}
+
+pub(super) fn decoded_message(mut message: &wa::Message) -> DecodedMessage<'_> {
+    let mut spoiler = false;
+    let mut view_once = false;
+    loop {
+        view_once |= message.is_view_once();
+        let base = message.get_base_message();
+        if !std::ptr::eq(base, message) { message = base; continue; }
+        if let Some(wrapper) = message.spoiler_message.as_option() {
+            spoiler = true;
+            if let Some(inner) = wrapper.message.as_option() { message = inner; continue; }
+        }
+        spoiler |= context_of(message).is_some_and(|context| context.is_spoiler == Some(true));
+        view_once |= message.ptv_message.as_option().is_some_and(|video| video.view_once == Some(true));
+        return DecodedMessage { message, spoiler, view_once };
+    }
+}
+
+fn context_of(base: &wa::Message) -> Option<&wa::ContextInfo> {
+    [
+        base.extended_text_message.as_option().and_then(|m| m.context_info.as_option()),
+        base.image_message.as_option().and_then(|m| m.context_info.as_option()),
+        base.video_message.as_option().and_then(|m| m.context_info.as_option()),
+        base.ptv_message.as_option().and_then(|m| m.context_info.as_option()),
+        base.music_message.as_option().and_then(|m| m.context_info.as_option()),
+        base.audio_message.as_option().and_then(|m| m.context_info.as_option()),
+        base.document_message.as_option().and_then(|m| m.context_info.as_option()),
+        base.sticker_message.as_option().and_then(|m| m.context_info.as_option()),
+        base.contact_message.as_option().and_then(|m| m.context_info.as_option()),
+        base.contacts_array_message.as_option().and_then(|m| m.context_info.as_option()),
+        base.location_message.as_option().and_then(|m| m.context_info.as_option()),
+        base.live_location_message.as_option().and_then(|m| m.context_info.as_option()),
+        base.poll_creation_message.as_option().and_then(|m| m.context_info.as_option()),
+        base.poll_creation_message_v2.as_option().and_then(|m| m.context_info.as_option()),
+        base.poll_creation_message_v3.as_option().and_then(|m| m.context_info.as_option()),
+        base.event_message.as_option().and_then(|m| m.context_info.as_option()),
+    ].into_iter().flatten().next()
 }
 
 /// Whether a message mentions us: directly, or everyone through @all.

@@ -3,6 +3,7 @@
   import { invoke } from "$lib/utils/ipc";
   import Icon from "$lib/ui/Icon.svelte";
   import { changeText, historyReceivers, historyResultText } from "$lib/utils/group-actions";
+  import { members as contactMembers } from "$lib/state/members.svelte";
   import { session } from "$lib/state/session.svelte";
   import type { GroupHistoryOffer, GroupHistoryResult, GroupMemberAddResult, Member, SearchResult } from "$lib/utils/models";
 
@@ -133,7 +134,7 @@
     selected = next;
   }
 
-  const names = $derived(new Map(results.map((r) => [r.jid, r.name])));
+  const names = $derived(new Map(shown.map((r) => [r.jid, contactMembers.displayName(r.name, r.jid)])));
 
   async function add() {
     if (busy || picked.length === 0) return;
@@ -242,9 +243,9 @@
               {#if avatars[result.jid]}
                 <img class="avatar" src={convertFileSrc(avatars[result.jid]!)} alt="" />
               {:else}
-                <span class="avatar placeholder">{result.name.slice(0, 1).toUpperCase()}</span>
+                <span class="avatar placeholder">{contactMembers.displayName(result.name, result.jid).slice(0, 1).toUpperCase()}</span>
               {/if}
-              <span class="label">{result.name}</span>
+              <span class="label">{contactMembers.displayName(result.name, result.jid)}</span>
               <input
                 type="checkbox"
                 disabled={busy}
@@ -252,7 +253,7 @@
                 checked={!!selected[result.jid]}
                 onchange={() => toggle(result.jid)}
                 onclick={(e) => e.stopPropagation()}
-                aria-label="Select {result.name}" />
+                aria-label="Select {contactMembers.displayName(result.name, result.jid)}" />
             </button>
           </li>
         {/each}

@@ -34,17 +34,31 @@ pub(super) fn first_url(text: &str) -> Option<String> {
 /// Blocking; call it from `spawn_blocking`. Discord's crawler user agent is what
 /// sites with rich embeds (fxtwitter, fixupx, YouTube…) answer with full cards.
 pub(super) fn fetch_link_preview(url: &str) -> Option<LinkPreview> {
+    fetch_preview_with(&public_agent(), url)
+}
+
+fn public_agent() -> ureq::Agent {
     let config = ureq::Agent::config_builder()
         .max_redirects(5)
         .timeout_global(Some(Duration::from_secs(10)))
         .user_agent("Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)")
         .build();
-    let agent = ureq::Agent::with_parts(
+    ureq::Agent::with_parts(
         config,
         ureq::unversioned::transport::DefaultConnector::new(),
         PublicResolver(ureq::unversioned::resolver::DefaultResolver::default()),
-    );
-    fetch_preview_with(&agent, url)
+    )
+}
+
+pub(super) fn fetch_public_thumbnail(url: &str) -> Option<Vec<u8>> {
+    fetch_thumbnail_with(&public_agent(), url)
+}
+
+fn fetch_thumbnail_with(agent: &ureq::Agent, url: &str) -> Option<Vec<u8>> {
+    if agent.config().proxy().is_some() { return None; }
+    let mut response = fetch_public(agent, url)?;
+    let bytes = response.body_mut().with_config().limit(8 << 20).read_to_vec().ok()?;
+    link_thumbnail(&bytes)
 }
 
 fn fetch_preview_with(agent: &ureq::Agent, url: &str) -> Option<LinkPreview> {
@@ -61,11 +75,7 @@ fn fetch_preview_with(agent: &ureq::Agent, url: &str) -> Option<LinkPreview> {
     let title = get(&["og:title", "twitter:title"]).or_else(|| html_title(&html));
     let image = get(&["og:image", "og:image:url", "twitter:image", "twitter:image:src"])
         .filter(|src| src.starts_with("http"));
-    let thumbnail = image.and_then(|src| {
-        let mut response = fetch_public(agent, &src)?;
-        let bytes = response.body_mut().with_config().limit(8 << 20).read_to_vec().ok()?;
-        link_thumbnail(&bytes)
-    });
+    let thumbnail = image.and_then(|src| fetch_thumbnail_with(agent, &src));
     let color = get(&["theme-color"]).filter(|c| {
         let c = c.trim();
         (c.starts_with('#') && c.len() <= 9 && c[1..].chars().all(|d| d.is_ascii_hexdigit())) || c.starts_with("rgb")
