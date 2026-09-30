@@ -202,7 +202,15 @@ fn the_companion_forwards_only_store_changes() {
     }
     // Catch-up replay and connection noise stay out of the main UI's stream.
     let noise = [
-        ServiceEvent::MessageHint { chat: "a@s".into(), id: "1".into(), sender: "b@s".into(), from_me: false, fresh: true },
+        ServiceEvent::MessageHint {
+            chat: "a@s".into(),
+            id: "1".into(),
+            sender: "b@s".into(),
+            from_me: false,
+            fresh: true,
+            change: postal_core::HintChange::Arrival,
+            status: None,
+        },
         ServiceEvent::Message { message: Box::default() },
         ServiceEvent::Synced,
     ];
@@ -224,10 +232,28 @@ fn the_companion_sheet_skips_catch_up_noise() {
         assert!(crate::connection::instance_sheet_event(&event), "{event:?}");
     }
     for event in [
-        ServiceEvent::MessageHint { chat: "a@s".into(), id: "1".into(), sender: "b@s".into(), from_me: false, fresh: true },
+        ServiceEvent::MessageHint {
+            chat: "a@s".into(),
+            id: "1".into(),
+            sender: "b@s".into(),
+            from_me: false,
+            fresh: true,
+            change: postal_core::HintChange::Arrival,
+            status: None,
+        },
         ServiceEvent::Message { message: Box::default() },
         ServiceEvent::Syncing { pending: 9, applied: 1 },
     ] {
         assert!(!crate::connection::instance_sheet_event(&event), "{event:?}");
     }
+}
+
+#[test]
+fn nvidia_modules_are_detected_for_the_renderer_workaround() {
+    use crate::nvidia_module_loaded;
+    assert!(nvidia_module_loaded("nvidia 123 0 - Live 0x0000\nnvidia_modeset 1 1 nvidia, Live 0x0"));
+    assert!(nvidia_module_loaded("nvidia_drm 1 1 nvidia_modeset,nvidia, Live 0x0"));
+    assert!(nvidia_module_loaded("nouveau 1 0 - Live 0x0"));
+    assert!(!nvidia_module_loaded("amdgpu 1 0 - Live 0x0\ni915 0 0 - Live 0x0"));
+    assert!(!nvidia_module_loaded(""));
 }
