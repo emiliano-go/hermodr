@@ -2,7 +2,7 @@ import type { StoredMessage } from "./models";
 import type { MessageCursor, MessagePage } from "./wire";
 export type { MessageCursor, MessagePage } from "./wire";
 
-export const DEFAULT_MESSAGE_WINDOW = 250;
+export const DEFAULT_MESSAGE_WINDOW = 500;
 export const MAX_MESSAGE_WINDOW = 2_000;
 export const cursorOf = (message: StoredMessage): MessageCursor => ({ id: message.id, timestamp: message.timestamp, sort_order: message.sort_order });
 export const compareMessages = (a: MessageCursor, b: MessageCursor) => a.timestamp - b.timestamp ||
