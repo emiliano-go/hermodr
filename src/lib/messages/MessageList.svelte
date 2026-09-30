@@ -148,7 +148,7 @@
     onmenu: (e: MouseEvent, m: StoredMessage) => void;
     onpick: (m: StoredMessage) => void;
     /** Messages picked for a bulk action, in the open chat; null when not picking. */
-    picking?: Record<string, true> | null;
+    picking?: Record<string, StoredMessage> | null;
     onjumpquoted: (m: StoredMessage) => void;
     onrecoverquote: (m: StoredMessage) => void;
     recovering: Record<string, true>;

@@ -34,7 +34,7 @@ export class UiState {
   /** A group member whose removal is waiting for confirmation. */
   removeMember = $state<{ chat: string; jid: string; name: string } | null>(null);
   /** Messages picked for a bulk action, in the open chat; null when not picking. */
-  picking = $state<Record<string, true> | null>(null);
+  picking = $state<Record<string, StoredMessage> | null>(null);
   /** The picked message ids a bulk delete is confirming. */
   bulkDelete = $state<string[] | null>(null);
   reporting = $state<StoredMessage | null>(null);
@@ -42,8 +42,8 @@ export class UiState {
   infoFor = $state<StoredMessage | null>(null);
   /** The message whose reactors are listed, opened from its menu or pill. */
   reactionsFor = $state<StoredMessage | null>(null);
-  /** The message a full-emoji reaction is being picked for, with the menu anchor. */
-  emojiFor = $state<{ message: StoredMessage; x: number; y: number } | null>(null);
+  /** The messages receiving a full-emoji reaction, with the picker anchor. */
+  emojiFor = $state<{ messages: StoredMessage[]; x: number; y: number } | null>(null);
   /** Bumped so the open info reloads on new receipts. */
   infoVersion = $state(0);
 

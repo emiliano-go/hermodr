@@ -13,11 +13,14 @@ async function withApp(run: (app: {
   deleteSelected: (everyone: boolean) => Promise<void>;
   canDeletePickedForEveryone: () => boolean;
   pickedInOrder: (
-    picking: Record<string, true> | null,
+    picking: Record<string, StoredMessage> | null,
     ordered: StoredMessage[],
   ) => StoredMessage[];
   forwardMessages: (batch: StoredMessage[], targets: string[]) => Promise<void>;
   viewableMessages: (ordered: StoredMessage[], viewOnce: Set<string>) => StoredMessage[];
+  copyMessages: (batch: StoredMessage[]) => Promise<void>;
+  starMessages: (batch: StoredMessage[], starred: boolean) => Promise<void>;
+  reactMessages: (batch: StoredMessage[], emoji: string) => Promise<void>;
   messages: {
     messages: StoredMessage[];
     marks: { reactions: { target: string; sender: string; emoji: string }[] };
@@ -26,23 +29,24 @@ async function withApp(run: (app: {
   ui: {
     reactionsFor: StoredMessage | null;
     removeMember: { chat: string; jid: string; name: string } | null;
-    picking: Record<string, true> | null;
+    picking: Record<string, StoredMessage> | null;
     bulkDelete: string[] | null;
     forwarding: StoredMessage[] | null;
+    error: string | null;
   };
   members: {
     participants: { jid: string; name: string; admin: boolean; owner: boolean; number: string | null; username: string | null; label: string | null }[];
     chatGroup: { admin: boolean } | null;
   };
-  session: { me: string | null };
-  composer: { editing: { chat: string; id: string; original: string } | null; startEditing: (m?: StoredMessage) => void };
+  session: { me: string | null; activeAccount: string | null };
+  composer: { editing: { chat: string; id: string; original: string } | null; startEditing: (m?: StoredMessage) => void; resetAccount: () => void };
   chats: { selectedChat: string | null };
   calls: { command: string; args: unknown }[];
-}) => Promise<void>) {
+}) => Promise<void>, beforeInvoke?: (command: string, args: unknown) => unknown) {
   const calls: { command: string; args: unknown }[] = [];
   Object.defineProperty(globalThis, "window", { configurable: true, value: {
     addEventListener() {},
-    __TAURI_INTERNALS__: { invoke: async (command: string, args: unknown) => { calls.push({ command, args }); } },
+    __TAURI_INTERNALS__: { invoke: async (command: string, args: unknown) => { calls.push({ command, args }); return await beforeInvoke?.(command, args); } },
   } });
   Object.defineProperty(globalThis, "document", { configurable: true, value: { addEventListener() {} } });
   const server = await createServer({
@@ -70,6 +74,9 @@ async function withApp(run: (app: {
       pickedInOrder: messageActions.pickedInOrder,
       forwardMessages: messageActions.forwardMessages,
       viewableMessages: messageActions.viewableMessages,
+      copyMessages: messageActions.copyMessages,
+      starMessages: messageActions.starMessages,
+      reactMessages: messageActions.reactMessages,
       messages, ui, members, session, composer, chats, calls,
     });
   } finally {
@@ -217,15 +224,36 @@ test("Select messages starts a bulk selection, and deleting uses the bulk comman
       .find((item) => item.label === "Select messages");
     assert.ok(select);
     select.action();
-    assert.deepEqual(ui.picking, { a: true });
+    assert.deepEqual(ui.picking, { a: message });
     assert.ok(!menuItems({ ...message, revoked: true }, async () => {})
       .some((item) => item.label === "Select messages"));
-    ui.picking = { a: true, b: true };
+    ui.picking = { a: message, b: { ...message, id: "b" } };
     await deleteSelected(false);
     assert.ok(calls.some((call) => call.command === "delete_messages"
       && JSON.stringify(call.args) === JSON.stringify({ chat: "99@g.us", ids: ["a", "b"], everyone: false })));
     assert.equal(ui.picking, null);
   });
+});
+
+test("a late bulk delete cannot clear a new selection or reload a different chat/account", async () => {
+  let move = () => {};
+  await withApp(async ({ deleteSelected, ui, chats, session, calls }) => {
+    const old = { chat: "99@g.us", id: "old" } as StoredMessage;
+    const next = { chat: "next@s", id: "next" } as StoredMessage;
+    chats.selectedChat = old.chat;
+    ui.picking = { old };
+    move = () => { chats.selectedChat = next.chat; ui.picking = { next }; };
+    await deleteSelected(false);
+    assert.deepEqual(ui.picking, { next });
+    assert.ok(!calls.some((call) => call.command === "message_page"));
+    const refreshed = calls.filter((call) => call.command === "chats").length;
+    chats.selectedChat = old.chat;
+    ui.picking = { old };
+    move = () => { session.activeAccount = "next-account"; ui.picking = { next }; };
+    await deleteSelected(false);
+    assert.deepEqual(ui.picking, { next });
+    assert.equal(calls.filter((call) => call.command === "chats").length, refreshed);
+  }, (command) => { if (command === "delete_messages") move(); });
 });
 
 test("bulk delete is offered for everyone only when every pick qualifies", async () => {
@@ -235,9 +263,9 @@ test("bulk delete is offered for everyone only when every pick qualifies", async
     const theirs = { chat: "99@g.us", id: "t", sender: "222@s.whatsapp.net", from_me: false,
       text: "y", revoked: false } as StoredMessage;
     messages.messages = [mine, theirs];
-    ui.picking = { m: true };
+    ui.picking = { m: mine };
     assert.ok(canDeletePickedForEveryone());
-    ui.picking = { m: true, t: true };
+    ui.picking = { m: mine, t: theirs };
     assert.ok(!canDeletePickedForEveryone());
     members.participants = [{
       jid: "111@s.whatsapp.net", name: "Me", admin: true, owner: false,
@@ -253,7 +281,7 @@ test("admin powers follow the core's read, and the roster's number form", async 
     const theirs = { chat: "99@g.us", id: "t", sender: "222@s.whatsapp.net", from_me: false,
       text: "y", revoked: false } as StoredMessage;
     messages.messages = [theirs];
-    ui.picking = { t: true };
+    ui.picking = { t: theirs };
     assert.ok(!canDeletePickedForEveryone());
     session.me = "59897504482@s.whatsapp.net";
     // LID-addressed rosters key us by LID and carry our number separately.
@@ -272,14 +300,15 @@ test("admin powers follow the core's read, and the roster's number form", async 
 
 test("picked messages come back in the chat's order, not the pick order", async () => {
   await withApp(async ({ pickedInOrder }) => {
-    const message = (id: string) => ({ chat: "99@g.us", id }) as StoredMessage;
+    const message = (id: string) => ({ chat: "99@g.us", id, timestamp: id.charCodeAt(0) }) as StoredMessage;
     const ordered = [message("a"), message("b"), message("c")];
     assert.deepEqual(
-      pickedInOrder({ c: true, a: true }, ordered).map((m) => m.id),
+      pickedInOrder({ c: ordered[2], a: ordered[0] }, ordered).map((m) => m.id),
       ["a", "c"],
     );
-    // Unknown ids are ignored, and no selection means nothing to send.
-    assert.deepEqual(pickedInOrder({ missing: true }, ordered), []);
+    const old = message("0");
+    const edited = { ...ordered[0], text: "edited" };
+    assert.deepEqual(pickedInOrder({ a: ordered[0], old }, [edited]), [old, edited]);
     assert.deepEqual(pickedInOrder(null, ordered), []);
   });
 });
@@ -288,7 +317,7 @@ test("forwarding sends every message to every chosen chat, in order", async () =
   await withApp(async ({ forwardMessages, ui, calls }) => {
     const message = (id: string) => ({ chat: "99@g.us", id, sender: "1@s", from_me: false }) as StoredMessage;
     const batch = [message("older"), message("newer")];
-    ui.picking = { older: true, newer: true };
+    ui.picking = { older: batch[0], newer: batch[1] };
     await forwardMessages(batch, ["x@s", "y@s"]);
     const sent = calls.filter((call) => call.command === "forward_message").map((call) => call.args);
     assert.deepEqual(sent, [
@@ -310,8 +339,68 @@ test("the message menu forwards one message, and Select starts picking", async (
     items.find((item) => item.label === "Forward")!.action();
     assert.deepEqual(ui.forwarding, [message]);
     items.find((item) => item.label === "Select messages")!.action();
-    assert.deepEqual(ui.picking, { a: true });
+    assert.deepEqual(ui.picking, { a: message });
   });
+});
+
+test("bulk copy, star and reactions target every selected message without copying revoked text", async () => {
+  await withApp(async ({ copyMessages, starMessages, reactMessages, ui, calls }) => {
+    const batch = ["first", "second"].map((text, index) => ({ chat: "99@g.us", id: String(index), sender: "1@s", from_me: false, text }) as StoredMessage);
+    ui.picking = Object.fromEntries(batch.map((message) => [message.id, message]));
+    const previous = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    const copied: string[] = [];
+    let rejectCopy = false;
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: { clipboard: {
+      writeText: async (text: string) => { if (rejectCopy) throw new Error("Synthetic clipboard failure"); copied.push(text); },
+    } } });
+    try {
+      await copyMessages([batch[0], { ...batch[0], revoked: true, text: "revoked text" }, batch[1]]);
+      assert.deepEqual(copied, ["first\nsecond"]);
+      await Promise.all([starMessages(batch, true), reactMessages(batch, "👍")]);
+      assert.deepEqual(calls.filter((call) => call.command === "star" || call.command === "react").map((call) => [call.command, call.args]), [
+        ["star", { target: { chat: "99@g.us", id: "0", sender: "1@s", fromMe: false }, starred: true }],
+        ["star", { target: { chat: "99@g.us", id: "1", sender: "1@s", fromMe: false }, starred: true }],
+        ["react", { target: { chat: "99@g.us", id: "0", sender: "1@s", fromMe: false }, emoji: "👍" }],
+        ["react", { target: { chat: "99@g.us", id: "1", sender: "1@s", fromMe: false }, emoji: "👍" }],
+      ]);
+      assert.equal(Object.keys(ui.picking ?? {}).length, 2);
+      rejectCopy = true;
+      await copyMessages(batch);
+      assert.match(ui.error ?? "", /Synthetic clipboard failure/);
+    } finally {
+      if (previous) Object.defineProperty(globalThis, "navigator", previous);
+      else Reflect.deleteProperty(globalThis, "navigator");
+    }
+  });
+});
+
+test("bulk sends stop when account changes, including an in-flight forward batch", async () => {
+  let switchAccount = () => {};
+  await withApp(async ({ starMessages, reactMessages, forwardMessages, composer, ui, calls }) => {
+    const batch = ["a", "b"].map((id) => ({ chat: "99@g.us", id, sender: "1@s", from_me: false }) as StoredMessage);
+    ui.picking = { a: batch[0], b: batch[1] };
+    switchAccount = () => composer.resetAccount();
+    await starMessages(batch, true);
+    assert.equal(calls.filter((call) => call.command === "star").length, 1);
+    assert.match(ui.error ?? "", /abort/i);
+    await reactMessages(batch, "👍");
+    assert.equal(calls.filter((call) => call.command === "react").length, 1);
+    await assert.rejects(forwardMessages(batch, ["x@s", "y@s"]), /abort/i);
+    assert.equal(calls.filter((call) => call.command === "forward_message").length, 1);
+    assert.equal(Object.keys(ui.picking ?? {}).length, 2);
+  }, (command) => { if (command === "star" || command === "react" || command === "forward_message") switchAccount(); });
+});
+
+test("a failed bulk command stops the batch, keeps selection and exposes the failure", async () => {
+  let sent = 0;
+  await withApp(async ({ reactMessages, ui, calls }) => {
+    const batch = ["a", "b", "c"].map((id) => ({ chat: "99@g.us", id, sender: "1@s", from_me: false }) as StoredMessage);
+    ui.picking = Object.fromEntries(batch.map((message) => [message.id, message]));
+    await reactMessages(batch, "❤️");
+    assert.match(ui.error ?? "", /Synthetic reaction failure/);
+    assert.equal(calls.filter((call) => call.command === "react").length, 2);
+    assert.equal(Object.keys(ui.picking ?? {}).length, 3);
+  }, (command) => { if (command === "react" && ++sent === 2) throw new Error("Synthetic reaction failure"); });
 });
 
 test("greyed-out media stays viewable, one-time copies stay behind their filter", async () => {

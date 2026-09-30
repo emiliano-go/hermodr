@@ -9,6 +9,7 @@ export const mediaFixture = { calls: 0, failure: true, deferNext: false, pending
 export const pluginFixture = { enabled: false, failure: false, crashed: false };
 export const sendFixture = { before: null as ((command: string, args?: Record<string, unknown>) => Promise<void>) | null };
 export const previewFixture = { calls: [] as string[], deferNext: false, pending: [] as (() => void)[], failure: false };
+export const selectionFixture = { calls: [] as { command: string; args: unknown }[], failure: false };
 export const uploadFixture = { calls: [] as string[], maxChunk: 0, size: 0, written: 0, chunks: [] as Uint8Array[],
   failChunk: false, failSend: false, afterChunk: null as (() => void) | null };
 export const archiveFixture = { failure: false, cancelled: false, deferNext: false, pending: [] as (() => void)[],
@@ -26,6 +27,14 @@ export const fixture = { updated: false, failure: false, calls: 0, savedRetentio
 
 export async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   previewFixture.calls.push(command);
+  if (["star", "react", "forward_message", "delete_messages"].includes(command)) {
+    const target = args?.target as { chat?: string } | undefined;
+    if ((target?.chat ?? args?.chat) === "selection@s.whatsapp.net") {
+      selectionFixture.calls.push({ command, args });
+      if (selectionFixture.failure) throw new Error("Synthetic selection failure");
+      return undefined as T;
+    }
+  }
   if (sendFixture.before) await sendFixture.before(command, args);
   if (["send_text", "send_reply", "send_voice", "send_sticker", "send_from_library", "send_typing"].includes(command)) return undefined as T;
   if (command === "list_plugins") return { directory: "synthetic/plugins", errors: [], plugins: [

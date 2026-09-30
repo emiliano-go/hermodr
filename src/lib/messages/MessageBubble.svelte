@@ -70,7 +70,13 @@ import VideoPlayer from "$lib/media/VideoPlayer.svelte";
   class:mine={message.from_me}
   class:picking={vm.picking}
   class:picked={vm.picked}
-  onclick={vm.picking ? () => api.onpick(message) : undefined}
+  onclickcapture={(event) => {
+    if (vm.picking || ((event.ctrlKey || event.metaKey) && !message.revoked)) {
+      event.preventDefault();
+      event.stopPropagation();
+      api.onpick(message);
+    }
+  }}
   ondblclick={() => {
     if (!vm.picking) api.onreplydraft(message);
   }}

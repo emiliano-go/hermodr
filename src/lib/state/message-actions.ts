@@ -1,5 +1,6 @@
 import { invoke } from "$lib/utils/ipc";
 import { bare, captionOf } from "$lib/utils/message";
+import { compareMessages } from "$lib/utils/message-window";
 import type { ChatEvent, StoredMessage } from "$lib/utils/models";
 import type { MenuItem } from "$lib/messages/MessageMenu.svelte";
 import { chats } from "./chats.svelte";
@@ -7,6 +8,7 @@ import { composer } from "./composer.svelte";
 import { members } from "./members.svelte";
 import { messages } from "./messages.svelte";
 import { ui } from "./ui.svelte";
+import { session } from "./session.svelte";
 
 export function target(m: StoredMessage) {
   return { chat: m.chat, id: m.id, sender: m.sender, fromMe: m.from_me };
@@ -158,7 +160,7 @@ const MENU_BUILDERS: Record<MenuId, MenuBuilder> = {
           label: messages.starred.has(m.id) ? "Unstar" : "Star",
           icon: "star",
           action: () =>
-            act(() => invoke("star", { target: target(m), starred: !messages.starred.has(m.id) })),
+            starMessages([m], !messages.starred.has(m.id)),
         }
       : null,
   report: ({ m, other }) =>
@@ -180,7 +182,7 @@ const MENU_BUILDERS: Record<MenuId, MenuBuilder> = {
       ? {
           label: "Select messages",
           icon: "check",
-          action: () => (ui.picking = { [m.id]: true }),
+          action: () => (ui.picking = { [m.id]: m }),
         }
       : null,
 };
@@ -256,7 +258,7 @@ export function canDeletePickedForEveryone() {
   return (
     ids.length > 0 &&
     ids.every((id) => {
-      const m = messages.messages.find((row) => row.id === id);
+      const m = messages.messages.find((row) => row.id === id) ?? ui.picking?.[id];
       return !!m && canDeleteForEveryone(m);
     })
   );
@@ -268,10 +270,13 @@ export async function deleteSelected(everyone: boolean) {
   ui.bulkDelete = null;
   const chat = chats.selectedChat;
   if (!chat || ids.length === 0) return;
+  const selection = ui.picking;
+  const account = session.activeAccount;
   await act(async () => {
     await invoke("delete_messages", { chat, ids, everyone });
-    ui.picking = null;
-    await messages.reloadMessages(chat);
+    if (session.activeAccount !== account) return;
+    if (ui.picking === selection) ui.picking = null;
+    if (chats.selectedChat === chat) await messages.reloadMessages(chat);
     await chats.refreshChats();
   });
 }
@@ -296,21 +301,49 @@ export function viewableMessages(
 
 /** The picked messages in the chat's own order, oldest first. */
 export function pickedInOrder(
-  picking: Record<string, true> | null,
+  picking: Record<string, StoredMessage> | null,
   ordered: StoredMessage[],
 ): StoredMessage[] {
   if (!picking) return [];
-  return ordered.filter((m) => picking[m.id]);
+  const current = new Map(ordered.map((message) => [message.id, message]));
+  return Object.values(picking).map((message) => current.get(message.id) ?? message).sort(compareMessages);
+}
+
+export async function copyMessages(batch: StoredMessage[]) {
+  const text = batch.filter((message) => !message.revoked).map((message) => message.text).filter(Boolean).join("\n");
+  if (text) await act(() => navigator.clipboard.writeText(text));
+}
+
+export async function starMessages(batch: StoredMessage[], starred: boolean) {
+  await act(() => composer.enqueue(async (signal) => {
+    for (const message of batch) {
+      signal.throwIfAborted();
+      if (!message.revoked) await invoke("star", { target: target(message), starred });
+    }
+  }));
+}
+
+export async function reactMessages(batch: StoredMessage[], emoji: string) {
+  await act(() => composer.enqueue(async (signal) => {
+    for (const message of batch) {
+      signal.throwIfAborted();
+      if (!message.revoked) await invoke("react", { target: target(message), emoji });
+    }
+  }));
 }
 
 /** Forwards one chat's messages to every chosen chat, in the batch's order. */
 export async function forwardMessages(batch: StoredMessage[], targets: string[]) {
-  for (const to of targets) {
-    for (const m of batch) {
-      await composer.enqueue(() => invoke("forward_message", { chat: m.chat, id: m.id, to }));
+  const selection = ui.picking;
+  await composer.enqueue(async (signal) => {
+    for (const to of targets) {
+      for (const m of batch) {
+        signal.throwIfAborted();
+        await invoke("forward_message", { chat: m.chat, id: m.id, to });
+      }
     }
-  }
-  ui.picking = null;
+  });
+  if (ui.picking === selection) ui.picking = null;
   await chats.refreshChats();
 }
 

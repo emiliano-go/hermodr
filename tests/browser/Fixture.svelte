@@ -1,5 +1,6 @@
 <script lang="ts">
   import MetaLayout from "./MetaLayout.svelte";
+  import Selection from "./Selection.svelte";
   import Customization from "$lib/settings/Customization.svelte";
   import BooleanProps from "$lib/ui/BooleanProps.svelte";
   import ChatMetadata from "./ChatMetadata.svelte";
@@ -18,6 +19,7 @@
 </script>
 
 <MetaLayout />
+<Selection />
 <details><summary>Theme export fixture</summary><Customization /></details>
 <h1>Synthetic flag diagnostics</h1>
 <p>No backend, account, database, network service or native IPC.</p>

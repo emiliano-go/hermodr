@@ -25,6 +25,14 @@ receipts off/on, then Show preview calls: only `message_page` may appear. Delay 
 preview read, switch the synthetic account and release it: no tooltip returns.
 Toggle preview failure: the error stays visible without opening or marking read.
 
+Message selection checks: expand Message selection fixture and reset it. Ctrl-click
+or Command-click one message, then click two more. Evict the oldest visible row:
+the count stays three. Star/Unstar and React must target all three IDs, including
+the evicted row; Copy includes their text in arrival order. Forward and Delete
+use the complete selection. Cancel selection and Escape exit; a simulated failure
+shows an error and retains selection. Show selection operations exposes only
+synthetic command payloads. Narrow selection layout: actions wrap without horizontal overflow.
+
 Flag diagnostics checks:
 
 1. Expand Server feature flags: true, false and Not received have separate values.

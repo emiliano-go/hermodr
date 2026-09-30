@@ -4,7 +4,7 @@
   import { addAccount, chooseAccount, connect, reconnect, removeAccount, switchTo, syncState } from "$lib/state/accounts";
   import { onDrop, onPaste } from "$lib/state/attachments";
   import { openPings, openStarred, searchChat } from "$lib/state/finder";
-  import { act, canDeleteForEveryone, canDeletePickedForEveryone, deleteMessage, deleteSelected, eventFields, forwardMessages, menuItems as messageMenuItems, pickedInOrder, saveEvent, target, viewableMessages } from "$lib/state/message-actions";
+  import { act, canDeleteForEveryone, canDeletePickedForEveryone, copyMessages, deleteMessage, deleteSelected, eventFields, forwardMessages, menuItems as messageMenuItems, pickedInOrder, reactMessages, saveEvent, starMessages, target, viewableMessages } from "$lib/state/message-actions";
   import { onMount, tick, untrack } from "svelte";
   import { invoke } from "$lib/utils/ipc";
   import { listen } from "@tauri-apps/api/event";
@@ -657,29 +657,25 @@
 
   const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
-  /**
-   * Full-emoji reaction flow. These deriveds use optional chaining on purpose:
-   * `{@const em = ui.emojiFor.message}` threw `null.message` when the picker
-   * closed, because an `{#if}` block's consts can re-evaluate during teardown.
-   */
-  const emojiChat = $derived(ui.emojiFor?.message.chat ?? "");
+  /** Picker targets remain readable during teardown. */
+  const emojiChat = $derived(ui.emojiFor?.messages[0]?.chat ?? "");
   const emojiAnchor = $derived(ui.emojiFor ? { x: ui.emojiFor.x, y: ui.emojiFor.y } : null);
   function openEmojiFor() {
     const anchor = ui.menu;
-    if (anchor) ui.emojiFor = { message: anchor.message, x: anchor.x, y: anchor.y };
+    if (anchor) ui.emojiFor = { messages: [anchor.message], x: anchor.x, y: anchor.y };
   }
   function pickCustomReaction(emoji: string) {
-    const em = ui.emojiFor?.message;
+    const batch = ui.emojiFor?.messages;
     ui.emojiFor = null;
-    if (!em) return;
-    const mine = messages.reactionsFor.get(em.id)?.find((r) => r.mine)?.emoji ?? null;
-    act(() => invoke("react", { target: target(em), emoji: mine === emoji ? "" : emoji }));
+    if (!batch?.length) return;
+    const mine = batch.length === 1 ? messages.reactionsFor.get(batch[0].id)?.find((r) => r.mine)?.emoji : null;
+    void reactMessages(batch, mine === emoji ? "" : emoji);
   }
   /** Takes back our own reaction from the Reactions dialog. */
   function removeOwnReaction() {
     const m = ui.reactionsFor;
     if (!m) return;
-    act(() => invoke("react", { target: target(m), emoji: "" }));
+    void reactMessages([m], "");
   }
   // Later readers in a group change no status, so the open info refreshes itself.
   $effect(() => {
@@ -1046,7 +1042,7 @@
           onpick={(m) => {
             const next = { ...(ui.picking ?? {}) };
             if (next[m.id]) delete next[m.id];
-            else next[m.id] = true;
+            else next[m.id] = m;
             ui.picking = next;
           }}
           polls={messages.marks.polls}
@@ -1112,7 +1108,7 @@
             const event = messages.marks.events.find((e) => e.id === m.id);
             if (event) return saveEvent(m.chat, m.id, { ...eventFields(event), canceled: true });
           }}
-          onreact={(m, emoji) => act(() => invoke("react", { target: target(m), emoji }))}
+          onreact={(m, emoji) => reactMessages([m], emoji)}
           onopenreactions={(m) => (ui.reactionsFor = m)}
           onmarkplayed={(m) => messages.markPlayed(m)}
           onnextvoice={(m) => {
@@ -1152,14 +1148,26 @@
         {#if ui.picking}
           <SelectionBar
             count={Object.keys(ui.picking).length}
+            allStarred={Object.keys(ui.picking).length > 0 && Object.keys(ui.picking).every((id) => messages.starred.has(id))}
             onforward={() => {
               const batch = pickedInOrder(ui.picking, messages.ordered);
               if (batch.length > 0) ui.forwarding = batch;
             }}
             ondelete={() => (ui.bulkDelete = Object.keys(ui.picking ?? {}))}
+            oncopy={() => copyMessages(pickedInOrder(ui.picking, messages.ordered))}
+            onstar={() => {
+              const batch = pickedInOrder(ui.picking, messages.ordered);
+              return starMessages(batch, !batch.every((message) => messages.starred.has(message.id)));
+            }}
+            onreact={(event) => {
+              const batch = pickedInOrder(ui.picking, messages.ordered);
+              const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
+              if (batch.length) ui.emojiFor = { messages: batch, x: box.left, y: box.top };
+            }}
             oncancel={() => {
               ui.picking = null;
               ui.bulkDelete = null;
+              ui.emojiFor = null;
             }} />
         {:else}
           <ComposerBar
@@ -1247,7 +1255,7 @@
     items={menuItems(m)}
     reactions={QUICK_REACTIONS}
     current={messages.reactionsFor.get(m.id)?.find((r) => r.mine)?.emoji ?? null}
-    onreact={(emoji) => act(() => invoke("react", { target: target(m), emoji }))}
+    onreact={(emoji) => reactMessages([m], emoji)}
     onmore={openEmojiFor}
     onclose={() => (ui.menu = null)} />
   {/key}

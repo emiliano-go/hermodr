@@ -6,13 +6,28 @@
     count,
     onforward,
     ondelete,
+    oncopy,
+    onstar,
+    onreact,
+    allStarred = false,
     oncancel,
   }: {
     count: number;
     onforward: () => void;
     ondelete: () => void;
+    oncopy: () => unknown;
+    onstar: () => unknown;
+    onreact: (event: MouseEvent) => void;
+    allStarred?: boolean;
     oncancel: () => void;
   } = $props();
+  let busy = $state(false);
+
+  async function run(action: () => unknown) {
+    if (busy) return;
+    busy = true;
+    try { await action(); } finally { busy = false; }
+  }
 </script>
 
 <svelte:window onkeydown={(e) => e.key === "Escape" && oncancel()} />
@@ -22,10 +37,19 @@
     <Icon name="x" size={18} />
   </button>
   <span class="count">{count} selected</span>
-  <button class="forward" disabled={count === 0} onclick={onforward}>
+  <button class="forward" disabled={count === 0 || busy} onclick={onforward}>
     <Icon name="forward" size={16} /> Forward
   </button>
-  <button class="delete" disabled={count === 0} onclick={ondelete}>
+  <button class="action" disabled={count === 0 || busy} onclick={() => run(oncopy)}>
+    <Icon name="copy" size={16} /> Copy
+  </button>
+  <button class="action" disabled={count === 0 || busy} onclick={() => run(onstar)}>
+    <Icon name="star" size={16} /> {allStarred ? "Unstar" : "Star"}
+  </button>
+  <button class="action" disabled={count === 0 || busy} onclick={onreact}>
+    <Icon name="smile" size={16} /> React
+  </button>
+  <button class="delete" disabled={count === 0 || busy} onclick={ondelete}>
     <Icon name="trash" size={16} /> Delete
   </button>
 </div>
@@ -33,6 +57,7 @@
 <style>
   .selection-bar {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 10px;
     padding: 5px 16px;
@@ -62,6 +87,7 @@
     font-size: 14px;
   }
   .forward,
+  .action,
   .delete {
     display: flex;
     align-items: center;
@@ -78,6 +104,7 @@
   .forward:hover:not(:disabled) {
     background: var(--raised-2);
   }
+  .action:hover:not(:disabled) { background: var(--raised-2); }
   .delete {
     color: var(--danger);
   }
@@ -85,6 +112,7 @@
     background: var(--danger-soft, var(--raised));
   }
   .forward:disabled,
+  .action:disabled,
   .delete:disabled {
     opacity: 0.5;
     cursor: default;
