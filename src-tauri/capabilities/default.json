@@ -35,7 +35,7 @@
     "allow-open-path",
     "allow-read-file",
     "allow-playable-audio",
-    "allow-playable-audio",
+    "allow-playable-video",
     "allow-participants",
     "allow-group-info",
     "allow-set-pinned",

@@ -195,7 +195,9 @@ there is nothing to clone by hand. `.cargo/config.toml` has Cargo use the system
 
 Requirements: Rust 1.94+ (stable), Node with pnpm, and the usual Tauri Linux
 dependencies (WebKitGTK 4.1, GTK 3). The dev script does not install system
-packages; it prints what the build needs.
+packages; it prints what the build needs. On Linux, `ffmpeg` on `PATH` also
+lets videos play when the system's GStreamer cannot decode their AAC audio:
+the file is remuxed to H.264 + Opus under the media cache on first play.
 
 On Wayland, WebKitGTK's DMA-BUF renderer fails with `Gdk Error 71`. The app sets
 `WEBKIT_DISABLE_DMABUF_RENDERER=1` itself, so no manual configuration is needed.

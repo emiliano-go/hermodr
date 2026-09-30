@@ -23,6 +23,7 @@ const COMMANDS: &[&str] = &[
     "message_media_action",
     "read_file",
     "playable_audio",
+    "playable_video",
     "participants",
     "group_info",
     "set_pinned",

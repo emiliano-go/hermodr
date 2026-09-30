@@ -23,10 +23,10 @@ struct Pcm {
     samples: Vec<f32>,
 }
 
-/// Where a source file's WAV conversion lives, under the media folder.
-pub(super) fn playable_path(media_dir: &Path, source: &Path) -> PathBuf {
+/// Where a source file's playback conversion lives, under the media folder.
+pub(super) fn playable_path(media_dir: &Path, source: &Path, extension: &str) -> PathBuf {
     let stem = source.file_stem().unwrap_or_default().to_string_lossy();
-    media_dir.join(PLAYABLE_DIR).join(format!("{stem}.wav"))
+    media_dir.join(PLAYABLE_DIR).join(format!("{stem}.{extension}"))
 }
 
 /// Whether a path is inside the playable conversion folder.
@@ -178,6 +178,22 @@ fn write_wav(pcm: &Pcm, path: &Path) -> Result<()> {
     std::fs::write(path, out).with_context(|| format!("cannot write {}", path.display()))
 }
 
+/// The media folder and the validated file inside it a playable conversion
+/// reads from, so only downloads can be prepared.
+fn playable_source(media_dir: &Path, path: &str) -> Result<(PathBuf, PathBuf)> {
+    let root = media_dir
+        .canonicalize()
+        .with_context(|| format!("media folder {} is missing", media_dir.display()))?;
+    let source = Path::new(path)
+        .canonicalize()
+        .with_context(|| format!("{path} is not readable"))?;
+    anyhow::ensure!(
+        source.starts_with(&root) && source.is_file(),
+        "only downloaded media can be played"
+    );
+    Ok((root, source))
+}
+
 impl WhatsAppService {
     /// A path the web view can play: the source itself when it already is PCM
     /// WAV, otherwise a cached WAV converted from it. When conversion fails,
@@ -185,14 +201,12 @@ impl WhatsAppService {
     /// chance.
     pub async fn playable_audio(&self, path: &str) -> Result<String> {
         let media_dir = self.media_dir.clone().context("no media folder is configured")?;
-        let root = media_dir.canonicalize().with_context(|| format!("media folder {} is missing", media_dir.display()))?;
-        let source = Path::new(path).canonicalize().with_context(|| format!("{path} is not readable"))?;
-        anyhow::ensure!(source.starts_with(&root) && source.is_file(), "only downloaded media can be played");
+        let (root, source) = playable_source(&media_dir, path)?;
         let source_string = source.to_string_lossy().into_owned();
         if is_wav(&source) {
             return Ok(source_string);
         }
-        let destination = playable_path(&root, &source);
+        let destination = playable_path(&root, &source, "wav");
         if destination.is_file() {
             return Ok(destination.to_string_lossy().into_owned());
         }
@@ -230,6 +244,86 @@ impl WhatsAppService {
                 Ok(source_string)
             }
             Err(e) => Err(anyhow::anyhow!("the audio conversion task failed: {e}")),
+        }
+    }
+
+    /// A path the web view can play a video from. Linux installs without an
+    /// AAC decoder fail on every video with sound; ffmpeg remuxes those to
+    /// H.264 + Opus in MP4 — the video is copied, not re-encoded — which the
+    /// system's codecs already handle. The result is cached beside the audio
+    /// conversions. Windows and macOS decode the original, so the web view
+    /// only asks for this after it has failed to play it.
+    pub async fn playable_video(&self, path: &str) -> Result<String> {
+        let media_dir = self.media_dir.clone().context("no media folder is configured")?;
+        let (root, source) = playable_source(&media_dir, path)?;
+        let destination = playable_path(&root, &source, "mp4");
+        if destination.is_file() {
+            return Ok(destination.to_string_lossy().into_owned());
+        }
+        let remuxed = tokio::task::spawn_blocking({
+            let source = source.clone();
+            let destination = destination.clone();
+            move || remux_video(&source, &destination)
+        })
+        .await?;
+        match remuxed {
+            Ok(()) => Ok(destination.to_string_lossy().into_owned()),
+            Err(e) => {
+                log::warn!("could not prepare {} for playback: {e:#}", source.display());
+                Err(e)
+            }
+        }
+    }
+}
+
+/// Rewrites a video's audio as Opus and leaves its video track alone.
+///
+/// WhatsApp sends H.264 + AAC; GStreamer on a plain Linux install has no AAC
+/// decoder, so the file plays silent at best and usually not at all. Opus in
+/// MP4 is understood everywhere the video itself is. Runs off the async
+/// runtime; ffmpeg is the same optional dependency video previews use.
+fn remux_video(source: &Path, destination: &Path) -> Result<()> {
+    use std::process::Command;
+    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    // ffmpeg picks its muxer from the file extension, so the temp keeps .mp4.
+    let temp = destination.with_extension(format!("part{}.mp4", NEXT_TEMP.fetch_add(1, Ordering::Relaxed)));
+    let output = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error", "-i"])
+        .arg(source)
+        .args([
+            "-map", "0:v:0", "-map", "0:a:0?",
+            "-c:v", "copy", "-c:a", "libopus", "-b:a", "96k",
+            "-movflags", "+faststart",
+        ])
+        .arg(&temp)
+        .output();
+    let output = match output {
+        Ok(output) => output,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            anyhow::bail!("ffmpeg is required to prepare this video for playback");
+        }
+        Err(e) => return Err(e.into()),
+    };
+    if !output.status.success() {
+        let _ = std::fs::remove_file(&temp);
+        anyhow::bail!(
+            "ffmpeg could not remux the video: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    match std::fs::rename(&temp, destination) {
+        Ok(()) => Ok(()),
+        // Another play finished first; its file is just as good.
+        Err(_) if destination.is_file() => {
+            let _ = std::fs::remove_file(&temp);
+            Ok(())
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&temp);
+            Err(e.into())
         }
     }
 }
@@ -314,6 +408,24 @@ mod tests {
     #[test]
     fn something_that_is_not_audio_is_refused() {
         assert!(decode_bytes(b"not an audio file at all", None).is_err());
+    }
+
+    #[test]
+    fn a_video_remuxes_its_audio_without_re_encoding_the_video() {
+        if std::process::Command::new("ffmpeg").arg("-version").output().is_err() {
+            return;
+        }
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tiny-video.mp4");
+        let dir = std::env::temp_dir().join(format!(
+            "postal-remux-{}-{}",
+            std::process::id(),
+            NEXT_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let output = dir.join("playable.mp4");
+        remux_video(&fixture, &output).unwrap();
+        assert!(output.metadata().unwrap().len() > 0);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(0);

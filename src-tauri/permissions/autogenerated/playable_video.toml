@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-playable-video"
+description = "Enables the playable_video command without any pre-configured scope."
+commands.allow = ["playable_video"]
+
+[[permission]]
+identifier = "deny-playable-video"
+description = "Denies the playable_video command without any pre-configured scope."
+commands.deny = ["playable_video"]
