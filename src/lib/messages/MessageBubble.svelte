@@ -502,6 +502,10 @@ import VideoPlayer from "$lib/media/VideoPlayer.svelte";
     flex-direction: column;
     padding: 1px var(--pad-l) 1px var(--pad-r);
     transition: background-color calc(0.6s * var(--motion-scale)) var(--ease);
+    /* Scrolled-away rows skip layout and paint; the intrinsic size keeps the
+       scrollbar from jumping while they are estimates. */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 56px;
   }
   .msg-row:hover {
     background: var(--row-hover);

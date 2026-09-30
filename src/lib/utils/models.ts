@@ -376,6 +376,39 @@ export type BubbleVm = {
   quoteChatName: string | null;
 };
 
+/** The list-wide inputs a row's own view model is built from. */
+export type BubbleCtx = {
+  isGroup: boolean;
+  /** Messages picked for a bulk action, in the open chat; null when not picking. */
+  picking: Record<string, true> | null;
+  dayKey: (ts: number) => string;
+  senderLabel: (m: StoredMessage) => string;
+  memberTagOf: (sender: string) => string | null;
+  hue: (jid: string) => number;
+  captionOf: (m: StoredMessage) => string;
+  viewOnceMarks: { id: string; opened: boolean; available: boolean }[];
+  reactionsFor: Map<string, Reaction[]>;
+  starredSet: Set<string>;
+  editedSet: Set<string>;
+  forwardedSet: Set<string>;
+  downloading: Record<string, true>;
+  downloadErrors: Record<string, string>;
+  downloadTries: Record<string, number>;
+  replyingToId: string | null;
+  highlightedId: string | null;
+  menuId: string | null;
+  polls: Poll[];
+  events: ChatEvent[];
+  avatars: Record<string, string | null>;
+  revealedOnce: Record<string, true>;
+  voiceAvatarOf: (m: StoredMessage) => string | null;
+  quoteAuthorOf: (sender: string | null) => string;
+  quoteTextOf: (m: StoredMessage) => string | null;
+  quoteChatNameOf: (m: StoredMessage) => string | null;
+  autoplayId: string | null;
+  onceAudioOpenId: string | null;
+};
+
 /** Page-owned helpers and actions the bubble calls back into. */
 export type BubbleApi = {
   toWire: (text: string) => string;

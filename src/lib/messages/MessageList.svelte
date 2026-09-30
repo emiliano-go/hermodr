@@ -1,8 +1,8 @@
 <!-- The open conversation's scrollback: day dividers, one bubble per message,
   outgoing uploads and the typing indicator. Moved out of +page.svelte. -->
 <script lang="ts">
-  import MessageBubble from "$lib/messages/MessageBubble.svelte";
-  import type { BubbleApi, BubbleVm } from "$lib/utils/models";
+  import MessageRow from "$lib/messages/MessageRow.svelte";
+  import type { BubbleApi, BubbleCtx } from "$lib/utils/models";
   import OutgoingItem from "$lib/messages/OutgoingItem.svelte";
   import TypingIndicator from "$lib/media/TypingIndicator.svelte";
   import { bare } from "$lib/utils/message";
@@ -208,75 +208,36 @@
     oninviteopen,
   });
 
-  function vmFor(message: StoredMessage, i: number): BubbleVm {
-    const prev = messages[i - 1];
-    const newDay = !prev || dayKey(prev.timestamp) !== dayKey(message.timestamp);
-    const first = newDay || prev.from_me !== message.from_me || prev.sender !== message.sender;
-    const mark = viewOnceMarks.find((v) => v.id === message.id) ?? null;
-    // A stub is spent unless a reply carried a copy of it, which the mark knows.
-    const viewOnce =
-      message.media_kind === "view_once"
-        ? { id: message.id, opened: true, available: mark?.available ?? false }
-        : mark;
-    // A copy the Android companion kept: an ordinary kind plus the once marker,
-    // behind a one-time filter until it is clicked in this visit to the chat.
-    const onceKept =
-      !!message.media_once_kind && message.media_kind !== "view_once" && !!message.media_path;
-    // A revoked message keeps its local copy, so it still counts as drawable.
-    const hasBody =
-      !!message.text.trim() ||
-      !!message.media_kind ||
-      !!message.media_path ||
-      !!message.media_thumb ||
-      !!message.reply_to_text;
-    const visual =
-      !viewOnce &&
-      (message.media_kind === "image" ||
-        message.media_kind === "video" ||
-        message.media_kind === "gif") &&
-      !!(message.media_path || message.media_thumb);
-    const caption = visual ? captionOf(message) : "";
-    const showSender = first && !message.from_me && isGroup;
-    const senderText = senderLabel(message);
-    return {
-      first,
-      showSender,
-      senderText,
-      senderHue: hue(message.sender),
-      senderAvatar: avatars[bare(message.sender)] ?? null,
-      memberTag: memberTagOf(message.sender),
-      visual,
-      caption,
-      viewOnce,
-      onceKept,
-      onceRevealed: !!revealedOnce[message.id],
-      inlineMeta:
-        (message.revoked && !hasBody) ||
-        (!message.preview_url && (!message.media_kind || (!!caption && !!message.media_path))),
-      reactions: reactionsFor.get(message.id),
-      isStarred: starredSet.has(message.id),
-      isEdited: editedSet.has(message.id),
-      isForwarded: forwardedSet.has(message.id),
-      isReplying: replyingToId === message.id,
-      highlighted: highlightedId === message.id,
-      forMe: !message.from_me && (message.mentioned || message.reply_to_sender === "@me"),
-      menuOpen: menuId === message.id,
-      poll: polls.find((p) => p.id === message.id),
-      chatEvent: events.find((e) => e.id === message.id),
-      downloading: !!downloading[message.id],
-      downloadError: message.media_path ? null : (downloadErrors[message.id] ?? null),
-      downloadGaveUp: (downloadTries[message.id] ?? 0) >= MAX_DOWNLOAD_TRIES,
-      hasBody,
-      picking: !!picking && !message.revoked,
-      picked: !!picking?.[message.id],
-      onceAudioOpen: onceAudioOpenId === message.id,
-      autoplay: autoplayId === message.id,
-      voiceAvatar: voiceAvatarOf(message),
-      quoteAuthor: message.reply_to_text ? quoteAuthorOf(message.reply_to_sender) : null,
-      quoteText: quoteTextOf(message),
-      quoteChatName: quoteChatNameOf(message),
-    };
-  }
+  const ctx = $derived<BubbleCtx>({
+    isGroup,
+    picking,
+    dayKey,
+    senderLabel,
+    memberTagOf,
+    hue,
+    captionOf,
+    viewOnceMarks,
+    reactionsFor,
+    starredSet,
+    editedSet,
+    forwardedSet,
+    downloading,
+    downloadErrors,
+    downloadTries,
+    replyingToId,
+    highlightedId,
+    menuId,
+    polls,
+    events,
+    avatars,
+    revealedOnce,
+    voiceAvatarOf,
+    quoteAuthorOf,
+    quoteTextOf,
+    quoteChatNameOf,
+    autoplayId,
+    onceAudioOpenId,
+  });
 
   const typerItems = $derived(
     typers.map((t) => ({ ...t, label: typerLabelOf(t.sender), hue: hue(t.sender) })),
@@ -312,7 +273,7 @@
       {@const line = noticeText(message.system_kind, message.system_params, namer, message.sender)}
       {#if line}<p class="system">{line}</p>{/if}
     {:else}
-      <MessageBubble {message} vm={vmFor(message, i)} {api} />
+      <MessageRow {message} {prev} {ctx} {api} />
     {/if}
   {/each}
   {#each uploads as upload (upload.token)}

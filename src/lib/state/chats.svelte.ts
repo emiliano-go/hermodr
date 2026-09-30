@@ -2,6 +2,7 @@
 // the group-info panel. Moved out of +page.svelte. Reads members (names) and
 // session (self, accounts); cross-domain flows (openChat) stay in the route.
 import { invoke } from "$lib/utils/ipc";
+import { mergeSummaries } from "$lib/utils/chat-list";
 import { plain } from "$lib/utils/format";
 import { bare, MEDIA_LABELS } from "$lib/utils/message";
 import type { IconName } from "$lib/ui/Icon.svelte";
@@ -119,7 +120,9 @@ export class ChatsState {
       const next = await invoke<ChatSummary[]>("chats");
       // A slow response must not overwrite a newer list.
       if (seq !== this.chatsSeq) return;
-      this.chats = next;
+      // Keep the objects of rows that did not change, so the sidebar
+      // re-renders only what moved or changed.
+      this.chats = mergeSummaries(this.chats, next);
     } catch (e) {
       ui.fail(e);
     }

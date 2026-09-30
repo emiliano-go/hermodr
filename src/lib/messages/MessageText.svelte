@@ -28,6 +28,13 @@
     onprofile: (jid: string, name: string, event: MouseEvent, self?: boolean) => void;
     onopenurl: (url: string) => void;
   } = $props();
+
+  /**
+   * Parsing and mention rewriting are not cheap, and this ran on every parent
+   * render; deriving it means it runs only when the text or the roster behind
+   * `toWire` changes.
+   */
+  const parsed = $derived(blocks(toWire(text)));
 </script>
 
 {#snippet runs(nodes: Inline[])}{#each nodes as n, i (i)}{#if n.kind === "text"}{n.text}{:else if n.kind === "link"}<a
@@ -63,7 +70,7 @@
 {#snippet lines(list: Inline[][])}{#each list as line, i (i)}{#if i > 0}<br />{/if}{@render runs(line)}{/each}{/snippet}
 
 <span class="text"
-  >{#each blocks(toWire(text)) as block, i (i)}{#if block.kind === "pre"}<pre class="pre">{block.text}</pre
+  >{#each parsed as block, i (i)}{#if block.kind === "pre"}<pre class="pre">{block.text}</pre
       >{:else if block.kind === "quote"}<span class="quote-block">{@render lines(block.lines)}</span
       >{:else if block.kind === "list"}{#if block.ordered}<ol class="fmt-list">
           {#each block.items as item, j (j)}<li>{@render runs(item)}</li>{/each}

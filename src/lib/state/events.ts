@@ -59,7 +59,7 @@ function deferRefresh(chat: string | null, markRead = false) {
   return true;
 }
 
-/** Coalesces an event burst into at most one chat-list reload per 200 ms. */
+/** Coalesces an event burst into at most one chat-list reload per 500 ms. */
 let chatsQueued = false;
 export function queueRefreshChats() {
   if (chatsQueued) return;
@@ -67,7 +67,7 @@ export function queueRefreshChats() {
   setTimeout(() => {
     chatsQueued = false;
     void chats.refreshChats();
-  }, 200);
+  }, 500);
 }
 
 /** The same for the open chat; `markRead` marks what arrived as seen if the window has focus. */
@@ -247,10 +247,22 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       if (session.uiUnlocked) {
         queueRefreshChats();
         if (chat === chats.selectedChat) {
+          // Fold the row in rather than reloading the window: a full reload
+          // rebuilds every row object and re-renders every bubble, which a
+          // busy account otherwise pays for on each message. Bursts above
+          // still take one deferred full reload.
+          if (payload.kind === "message") messages.append(payload.message);
+          else void messages.refreshRow(chat, payload.id, fresh);
           // Follow the stream when already at the bottom, but never yank
           // the view down while reading older messages. Status-only
           // updates never follow or mark.
-          queueReloadMessages(host, chat, fresh && (fromMe || !ui.scrolledUp), fresh && !fromMe);
+          if (fresh && !ui.scrolledUp) {
+            if (messages.atLatest) host.scrollToBottom();
+            if (!fromMe && document.hasFocus()) {
+              void invoke("mark_read", { chat }).catch(() => {});
+              queueRefreshChats();
+            }
+          }
         }
       }
       // A group seen for the first time has no name yet; look it up in

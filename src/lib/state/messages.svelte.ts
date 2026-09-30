@@ -161,6 +161,38 @@ export class MessagesState {
 
   acceptMessages(rows: StoredMessage[]) { this.messages = this.window.replace(rows); }
 
+  /** Folds one changed row in, so only its bubble re-renders. */
+  patch(row: StoredMessage) { this.messages = this.window.patch(row); }
+
+  /** Adds a row that just arrived, or refreshes it when already loaded. */
+  append(row: StoredMessage) { this.messages = this.window.insert(row); }
+
+  /**
+   * Fetches one row and folds it in without reloading the window. A full
+   * window reload replaces every object and so re-renders every bubble; on a
+   * busy account that happens per message. `mayAppend` is for a fresh arrival
+   * only: an old row the window never held is left to the next full reload.
+   */
+  async refreshRow(chat: string, id: string, mayAppend: boolean) {
+    if (chat !== this.chat) return;
+    const known = this.messages.some((m) => m.id === id);
+    if (!known && !(mayAppend && this.atLatest)) return;
+    try {
+      const page = await invoke<MessagePage>("message_page", {
+        chat,
+        limit: 1,
+        anchorId: id,
+        direction: "through",
+      });
+      const row = page.messages.find((m) => m.id === id);
+      if (!row) return;
+      if (known) this.patch(row);
+      else this.append(row);
+    } catch {
+      // A later full reload covers a failed one-row fetch.
+    }
+  }
+
   private async flushRefresh(chat: string, el: HTMLDivElement | null = null) {
     if (!this.refreshPending || chat !== this.chat) return;
     this.refreshPending = false;

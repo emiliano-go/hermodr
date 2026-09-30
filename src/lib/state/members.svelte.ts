@@ -47,6 +47,11 @@ export class MembersState {
   /** When each unnamed group's subject was last asked for; the core backs off failed ones. */
   askedSubjects = new Map<string, number>();
 
+  /** Memo for asWireMentions, cleared when the roster or aliases change. */
+  #wireCache = new Map<string, string>();
+  #wireRoster: Member[] | null = null;
+  #wireAliases: Record<string, string[]> | null = null;
+
   /** What kind of group the open chat is, shown before its members in the header. */
   groupContext = $derived.by(() => {
     const chatGroup = this.chatGroup;
@@ -254,6 +259,15 @@ export class MembersState {
    */
   asWireMentions(text: string) {
     if (!text.includes("@") || this.participants.length === 0) return text;
+    // Memoized per text: this runs for every visible bubble on every render,
+    // and the rewrite scans the whole roster and alias set.
+    if (this.#wireRoster !== this.participants || this.#wireAliases !== this.aliases) {
+      this.#wireRoster = this.participants;
+      this.#wireAliases = this.aliases;
+      this.#wireCache.clear();
+    }
+    const cached = this.#wireCache.get(text);
+    if (cached !== undefined) return cached;
     const tokens: { token: string; user: string }[] = [];
     for (const p of this.participants) {
       if (p.name.length > 1 && !isPlaceholder(p.name)) {
@@ -269,6 +283,8 @@ export class MembersState {
     for (const { token, user } of tokens) {
       if (out.includes(token)) out = out.split(token).join(`@${user}`);
     }
+    if (this.#wireCache.size >= 512) this.#wireCache.clear();
+    this.#wireCache.set(text, out);
     return out;
   }
 
