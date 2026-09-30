@@ -380,7 +380,7 @@ export type BubbleVm = {
 export type BubbleCtx = {
   isGroup: boolean;
   /** Messages picked for a bulk action, in the open chat; null when not picking. */
-  picking: Record<string, true> | null;
+  picking: Record<string, StoredMessage> | null;
   dayKey: (ts: number) => string;
   senderLabel: (m: StoredMessage) => string;
   memberTagOf: (sender: string) => string | null;
