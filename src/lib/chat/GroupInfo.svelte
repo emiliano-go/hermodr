@@ -14,11 +14,12 @@
   import AutoDownloadOverride from "$lib/settings/AutoDownloadOverride.svelte";
   import NotificationSoundOverride from "$lib/settings/NotificationSoundOverride.svelte";
   import GroupInviteLinks from "$lib/chat/GroupInviteLinks.svelte";
+  import GroupSettings from "$lib/chat/GroupSettings.svelte";
   import { session } from "$lib/state/session.svelte";
   import ConfirmDialog from "$lib/ui/ConfirmDialog.svelte";
   import { changeText } from "$lib/utils/group-actions";
   import type { GroupHistoryResult, GroupMemberAddResult, ParticipantChange } from "$lib/utils/models";
-  import type { GroupJoinRequest } from "$lib/utils/wire";
+  import type { GroupJoinRequest, GroupSettingChange, GroupSettings as GroupSettingsData } from "$lib/utils/wire";
   import { displayName, phoneLabel } from "$lib/utils/phone";
 
   let {
@@ -43,6 +44,10 @@
     onretryhistory,
     oninviteload,
     oninvitereset,
+    account,
+    onsettingsload,
+    onsettingchange,
+    onpicturechange,
     onrequests,
     onrequestchange,
     onremove,
@@ -79,6 +84,10 @@
     onretryhistory: (retryId: string) => Promise<GroupHistoryResult>;
     oninviteload: () => Promise<string>;
     oninvitereset: () => Promise<string>;
+    account: string | null;
+    onsettingsload: () => Promise<GroupSettingsData>;
+    onsettingchange: (change: GroupSettingChange) => Promise<void>;
+    onpicturechange: (data: string) => Promise<void>;
     onrequests: () => Promise<GroupJoinRequest[]>;
     onrequestchange: (jids: string[], approve: boolean) => Promise<ParticipantChange[]>;
     /** Removes people from the group. */
@@ -118,10 +127,12 @@
     }
   }
 
-  type Section = "overview" | "members" | "reports" | "requests";
+  type Section = "overview" | "settings" | "members" | "reports" | "requests";
   let section = $state<Section>("overview");
+  let settingsBusy = $state(false);
   const nav = $derived<{ id: Section; label: string; group: string }[]>([
     { id: "overview", label: "Overview", group: title },
+    { id: "settings", label: "Settings", group: title },
     {
       id: "members",
       label: info ? `Members (${info.participants.length})` : "Members",
@@ -271,7 +282,7 @@
   {/if}
 {/snippet}
 
-<Panel label="Group info" {nav} bind:section {onclose}>
+<Panel label="Group info" {nav} bind:section onclose={() => { if (!settingsBusy) onclose(); }}>
   {#snippet header()}
     <div class="head">
       {@render avatar(jid, title, 44)}
@@ -285,7 +296,13 @@
   {#if section === "overview" && session.activeAccount && inviteAdmin === inviteOwner}
     <div class="setting stack"><GroupInviteLinks chat={jid} canReset onload={oninviteload} onreset={oninvitereset} /></div>
   {/if}
-  {#if section === "requests"}
+  {#if section === "settings" && account}
+    <h2>Group settings</h2>
+    {#key JSON.stringify([account, jid])}
+      <GroupSettings chat={jid} {account} onload={onsettingsload} onchange={onsettingchange} onpicture={onpicturechange}
+        onbusy={(busy) => settingsBusy = busy} />
+    {/key}
+  {:else if section === "requests"}
     {#if info && !info.admin}
       <p class="error-text">Only group admins can manage join requests.</p>
     {:else}

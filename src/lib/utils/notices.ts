@@ -3,6 +3,17 @@
 // kind without a sentence here is kept but not shown.
 
 export function noticeText(kind: string, params: string[], name: (jid: string) => string, actor = ""): string | null {
+  if (kind === "NEW_CHAT_MESSAGE_CAPPED") {
+    const total = /^\d+$/.test(params[0] ?? "") ? params[0] : null;
+    const used = /^\d+$/.test(params[1] ?? "") ? params[1] : null;
+    const reset = Number(params[2]);
+    const date = new Date(reset * 1000);
+    const quota = total !== null ? `Quota this cycle: ${total} new chats${used !== null ? `, ${used} used` : ""}.`
+      : "WhatsApp did not provide this cycle's quota.";
+    const when = Number.isSafeInteger(reset) && reset > 0 && !Number.isNaN(date.getTime())
+      ? `Resets at ${date.toLocaleString()}.` : "WhatsApp did not provide a reset time.";
+    return `This account has reached WhatsApp's limit for starting new one-to-one chats. ${quota} ${when}`;
+  }
   if (kind === "SILENCED_UNKNOWN_CALLER_AUDIO" || kind === "SILENCED_UNKNOWN_CALLER") return "Silenced voice call from an unknown number";
   if (kind === "SILENCED_UNKNOWN_CALLER_VIDEO") return "Silenced video call from an unknown number";
   const names = params.map((p) => p.includes("@") ? name(p) : kind.endsWith("CHANGE_NUMBER") && /^\d+$/.test(p) ? name(`${p}@s.whatsapp.net`) : p);

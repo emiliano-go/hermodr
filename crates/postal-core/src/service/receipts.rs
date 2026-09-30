@@ -59,6 +59,7 @@ impl Inbound {
     // JID can differ in form from the stored one, so the
     // id alone is the reliable correlator.
     pub(super) async fn on_server_ack(&self, ack: &ServerAck) {
+        self.on_message_capping_ack(ack);
         let Self { store, events, .. } = self;
         let accepted = ack.error.is_none();
         let is_message =

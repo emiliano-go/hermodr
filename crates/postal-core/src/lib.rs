@@ -21,6 +21,7 @@ pub use service::{
     GroupHistoryOffer, GroupHistoryResult, GroupMemberAddResult,
     GroupJoinRequest,
     GroupCreateResult, GroupCreateParticipant, GroupCreateParticipantState,
+    GroupSettings, GroupSettingChange,
     AdminReport, GroupInfo, GroupKind, InviteInfo, UserProfile, Participant, ParticipantChange, Profile, SearchResult, SendOptions, WhatsAppService, ServiceConfig,
     HintChange, ServiceEvent, VoiceNote, StickerLibrary, StickerResyncReport,
 };

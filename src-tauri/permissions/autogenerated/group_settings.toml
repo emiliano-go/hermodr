@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-group-settings"
+description = "Enables the group_settings command without any pre-configured scope."
+commands.allow = ["group_settings"]
+
+[[permission]]
+identifier = "deny-group-settings"
+description = "Denies the group_settings command without any pre-configured scope."
+commands.deny = ["group_settings"]

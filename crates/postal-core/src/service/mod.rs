@@ -59,6 +59,8 @@ mod blocked_contacts;
 pub use blocked_contacts::BlockedContact;
 mod group_create;
 pub use group_create::{GroupCreateResult, GroupCreateParticipant, GroupCreateParticipantState};
+mod group_settings;
+pub use group_settings::{GroupSettings, GroupSettingChange};
 mod group_requests;
 pub use group_requests::GroupJoinRequest;
 mod group_history;
@@ -74,6 +76,7 @@ mod media_codec;
 mod media_download;
 mod media_wire;
 mod message_decode;
+mod message_capping;
 mod messages;
 mod notices;
 mod polls;
@@ -145,6 +148,15 @@ fn remove_cached_file(path: impl AsRef<Path>) {
         if error.kind() != std::io::ErrorKind::NotFound {
             Err::<(), _>(error).logged();
         }
+    }
+}
+
+fn invalidate_avatar_cache(media_dir: Option<&Path>, jid: &str) {
+    if let Some(dir) = media_dir {
+        let path = avatar_path(dir, jid);
+        remove_cached_file(path.with_extension("none"));
+        remove_cached_file(path);
+        remove_cached_file(avatar_full_path(dir, jid));
     }
 }
 

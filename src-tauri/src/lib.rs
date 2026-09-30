@@ -36,6 +36,7 @@ mod bulk_chats;
 mod group_invites;
 mod blocked_contacts;
 mod group_create;
+mod group_settings;
 #[cfg(desktop)]
 mod tray;
 mod transcription_config;
@@ -246,6 +247,9 @@ macro_rules! postal_commands {
             blocked_contacts::set_contact_blocked,
             group_create::create_group,
             group_create::group_creation_contacts,
+            group_settings::group_settings,
+            group_settings::change_group_setting,
+            group_settings::set_group_picture,
             chats::set_chat_privacy,
             contacts::contact_aliases,
             contacts::add_contact_alias,

@@ -16,7 +16,7 @@
     ChatSummary,
     SearchResult,
   } from "$lib/utils/models";
-  import { tick } from "svelte";
+  import { onDestroy, tick } from "svelte";
   import { invoke } from "$lib/utils/ipc";
 
   const STATUS_TEXT: Record<string, string> = {
@@ -150,14 +150,74 @@
   let menuRequest = 0;
   let menuOwner: HTMLElement | null = null;
   let preview = $state<{ chat: ChatSummary; x: number; y: number } | null>(null);
+  let previewOwner: HTMLElement | null = null;
+  let previewClose: ReturnType<typeof setTimeout> | undefined;
+  let previewFocusFrame: number | undefined;
+  let restoringPreviewFocus = false;
 
-  function showPreview(event: MouseEvent | FocusEvent, chat: ChatSummary) {
-    if (chatMenu) return;
-    const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  function cancelPreviewFocus() {
+    if (previewFocusFrame !== undefined) cancelAnimationFrame(previewFocusFrame);
+    previewFocusFrame = undefined;
+  }
+
+  function showPreview(owner: HTMLElement, chat: ChatSummary) {
+    cancelPreviewFocus();
+    holdPreview();
+    if (chatMenu || restoringPreviewFocus) return;
+    previewOwner = owner;
+    const box = previewOwner.getBoundingClientRect();
     preview = { chat, x: box.right + 8, y: box.top };
   }
 
-  function hidePreview() { preview = null; }
+  function focusPreview(owner: HTMLElement, chat: ChatSummary, enter = false) {
+    if (restoringPreviewFocus) return;
+    cancelPreviewFocus();
+    const account = activeAccount;
+    previewFocusFrame = requestAnimationFrame(async () => {
+      previewFocusFrame = undefined;
+      if (account !== activeAccount || !owner.isConnected || document.activeElement !== owner || !visibleChats.some((row) => row.chat === chat.chat)) return;
+      showPreview(owner, chat);
+      if (enter) {
+        await tick();
+        if (account === activeAccount && preview?.chat.chat === chat.chat) {
+          document.querySelector<HTMLElement>("#chat-preview .preview-messages")?.focus({ preventScroll: true });
+        }
+      }
+    });
+  }
+
+  function holdPreview() {
+    clearTimeout(previewClose);
+    previewClose = undefined;
+  }
+
+  function hidePreview() {
+    cancelPreviewFocus();
+    holdPreview();
+    preview = null;
+    previewOwner = null;
+  }
+
+  function leavePreview() {
+    holdPreview();
+    previewClose = setTimeout(() => {
+      const overlay = document.getElementById("chat-preview");
+      if (overlay?.matches(":hover") || overlay?.contains(document.activeElement) || previewOwner === document.activeElement) return;
+      hidePreview();
+    }, 180);
+  }
+
+  function dismissPreview() {
+    const owner = previewOwner;
+    hidePreview();
+    if (owner?.isConnected) {
+      restoringPreviewFocus = true;
+      owner.focus({ preventScroll: true });
+      restoringPreviewFocus = false;
+    }
+  }
+
+  onDestroy(hidePreview);
 
   /** A search result's row as a summary: the list's own row when known, else the result's fields. */
   function resultChat(result: SearchResult): ChatSummary {
@@ -225,6 +285,10 @@
   }
 
   $effect(() => { void activeAccount; closeChatMenu(false); hidePreview(); });
+  $effect(() => {
+    const chat = preview?.chat.chat;
+    if (chat && !visibleChats.some((row) => row.chat === chat)) hidePreview();
+  });
 
   // Hover freeze: while the pointer is over the list, new arrivals update each
   // row in place but keep the captured order, so the row under the cursor
@@ -237,6 +301,7 @@
   // pointer and the list would never re-sort again.
   $effect(() => {
     void searchQuery.trim();
+    hidePreview();
     listHover = false;
     frozenOrder = [];
   });
@@ -358,7 +423,8 @@
       {/each}
     </ul>
   {:else}
-  <ul onmouseenter={onListEnter} onmouseleave={onListLeave} onscroll={hidePreview}>
+  <ul onmouseenter={onListEnter} onmouseleave={onListLeave} onwheel={hidePreview}
+    onscroll={(e) => { if (e.target === e.currentTarget && previewFocusFrame === undefined) hidePreview(); }}>
     {#each displayedChats as chat (chat.chat)}
       <li>
         <div
@@ -367,10 +433,10 @@
           role="button"
           tabindex="0"
           aria-describedby={preview?.chat.chat === chat.chat ? "chat-preview" : undefined}
-          onmouseenter={(e) => showPreview(e, chat)}
-          onmouseleave={hidePreview}
-          onfocus={(e) => showPreview(e, chat)}
-          onblur={hidePreview}
+          onpointerenter={(e) => showPreview(e.currentTarget, chat)}
+          onpointerleave={leavePreview}
+          onfocus={(e) => focusPreview(e.currentTarget, chat)}
+          onblur={leavePreview}
           onclick={() => {
             hidePreview();
             releaseFreeze();
@@ -378,7 +444,10 @@
           }}
           oncontextmenu={(e) => openChatMenu(e, chat)}
           onkeydown={(e) => {
-            if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+            if (e.key === "ArrowRight") {
+              e.preventDefault();
+              focusPreview(e.currentTarget, chat, true);
+            } else if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
               void openChatMenu(e, chat);
             } else if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
@@ -520,7 +589,8 @@
 </aside>
 
 {#if preview}
-  <ChatPreview chat={preview.chat.chat} account={activeAccount} name={chatLabelOf(preview.chat)} x={preview.x} y={preview.y} />
+  <ChatPreview chat={preview.chat.chat} account={activeAccount} name={chatLabelOf(preview.chat)} x={preview.x} y={preview.y}
+    onpointerenter={holdPreview} onpointerleave={leavePreview} onfocusin={holdPreview} onfocusout={leavePreview} ondismiss={dismissPreview} />
 {/if}
 
 {#if chatMenu}
@@ -658,7 +728,7 @@
     if (chatMenu && !(e.target as Element).closest?.(".chat-menu")) closeChatMenu(false);
   }}
   onkeydown={(e) => {
-    if (e.key === "Escape") hidePreview();
+    if (e.key === "Escape" && preview && !e.defaultPrevented) dismissPreview();
     if (e.key === "Escape" && chatMenu) closeChatMenu();
   }} />
 

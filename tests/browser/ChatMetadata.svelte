@@ -6,6 +6,8 @@
   import { session } from "$lib/state/session.svelte";
   let selected = $state<string | null>(null);
   let account = $state("synthetic-a");
+  let previewLight = $state(false);
+  let previewLarge = $state(false);
   const quiet = $state<ChatSummary>({
     chat: "quiet@s.whatsapp.net", display_name: "Quiet contact",
     last_message_at: 1700000000, last_text: "", last_from_me: false,
@@ -47,6 +49,8 @@
 <button onclick={() => { fixture.chatSettingsPending.shift()?.(); }}>Release chat settings read</button>
 <button onclick={() => { account = account === "synthetic-a" ? "synthetic-b" : "synthetic-a"; }}>Switch synthetic account</button>
 <label><input type="checkbox" bind:checked={session.settings.send_receipts} />Test send receipts</label>
+<label><input type="checkbox" bind:checked={previewLight} />Light preview theme</label>
+<label><input type="checkbox" bind:checked={previewLarge} />Preview text 200%</label>
 <button onclick={() => { previewFixture.calls = []; previewCalls = ""; }}>Clear preview calls</button>
 <button onclick={() => { previewCalls = JSON.stringify(previewFixture.calls); }}>Show preview calls</button>
 <button onclick={() => { previewFixture.deferNext = true; }}>Delay next preview read</button>
@@ -54,8 +58,11 @@
 <button onclick={() => { previewFixture.failure = !previewFixture.failure; }}>Toggle preview failure</button>
 <output aria-label="Preview calls">{previewCalls}</output>
 <output aria-label="Chat action">{action}</output>
-<div class="sidebar"><ChatSidebar {...props} activeAccount={account} selectedChat={selected} /></div>
+<div class="sidebar" class:light={previewLight} style:--font-size={previewLarge ? "30px" : "15px"}>
+  <ChatSidebar {...props} activeAccount={account} selectedChat={selected} />
+</div>
 
 <style>
-  .sidebar { height: 500px; display: flex; }
+  .sidebar { height: 500px; display: flex; --bubble: #202c33; --bubble-mine: #005c4b; --chat-bg: #0b141a; }
+  .sidebar.light { --bg: #ffffff; --chat-bg: #efeae2; --surface: #f0f2f5; --bubble: #ffffff; --bubble-mine: #d9fdd3; --text: #111b21; --muted: #667781; --accent: #00a884; --line-strong: #d1d7db; }
 </style>

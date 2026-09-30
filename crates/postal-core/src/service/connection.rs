@@ -382,6 +382,7 @@ impl SessionState {
             group_cache: self.group_cache.clone(),
             groups_cache: self.groups_cache.clone(),
             older_waits: self.older_waits.clone(),
+            message_capping_check: Arc::default(),
             // Auto-downloads run beside the event handler, so a long backlog of
             // media never holds up the messages behind it.
             downloads: Arc::new(tokio::sync::Semaphore::new(4)),

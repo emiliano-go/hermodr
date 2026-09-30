@@ -81,12 +81,7 @@ impl WhatsAppService {
             profile.set_profile_picture(jpeg).await
         };
         sent.map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        if let Some(dir) = &self.media_dir {
-            let path = avatar_path(dir, &self.own_jid());
-            remove_cached_file(path.with_extension("none"));
-            remove_cached_file(path);
-            remove_cached_file(avatar_full_path(dir, &self.own_jid()));
-        }
+        invalidate_avatar_cache(self.media_dir.as_deref(), &self.own_jid());
         Ok(())
     }
 

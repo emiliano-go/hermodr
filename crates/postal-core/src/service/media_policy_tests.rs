@@ -12,6 +12,7 @@ async fn handler() -> Inbound {
         group_cache: Arc::default(),
         groups_cache: Arc::default(),
         older_waits: Arc::default(),
+        message_capping_check: Arc::default(),
         downloads: Arc::new(tokio::sync::Semaphore::new(1)),
         sync_progress: Arc::default(),
         media_auto_download: Arc::default(),

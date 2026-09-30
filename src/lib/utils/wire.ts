@@ -159,6 +159,8 @@ members_can_add: boolean, };
 export type GroupJoinRequest = { jid: string, name: string, request_time: number | null, };
 export type GroupKind = { community: boolean, announcements: boolean, parent: string | null, };
 export type GroupMemberAddResult = { participants: Array<ParticipantChange>, history: GroupHistoryResult, };
+export type GroupSettingChange = { "kind": "subject", text: string, } | { "kind": "description", text: string | null, previous_id: string | null, } | { "kind": "announce", enabled: boolean, } | { "kind": "locked", enabled: boolean, } | { "kind": "approval", enabled: boolean, };
+export type GroupSettings = { subject: string | null, description: string | null, description_id: string | null, announce: boolean, locked: boolean, approval: boolean, member: boolean, admin: boolean, can_edit_info: boolean, can_edit_picture: boolean, community: boolean, };
 export type HintChange = "arrival" | "content" | "status";
 export type HostMessage<E = JsonValue> = { "type": "hello", api_version: number, capabilities: Array<string>, } | { "type": "event", seq: number, event: E, } | { "type": "error", id: JsonValue, error: string, } | { "type": "transcribe", id: number, provider: string, chat: string, message_id: string, mime: string, duration_ms: number, audio: string, config: TranscriptionConfig, } | { "type": "install_model", id: number, url: string, sha256: string, filename: string, data_directory: string, };
 export type InviteInfo = { jid: string, subject: string | null, description: string | null, size: number, created_at: number | null,

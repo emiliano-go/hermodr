@@ -1673,6 +1673,13 @@
 {#if chats.showGroupInfo && chats.selectedChat}
   {@const selectedChat = chats.selectedChat}
   {@const chat = chats.chats.find((c) => c.chat === selectedChat)}
+  {@const account = session.activeAccount}
+  {@const generation = messages.accountGeneration}
+  {@const currentGroup = (signal?: AbortSignal) => {
+    if (signal?.aborted || !account || account !== session.activeAccount || generation !== messages.accountGeneration || chats.selectedChat !== selectedChat) {
+      throw new Error("account or group changed during operation");
+    }
+  }}
   <GroupInfo
     jid={selectedChat}
     title={chat ? chats.chatLabel(chat) : members.displayName(null, selectedChat)}
@@ -1691,6 +1698,23 @@
     onprofile={(jid, name, e) => openProfile(jid, name, e)}
     me={session.me}
     namer={(name, jid) => members.displayName(name, jid)}
+    {account}
+    onsettingsload={async () => {
+      currentGroup();
+      const settings = await invoke<import("$lib/utils/wire").GroupSettings>("group_settings", { account, chat: selectedChat });
+      currentGroup();
+      return settings;
+    }}
+    onsettingchange={(change) => composer.enqueue(async (signal) => {
+      currentGroup(signal);
+      await invoke<void>("change_group_setting", { account, chat: selectedChat, change });
+      currentGroup(signal);
+    })}
+    onpicturechange={(data) => composer.enqueue(async (signal) => {
+      currentGroup(signal);
+      await invoke<void>("set_group_picture", { account, chat: selectedChat, data });
+      currentGroup(signal);
+    })}
     onreports={() => invoke<AdminReport[]>("admin_reports", { chat: selectedChat })}
     oninviteload={() => {
       const account = session.activeAccount, chat = selectedChat;

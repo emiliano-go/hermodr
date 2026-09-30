@@ -17,6 +17,7 @@ pub(super) struct Inbound {
     pub(super) group_cache: Arc<Mutex<std::collections::HashMap<String, GroupInfo>>>,
     pub(super) groups_cache: Arc<Mutex<Option<Vec<whatsapp_rust::GroupOverview>>>>,
     pub(super) older_waits: Arc<Mutex<OlderWaits>>,
+    pub(super) message_capping_check: Arc<Mutex<Option<std::time::Instant>>>,
     pub(super) downloads: Arc<tokio::sync::Semaphore>,
     pub(super) sync_progress: Arc<Mutex<SyncProgress>>,
     pub(super) media_auto_download: Arc<RwLock<crate::store::media_policy::MediaAutoDownload>>,
@@ -281,12 +282,7 @@ impl Inbound {
 
     async fn on_picture_update(&self, update: &wa_events::PictureUpdate) {
         let jid = update.jid.to_non_ad().to_string();
-        if let Some(dir) = self.media_dir.as_deref() {
-            let path = avatar_path(dir, &jid);
-            remove_cached_file(path.with_extension("none"));
-            remove_cached_file(path);
-            remove_cached_file(avatar_full_path(dir, &jid));
-        }
+        invalidate_avatar_cache(self.media_dir.as_deref(), &jid);
         if update.jid.is_group() {
             let at = update.timestamp.timestamp();
             let id = format!("group-picture-{at}-{}-{}", update.picture_id.as_deref().unwrap_or("removed"), update.removed);
@@ -1044,6 +1040,7 @@ mod contact_identity_tests {
             store: store.clone(), events, connected: Arc::default(), client_for_events: Arc::default(),
             disk_retention: Arc::new(DiskRetentionManager::new(DiskRetention::unlimited())),
             media_dir: None, group_cache: Arc::default(), groups_cache: Arc::default(), older_waits: Arc::default(),
+            message_capping_check: Arc::default(),
             downloads: Arc::new(tokio::sync::Semaphore::new(1)), sync_progress: Arc::default(), media_auto_download: Arc::default(),
             keep_archived: Arc::default(), keep_view_once: Arc::default(), one_time_only: false, tally: Arc::default(), secret_edits: Default::default(),
         };

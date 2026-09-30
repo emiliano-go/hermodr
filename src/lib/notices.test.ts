@@ -2,6 +2,23 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { noticeText } from "./utils/notices.ts";
 
+test("new-chat caps explain authoritative quotas and reset times without guessing absent values", () => {
+  const name = () => { throw new Error("Cap notices must not resolve a contact"); };
+  const reset = 2_000_000_000;
+  const text = noticeText("NEW_CHAT_MESSAGE_CAPPED", ["100", "100", String(reset)], name)!;
+  assert.match(text, /limit for starting new one-to-one chats/);
+  assert.match(text, /Quota this cycle: 100 new chats, 100 used/);
+  assert.ok(text.includes(new Date(reset * 1000).toLocaleString()));
+  const unknown = noticeText("NEW_CHAT_MESSAGE_CAPPED", [], name)!;
+  assert.match(unknown, /did not provide this cycle's quota/);
+  assert.match(unknown, /did not provide a reset time/);
+  assert.ok(!unknown.includes("Invalid Date"));
+  for (const at of ["bad", "-1", "0", "9999999999999999"]) {
+    assert.match(noticeText("NEW_CHAT_MESSAGE_CAPPED", ["", "", at], name)!, /did not provide a reset time/);
+  }
+  assert.match(noticeText("NEW_CHAT_MESSAGE_CAPPED", ["0", "", ""], name)!, /Quota this cycle: 0 new chats\./);
+});
+
 test("encryption history stubs do not duplicate the chat's fixed notice", () => {
   assert.equal(noticeText("E2E_ENCRYPTED", [], () => "Alice"), null);
   assert.equal(noticeText("FUTURE_UNKNOWN_NOTICE", [], () => "Alice"), null);

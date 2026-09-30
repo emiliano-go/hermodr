@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-group-picture"
+description = "Enables the set_group_picture command without any pre-configured scope."
+commands.allow = ["set_group_picture"]
+
+[[permission]]
+identifier = "deny-set-group-picture"
+description = "Denies the set_group_picture command without any pre-configured scope."
+commands.deny = ["set_group_picture"]

@@ -12,7 +12,20 @@ export const historyFixture = {
   enabled: true, delayNext: false, pending: [] as (() => void)[],
   offers: [] as { chat: unknown; account: unknown }[],
 };
-export const previewFixture = { calls: [] as string[], deferNext: false, pending: [] as (() => void)[], failure: false };
+export const previewFixture = {
+  calls: [] as string[], reads: [] as Record<string, unknown>[],
+  deferNext: false, pending: [] as (() => void)[], failure: false,
+  archive: Array.from({ length: 30 }, (_, n) => ({
+    chat: "quiet@s.whatsapp.net", id: `preview-${n}`, timestamp: 1700000000 + n * 60,
+    sender: "200@s.whatsapp.net", sender_name: "Saved sender", from_me: n % 3 === 2,
+    text: n === 29 ? "Unread synthetic message with a long paragraph that stays readable across several lines. *Formatted text* and https://example.invalid stay passive. Second sentence must remain visible, with no truncation or chat selection."
+      : n === 27 || n === 28 ? "HIDDEN SYNTHETIC CONTENT" : n === 26 ? "[image]" : `Unread synthetic message ${n}`,
+    media_kind: n === 26 ? "image" : n === 27 ? "view_once" : n === 23 ? "audio" : n === 22 ? "video" : null,
+    media_path: "C:\\synthetic\\unopened-media", media_thumb: "data:image/png;base64,AA==",
+    system_kind: n === 20 ? "SYSTEM_NOTICE" : null,
+    deleted: n === 24, revoked: n === 25, spoiler: n === 28, read: false, mentioned: n === 29,
+  }) as StoredMessage),
+};
 export const selectionFixture = { calls: [] as { command: string; args: unknown }[], failure: false };
 export const uploadFixture = { calls: [] as string[], maxChunk: 0, size: 0, written: 0, chunks: [] as Uint8Array[],
   failChunk: false, failSend: false, afterChunk: null as (() => void) | null };
@@ -120,11 +133,10 @@ export async function invoke<T>(command: string, args?: Record<string, unknown>)
   }
   if (command === "message_page") {
     if (args?.chat === "quiet@s.whatsapp.net") {
+      previewFixture.reads.push({ ...args });
       if (previewFixture.failure) throw new Error("Synthetic preview failure");
-      const result = { messages: [
-        { id: "image", sender: "200@s.whatsapp.net", sender_name: "Saved sender", from_me: false, text: "[image]", media_kind: "image", system_kind: null },
-        { id: "text", sender: "200@s.whatsapp.net", sender_name: "Saved sender", from_me: false, text: "Unread synthetic message", media_kind: null, system_kind: null },
-      ], has_more: false } as T;
+      const limit = Number(args?.limit ?? 30);
+      const result = { messages: previewFixture.archive.toReversed().slice(0, limit), has_more: previewFixture.archive.length > limit } as T;
       if (previewFixture.deferNext) {
         previewFixture.deferNext = false;
         return new Promise<T>((resolve) => previewFixture.pending.push(() => resolve(result)));

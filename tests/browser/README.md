@@ -18,12 +18,18 @@ state. Toggle chat settings failure: an alert appears and the media toggle stays
 disabled. Delay a settings read, open the menu, switch the synthetic account and
 release the read: the old menu must stay closed. All actions stay in fixture state.
 
-Passive preview checks: tab to Quiet contact and wait for its tooltip. It shows a
-saved sender, text and an image placeholder without selecting the chat. Escape,
-blur or list scrolling dismisses it. Clear preview calls, repeat with Test send
-receipts off/on, then Show preview calls: only `message_page` may appear. Delay a
-preview read, switch the synthetic account and release it: no tooltip returns.
-Toggle preview failure: the error stays visible without opening or marking read.
+Passive preview checks: tab to Quiet contact and wait for its mini-chat. It shows
+30 stored messages with wrapped text, sender, time and media placeholders without
+selecting the chat. ArrowRight moves focus into its scroll area; PageUp/Home/End
+scroll locally. Move the pointer from the row into the overlay: it stays open;
+scrolling inside stays open, while leaving both or scrolling the chat list closes
+it. Escape restores row focus without reopening. Spoiler and one-time content
+remain hidden. Clear preview calls, repeat with Test send receipts off/on, then
+Show preview calls: only `message_page` may appear. Delay a preview read, switch
+the synthetic account and release it: no preview returns. Toggle preview failure:
+the error stays visible without opening or marking read. Test narrow viewports,
+dark/light themes and 200% text scale: the preview stays within the viewport and
+messages remain readable without horizontal clipping.
 
 Message selection checks: expand Message selection fixture and reset it. Ctrl-click
 or Command-click one message, then click two more. Evict the oldest visible row:
