@@ -35,8 +35,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
-      - run: node --experimental-strip-types src/lib/phone.ts
-      - run: node --experimental-strip-types src/lib/format.ts
+      - run: node --experimental-strip-types src/lib/utils/phone.ts
+      - run: node --experimental-strip-types src/lib/utils/format.ts
       - run: pnpm test
       # Fails when a production Rust function grows past 80 lines.
       - run: pnpm check:fn-length
