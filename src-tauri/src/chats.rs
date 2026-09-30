@@ -13,6 +13,9 @@ pub(crate) async fn chats(state: State<'_, AppState>) -> Result<Vec<ChatSummary>
 pub(crate) struct ChatSettings {
     /// The chat's auto download override, `None` when it follows the global one.
     auto_download: Option<bool>,
+    auto_download_types: postal_core::store::media_policy::MediaAutoDownloadOverrides,
+    sound_muted: Option<bool>,
+    unarchive: Option<bool>,
     retention: postal_core::ChatRetention,
     /// Typing and read receipt overrides, `None` when following the global ones.
     send_typing: Option<bool>,
@@ -27,6 +30,9 @@ pub(crate) async fn chat_settings(state: State<'_, AppState>, chat: String) -> R
         send_typing,
         send_receipts,
         auto_download: service.chat_auto_download(&chat).await.map_err(|e| e.to_string())?,
+        auto_download_types: service.chat_media_auto_download(&chat).await.map_err(|e| e.to_string())?,
+        sound_muted: service.chat_sound_muted(&chat).await.map_err(|e| e.to_string())?,
+        unarchive: service.chat_unarchive(&chat).await.map_err(|e| e.to_string())?,
         retention: service.chat_retention(&chat).await.map_err(|e| e.to_string())?,
     })
 }
@@ -99,6 +105,35 @@ pub(crate) async fn set_chat_auto_download(
         .service()?
         .set_chat_auto_download(&chat, enabled)
         .await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub(crate) async fn chat_media_auto_download(
+    state: State<'_, AppState>, account_id: String, chat: String,
+) -> Result<postal_core::store::media_policy::MediaAutoDownloadOverrides, String> {
+    state.service_for_account(&account_id)?.chat_media_auto_download(&chat).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub(crate) async fn set_chat_media_auto_download(
+    state: State<'_, AppState>, account_id: String, chat: String,
+    overrides: postal_core::store::media_policy::MediaAutoDownloadOverrides,
+) -> Result<(), String> {
+    state.service_for_account(&account_id)?.set_chat_media_auto_download(&chat, overrides).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub(crate) async fn chat_unarchive(
+    state: State<'_, AppState>, account_id: String, chat: String,
+) -> Result<Option<bool>, String> {
+    state.service_for_account(&account_id)?.chat_unarchive(&chat).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub(crate) async fn set_chat_unarchive(
+    state: State<'_, AppState>, account_id: String, chat: String, enabled: Option<bool>,
+) -> Result<(), String> {
+    state.service_for_account(&account_id)?.set_chat_unarchive(&chat, enabled).await.map_err(|e| e.to_string())
 }
 
 /// Sets a chat's typing and read receipt overrides; `None` follows the global setting.

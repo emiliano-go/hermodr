@@ -1,12 +1,6 @@
-// Desktop notifications for direct messages and groups.
-//
-// Pure helpers (`isChatMuted`, `shouldNotify`, `notificationTitle`,
-// `notificationBody`) are unit-tested in `notifications.test.ts`. Delivery
-// goes through Tauri's native notification plugin, which shows a real OS
-// permission prompt: the webview's own Notification API auto-denies without
-// one, so an "Allow" button built on it can never work. Outside Tauri (the
-// synthetic browser harness) the Web Notification API is the fallback.
+// Native permission prompts are required; WebView Notifications cannot request them.
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
+import { invoke } from "@tauri-apps/api/core";
 import { plain } from "./format.ts";
 import { MEDIA_LABELS, captionOf } from "./message.ts";
 import type { StoredMessage } from "./models.ts";
@@ -134,16 +128,22 @@ export async function requestNotificationPermission(): Promise<NotifPermission> 
 }
 
 /** Shows one desktop notification. No-ops without permission. Never throws. */
-export async function showChatNotification(title: string, body: string, chat: string): Promise<void> {
-  if (typeof window === "undefined") return;
+export async function showChatNotification(
+  title: string, body: string, chat: string, accountId: string, current: () => boolean,
+): Promise<void> {
+  if (typeof window === "undefined" || !current()) return;
   try {
     if (!(await isPermissionGranted())) return;
-    await sendNotification({ title, body });
+    if (!current()) return;
+    await invoke("show_chat_notification", { accountId, chat, title, body });
   } catch {
     // Outside Tauri (synthetic browser harness): best-effort Web API fallback.
     if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    let muted = false;
+    try { muted = (await invoke<boolean | null>("chat_sound_muted", { accountId, chat })) ?? false; } catch {}
+    if (!current()) return;
     try {
-      const note = new Notification(title, { body, tag: `postal-${chat}`, silent: false });
+      const note = new Notification(title, { body, tag: `postal-${chat}`, silent: muted });
       note.onclick = () => {
         window.focus();
         window.dispatchEvent(new CustomEvent<string>("postal:open-chat", { detail: chat }));

@@ -9,6 +9,7 @@
     message_window_size: 500,
     retention: { max_age_hours: { kind: "limited", value: 24 }, max_messages_per_chat: { kind: "limited", value: 500 } },
     request_full_history: false, auto_download_media: false, auto_transcribe: false, warn_missing_video_preview: true,
+    auto_download_types: { image: false, video: false, audio: false, document: false, sticker: false, gif: false },
     media_dir: null, history_dir: null, send_typing: false, send_receipts: false, keep_history: true,
     skip_loading_screen: false, keep_archived: true, android_instance: false,
     notifications_enabled: true, freeze_chat_list_on_hover: true, verbose_whatsapp_logs: true,
@@ -20,7 +21,7 @@
 <button onclick={() => { globalOpen = true; }}>Test global retention</button>
 <pre aria-label="Saved retention">{saved}</pre>
 {#if chatOpen}
-  <ChatSettings chat="synthetic@s.whatsapp.net" title="Synthetic contact" globalAutoDownload={false}
+  <ChatSettings chat="synthetic@s.whatsapp.net" title="Synthetic contact"
     onchange={() => { saved = JSON.stringify(fixture.savedRetention); }}
     onclearchat={noop} ondeletechat={noop} onclose={() => { chatOpen = false; }} />
 {/if}

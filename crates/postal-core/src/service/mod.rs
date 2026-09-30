@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, RwLock,
     },
     time::Duration,
 };
@@ -52,6 +52,9 @@ mod history_pins;
 use pins::Pins;
 mod secret_edits;
 pub mod transcription;
+mod media_policy;
+mod chat_unarchive;
+mod group_invites;
 mod group_requests;
 pub use group_requests::GroupJoinRequest;
 mod group_history;
@@ -487,7 +490,7 @@ pub struct ServiceConfig {
     pub media_dir: Option<PathBuf>,
     /// Whether incoming media is downloaded when it arrives. A chat can
     /// override this in the store.
-    pub auto_download_media: bool,
+    pub auto_download_types: crate::store::media_policy::MediaAutoDownload,
     /// Whether archived chats stay archived when a new message arrives. Off
     /// moves the chat back to the main list.
     pub keep_archived: bool,
@@ -516,7 +519,7 @@ impl ServiceConfig {
             aliases_path: data_dir.join("aliases.db"),
             retention: DiskRetention::default(),
             request_full_history: false,
-            auto_download_media: true,
+            auto_download_types: Default::default(),
             keep_archived: true,
             android_pair: true,
             keep_view_once: true,
@@ -553,6 +556,7 @@ pub struct WhatsAppService {
     connected: Arc<AtomicBool>,
     /// Whether archived chats stay archived when new messages arrive.
     keep_archived: Arc<AtomicBool>,
+    media_auto_download: Arc<RwLock<crate::store::media_policy::MediaAutoDownload>>,
     /// Single-flight guard for a forced reconnect after a stall or sleep.
     reconnecting: Arc<AtomicBool>,
     /// Groups whose subject query failed: when to retry, and the wait that set it.

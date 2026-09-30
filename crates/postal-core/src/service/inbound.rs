@@ -19,7 +19,7 @@ pub(super) struct Inbound {
     pub(super) older_waits: Arc<Mutex<OlderWaits>>,
     pub(super) downloads: Arc<tokio::sync::Semaphore>,
     pub(super) sync_progress: Arc<Mutex<SyncProgress>>,
-    pub(super) auto_download_default: bool,
+    pub(super) media_auto_download: Arc<RwLock<crate::store::media_policy::MediaAutoDownload>>,
     /// Whether a new message keeps an archived chat archived. Off moves it back
     /// to the main list and tells the account, as WhatsApp does.
     pub(super) keep_archived: Arc<AtomicBool>,
@@ -836,7 +836,6 @@ impl Inbound {
 
     /// Decodes and stores one ordinary message, then starts any media fetch.
     async fn store_incoming(&self, ctx: &BatchCtx<'_>, inbound: &InboundMessage, incoming: &Incoming) {
-        let auto_download = self.auto_download_for(ctx, inbound, &incoming.chat).await;
         let Some(mut message) = incoming_message(
             &incoming.chat, inbound, ctx.client.as_deref(), ctx.media_dir.as_deref(), false,
         )
@@ -854,26 +853,16 @@ impl Inbound {
             ctx.store.set_forwarded(&incoming.chat, &message.header.id).await.logged();
         }
         self.recall_quoted(ctx, &incoming.chat, &message).await;
-        let Some(message) = self.store_and_track(ctx, &incoming.chat, &message).await else { return };
+        let live = ctx.live && !inbound.info.is_offline;
+        let Some(message) = self.store_and_track(ctx, &incoming.chat, &message, live).await else { return };
+        let auto_download = self.auto_download_for(ctx.store, &incoming.chat, message.media.kind.as_deref().unwrap_or("")).await;
         self.spawn_media_fetch(ctx, &incoming.chat, &message, auto_download, !inbound.info.is_offline);
     }
 
-    /// Whether to fetch this message's media now. Stickers and voice notes are
-    /// small and read as part of the conversation, so WhatsApp always fetches
-    /// them; anything else follows the chat's setting.
-    async fn auto_download_for(&self, ctx: &BatchCtx<'_>, inbound: &InboundMessage, chat: &str) -> bool {
-        let base = decoded_message(&inbound.message).message;
-        let small = base.sticker_message.is_set()
-            || base.audio_message.as_option().is_some_and(|a| a.ptt == Some(true));
-        if small {
-            return true;
-        }
-        ctx.store
-            .chat_auto_download(chat)
-            .await
-            .observed()
-            .flatten()
-            .unwrap_or(self.auto_download_default)
+    pub(super) async fn auto_download_for(&self, store: &StoreWorker, chat: &str, kind: &str) -> bool {
+        let global = *self.media_auto_download.read().unwrap();
+        store.chat_media_auto_download(chat).await.observed()
+            .is_some_and(|overrides| global.effective(kind, overrides))
     }
 
     /// Pairing only brings recent days; a reply to something older pulls that
@@ -892,9 +881,11 @@ impl Inbound {
 
     /// Stores the row, counts it for the loading gate, records a sticker and
     /// moves an archived chat back unless the account keeps them archived.
-    async fn store_and_track(&self, ctx: &BatchCtx<'_>, chat: &str, message: &StoredMessage) -> Option<StoredMessage> {
-        let message = match ctx.store.insert_message_row(message).await {
-            Ok(message) => message,
+    async fn store_and_track(&self, ctx: &BatchCtx<'_>, chat: &str, message: &StoredMessage, live: bool) -> Option<StoredMessage> {
+        let result = if live { ctx.store.insert_incoming_row(message).await }
+            else { ctx.store.insert_message_row(message).await.map(|message| (message, false)) };
+        let (message, fresh) = match result {
+            Ok(result) => result,
             Err(e) => {
                 log::error!("could not store message {} in {chat}: {e}", message.header.id);
                 return None;
@@ -906,7 +897,7 @@ impl Inbound {
             }
         }
         self.track_sync_progress();
-        self.maybe_unarchive(ctx, &message).await;
+        self.maybe_unarchive(ctx, &message, fresh).await;
         Some(message)
     }
 
@@ -932,15 +923,13 @@ impl Inbound {
     /// A new incoming message moves an archived chat back to the main list
     /// unless the account keeps archived chats archived. The account is told
     /// too, so the phone cannot re-archive it later.
-    async fn maybe_unarchive(&self, ctx: &BatchCtx<'_>, message: &StoredMessage) {
+    async fn maybe_unarchive(&self, ctx: &BatchCtx<'_>, message: &StoredMessage, fresh: bool) {
         let chat = message.header.chat.clone();
-        if message.header.from_me
-            || self.keep_archived.load(Ordering::SeqCst)
-            || !ctx.store.is_archived(&chat).await.observed().unwrap_or(false)
-        {
-            return;
-        }
-        ctx.store.set_archived(&chat, false).await.logged();
+        if !fresh || message.header.from_me { return; }
+        let Some(enabled) = ctx.store.chat_unarchive(&chat).await.observed() else { return };
+        if !enabled.unwrap_or(!self.keep_archived.load(Ordering::SeqCst))
+            || !ctx.store.is_archived(&chat).await.observed().unwrap_or(false) { return; }
+        if ctx.store.set_archived(&chat, false).await.observed().is_none() { return; }
         let _ = self.events.send(ServiceEvent::ChatStateChanged { chat: chat.clone() });
         let (Some(client), Ok(jid)) = (ctx.client.clone(), chat.parse::<Jid>()) else { return };
         tokio::spawn(async move {
@@ -970,7 +959,8 @@ impl Inbound {
         let keep_once = message.media.kind.as_deref() == Some("view_once")
             && message.media.locator.is_some()
             && self.keep_view_once.load(Ordering::SeqCst);
-        let fetch = match ((auto_download || keep_once) && message.media.locator.is_some(), &ctx.client, &ctx.media_dir) {
+        let fetch = match ((auto_download || keep_once) && message.media.locator.is_some()
+            && message.media.kind.as_deref() != Some("group_invite"), &ctx.client, &ctx.media_dir) {
             (true, Some(client), Some(dir)) => {
                 Some((client.clone(), dir.clone(), message.header.id.clone(), keep_once))
             }
@@ -1050,7 +1040,7 @@ mod contact_identity_tests {
             store: store.clone(), events, connected: Arc::default(), client_for_events: Arc::default(),
             disk_retention: Arc::new(DiskRetentionManager::new(DiskRetention::unlimited())),
             media_dir: None, group_cache: Arc::default(), groups_cache: Arc::default(), older_waits: Arc::default(),
-            downloads: Arc::new(tokio::sync::Semaphore::new(1)), sync_progress: Arc::default(), auto_download_default: false,
+            downloads: Arc::new(tokio::sync::Semaphore::new(1)), sync_progress: Arc::default(), media_auto_download: Arc::default(),
             keep_archived: Arc::default(), keep_view_once: Arc::default(), one_time_only: false, tally: Arc::default(), secret_edits: Default::default(),
         };
         let ctx = BatchCtx { store: &store, client: None, own: vec![], media_dir: None, touched: vec![], live: true };

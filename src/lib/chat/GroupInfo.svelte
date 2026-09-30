@@ -11,6 +11,9 @@
   import AddMembers from "$lib/chat/AddMembers.svelte";
   import GroupRequests from "$lib/chat/GroupRequests.svelte";
   import TranscriptionOverride from "$lib/settings/TranscriptionOverride.svelte";
+  import AutoDownloadOverride from "$lib/settings/AutoDownloadOverride.svelte";
+  import NotificationSoundOverride from "$lib/settings/NotificationSoundOverride.svelte";
+  import GroupInviteLinks from "$lib/chat/GroupInviteLinks.svelte";
   import { session } from "$lib/state/session.svelte";
   import ConfirmDialog from "$lib/ui/ConfirmDialog.svelte";
   import { changeText } from "$lib/utils/group-actions";
@@ -38,6 +41,8 @@
     onallowreports,
     onadd,
     onretryhistory,
+    oninviteload,
+    oninvitereset,
     onrequests,
     onrequestchange,
     onremove,
@@ -72,6 +77,8 @@
     /** Adds people to the group; the server answers per person. */
     onadd: (jids: string[], optedIn: string[]) => Promise<GroupMemberAddResult>;
     onretryhistory: (retryId: string) => Promise<GroupHistoryResult>;
+    oninviteload: () => Promise<string>;
+    oninvitereset: () => Promise<string>;
     onrequests: () => Promise<GroupJoinRequest[]>;
     onrequestchange: (jids: string[], approve: boolean) => Promise<ParticipantChange[]>;
     /** Removes people from the group. */
@@ -90,6 +97,9 @@
   const self = $derived(
     info?.participants.find((p) => p.jid === me || (me && p.number === me.split("@")[0])),
   );
+  let inviteAdmin = $state<string | null>(null);
+  const inviteOwner = $derived(JSON.stringify([session.activeAccount, jid]));
+  $effect(() => { if (info) inviteAdmin = info.admin ? inviteOwner : null; });
   let tagDraft = $state<string | null>(null);
   let tagBusy = $state(false);
   let tagError = $state<string | null>(null);
@@ -272,6 +282,9 @@
     </div>
   {/snippet}
 
+  {#if section === "overview" && session.activeAccount && inviteAdmin === inviteOwner}
+    <div class="setting stack"><GroupInviteLinks chat={jid} canReset onload={oninviteload} onreset={oninvitereset} /></div>
+  {/if}
   {#if section === "requests"}
     {#if info && !info.admin}
       <p class="error-text">Only group admins can manage join requests.</p>
@@ -361,7 +374,9 @@
     </div>
 
     {#if session.activeAccount}
+      <div class="setting stack"><AutoDownloadOverride accountId={session.activeAccount} chat={jid} /></div>
       <div class="setting stack"><TranscriptionOverride accountId={session.activeAccount} chat={jid} /></div>
+      <div class="setting stack"><NotificationSoundOverride accountId={session.activeAccount} chat={jid} /></div>
     {/if}
     <div class="setting stack">
       <div>

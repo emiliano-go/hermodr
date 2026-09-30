@@ -65,13 +65,16 @@ impl MessageStore {
 
     /// Sets the per chat auto download override.
     pub fn set_chat_auto_download(&self, jid: &str, enabled: bool) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        let jid = &*names::canonical_chat(&conn, jid)?;
-        conn.execute(
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.savepoint()?;
+        let jid = &*names::canonical_chat(&tx, jid)?;
+        tx.execute(
             "INSERT INTO chat_settings (jid, auto_download) VALUES (?1, ?2)
              ON CONFLICT(jid) DO UPDATE SET auto_download = excluded.auto_download",
             params![jid, enabled as i32],
         )?;
+        super::media_policy::write_overrides(&tx, jid, super::media_policy::MediaAutoDownloadOverrides::all(Some(enabled)))?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -322,6 +325,9 @@ pub(crate) fn fold_chat(conn: &Connection, from: &str, to: &str) -> Result<()> {
     // Archive, mute and unread marks: keep whichever side had them set.
     merge_chat_state(conn, from, to)?;
     merge_pin(conn, from, to)?;
+    super::media_policy::merge(conn, from, to)?;
+    super::notification_prefs::merge(conn, from, to)?;
+    super::chat_unarchive::merge(conn, from, to)?;
     move_chat_keyed_tables(conn, from, to, CHAT_SETTING_TABLES, "jid")?;
     move_list_flags(conn, from, to)?;
     adopt_name(conn, from, to)?;

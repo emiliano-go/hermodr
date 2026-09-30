@@ -13,14 +13,22 @@
 
 <script lang="ts">
   import { convertFileSrc } from "@tauri-apps/api/core";
+  import { onDestroy } from "svelte";
   import { invoke } from "$lib/utils/ipc";
+  import { session } from "$lib/state/session.svelte";
+  import { messages } from "$lib/state/messages.svelte";
+  import type { Joined, StoredMessage } from "$lib/utils/wire";
   import Icon from "$lib/ui/Icon.svelte";
 
   let {
-    link,
+    link = null,
+    message = null,
+    onjoin,
     onopen,
   }: {
-    link: string;
+    link?: string | null;
+    message?: StoredMessage | null;
+    onjoin: () => Promise<Joined>;
     /** Opens the group's chat once joined. */
     onopen: (jid: string) => void;
   } = $props();
@@ -29,71 +37,98 @@
   let failed = $state<string | null>(null);
   let busy = $state(false);
   let requested = $state(false);
+  let attempt = $state(0);
+  let generation = 0;
+  onDestroy(() => { generation++; });
 
   $effect(() => {
-    if (!cache.has(link)) {
-      const lookup = invoke<InviteInfo>("invite_info", { link });
+    attempt;
+    const account = session.activeAccount, epoch = messages.accountGeneration, target = link, row = message;
+    const revision = ++generation;
+    info = null; failed = null; busy = false; requested = false;
+    if (row || !target || !account) return;
+    const key = JSON.stringify([account, epoch, target]);
+    if (!cache.has(key)) {
+      const lookup = invoke<InviteInfo>("invite_info", { account, link: target });
       // A failed lookup is not remembered, so it can be tried again later.
-      lookup.catch(() => cache.delete(link));
-      cache.set(link, lookup);
+      lookup.catch(() => { if (cache.get(key) === lookup) cache.delete(key); });
+      cache.set(key, lookup);
     }
     cache
-      .get(link)!
-      .then((i) => (info = i))
-      .catch((e) => (failed = String(e)));
+      .get(key)!
+      .then((value) => { if (revision === generation && account === session.activeAccount && epoch === messages.accountGeneration) info = value; })
+      .catch((error) => { if (revision === generation && account === session.activeAccount && epoch === messages.accountGeneration) failed = String(error); });
   });
 
   async function join() {
-    if (!info) return;
-    if (info.joined) return onopen(info.jid);
+    if (busy || requested || (!info && !message) || message?.from_me) return;
+    const account = session.activeAccount, epoch = messages.accountGeneration, revision = generation;
+    if (!account) return;
+    const current = () => revision === generation && account === session.activeAccount && epoch === messages.accountGeneration;
     busy = true;
+    failed = null;
     try {
-      const joined = await invoke<import("$lib/utils/wire").Joined>("join_invite", { link });
+      if (!message && link) {
+        const wasJoined = info?.joined;
+        const fresh = await invoke<InviteInfo>("invite_info", { account, link });
+        if (!current()) return;
+        info = fresh;
+        if (fresh.joined) return onopen(fresh.jid);
+        if (wasJoined) return;
+      }
+      const joined = await onjoin();
+      if (!current()) return;
       if (joined.pending) requested = true;
       else {
-        cache.delete(link);
+        cache.delete(JSON.stringify([account, epoch, link]));
         onopen(joined.jid);
       }
     } catch (e) {
-      failed = String(e);
+      if (current()) failed = String(e);
     } finally {
-      busy = false;
+      if (current()) busy = false;
     }
   }
 </script>
 
 <div class="invite">
   <span class="kind"><Icon name="users" size={13} /> {info?.community ? "Community invite" : "Group invite"}</span>
-  {#if info}
+  {#if info || message}
+    {@const picture = message?.media_thumb ?? (info?.picture ? convertFileSrc(info.picture) : null)}
     <div class="head">
-      {#if info.picture}
-        <img class="picture" src={convertFileSrc(info.picture)} alt="" />
+      {#if picture}
+        <img class="picture" src={picture} alt="" />
       {:else}
         <span class="picture blank"><Icon name="users" size={22} /></span>
       {/if}
       <div class="text">
-        <span class="subject">{info.subject ?? "WhatsApp group"}</span>
+        <span class="subject">{info?.subject ?? message?.text ?? "WhatsApp group"}</span>
         <span class="meta">
+          {#if info}
           {info.size}
           {info.size === 1 ? "member" : "members"}{#if info.created_at}
             · created {new Date(info.created_at * 1000).toLocaleDateString()}{/if}
+          {:else}Group invitation{/if}
         </span>
       </div>
     </div>
-    {#if info.description}<p class="description">{info.description}</p>{/if}
-    <button class="join" disabled={busy || requested} onclick={join}>
-      {info.joined
+    {#if info?.description}<p class="description">{info.description}</p>{/if}
+    <button class="join" disabled={busy || requested || !session.activeAccount || !!message?.from_me} onclick={join}>
+      {info?.joined
         ? "Open chat"
         : requested
           ? "Request sent"
           : busy
             ? "Joining…"
-            : info.approval
+            : info?.approval
               ? "Request to join"
               : "Join group"}
     </button>
+    {#if requested}<span class="meta">Waiting for an admin to approve.</span>{/if}
+    {#if failed}<span class="meta" role="alert">{failed}</span>{/if}
   {:else if failed}
-    <span class="meta">This invite could not be opened: it may have been reset or expired.</span>
+    <span class="meta" role="alert">{failed}</span>
+    <button class="join" onclick={() => attempt++}>Retry</button>
   {:else}
     <div class="head">
       <span class="picture blank loading"></span>

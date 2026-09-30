@@ -191,6 +191,12 @@ export async function invoke<T>(command: string, args?: Record<string, unknown>)
     if (fixture.chatSettingsFailure) throw new Error("Synthetic chat settings failure");
     return {
     auto_download: fixture.chatAutoDownload,
+    auto_download_types: { image: fixture.chatAutoDownload, video: fixture.chatAutoDownload, audio: fixture.chatAutoDownload,
+      document: fixture.chatAutoDownload, sticker: fixture.chatAutoDownload, gif: fixture.chatAutoDownload },
+    sound_muted: null,
+    unarchive: null,
+    send_typing: null,
+    send_receipts: null,
     retention: { max_age_hours: { kind: "inherit" }, max_messages: { kind: "limited", value: 200 }, on_demand: true },
     } as T;
   }

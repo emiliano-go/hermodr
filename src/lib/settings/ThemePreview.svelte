@@ -40,7 +40,8 @@
           onmenutoggle={noop} onswitchaccount={noop} onaddaccount={noop} onsettings={noop}
           onpings={noop} onstarred={noop} onsearch={noop} onopenresult={noop} onopenchat={noop}
           ontogglepin={noop} onclearchat={noop} ondeletechat={noop} onchataction={noop}
-          onmarkread={noop} archivedChats={0} onresize={noop}
+          onmarkread={noop} onmarkallread={noop} archivedChats={0} onresize={noop}
+          globalAutoDownload={{ image: false, video: false, audio: false, document: false, sticker: false, gif: false }}
         />
         <section class="conversation">
           <ChatHeader

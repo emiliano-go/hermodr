@@ -34,7 +34,7 @@ async fn main() -> Result<()> {
         aliases_path: data_dir.join("aliases.db"),
         retention,
         request_full_history: false,
-        auto_download_media: true,
+        auto_download_types: postal_core::store::media_policy::MediaAutoDownload::all(true),
         keep_archived: true,
         android_pair: true,
         keep_view_once: true,

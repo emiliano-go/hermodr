@@ -92,6 +92,7 @@ export const bubbleApi: BubbleApi = {
   onrespond: noop, oneditrequest: noop, oncancelevent: noop, onreact: noop, onopenreactions: noop,
   onmarkplayed: noop, onnextvoice: noop, onpausevoice: noop, onreplymenu: noop,
   ononce: noop, oncloseonce: noop, onrevealonce: noop, oninviteopen: noop,
+  oninvitejoin: async () => ({ jid: "preview@g.us", pending: false }),
 };
 
 export const menuItems: MenuItem[] = [

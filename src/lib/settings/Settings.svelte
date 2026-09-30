@@ -40,6 +40,7 @@
   import PluginManager from "$lib/settings/PluginManager.svelte";
   import LinkedDevices from "$lib/settings/LinkedDevices.svelte";
   import TranscriptionSettings from "$lib/settings/TranscriptionSettings.svelte";
+  import AutoDownloadSettings from "$lib/settings/AutoDownloadSettings.svelte";
   import { session } from "$lib/state/session.svelte";
   import { limitValue, parseLimit } from "$lib/utils/retention";
   import type { NotifPermission } from "$lib/utils/notifications";
@@ -834,13 +835,12 @@
             </div>
           {/if}
         {:else if section === "media"}
-          <label class="setting">
-            <div>
-              <span class="setting-title">Download media automatically</span>
-              <span class="setting-desc">Off shows a download button instead. Each chat can override this.</span>
-            </div>
-            <input class="switch" type="checkbox" bind:checked={draft.auto_download_media} />
-          </label>
+          <div class="setting stack">
+            <AutoDownloadSettings value={draft.auto_download_types} onchange={(next) => {
+              draft.auto_download_types = next;
+              draft.auto_download_media = Object.values(next).every(Boolean);
+            }} />
+          </div>
           <label class="setting">
             <div>
               <span class="setting-title">Warn when a video goes out without a preview</span>

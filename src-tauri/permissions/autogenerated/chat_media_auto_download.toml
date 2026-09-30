@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-chat-media-auto-download"
+description = "Enables the chat_media_auto_download command without any pre-configured scope."
+commands.allow = ["chat_media_auto_download"]
+
+[[permission]]
+identifier = "deny-chat-media-auto-download"
+description = "Denies the chat_media_auto_download command without any pre-configured scope."
+commands.deny = ["chat_media_auto_download"]

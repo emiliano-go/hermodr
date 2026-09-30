@@ -5,6 +5,9 @@ use whatsapp_rust::{AppStateResyncMode, AppStateResyncReport};
 use whatsapp_rust::wacore::appstate::hash::HashState;
 use whatsapp_rust::wacore::types::events::{EventHandler, EventInterest, EventKind};
 
+#[path = "favorites_recovery.rs"]
+mod recovery;
+
 #[derive(Clone)]
 struct Snapshot { revision: u64, chats: Vec<String>, replay: Option<Replay> }
 
@@ -22,6 +25,7 @@ pub(super) struct Favorites {
     changed: tokio::sync::watch::Sender<u64>,
     sending: Arc<tokio::sync::Mutex<()>>,
     synced: Arc<AtomicBool>,
+    capture: recovery::Capture,
 }
 
 fn favorite_jid(chat: &str) -> Result<Jid> {
@@ -59,7 +63,7 @@ impl Favorites {
                 }
             }
         });
-        Ok(Self { worker, current, changed, sending: Arc::default(), synced: Arc::default() })
+        Ok(Self { worker, current, changed, sending: Arc::default(), synced: Arc::default(), capture: recovery::Capture::default() })
     }
 
     fn snapshot(&self) -> Snapshot { self.current.lock().unwrap().clone() }
@@ -98,26 +102,44 @@ impl Favorites {
 
     pub(super) fn handler(&self) -> impl EventHandler { FavoriteHandler(self.clone()) }
 
-    pub(super) async fn synchronize(&self, client: &Client) -> Result<()> {
+    pub(super) async fn synchronize(&self, client: &Arc<Client>) -> Result<()> {
         let _send = self.sending.lock().await;
         if self.synced.load(Ordering::Acquire) { return Ok(()); }
         self.ensure_synced(client).await
     }
 
-    async fn ensure_synced(&self, client: &Client) -> Result<()> {
+    async fn ensure_synced(&self, client: &Arc<Client>) -> Result<()> {
         self.synced.store(false, Ordering::Release);
         let ready = client.resync_app_state([WAPatchName::RegularHigh], AppStateResyncMode::Incremental).await?;
         anyhow::ensure!(requested_synced(&ready), "Favorite chats are still synchronizing; try again once connected.");
         self.begin_snapshot();
-        let result = client.resync_app_state([WAPatchName::RegularHigh], AppStateResyncMode::Snapshot).await;
-        let baseline = client.persistence_manager().backend().get_version(WAPatchName::RegularHigh.as_str()).await;
-        let complete = self.complete_snapshot(result.as_ref().is_ok_and(requested_synced), baseline.as_ref().ok().and_then(|state| state.as_ref()));
+        let result = self.read_snapshot(client).await;
+        let complete = self.complete_snapshot(result.is_ok(), result.as_ref().ok());
         result?;
-        baseline?;
         complete?;
         self.flush().await?;
         self.synced.store(true, Ordering::Release);
         Ok(())
+    }
+
+    async fn read_snapshot(&self, client: &Arc<Client>) -> Result<HashState> {
+        let report = client.resync_app_state([WAPatchName::RegularHigh], AppStateResyncMode::Snapshot).await?;
+        anyhow::ensure!(requested_synced(&report), "Favorite chats are still synchronizing; try again once connected.");
+        let baseline = recovery::baseline(client).await?;
+        let snapshot = self.snapshot();
+        let replay = snapshot.replay.as_ref().ok_or_else(|| anyhow::anyhow!("favorite snapshot was not started"))?;
+        anyhow::ensure!(!replay.invalid, "Favorite chats contained an invalid update.");
+        if replay.chats.is_some() { return Ok(baseline); }
+        let (proof, baseline) = recovery::recover(client, &self.capture, &baseline).await?;
+        let mut current = self.current.lock().unwrap();
+        anyhow::ensure!(current.revision == snapshot.revision, "Favorite chats changed during recovery; try again.");
+        let replay = current.replay.as_mut().ok_or_else(|| anyhow::anyhow!("favorite snapshot was not started"))?;
+        anyhow::ensure!(!replay.invalid, "Favorite chats contained an invalid update.");
+        if let Some(chats) = &replay.chats {
+            anyhow::ensure!(*chats == proof.chats, "Favorite chats changed during recovery; try again.");
+        }
+        replay.chats = Some(proof.chats);
+        Ok(baseline)
     }
 
     fn complete_snapshot(&self, synced: bool, baseline: Option<&HashState>) -> Result<()> {
@@ -135,6 +157,7 @@ struct FavoriteHandler(Favorites);
 
 impl EventHandler for FavoriteHandler {
     fn handle_event(&self, event: Arc<Event>) {
+        if let Event::DecryptedPayload(raw) = event.as_ref() { self.0.capture.forward(raw); return; }
         let Event::FavoritesUpdate(update) = event.as_ref() else { return };
         let chats: Option<Vec<String>> = update.action.favorites.iter().map(|favorite| favorite.id.clone()).collect();
         if chats.as_deref().map_or(true, |chats| self.0.receive(chats, update.from_full_sync).is_err()) {
@@ -146,7 +169,7 @@ impl EventHandler for FavoriteHandler {
     }
 
     fn interest(&self) -> EventInterest {
-        EventInterest::of(&[EventKind::FavoritesUpdate])
+        EventInterest::of(&[EventKind::FavoritesUpdate, EventKind::DecryptedPayload])
     }
 }
 

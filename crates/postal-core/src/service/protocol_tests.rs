@@ -4,7 +4,7 @@ use std::io::Write;
 use whatsapp_rust::wacore::types::events::LazyHistorySync;
 use whatsapp_rust::wacore::types::{events::{InboundMessage, MessageBatch, BatchOrigin, Receipt}, message::{MessageInfo, MessageSource}};
 
-async fn inbound() -> (Inbound, broadcast::Receiver<ServiceEvent>) {
+pub(super) async fn inbound() -> (Inbound, broadcast::Receiver<ServiceEvent>) {
     let (events, received) = broadcast::channel(32);
     (Inbound {
         store: StoreWorker::open(Path::new(":memory:")).await.unwrap(),
@@ -12,12 +12,12 @@ async fn inbound() -> (Inbound, broadcast::Receiver<ServiceEvent>) {
         events, connected: Arc::default(), client_for_events: Arc::default(), media_dir: None,
         group_cache: Arc::default(), groups_cache: Arc::default(), older_waits: Arc::default(),
         downloads: Arc::new(tokio::sync::Semaphore::new(1)), sync_progress: Arc::default(),
-        auto_download_default: false, keep_archived: Arc::default(), keep_view_once: Arc::default(),
+        media_auto_download: Arc::default(), keep_archived: Arc::default(), keep_view_once: Arc::default(),
         one_time_only: false, tally: Arc::default(), secret_edits: Default::default(),
     }, received)
 }
 
-fn message_event(chat: &str, sender: &str, id: &str, message: wa::Message) -> Event {
+pub(super) fn message_event(chat: &str, sender: &str, id: &str, message: wa::Message) -> Event {
     let info = MessageInfo { id: id.into(), source: MessageSource {
         chat: chat.parse().unwrap(), sender: sender.parse().unwrap(), is_group: chat.ends_with("@g.us"), ..Default::default()
     }, ..Default::default() };
@@ -205,7 +205,7 @@ async fn receipt_events_advance_delivery_without_regression() {
     assert_eq!(receipts[0].recipient, "200@s.whatsapp.net");
 }
 
-fn history_chunk(chat: &str, id: &str, session: Option<&str>) -> LazyHistorySync {
+pub(super) fn history_chunk(chat: &str, id: &str, session: Option<&str>) -> LazyHistorySync {
     let kind = if session.is_some() { wa::history_sync::HistorySyncType::ON_DEMAND }
         else { wa::history_sync::HistorySyncType::RECENT };
     let history = wa::HistorySync {

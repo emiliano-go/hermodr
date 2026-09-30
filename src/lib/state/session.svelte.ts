@@ -72,6 +72,7 @@ export class SessionState {
     retention: { max_age_hours: { kind: "unlimited" }, max_messages_per_chat: { kind: "unlimited" } },
     request_full_history: false,
     auto_download_media: true,
+    auto_download_types: { image: false, video: false, audio: false, document: false, sticker: false, gif: false },
     auto_transcribe: false,
     warn_missing_video_preview: true,
     media_dir: null,

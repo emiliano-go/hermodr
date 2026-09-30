@@ -89,6 +89,27 @@ impl MessageStore {
         self.message(&message.header.chat, &message.header.id)
     }
 
+    pub(crate) fn insert_incoming_row(&self, message: &StoredMessage) -> Result<(StoredMessage, bool)> {
+        let fresh = {
+            let mut conn = self.conn.lock().unwrap();
+            let tx = conn.savepoint()?;
+            let chat = names::canonical_chat(&tx, &message.header.chat)?;
+            let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM messages WHERE chat=?1 AND id=?2)",
+                params![chat.as_ref(), message.header.id], |row| row.get(0))?;
+            let mut canonical;
+            let message = if chat != message.header.chat {
+                canonical = message.clone();
+                canonical.header.chat = chat.into_owned();
+                &canonical
+            } else { message };
+            Self::insert_row(&tx, message)?;
+            self.revive_chat(&tx, &message.header.chat)?;
+            tx.commit()?;
+            !exists
+        };
+        Ok((self.message(&message.header.chat, &message.header.id)?, fresh))
+    }
+
     /// The upsert behind every insert; see `insert_message` for the
     /// state rules it enforces.
     pub(super) fn insert_row(conn: &Connection, message: &StoredMessage) -> Result<()> {
@@ -382,6 +403,11 @@ impl MessageStore {
 }
 
 impl StoreWorker {
+    pub(crate) async fn insert_incoming_row(&self, message: &StoredMessage) -> Result<(StoredMessage, bool)> {
+        let message = message.clone();
+        self.run(move |store| store.insert_incoming_row(&message)).await
+    }
+
     pub(crate) async fn insert_message_row(&self, message: &StoredMessage) -> Result<StoredMessage> {
         let message = message.clone();
         self.run(move |store| store.insert_message_row(&message)).await

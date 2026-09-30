@@ -483,9 +483,11 @@
     {/if}
 
     {@const invite = inviteLink(message.text)}
-    {#if invite}
+    {#if invite || message.media_kind === "group_invite"}
       <InviteCard
         link={invite}
+        message={message.media_kind === "group_invite" ? message : null}
+        onjoin={() => api.oninvitejoin(message, invite)}
         onopen={(jid) => api.oninviteopen(jid)} />
     {:else if message.preview_url}
       {@const url = message.preview_url}

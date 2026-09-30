@@ -11,6 +11,7 @@
   import StarredList from "$lib/messages/StarredList.svelte";
   import MessageFinder from "$lib/messages/MessageFinder.svelte";
   import ChatSettings from "$lib/chat/ChatSettings.svelte";
+  import { formatBulkReadFailures } from "$lib/utils/bulk-chats";
   import type { ChatRetention } from "$lib/utils/models";
   import ProfileCard from "$lib/contacts/ProfileCard.svelte";
   import ContactInfo from "$lib/contacts/ContactInfo.svelte";
@@ -33,7 +34,7 @@
   import ScheduledOutbox from "$lib/composer/ScheduledOutbox.svelte";
   import SelectionBar from "$lib/messages/SelectionBar.svelte";
   import { hue } from "$lib/utils/avatar";
-  import { bare, captionOf, dayKey, dayLabel, formatTime, isSvg, MEDIA_LABELS } from "$lib/utils/message";
+  import { bare, captionOf, dayKey, dayLabel, formatTime, MEDIA_LABELS } from "$lib/utils/message";
   import { chats } from "$lib/state/chats.svelte";
   import { composer } from "$lib/state/composer.svelte";
   import { favorites } from "$lib/state/favorites.svelte";
@@ -647,21 +648,32 @@
   }
 
 
-  /** Fetches a message's media on demand. */
-  // Stickers, voice notes and SVG files read as part of the conversation, so ones that
-  // arrived before automatic fetching are fetched as soon as they are shown.
-  const autoFetched = new Set<string>();
-  $effect(() => {
-    if (!session.connected) return;
-    // A Set, not a scan per message: the list can hold thousands of rows.
-    const onceIds = new Set(messages.marks.view_once.map((v) => v.id));
-    for (const m of messages.messages) {
-      if (m.media_path || !(m.media_kind === "sticker" || m.media_kind === "audio" || isSvg(m))) continue;
-      if (autoFetched.has(m.id) || onceIds.has(m.id)) continue;
-      autoFetched.add(m.id);
-      void untrack(() => messages.downloadMedia(chats.selectedChat, m, true));
+  let markingAllRead = $state(false);
+  async function markAllRead() {
+    const accountId = session.activeAccount;
+    if (!accountId || markingAllRead) return;
+    const generation = messages.accountGeneration;
+    const current = () => accountId === session.activeAccount && generation === messages.accountGeneration;
+    markingAllRead = true;
+    try {
+      const results = await composer.enqueue(() => invoke<import("$lib/utils/wire").MarkReadResult[]>("mark_all_read", { accountId }));
+      if (!current()) return;
+      const failures = formatBulkReadFailures(results, (chat) => {
+        const known = chats.chats.find((item) => item.chat === chat);
+        return known ? chats.chatLabel(known) : members.displayName(null, chat);
+      });
+      if (failures.length) ui.fail(failures.join("\n"));
+      if (results.some((result) => result.chat === chats.selectedChat && !result.error)) {
+        messages.firstUnreadId = null;
+        messages.lastUnreadId = null;
+      }
+    } catch (error) {
+      if (current()) ui.fail(error);
+    } finally {
+      try { if (current()) await chats.refreshChats(); }
+      finally { markingAllRead = false; }
     }
-  });
+  }
 
   async function create(value: unknown) {
     const chat = chats.selectedChat;
@@ -1010,7 +1022,9 @@
       onclearchat={(chat) => (ui.chatConfirm = { kind: "clear", chat: chat.chat })}
       ondeletechat={(chat) => (ui.chatConfirm = { kind: "delete", chat: chat.chat })}
       onchataction={(command, args) => chats.chatAction(command, args)}
-      globalAutoDownload={session.settings.auto_download_media}
+      globalAutoDownload={session.settings.auto_download_types}
+      onmarkallread={markAllRead}
+      {markingAllRead}
       onmarkread={(chat) => {
         // Reading the whole chat from the list clears the divider with it.
         if (chat.chat === chats.selectedChat) {
@@ -1176,8 +1190,16 @@
             ui.onceOpen = m;
           }}
           oncloseonce={closeViewOnce}
+          oninvitejoin={(message, link) => {
+            const account = session.activeAccount, chat = message.chat, id = message.id;
+            return composer.enqueue(() => message.media_kind === "group_invite"
+              ? invoke<import("$lib/utils/wire").Joined>("join_group_invite_message", { account, chat, id })
+              : invoke<import("$lib/utils/wire").Joined>("join_invite", { account, link }));
+          }}
           oninviteopen={async (jid) => {
+            const account = session.activeAccount, generation = messages.accountGeneration;
             await chats.refreshChats();
+            if (account !== session.activeAccount || generation !== messages.accountGeneration) return;
             void openChat(jid);
           }} />
 
@@ -1427,7 +1449,6 @@
     title={chats.chats.find((c) => c.chat === chats.selectedChat)
       ? chats.chatLabel(chats.chats.find((c) => c.chat === chats.selectedChat)!)
       : members.displayName(null, chats.selectedChat)}
-    globalAutoDownload={session.settings.auto_download_media}
     picture={chats.avatars[chats.selectedChat] ?? null}
     onchange={async (retention) => {
       messages.loadOnScroll = retention.on_demand;
@@ -1653,6 +1674,14 @@
     me={session.me}
     namer={(name, jid) => members.displayName(name, jid)}
     onreports={() => invoke<AdminReport[]>("admin_reports", { chat: selectedChat })}
+    oninviteload={() => {
+      const account = session.activeAccount, chat = selectedChat;
+      return invoke<string>("group_invite_link", { account, chat, reset: false });
+    }}
+    oninvitereset={() => {
+      const account = session.activeAccount, chat = selectedChat;
+      return composer.enqueue(() => invoke<string>("group_invite_link", { account, chat, reset: true }));
+    }}
     onrequests={() => invoke<GroupJoinRequest[]>("group_join_requests", { account: session.activeAccount, chat: selectedChat })}
     onrequestchange={(jids, approve) => {
       const account = session.activeAccount, chat = selectedChat;

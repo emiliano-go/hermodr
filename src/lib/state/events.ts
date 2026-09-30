@@ -154,8 +154,11 @@ function notifyChatName(chat: string): string {
 /** Shows a notification for a fully loaded message, when the gate allows it. */
 function notifyForMessage(message: StoredMessage, fresh: boolean) {
   const chat = message.chat;
-  if (
-    !shouldNotify(
+  const account = session.activeAccount;
+  if (!account) return;
+  const generation = messages.accountGeneration;
+  const current = () => account === session.activeAccount && generation === messages.accountGeneration
+    && shouldNotify(
       {
         fromMe: message.from_me,
         systemKind: message.system_kind,
@@ -166,10 +169,8 @@ function notifyForMessage(message: StoredMessage, fresh: boolean) {
         isOpenChat: isOpenChat(chat),
         sentAt: message.timestamp,
       },
-    )
-  ) {
-    return;
-  }
+    );
+  if (!current()) return;
   const isGroup = chat.endsWith("@g.us");
   const chatName = notifyChatName(chat);
   const senderName = message.from_me ? "You" : notifySenderName(message);
@@ -178,6 +179,8 @@ function notifyForMessage(message: StoredMessage, fresh: boolean) {
     notificationTitle({ isGroup, chatName, senderName }),
     isGroup ? groupNotificationBody(senderName, body) : body,
     chat,
+    account,
+    current,
   );
 }
 
@@ -191,6 +194,7 @@ async function notifyForHint(chat: string, id: string, fresh: boolean) {
   if (isOpenChat(chat)) return;
   if (isChatMuted(mutedUntilOf(chat))) return;
   const account = session.activeAccount;
+  if (!account) return;
   const generation = messages.accountGeneration;
   let message: StoredMessage | null = null;
   try {
@@ -215,7 +219,9 @@ async function notifyForHint(chat: string, id: string, fresh: boolean) {
   // The row is not on this device yet; still ping with the chat name.
   const isGroup = chat.endsWith("@g.us");
   const chatName = notifyChatName(chat);
-  showChatNotification(chatName, isGroup ? "New message" : `New message from ${chatName}`, chat);
+  showChatNotification(chatName, isGroup ? "New message" : `New message from ${chatName}`, chat, account,
+    () => account === session.activeAccount && generation === messages.accountGeneration
+      && notificationsOn() && !isOpenChat(chat) && !isChatMuted(mutedUntilOf(chat)));
 }
 
 /** When each unnamed group's subject was last asked for; the core backs off failed ones. */

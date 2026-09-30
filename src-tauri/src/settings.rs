@@ -22,6 +22,7 @@ pub struct UiSettings {
     /// Whether to download incoming media automatically.
     #[serde(default = "default_true")]
     pub auto_download_media: bool,
+    pub auto_download_types: postal_core::store::media_policy::MediaAutoDownload,
     #[serde(default)]
     pub auto_transcribe: bool,
     /// Whether to warn when a video goes out without a preview.
@@ -76,6 +77,7 @@ impl Default for UiSettings {
             message_window_size: 250,
             request_full_history: false,
             auto_download_media: true,
+            auto_download_types: Default::default(),
             auto_transcribe: false,
             media_dir: None,
             history_dir: None,
@@ -112,7 +114,13 @@ fn parse_settings(json: &str) -> serde_json::Result<UiSettings> {
     let value: serde_json::Value = serde_json::from_str(json)?;
     let legacy_unlimited = value.get("request_full_history").is_none()
         && value.get("accept_full_history").and_then(|v| v.as_bool()) == Some(true);
+    let legacy_downloads = value.get("auto_download_types").is_none().then(|| {
+        postal_core::store::media_policy::MediaAutoDownload::all(
+            value.get("auto_download_media").and_then(|v| v.as_bool()).unwrap_or(false),
+        )
+    });
     let mut settings: UiSettings = serde_json::from_value(value)?;
+    if let Some(policy) = legacy_downloads { settings.auto_download_types = policy; }
     if legacy_unlimited { settings.retention = DiskRetention::unlimited(); }
     settings.message_window_size = settings.message_window_size.clamp(50, postal_core::store::MAX_MESSAGE_PAGE);
     Ok(settings)
@@ -176,6 +184,7 @@ pub(crate) async fn set_settings(app: AppHandle, state: State<'_, AppState>, set
     if let Ok(service) = state.service() {
         service.set_retention(settings.retention);
         service.set_keep_archived(settings.keep_archived);
+        service.set_media_auto_download(settings.auto_download_types);
     }
     if let Some(service) = state.once_service.lock().unwrap().as_ref() {
         service.set_retention(settings.retention);
@@ -197,6 +206,20 @@ pub(crate) async fn set_settings(app: AppHandle, state: State<'_, AppState>, set
 mod tests {
     use super::*;
     use postal_core::store::RetentionLimit;
+
+    #[test]
+    fn media_policy_migrates_legacy_choices_and_preserves_partial_types() {
+        use postal_core::store::media_policy::MediaAutoDownload;
+        for enabled in [true, false] {
+            let migrated = parse_settings(&format!(r#"{{"auto_download_media":{enabled}}}"#)).unwrap();
+            assert_eq!(migrated.auto_download_types, MediaAutoDownload::all(enabled));
+            let saved = serde_json::to_string(&migrated).unwrap();
+            assert_eq!(parse_settings(&saved).unwrap().auto_download_types, migrated.auto_download_types);
+        }
+        let explicit = parse_settings(r#"{"auto_download_media":true,"auto_download_types":{"audio":true,"image":false}}"#).unwrap();
+        assert_eq!(explicit.auto_download_types, MediaAutoDownload { audio: true, ..Default::default() });
+        assert_eq!(parse_settings("{}").unwrap().auto_download_types, MediaAutoDownload::default());
+    }
 
     #[test]
     fn full_history_migration_preserves_effective_disk_policy() {

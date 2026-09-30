@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-mark-all-read"
+description = "Enables the mark_all_read command without any pre-configured scope."
+commands.allow = ["mark_all_read"]
+
+[[permission]]
+identifier = "deny-mark-all-read"
+description = "Denies the mark_all_read command without any pre-configured scope."
+commands.deny = ["mark_all_read"]

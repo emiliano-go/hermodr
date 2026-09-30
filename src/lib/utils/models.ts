@@ -1,6 +1,6 @@
 // Shared data shapes for the chat views. Moved out of +page.svelte so every
 // view, bar and bubble can type its props without importing the page.
-import type { StoredMessage, Poll, Event as ChatEvent } from "./wire";
+import type { StoredMessage, Poll, Joined, Event as ChatEvent } from "./wire";
 export type {
   Account, ChatRetention, ChatSummary, ConnectionState, DiskRetention, GroupInfo,
   GroupHistoryOffer, GroupHistoryResult, GroupMemberAddResult, LiveLocation, OnceState,
@@ -189,4 +189,5 @@ export type BubbleApi = {
   /** Dismisses the one-time filter on a kept copy; a second click opens it. */
   onrevealonce: (m: StoredMessage) => void;
   oninviteopen: (jid: string) => void;
+  oninvitejoin: (message: StoredMessage, link: string | null) => Promise<Joined>;
 };

@@ -3692,6 +3692,7 @@ dependencies = [
  "image",
  "keyring",
  "log",
+ "notify-rust",
  "postal-core",
  "postal-plugins",
  "serde",

@@ -418,6 +418,19 @@ pub(super) async fn stored_message(
         }
     }
 
+    if let Some(invite) = message.group_invite_message.as_option() {
+        text = invite.caption.clone().filter(|text| !text.trim().is_empty())
+            .or_else(|| invite.group_name.clone()).unwrap_or_else(|| "Group invitation".into());
+        media_kind = Some("group_invite".into());
+        media_thumb = invite.jpeg_thumbnail.as_deref().map(thumb_uri);
+        let mut payload = invite.clone();
+        payload.jpeg_thumbnail = None;
+        payload.context_info = Default::default();
+        media_ref = Some(buffa::Message::encode_to_vec(&wa::Message {
+            group_invite_message: MessageField::some(payload), ..Default::default()
+        }));
+    }
+
     // Kinds without a dedicated view still arrive as readable cards.
     if text.is_empty() && media_kind.is_none() {
         if let Some(card) = card_of(message, header.timestamp) {
@@ -661,6 +674,7 @@ fn context_of(base: &wa::Message) -> Option<&wa::ContextInfo> {
         base.poll_creation_message_v2.as_option().and_then(|m| m.context_info.as_option()),
         base.poll_creation_message_v3.as_option().and_then(|m| m.context_info.as_option()),
         base.event_message.as_option().and_then(|m| m.context_info.as_option()),
+        base.group_invite_message.as_option().and_then(|m| m.context_info.as_option()),
     ].into_iter().flatten().next()
 }
 

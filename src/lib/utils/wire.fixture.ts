@@ -73,6 +73,14 @@ export const fixture = {
   "settings": {
     "android_instance": false,
     "auto_download_media": true,
+    "auto_download_types": {
+      "audio": false,
+      "document": false,
+      "gif": false,
+      "image": false,
+      "sticker": false,
+      "video": false
+    },
     "auto_transcribe": false,
     "freeze_chat_list_on_hover": false,
     "history_dir": null,

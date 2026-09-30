@@ -16,13 +16,14 @@
   import Button from "$lib/ui/Button.svelte";
   import Icon from "$lib/ui/Icon.svelte";
   import TranscriptionOverride from "$lib/settings/TranscriptionOverride.svelte";
+  import AutoDownloadOverride from "$lib/settings/AutoDownloadOverride.svelte";
+  import NotificationSoundOverride from "$lib/settings/NotificationSoundOverride.svelte";
   import { session } from "$lib/state/session.svelte";
 
   let {
     chat,
     title,
     picture = null,
-    globalAutoDownload,
     onchange,
     onclearchat,
     ondeletechat,
@@ -32,7 +33,6 @@
     title: string;
     /** The chat's cached picture, when there is one. */
     picture?: string | null;
-    globalAutoDownload: boolean;
     /** The chat's retention after a save, so the page can follow it. */
     onchange: (retention: ChatRetention) => void;
     onclearchat: () => void;
@@ -60,18 +60,18 @@
   let failed = $state<string | null>(null);
   let busy = $state(false);
   let retention = $state<ChatRetention>({ max_age_hours: { kind: "inherit" }, max_messages: { kind: "inherit" }, on_demand: true });
-  let autoDownload = $state<boolean | null>(null);
+  let unarchive = $state<boolean | null>(null);
   let initial = "";
 
-  const snapshot = $derived(JSON.stringify([retention, autoDownload]));
+  const snapshot = $derived(JSON.stringify([retention, unarchive]));
   const dirty = $derived(loaded && snapshot !== initial);
 
   onMount(async () => {
     try {
       const got = await invoke<import("$lib/utils/wire").ChatSettings>("chat_settings", { chat });
       retention = got.retention;
-      autoDownload = got.auto_download;
-      initial = JSON.stringify([got.retention, got.auto_download]);
+      unarchive = got.unarchive;
+      initial = JSON.stringify([got.retention, got.unarchive]);
       loaded = true;
     } catch (e) {
       failed = String(e);
@@ -79,13 +79,14 @@
   });
 
   async function save() {
+    const accountId = session.activeAccount;
+    if (!accountId) return;
     busy = true;
     failed = null;
     try {
       await invoke("set_chat_retention", { chat, retention });
-      if (autoDownload !== null) {
-        await invoke("set_chat_auto_download", { chat, enabled: autoDownload });
-      }
+      if (accountId !== session.activeAccount) throw new Error("account changed");
+      await invoke("set_chat_unarchive", { accountId, chat, enabled: unarchive });
       onchange(retention);
       onclose();
     } catch (e) {
@@ -192,25 +193,27 @@
         </section>
 
         <section>
-          <h3><Icon name="download" size={14} /> Media</h3>
+          <h3><Icon name="settings" size={14} /> Chat behavior</h3>
           <label class="toggle-row">
-            <span>
-              <span class="name">Download media automatically</span>
-              <span class="desc">
-                {#if autoDownload === null}
-                  Following the global setting ({globalAutoDownload ? "on" : "off"}).
-                {:else}
-                  Set for this chat.
-                {/if}
-              </span>
-            </span>
-            <input
-              class="toggle"
-              type="checkbox"
-              checked={autoDownload ?? globalAutoDownload}
-              onchange={(e) => (autoDownload = e.currentTarget.checked)} />
+            <span class="name">Unarchive on new incoming messages</span>
+            <select value={unarchive === null ? "" : String(unarchive)}
+              onchange={(event) => unarchive = event.currentTarget.value === "" ? null : event.currentTarget.value === "true"}>
+              <option value="">Follow global setting ({session.settings.keep_archived ? "off" : "on"})</option>
+              <option value="true">On</option>
+              <option value="false">Off</option>
+            </select>
           </label>
-          {#if session.activeAccount}<TranscriptionOverride accountId={session.activeAccount} {chat} />{/if}
+          {#if session.activeAccount}
+            <NotificationSoundOverride accountId={session.activeAccount} {chat} />
+          {/if}
+        </section>
+
+        <section>
+          <h3><Icon name="download" size={14} /> Media</h3>
+          {#if session.activeAccount}
+            <AutoDownloadOverride accountId={session.activeAccount} {chat} />
+            <TranscriptionOverride accountId={session.activeAccount} {chat} />
+          {/if}
         </section>
 
         <section>

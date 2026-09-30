@@ -2,6 +2,8 @@
   Moved out of +page.svelte. -->
 <script lang="ts">
   import { members } from "$lib/state/members.svelte";
+  import { MEDIA_TYPES, emptyMediaOverrides } from "$lib/utils/auto-download";
+  import type { MediaAutoDownload, MediaAutoDownloadOverrides } from "$lib/utils/wire";
   import Avatar from "$lib/ui/Avatar.svelte";
   import Button from "$lib/ui/Button.svelte";
   import Icon, { type IconName } from "$lib/ui/Icon.svelte";
@@ -66,10 +68,12 @@
     ondeletechat,
     onchataction,
     onmarkread,
+    onmarkallread,
+    markingAllRead = false,
     archivedChats,
     onresize,
     freezeOnHover = true,
-    globalAutoDownload = true,
+    globalAutoDownload,
   }: {
     searchQuery: string;
     searchResults: SearchResult[];
@@ -116,7 +120,9 @@
     onresize: (event: MouseEvent) => void;
     /** Pause list reordering while the pointer is over the list. */
     freezeOnHover?: boolean;
-    globalAutoDownload?: boolean;
+    globalAutoDownload: MediaAutoDownload;
+    onmarkallread: () => void;
+    markingAllRead?: boolean;
   } = $props();
 
   const MUTES: [string, number][] = [
@@ -131,7 +137,8 @@
 
   /** Right-click menu on a chat row. */
   let chatMenu = $state<{ x: number; y: number; chat: ChatSummary } | null>(null);
-  let menuAutoDownload = $state<boolean | null>(null);
+  let menuAutoDownload = $state<MediaAutoDownloadOverrides>(emptyMediaOverrides());
+  const menuDownloadsEnabled = $derived(MEDIA_TYPES.some(([kind]) => menuAutoDownload[kind] ?? globalAutoDownload[kind]));
   let menuLoaded = $state(false);
   let menuError = $state<string | null>(null);
   let menuRequest = 0;
@@ -186,7 +193,7 @@
     try {
       const settings = await invoke<import("$lib/utils/wire").ChatSettings>("chat_settings", { chat: chat.chat });
       if (request !== menuRequest || account !== activeAccount) return;
-      menuAutoDownload = settings.auto_download;
+      menuAutoDownload = settings.auto_download_types;
       menuLoaded = true;
     } catch (e) {
       if (request !== menuRequest || account !== activeAccount) return;
@@ -270,6 +277,8 @@
       {#if unreadPings > 0}<span class="icon-badge">{unreadPings > 99 ? "99+" : unreadPings}</span>{/if}
     </Button>
     <Button variant="icon" icon="star" iconSize={18} title="Starred messages" aria-label="Starred messages" onclick={onstarred} />
+    <Button variant="icon" icon="check" iconSize={18} title="Mark all chats as read" aria-label="Mark all chats as read"
+      disabled={markingAllRead} onclick={onmarkallread} />
   </header>
   <label class="search">
     <Icon name="search" size={15} />
@@ -586,9 +595,9 @@
       role="menuitem"
       disabled={!menuLoaded}
       onclick={() => {
-        onchataction("set_chat_auto_download", { chat: menuChat.chat, enabled: !(menuAutoDownload ?? globalAutoDownload) });
+        onchataction("set_chat_auto_download", { chat: menuChat.chat, enabled: !menuDownloadsEnabled });
         closeChatMenu();
-      }}>{menuLoaded ? `${menuAutoDownload ?? globalAutoDownload ? "Disable" : "Enable"} media auto-download` : menuError ? "Media settings unavailable" : "Loading media settings…"}</Button>
+      }}>{menuLoaded ? `${menuDownloadsEnabled ? "Disable" : "Enable"} all media auto-download` : menuError ? "Media settings unavailable" : "Loading media settings…"}</Button>
     <Button
       variant="menu"
       icon="edit"

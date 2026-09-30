@@ -168,7 +168,7 @@ pub(crate) fn config_for(app: &AppHandle, settings: &UiSettings, account: &str) 
         aliases_path: base.join("aliases.db"),
         retention: settings.retention,
         request_full_history: settings.request_full_history,
-        auto_download_media: settings.auto_download_media,
+        auto_download_types: settings.auto_download_types,
         keep_archived: settings.keep_archived,
         // The main link is the ordinary companion; view-once media is fetched
         // by the optional Android instance instead.
@@ -199,7 +199,7 @@ pub(crate) fn once_config_for(app: &AppHandle, settings: &UiSettings, account: &
     config.android_pair = true;
     // The instance is not the user's session: it takes messages from the shared
     // store but must not download ordinary media twice or ask for old history.
-    config.auto_download_media = false;
+    config.auto_download_types = Default::default();
     config.keep_view_once = true;
     config.one_time_only = true;
     config.request_full_history = false;

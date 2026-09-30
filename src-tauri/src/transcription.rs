@@ -135,22 +135,7 @@ fn provider(
 }
 
 fn bound_service(state: &AppState, account_id: &str) -> Result<Arc<WhatsAppService>, String> {
-    if state.accounts.lock().unwrap().active.as_deref() != Some(account_id) {
-        return Err("account changed".into());
-    }
-    let service = state.service()?;
-    let matches = state
-        .account_service
-        .lock()
-        .unwrap()
-        .as_ref()
-        .is_some_and(|(id, weak)| {
-            id == account_id && weak.upgrade().is_some_and(|s| Arc::ptr_eq(&s, &service))
-        });
-    if !matches {
-        return Err("account changed".into());
-    }
-    Ok(service)
+    state.service_for_account(account_id)
 }
 
 fn current(
@@ -412,14 +397,18 @@ async fn prepare(
         return Err("transcription plugin disabled".into());
     }
     let global_auto = state.settings.lock().unwrap().auto_transcribe;
+    let audio_download = if automatic {
+        service.effective_media_auto_download(chat, "audio", service.media_auto_download())
+            .await.map_err(|e| e.to_string())?
+    } else { true };
     if automatic
-        && !effective_auto(
+        && (!audio_download || !effective_auto(
             global_auto,
             service
                 .chat_auto_transcribe(chat)
                 .await
                 .map_err(|e| e.to_string())?,
-        )
+        ))
     {
         return Err("automatic transcription disabled".into());
     }

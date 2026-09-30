@@ -214,6 +214,14 @@ impl WhatsAppService {
         self.store.set_chat_auto_download(chat, enabled).await
     }
 
+    pub async fn chat_sound_muted(&self, chat: &str) -> Result<Option<bool>> {
+        self.store.chat_sound_muted(chat).await
+    }
+
+    pub async fn set_chat_sound_muted(&self, chat: &str, muted: Option<bool>) -> Result<()> {
+        self.store.set_chat_sound_muted(chat, muted).await
+    }
+
     /// Deletes every message stored on this device; the phone keeps its copy.
     pub async fn clear_history(&self) -> Result<usize> {
         let removed = self.store.clear_history().await?;

@@ -396,8 +396,9 @@ impl WhatsAppService {
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let jid = group.id.to_string();
-        // Already a member when the chat is here.
-        let joined = self.store.chats().await?.iter().any(|c| c.chat == jid);
+        let joined = self.client.groups().list_participating().await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?
+            .iter().any(|group| group.id.to_string() == jid);
         let picture = self.avatar(&jid, false).await.ok().flatten();
         Ok(InviteInfo {
             size: group.size.unwrap_or(group.participants.len() as u32),
@@ -422,6 +423,7 @@ impl WhatsAppService {
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let pending = matches!(joined, JoinGroupResult::PendingApproval(_));
+        if !pending { self.after_group_change(&joined.group_jid().to_string()); }
         Ok((joined.group_jid().to_string(), pending))
     }
 

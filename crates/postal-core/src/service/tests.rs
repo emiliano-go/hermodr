@@ -36,7 +36,7 @@ async fn storage_failures_are_logged_and_event_processing_continues() {
         disk_retention: Arc::new(DiskRetentionManager::new(DiskRetention::unlimited())),
         media_dir: None, group_cache: Arc::default(), groups_cache: Arc::default(),
         older_waits: Arc::default(), downloads: Arc::new(tokio::sync::Semaphore::new(1)),
-        sync_progress: Arc::default(), auto_download_default: false,
+        sync_progress: Arc::default(), media_auto_download: Arc::default(),
         keep_archived: Arc::default(), keep_view_once: Arc::default(),
         one_time_only: false, tally: Arc::default(), secret_edits: Default::default(),
     };
@@ -138,7 +138,7 @@ async fn group_changes_invalidate_fetched_metadata_and_overviews() {
         older_waits: Arc::default(),
         downloads: Arc::new(tokio::sync::Semaphore::new(1)),
         sync_progress: Arc::default(),
-        auto_download_default: false,
+        media_auto_download: Arc::default(),
         keep_archived: Arc::default(),
         keep_view_once: Arc::default(),
         one_time_only: false, tally: Arc::default(), secret_edits: Default::default(),

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-show-chat-notification"
+description = "Enables the show_chat_notification command without any pre-configured scope."
+commands.allow = ["show_chat_notification"]
+
+[[permission]]
+identifier = "deny-show-chat-notification"
+description = "Denies the show_chat_notification command without any pre-configured scope."
+commands.deny = ["show_chat_notification"]

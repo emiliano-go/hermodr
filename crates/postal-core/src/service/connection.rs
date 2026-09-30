@@ -322,6 +322,7 @@ struct SessionState {
     qr: Arc<Mutex<Option<String>>>,
     connected: Arc<AtomicBool>,
     keep_archived: Arc<AtomicBool>,
+    media_auto_download: Arc<RwLock<crate::store::media_policy::MediaAutoDownload>>,
     keep_view_once: Arc<AtomicBool>,
     reconnecting: Arc<AtomicBool>,
     names_resynced: Arc<AtomicBool>,
@@ -342,6 +343,7 @@ impl SessionState {
             // Shared with the event handler so the settings apply without a
             // reconnect.
             keep_archived: Arc::new(AtomicBool::new(config.keep_archived)),
+            media_auto_download: Arc::new(RwLock::new(config.auto_download_types)),
             keep_view_once: Arc::new(AtomicBool::new(config.keep_view_once)),
             // Single-flight guard for a forced reconnect after a stall or a resume.
             reconnecting: Arc::new(AtomicBool::new(false)),
@@ -384,7 +386,7 @@ impl SessionState {
             // media never holds up the messages behind it.
             downloads: Arc::new(tokio::sync::Semaphore::new(4)),
             sync_progress: self.sync_progress.clone(),
-            auto_download_default: config.auto_download_media,
+            media_auto_download: self.media_auto_download.clone(),
             keep_archived: self.keep_archived.clone(),
             keep_view_once: self.keep_view_once.clone(),
             one_time_only: config.one_time_only,
@@ -711,6 +713,7 @@ impl WhatsAppService {
                 qr: states.qr,
                 connected: states.connected,
                 keep_archived: states.keep_archived,
+                media_auto_download: states.media_auto_download,
                 reconnecting: states.reconnecting,
                 subject_backoff: Mutex::default(),
                 nameless: Mutex::default(),
@@ -750,6 +753,14 @@ impl WhatsAppService {
     /// Changes the keep-archived behavior without a reconnect.
     pub fn set_keep_archived(&self, keep: bool) {
         self.keep_archived.store(keep, Ordering::SeqCst);
+    }
+
+    pub fn media_auto_download(&self) -> crate::store::media_policy::MediaAutoDownload {
+        *self.media_auto_download.read().unwrap()
+    }
+
+    pub fn set_media_auto_download(&self, policy: crate::store::media_policy::MediaAutoDownload) {
+        *self.media_auto_download.write().unwrap() = policy;
     }
 
     /// Drops the current transport so the client reconnects. For a stalled or

@@ -31,6 +31,9 @@ mod favorites;
 mod group_requests;
 mod scheduled;
 mod transcription;
+mod notifications;
+mod bulk_chats;
+mod group_invites;
 mod transcription_config;
 mod transcription_credentials;
 mod contacts;
@@ -77,6 +80,10 @@ impl AppState {
             .unwrap()
             .clone()
             .ok_or_else(|| "not connected yet".to_string())
+    }
+
+    fn service_for_account(&self, account_id: &str) -> Result<Arc<WhatsAppService>, String> {
+        self.account_service(account_id)
     }
 }
 
@@ -221,6 +228,16 @@ macro_rules! postal_commands {
             media::download_media,
             media::recover_quote_media,
             chats::set_chat_auto_download,
+            chats::chat_media_auto_download,
+            chats::set_chat_media_auto_download,
+            notifications::chat_sound_muted,
+            notifications::set_chat_sound_muted,
+            notifications::show_chat_notification,
+            bulk_chats::mark_all_read,
+            chats::chat_unarchive,
+            chats::set_chat_unarchive,
+            group_invites::group_invite_link,
+            group_invites::join_group_invite_message,
             chats::set_chat_privacy,
             contacts::contact_aliases,
             contacts::add_contact_alias,

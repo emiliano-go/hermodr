@@ -92,6 +92,7 @@
     revealedOnce,
     onrevealonce,
     oninviteopen,
+    oninvitejoin,
   }: {
     /** Oldest first, the order the conversation is drawn in. */
     messages: StoredMessage[];
@@ -172,6 +173,7 @@
     revealedOnce: Record<string, true>;
     onrevealonce: (m: StoredMessage) => void;
     oninviteopen: (jid: string) => void;
+    oninvitejoin: BubbleApi["oninvitejoin"];
   } = $props();
 
   const api: BubbleApi = $derived({
@@ -206,6 +208,7 @@
     oncloseonce,
     onrevealonce,
     oninviteopen,
+    oninvitejoin,
   });
 
   const ctx = $derived<BubbleCtx>({

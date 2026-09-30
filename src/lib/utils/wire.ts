@@ -41,7 +41,7 @@ export type ChatSettings = {
 /**
  * The chat's auto download override, `None` when it follows the global one.
  */
-auto_download: boolean | null, retention: ChatRetention,
+auto_download: boolean | null, auto_download_types: MediaAutoDownloadOverrides, sound_muted: boolean | null, unarchive: boolean | null, retention: ChatRetention,
 /**
  * Typing and read receipt overrides, `None` when following the global ones.
  */
@@ -206,7 +206,10 @@ expires_at: number | null,
  * Stopped by the sender or expired; the last position is kept.
  */
 ended: boolean, };
+export type MarkReadResult = { chat: string, changed: number | null, error: string | null, };
 export type MediaAction = "copy_image" | "save" | "open";
+export type MediaAutoDownload = { image: boolean, video: boolean, audio: boolean, document: boolean, sticker: boolean, gif: boolean, };
+export type MediaAutoDownloadOverrides = { image: boolean | null, video: boolean | null, audio: boolean | null, document: boolean | null, sticker: boolean | null, gif: boolean | null, };
 export type MessageCursor = { timestamp: number, id: string, sort_order: number, };
 export type MessagePage = { messages: Array<StoredMessage>, has_more: boolean, };
 export type MessagePageDirection = "before" | "after" | "through";
@@ -466,7 +469,7 @@ history_dir: string | null,
 /**
  * Whether to download incoming media automatically.
  */
-auto_download_media: boolean, auto_transcribe: boolean,
+auto_download_media: boolean, auto_download_types: MediaAutoDownload, auto_transcribe: boolean,
 /**
  * Whether to warn when a video goes out without a preview.
  */

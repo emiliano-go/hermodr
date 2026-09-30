@@ -158,20 +158,20 @@ pub(crate) async fn set_member_label(
 
 /// The group behind an invite link, without joining it.
 #[tauri::command]
-pub(crate) async fn invite_info(state: State<'_, AppState>, link: String) -> Result<postal_core::InviteInfo, String> {
-    state.service()?.invite_info(&link).await.map_err(|e| e.to_string())
+pub(crate) async fn invite_info(state: State<'_, AppState>, account: String, link: String) -> Result<postal_core::InviteInfo, String> {
+    state.account_service(&account)?.invite_info(&link).await.map_err(|e| e.to_string())
 }
 
 #[derive(serde::Serialize)]
 #[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub(crate) struct Joined {
-    jid: String,
+    pub(crate) jid: String,
     /// An admin still has to approve the request.
-    pending: bool,
+    pub(crate) pending: bool,
 }
 
 #[tauri::command]
-pub(crate) async fn join_invite(state: State<'_, AppState>, link: String) -> Result<Joined, String> {
-    let (jid, pending) = state.service()?.join_invite(&link).await.map_err(|e| e.to_string())?;
+pub(crate) async fn join_invite(state: State<'_, AppState>, account: String, link: String) -> Result<Joined, String> {
+    let (jid, pending) = state.account_service(&account)?.join_invite(&link).await.map_err(|e| e.to_string())?;
     Ok(Joined { jid, pending })
 }
