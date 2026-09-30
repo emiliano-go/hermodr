@@ -146,6 +146,31 @@
 
   function hidePreview() { preview = null; }
 
+  /** A search result's row as a summary: the list's own row when known, else the result's fields. */
+  function resultChat(result: SearchResult): ChatSummary {
+    return visibleChats.find((c) => c.chat === result.jid) ?? {
+      chat: result.jid,
+      display_name: result.name || null,
+      last_message_at: 0,
+      last_text: "",
+      last_from_me: false,
+      last_sender_name: null,
+      last_sender: "",
+      last_media_kind: null,
+      message_count: result.has_messages ? 1 : 0,
+      unread_count: 0,
+      mention_count: 0,
+      pinned: false,
+      archived: false,
+      muted_until: 0,
+      marked_unread: false,
+    };
+  }
+
+  function openResultMenu(event: MouseEvent | KeyboardEvent, result: SearchResult) {
+    void openChatMenu(event, resultChat(result));
+  }
+
   async function openChatMenu(event: MouseEvent | KeyboardEvent, chat: ChatSummary) {
     event.preventDefault();
     event.stopPropagation();
@@ -193,6 +218,15 @@
   // cannot jump away. The pending order applies on leave or on open/action.
   let listHover = $state(false);
   let frozenOrder = $state<string[]>([]);
+
+  // Searching swaps the list for results, which removes a hovered <ul> without
+  // firing mouseleave; without this reset the captured order would outlive the
+  // pointer and the list would never re-sort again.
+  $effect(() => {
+    void searchQuery.trim();
+    listHover = false;
+    frozenOrder = [];
+  });
 
   function onListEnter() {
     listHover = true;
@@ -282,8 +316,11 @@
             role="button"
             tabindex="0"
             onclick={() => onopenresult(result)}
+            oncontextmenu={(e) => openResultMenu(e, result)}
             onkeydown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
+              if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+                void openResultMenu(e, result);
+              } else if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
                 onopenresult(result);
               }
