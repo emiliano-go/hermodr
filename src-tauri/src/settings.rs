@@ -74,7 +74,7 @@ impl Default for UiSettings {
     fn default() -> Self {
         Self {
             retention: DiskRetention::default(),
-            message_window_size: 250,
+            message_window_size: 500,
             request_full_history: false,
             auto_download_media: true,
             auto_download_types: Default::default(),
@@ -112,8 +112,10 @@ pub(crate) fn load_settings(app: &AppHandle) -> UiSettings {
 
 fn parse_settings(json: &str) -> serde_json::Result<UiSettings> {
     let value: serde_json::Value = serde_json::from_str(json)?;
-    let legacy_unlimited = value.get("request_full_history").is_none()
-        && value.get("accept_full_history").and_then(|v| v.as_bool()) == Some(true);
+    // Files written before history requests and disk retention were split kept
+    // the old bounded default (24 h / 500 per chat). That was never an explicit
+    // choice: today's default is unlimited, so pre-refactor files adopt it.
+    let legacy = value.get("request_full_history").is_none();
     let legacy_downloads = value.get("auto_download_types").is_none().then(|| {
         postal_core::store::media_policy::MediaAutoDownload::all(
             value.get("auto_download_media").and_then(|v| v.as_bool()).unwrap_or(false),
@@ -121,7 +123,7 @@ fn parse_settings(json: &str) -> serde_json::Result<UiSettings> {
     });
     let mut settings: UiSettings = serde_json::from_value(value)?;
     if let Some(policy) = legacy_downloads { settings.auto_download_types = policy; }
-    if legacy_unlimited { settings.retention = DiskRetention::unlimited(); }
+    if legacy { settings.retention = DiskRetention::unlimited(); }
     settings.message_window_size = settings.message_window_size.clamp(50, postal_core::store::MAX_MESSAGE_PAGE);
     Ok(settings)
 }
@@ -222,7 +224,7 @@ mod tests {
     }
 
     #[test]
-    fn full_history_migration_preserves_effective_disk_policy() {
+    fn legacy_settings_adopt_unlimited_disk_retention() {
         let legacy = r#"{"accept_full_history":true,"retention":{"max_age_hours":24,"max_messages_per_chat":500}}"#;
         let migrated = parse_settings(legacy).unwrap();
         assert!(migrated.request_full_history);
@@ -230,8 +232,12 @@ mod tests {
         let saved = serde_json::to_string(&migrated).unwrap();
         assert!(!saved.contains("accept_full_history"));
         assert_eq!(parse_settings(&saved).unwrap().retention, DiskRetention::unlimited());
-        let bounded = parse_settings(&legacy.replace("true", "false")).unwrap();
-        assert_eq!(bounded.retention, DiskRetention { max_age_hours: RetentionLimit::Limited(24), max_messages_per_chat: RetentionLimit::Limited(500) });
+        // Declining full history kept the old bounded default too; it was not a
+        // choice, so the file adopts the current unlimited default as well.
+        let declined = parse_settings(&legacy.replace("true", "false")).unwrap();
+        assert!(!declined.request_full_history);
+        assert_eq!(declined.retention, DiskRetention::unlimited());
+        // Once the file carries the new key, its retention limits are honored.
         let explicit = parse_settings(&legacy.replace("accept_full_history", "request_full_history")).unwrap();
         assert!(explicit.request_full_history);
         assert_eq!(explicit.retention.max_age_hours, RetentionLimit::Limited(24));
@@ -248,6 +254,6 @@ mod tests {
         // Verbose WhatsApp logs default to on, switchable from Advanced.
         assert!(parse_settings("{}").unwrap().verbose_whatsapp_logs);
         assert!(!parse_settings(r#"{"verbose_whatsapp_logs":false}"#).unwrap().verbose_whatsapp_logs);
-        assert_eq!(bounded.message_window_size, 250);
+        assert_eq!(declined.message_window_size, 500);
     }
 }
