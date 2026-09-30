@@ -109,6 +109,11 @@
   let scheduling = $state(false);
   let schedulingChat = "";
   $effect(() => { if (selectedChat !== schedulingChat) { scheduling = false; schedulingChat = selectedChat; } });
+
+  /** A plain draft can be scheduled; while one can, the clock schedules it. */
+  const canSchedule = $derived(
+    !!draft.trim() && !editing && !replyingTo && pending.length === 0,
+  );
   let filePicker: HTMLInputElement | undefined = $state();
 
   function attach(event: Event) {
@@ -346,12 +351,12 @@
       variant="icon"
       icon="clock"
       iconSize={20}
-      title="Scheduled messages"
-      aria-label="Scheduled messages"
-      onclick={() => { scheduled.open = true; }} />
-    {#if draft.trim() && !editing && !replyingTo && pending.length === 0}
-      <Button variant="ghost" type="button" title="Schedule this message" onclick={() => (scheduling = true)}>Schedule</Button>
-    {/if}
+      title={canSchedule ? "Schedule this message" : "Scheduled messages"}
+      aria-label={canSchedule ? "Schedule this message" : "Scheduled messages"}
+      onclick={() => {
+        if (canSchedule) scheduling = true;
+        else scheduled.open = true;
+      }} />
     <Button
       variant="icon"
       icon={receiptsHidden ? "eyeOff" : "eye"}
