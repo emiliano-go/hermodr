@@ -5,6 +5,7 @@
   import Button from "$lib/ui/Button.svelte";
   import Icon, { type IconName } from "$lib/ui/Icon.svelte";
   import NowPlaying from "$lib/media/NowPlaying.svelte";
+  import ChatPreview from "./ChatPreview.svelte";
   import type { Section } from "$lib/settings/Settings.svelte";
   import type {
     Account,
@@ -129,10 +130,20 @@
   let menuError = $state<string | null>(null);
   let menuRequest = 0;
   let menuOwner: HTMLElement | null = null;
+  let preview = $state<{ chat: ChatSummary; x: number; y: number } | null>(null);
+
+  function showPreview(event: MouseEvent | FocusEvent, chat: ChatSummary) {
+    if (chatMenu) return;
+    const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    preview = { chat, x: box.right + 8, y: box.top };
+  }
+
+  function hidePreview() { preview = null; }
 
   async function openChatMenu(event: MouseEvent | KeyboardEvent, chat: ChatSummary) {
     event.preventDefault();
     event.stopPropagation();
+    hidePreview();
     menuOwner = event.currentTarget as HTMLElement;
     const box = menuOwner.getBoundingClientRect();
     chatMenu = { x: "clientX" in event ? event.clientX : box.left, y: "clientY" in event ? event.clientY : box.bottom, chat };
@@ -169,7 +180,7 @@
     if (restoreFocus) menuOwner?.focus();
   }
 
-  $effect(() => { void activeAccount; closeChatMenu(false); });
+  $effect(() => { void activeAccount; closeChatMenu(false); hidePreview(); });
 
   // Hover freeze: while the pointer is over the list, new arrivals update each
   // row in place but keep the captured order, so the row under the cursor
@@ -292,7 +303,7 @@
       {/each}
     </ul>
   {:else}
-  <ul onmouseenter={onListEnter} onmouseleave={onListLeave}>
+  <ul onmouseenter={onListEnter} onmouseleave={onListLeave} onscroll={hidePreview}>
     {#each displayedChats as chat (chat.chat)}
       <li>
         <div
@@ -300,7 +311,13 @@
           class:active={chat.chat === selectedChat}
           role="button"
           tabindex="0"
+          aria-describedby={preview?.chat.chat === chat.chat ? "chat-preview" : undefined}
+          onmouseenter={(e) => showPreview(e, chat)}
+          onmouseleave={hidePreview}
+          onfocus={(e) => showPreview(e, chat)}
+          onblur={hidePreview}
           onclick={() => {
+            hidePreview();
             releaseFreeze();
             onopenchat(chat.chat);
           }}
@@ -310,6 +327,7 @@
               void openChatMenu(e, chat);
             } else if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
+              hidePreview();
               releaseFreeze();
               onopenchat(chat.chat);
             }
@@ -446,6 +464,10 @@
   <button type="button" class="resizer" aria-label="Resize chat list" onmousedown={onresize}></button>
 </aside>
 
+{#if preview}
+  <ChatPreview chat={preview.chat.chat} account={activeAccount} name={chatLabelOf(preview.chat)} x={preview.x} y={preview.y} />
+{/if}
+
 {#if chatMenu}
   {@const menuChat = chatMenu.chat}
   <div
@@ -564,6 +586,7 @@
     if (chatMenu && !(e.target as Element).closest?.(".chat-menu")) closeChatMenu(false);
   }}
   onkeydown={(e) => {
+    if (e.key === "Escape") hidePreview();
     if (e.key === "Escape" && chatMenu) closeChatMenu();
   }} />
 

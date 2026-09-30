@@ -18,6 +18,13 @@ state. Toggle chat settings failure: an alert appears and the media toggle stays
 disabled. Delay a settings read, open the menu, switch the synthetic account and
 release the read: the old menu must stay closed. All actions stay in fixture state.
 
+Passive preview checks: tab to Quiet contact and wait for its tooltip. It shows a
+saved sender, text and an image placeholder without selecting the chat. Escape,
+blur or list scrolling dismisses it. Clear preview calls, repeat with Test send
+receipts off/on, then Show preview calls: only `message_page` may appear. Delay a
+preview read, switch the synthetic account and release it: no tooltip returns.
+Toggle preview failure: the error stays visible without opening or marking read.
+
 Flag diagnostics checks:
 
 1. Expand Server feature flags: true, false and Not received have separate values.

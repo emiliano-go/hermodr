@@ -2,7 +2,8 @@
   import ChatSidebar from "$lib/chat/ChatSidebar.svelte";
   import type { ComponentProps } from "svelte";
   import type { ChatSummary } from "$lib/utils/models";
-  import { fixture } from "./ipc";
+  import { fixture, previewFixture } from "./ipc";
+  import { session } from "$lib/state/session.svelte";
   let selected = $state<string | null>(null);
   let account = $state("synthetic-a");
   const quiet = $state<ChatSummary>({
@@ -13,9 +14,12 @@
     pinned: true, archived: false, muted_until: 0, marked_unread: false,
   });
   let action = $state("");
+  let previewCalls = $state("");
   const noop = () => {};
   const props: ComponentProps<typeof ChatSidebar> = {
-    searchQuery: "", searchResults: [], visibleChats: [quiet], selectedChat: null,
+    searchQuery: "", searchResults: [], visibleChats: [quiet, ...Array.from({ length: 10 }, (_, n) => ({
+      ...quiet, chat: `preview-${n}@s.whatsapp.net`, display_name: `Preview contact ${n}`, pinned: false,
+    }))], selectedChat: null,
     chatFilter: "all", onfilter: noop, unreadChats: 0, unreadPings: 0, avatars: {},
     chatLabelOf: (chat) => chat.display_name ?? chat.chat, formatTime: () => "Nov 14",
     typingLabelOf: () => null, previewAuthorOf: () => null,
@@ -40,6 +44,13 @@
 <button onclick={() => { fixture.chatSettingsDelay = true; }}>Delay next chat settings read</button>
 <button onclick={() => { fixture.chatSettingsPending.shift()?.(); }}>Release chat settings read</button>
 <button onclick={() => { account = account === "synthetic-a" ? "synthetic-b" : "synthetic-a"; }}>Switch synthetic account</button>
+<label><input type="checkbox" bind:checked={session.settings.send_receipts} />Test send receipts</label>
+<button onclick={() => { previewFixture.calls = []; previewCalls = ""; }}>Clear preview calls</button>
+<button onclick={() => { previewCalls = JSON.stringify(previewFixture.calls); }}>Show preview calls</button>
+<button onclick={() => { previewFixture.deferNext = true; }}>Delay next preview read</button>
+<button onclick={() => { previewFixture.pending.shift()?.(); }}>Release preview read</button>
+<button onclick={() => { previewFixture.failure = !previewFixture.failure; }}>Toggle preview failure</button>
+<output aria-label="Preview calls">{previewCalls}</output>
 <output aria-label="Chat action">{action}</output>
 <div class="sidebar"><ChatSidebar {...props} activeAccount={account} selectedChat={selected} /></div>
 

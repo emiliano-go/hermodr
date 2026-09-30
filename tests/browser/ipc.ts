@@ -8,6 +8,7 @@ export const windowFixture = {
 export const mediaFixture = { calls: 0, failure: true, deferNext: false, pending: [] as (() => void)[] };
 export const pluginFixture = { enabled: false, failure: false, crashed: false };
 export const sendFixture = { before: null as ((command: string, args?: Record<string, unknown>) => Promise<void>) | null };
+export const previewFixture = { calls: [] as string[], deferNext: false, pending: [] as (() => void)[], failure: false };
 export const uploadFixture = { calls: [] as string[], maxChunk: 0, size: 0, written: 0, chunks: [] as Uint8Array[],
   failChunk: false, failSend: false, afterChunk: null as (() => void) | null };
 export const archiveFixture = { failure: false, cancelled: false, deferNext: false, pending: [] as (() => void)[],
@@ -24,6 +25,7 @@ export const fixture = { updated: false, failure: false, calls: 0, savedRetentio
 };
 
 export async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  previewFixture.calls.push(command);
   if (sendFixture.before) await sendFixture.before(command, args);
   if (["send_text", "send_reply", "send_voice", "send_sticker", "send_from_library", "send_typing"].includes(command)) return undefined as T;
   if (command === "list_plugins") return { directory: "synthetic/plugins", errors: [], plugins: [
@@ -92,6 +94,18 @@ export async function invoke<T>(command: string, args?: Record<string, unknown>)
     return complete();
   }
   if (command === "message_page") {
+    if (args?.chat === "quiet@s.whatsapp.net") {
+      if (previewFixture.failure) throw new Error("Synthetic preview failure");
+      const result = { messages: [
+        { id: "image", sender: "200@s.whatsapp.net", sender_name: "Saved sender", from_me: false, text: "[image]", media_kind: "image", system_kind: null },
+        { id: "text", sender: "200@s.whatsapp.net", sender_name: "Saved sender", from_me: false, text: "Unread synthetic message", media_kind: null, system_kind: null },
+      ], has_more: false } as T;
+      if (previewFixture.deferNext) {
+        previewFixture.deferNext = false;
+        return new Promise<T>((resolve) => previewFixture.pending.push(() => resolve(result)));
+      }
+      return result;
+    }
     if (windowFixture.failure) throw new Error("Synthetic page failure");
     const compare = (a: MessageCursor, b: MessageCursor) => a.timestamp - b.timestamp || (a.sort_order ?? 0) - (b.sort_order ?? 0) || (a.id === b.id ? 0 : a.id < b.id ? -1 : 1);
     const anchor = args?.anchorId ? windowFixture.archive.find((m) => m.chat === args?.chat && m.id === args.anchorId) : undefined;

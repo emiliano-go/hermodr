@@ -57,6 +57,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn local_preview_preserves_unread_mentions_and_stored_state() {
+        let store = MessageStore::open(Path::new(":memory:")).unwrap();
+        for n in 0..8 {
+            store.insert_message(&StoredMessage {
+                header: MessageHeader { chat: "preview@s".into(), id: n.to_string(), timestamp: n,
+                    sender: "peer@s".into(), from_me: false },
+                local: LocalState { read: n == 0, mentioned: n == 7, ..Default::default() },
+                media: Media { kind: Some("image".into()), ..Default::default() },
+                ..Default::default()
+            }).unwrap();
+        }
+        store.set_marked_unread("preview@s", true).unwrap();
+        let before = store.chats().unwrap();
+        let stored = store.messages_for("preview@s", 20).unwrap();
+        let page = store.message_page("preview@s", 5, None, MessagePageDirection::Before).unwrap();
+        assert_eq!(page.messages.iter().map(|m| m.header.id.as_str()).collect::<Vec<_>>(), ["7", "6", "5", "4", "3"]);
+        assert_eq!(store.chats().unwrap(), before);
+        assert_eq!(store.messages_for("preview@s", 20).unwrap(), stored);
+        let conn = store.conn.lock().unwrap();
+        let mut plan = conn.prepare("EXPLAIN QUERY PLAN SELECT id FROM messages WHERE chat = ?1 ORDER BY timestamp DESC, sort_order DESC, id DESC LIMIT 5").unwrap();
+        let details = plan.query_map(["preview@s"], |row| row.get::<_, String>(3)).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
+        assert!(details.iter().any(|detail| detail.contains("idx_messages_chat_time")), "{details:?}");
+        assert!(!details.iter().any(|detail| detail.contains("TEMP B-TREE")), "{details:?}");
+    }
+
+    #[test]
     fn equal_timestamp_messages_keep_arrival_order_instead_of_id_order() {
         let store = MessageStore::open(Path::new(":memory:")).unwrap();
         for id in ["z", "a", "m"] {
