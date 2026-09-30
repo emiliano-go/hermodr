@@ -94,7 +94,7 @@ muted_until: number,
 marked_unread: boolean, };
 export type CleanupResult = { files: number, bytes: number, };
 export type ConnectionState = { started: boolean, connected: boolean, qr: string | null, };
-export type ContactIdentity = { saved_name: string | null, push_name: string | null, username: string | null, number: string | null, own: boolean, };
+export type ContactIdentity = { contact_saved: boolean | null, saved_name: string | null, legacy_name: string | null, push_name: string | null, username: string | null, number: string | null, own: boolean, };
 export type Contributions = { commands: Array<string>, transcription?: TranscriptionContribution | null, };
 export type DiskRetention = { max_age_hours: RetentionLimit, max_messages_per_chat: RetentionLimit, };
 export type Event = { id: string, name: string, description: string | null, start: number | null, end: number | null, location: string | null, link: string | null, canceled: boolean, responses: Array<EventResponse>, };

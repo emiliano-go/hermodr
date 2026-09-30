@@ -205,11 +205,6 @@ impl StoreWorker {
         self.run(move |store| store.set_saved_name(&jid, &name)).await
     }
 
-    pub(crate) async fn clear_saved_name(&self, jid: &str) -> Result<()> {
-        let jid = jid.to_owned();
-        self.run(move |store| store.clear_saved_name(&jid)).await
-    }
-
     pub(crate) async fn saved_name_count(&self) -> Result<usize> {
         self.run(move |store| store.saved_name_count()).await
     }

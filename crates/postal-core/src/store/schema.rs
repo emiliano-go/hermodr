@@ -374,6 +374,7 @@ pub(super) const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
     |conn| Ok(conn.execute_batch(super::secret_edits::SCHEMA)?),
     super::transcription::migrate,
     super::history_pins::migrate,
+    super::contact_identity::migrate_baseline,
 ];
 
 pub(super) fn migrate(conn: &Connection) -> Result<()> {

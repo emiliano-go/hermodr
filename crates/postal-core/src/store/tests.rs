@@ -565,12 +565,16 @@ fn empty_name_does_not_erase_a_known_name() {
 }
 
 #[test]
-fn push_names_replace_a_saved_number() {
+fn saved_names_keep_numeric_labels_until_contact_removed() {
     let s = store(DiskRetention::default());
-    s.set_saved_name("1@lid", "59899022028").unwrap();
-    s.set_name("1@lid", "Ana").unwrap();
+    s.set_contact_state("1@lid", Some("59899022028"), true, 10).unwrap();
+    s.set_push_name("1@lid", "Ana").unwrap();
+    assert_eq!(s.name_for("1@lid").unwrap().as_deref(), Some("59899022028"));
+    assert_eq!(s.contact_identity("1@lid").unwrap().push_name.as_deref(), Some("Ana"));
+    s.set_contact_state("1@lid", None, false, 20).unwrap();
     assert_eq!(s.name_for("1@lid").unwrap().as_deref(), Some("Ana"));
-    s.set_saved_name("2@lid", "Bea").unwrap();
+    assert!(!s.name_is_saved("1@lid").unwrap());
+    s.set_contact_state("2@lid", Some("Bea"), true, 10).unwrap();
     s.set_name("2@lid", "Other").unwrap();
     assert_eq!(s.name_for("2@lid").unwrap().as_deref(), Some("Bea"));
     // A masked group label never replaces a push name, and a push name replaces it.

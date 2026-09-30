@@ -61,13 +61,15 @@ export function isPlaceholder(name: string): boolean {
 export function displayName(name: string | null | undefined, jid: string, identity?: ContactIdentity): string {
   if (identity) {
     if (identity.own && identity.push_name) return identity.push_name;
-    if (identity.saved_name) return identity.saved_name;
+    if (identity.contact_saved !== false && identity.saved_name) return identity.saved_name;
+    if (identity.contact_saved == null && identity.legacy_name) return identity.legacy_name;
     if (identity.number) {
       const number = phoneLabel(identity.number) ?? `+${identity.number}`;
-      return identity.push_name ? `${number} · ~${identity.push_name}` : number;
+      return identity.contact_saved !== true && identity.push_name ? `${number} · ~${identity.push_name}` : number;
     }
     if (identity.username) return `@${identity.username.replace(/^@/, "")}`;
     if (identity.push_name) return identity.push_name;
+    if (identity.contact_saved != null) return jid.split("@")[0].split(":")[0];
   }
   if (name && !isPlaceholder(name)) return name;
   const user = jid.split("@")[0].split(":")[0];
@@ -89,9 +91,14 @@ if (argv?.[1]?.endsWith("phone.ts")) {
   assert(displayName(null, "138947158093828@lid") === "138947158093828", "LID untouched");
   assert(displayName("138947158093828", "138947158093828@lid") === "138947158093828", "numeric LID name never implies a phone number");
   assert(displayName(null, "59891954564:3@s.whatsapp.net") === `${flag("UY")} +598 91954564`, "device suffix");
-  const identity: ContactIdentity = { saved_name: null, push_name: "Push", username: "username", number: "59891954564", own: false };
+  const identity: ContactIdentity = { contact_saved: false, saved_name: null, legacy_name: null, push_name: "Push", username: "username", number: "59891954564", own: false };
   assert(displayName("stale", "77@lid", identity) === `${flag("UY")} +598 91954564 · ~Push`, "noncontact number and push name");
-  assert(displayName("Push", "77@lid", { ...identity, saved_name: "12345" }) === "12345", "saved provenance beats name heuristics");
+  assert(displayName("Push", "77@lid", { ...identity, contact_saved: true, saved_name: "12345" }) === "12345", "saved provenance beats name heuristics");
+  assert(displayName("stale", "77@lid", { ...identity, contact_saved: null, legacy_name: "Legacy" }) === "Legacy", "unknown baseline preserves legacy fallback");
+  assert(displayName("stale", "77@lid", { ...identity, saved_name: "Legacy", legacy_name: "Legacy" }).endsWith("· ~Push"), "confirmed removal ignores stale saved labels");
+  assert(displayName(null, "77@lid", { ...identity, contact_saved: true }) === `${flag("UY")} +598 91954564`, "saved contact without a name does not claim an unsaved push label");
+  assert(displayName("stale saved", "77:3@lid", { ...identity, number: null, username: null, push_name: null }) === "77", "confirmed absence cannot reuse a stale passed name");
+  assert(displayName("stale", "77@lid", { ...identity, contact_saved: null, legacy_name: "12345" }) === "12345", "unknown legacy numeric names stay unchanged");
   assert(displayName("Push", "77@lid", { ...identity, number: null }) === "@username", "username-only contact never formats a LID as a phone");
   assert(displayName(null, "77@lid", { ...identity, own: true }) === "Push", "own push name");
   console.log("phone.ts ok");

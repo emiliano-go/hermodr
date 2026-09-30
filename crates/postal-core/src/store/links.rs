@@ -42,7 +42,8 @@ pub(super) fn refresh(conn: &Connection, chat: &str, id: &str) -> Result<()> {
 }
 
 pub(super) fn migrate(conn: &Connection) -> Result<()> {
-    conn.execute_batch("ALTER TABLE messages ADD COLUMN link_urls TEXT NOT NULL DEFAULT '[]';")?;
+    let exists: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('messages') WHERE name = 'link_urls')", [], |row| row.get(0))?;
+    if !exists { conn.execute_batch("ALTER TABLE messages ADD COLUMN link_urls TEXT NOT NULL DEFAULT '[]';")?; }
     let mut cursor = 0;
     loop {
         let rows = conn.prepare("SELECT rowid, chat, id FROM messages WHERE rowid > ?1

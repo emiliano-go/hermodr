@@ -10,10 +10,10 @@ pub(crate) struct MessagePinUpdate {
 }
 
 pub(super) fn migrate(conn: &Connection) -> Result<()> {
-    conn.execute_batch("CREATE TABLE message_pin_sync (
+    conn.execute_batch("CREATE TABLE IF NOT EXISTS message_pin_sync (
         chat TEXT PRIMARY KEY, target TEXT NOT NULL, pinned INTEGER NOT NULL,
         timestamp INTEGER NOT NULL, expires_at INTEGER);
-        INSERT INTO message_pin_sync SELECT chat, id, 1, 0, NULL FROM message_pins;")?;
+        INSERT OR IGNORE INTO message_pin_sync SELECT chat, id, 1, 0, NULL FROM message_pins;")?;
     Ok(())
 }
 

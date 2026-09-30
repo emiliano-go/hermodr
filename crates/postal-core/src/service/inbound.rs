@@ -179,16 +179,16 @@ impl Inbound {
             .as_deref()
             .filter(|name| !name.trim().is_empty())
             .or(update.action.first_name.as_deref());
-        if let Some(name) = name.filter(|n| !n.trim().is_empty()) {
-            changed |= self.store.set_saved_name(&update.jid.to_string(), name).await.observed().is_some();
-        }
+        changed |= self.store.set_contact_state(&update.jid.to_string(), name, true, update.timestamp.timestamp_millis())
+            .await.observed().unwrap_or(false);
         if changed {
             let _ = self.events.send(ServiceEvent::NamesUpdated { count: 1 });
         }
     }
 
     async fn on_contact_removed(&self, removed: &wa_events::ContactRemoved) {
-        if self.store.clear_saved_name(&removed.jid.to_string()).await.observed().is_some() {
+        if self.store.set_contact_state(&removed.jid.to_string(), None, false, removed.timestamp.timestamp_millis())
+            .await.observed().unwrap_or(false) {
             let _ = self.events.send(ServiceEvent::NamesUpdated { count: 1 });
         }
     }

@@ -20,7 +20,7 @@ test("stored identity overrides stale labels in all name paths and ignores old-a
     const { chats } = await load("./state/chats.svelte.ts");
     const { setHandler } = await load("../../tests/scheduled/ipc.ts");
     const { plain } = await load("./utils/format.ts");
-    const saved = { saved_name: "Saved", push_name: "Push", username: "username", number: "59891954564", own: false };
+    const saved = { contact_saved: true, saved_name: "Saved", legacy_name: null, push_name: "Push", username: "username", number: "59891954564", own: false };
     let current: ContactIdentity = saved;
     let reached!: () => void;
     let delay: Promise<void> | null = null;
@@ -46,12 +46,15 @@ test("stored identity overrides stale labels in all name paths and ignores old-a
     assert.equal(members.mentionTarget("77").name, "Saved");
     assert.equal(chats.chatLabel({ chat: "77@lid", display_name: "stale" }), "Saved");
 
-    current = { ...saved, saved_name: null };
+    current = { ...saved, contact_saved: null, saved_name: null, legacy_name: "Legacy" };
+    members.forgetUnresolvedNames(); await settle("77@lid");
+    assert.equal(members.displayName("stale", "77@lid"), "Legacy");
+    current = { ...saved, contact_saved: false, saved_name: null };
     members.forgetUnresolvedNames(); await settle("77@lid");
     const unsaved = members.displayName("Saved stale", "77@lid");
     assert.ok(unsaved.includes("+598 91954564")); assert.ok(unsaved.endsWith("· ~Push"));
     assert.equal(members.senderLabel({ sender: "77@lid", sender_name: "Saved stale" }), unsaved);
-    current = { ...saved, saved_name: null, number: null, username: "only_username" };
+    current = { ...saved, contact_saved: false, saved_name: null, number: null, username: "only_username" };
     members.forgetUnresolvedNames(); await settle("88000000000000@lid");
     assert.equal(members.displayName("Push", "88000000000000@lid"), "@only_username");
     assert.equal(members.mentionTarget("88000000000000").name, "only_username");

@@ -52,7 +52,7 @@ pub(super) fn create_indexes(conn: &Connection) -> Result<()> {
         ("links_all", "", "link_urls != '[]'"), ("links_chat", "chat,", "link_urls != '[]'"),
     ] {
         let order = if name.contains("chat") { "timestamp DESC, sort_order DESC, id DESC" } else { "timestamp DESC, sort_order DESC, chat DESC, id DESC" };
-        conn.execute_batch(&format!("CREATE INDEX idx_gallery_{name} ON messages ({prefix}{order}) WHERE {visible} AND {predicate};"))?;
+        conn.execute_batch(&format!("CREATE INDEX IF NOT EXISTS idx_gallery_{name} ON messages ({prefix}{order}) WHERE {visible} AND {predicate};"))?;
     }
     Ok(())
 }

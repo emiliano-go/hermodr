@@ -19,8 +19,8 @@ impl PinState {
 
 pub(super) fn migrate(conn: &Connection) -> Result<()> {
     conn.execute_batch(
-        "CREATE TABLE pin_state (jid TEXT PRIMARY KEY, pinned INTEGER NOT NULL, timestamp INTEGER NOT NULL, sequence INTEGER NOT NULL);
-         INSERT INTO pin_state SELECT jid, 1, 0, 0 FROM pins;
+        "CREATE TABLE IF NOT EXISTS pin_state (jid TEXT PRIMARY KEY, pinned INTEGER NOT NULL, timestamp INTEGER NOT NULL, sequence INTEGER NOT NULL);
+         INSERT OR IGNORE INTO pin_state SELECT jid, 1, 0, 0 FROM pins;
          INSERT OR IGNORE INTO chats (jid, last_message_at) SELECT jid, 0 FROM pins;",
     )?;
     Ok(())
