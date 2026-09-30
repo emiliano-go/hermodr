@@ -2,14 +2,17 @@
   import ChatSidebar from "$lib/chat/ChatSidebar.svelte";
   import type { ComponentProps } from "svelte";
   import type { ChatSummary } from "$lib/utils/models";
+  import { fixture } from "./ipc";
   let selected = $state<string | null>(null);
-  const quiet: ChatSummary = {
+  let account = $state("synthetic-a");
+  const quiet = $state<ChatSummary>({
     chat: "quiet@s.whatsapp.net", display_name: "Quiet contact",
     last_message_at: 1700000000, last_text: "", last_from_me: false,
     last_sender_name: null, last_sender: "", last_media_kind: null,
     message_count: 0, unread_count: 0, mention_count: 0,
     pinned: true, archived: false, muted_until: 0, marked_unread: false,
-  };
+  });
+  let action = $state("");
   const noop = () => {};
   const props: ComponentProps<typeof ChatSidebar> = {
     searchQuery: "", searchResults: [], visibleChats: [quiet], selectedChat: null,
@@ -21,13 +24,24 @@
     accountAvatars: {}, me: null, meVersion: 0, visibility: "offline", accountMenu: false,
     onmenutoggle: noop, onswitchaccount: noop, onaddaccount: noop, onsettings: noop,
     onpings: noop, onstarred: noop, onsearch: noop, onopenresult: noop,
-    onopenchat: (chat) => { selected = chat; }, ontogglepin: noop, onclearchat: noop,
-    ondeletechat: noop, onchataction: noop, onmarkread: noop, archivedChats: 0, onresize: noop,
+    onopenchat: (chat) => { selected = chat; }, ontogglepin: () => { quiet.pinned = !quiet.pinned; }, onclearchat: noop,
+    ondeletechat: noop, onchataction: (command, args) => {
+      action = JSON.stringify({ command, args });
+      if (command === "set_archived") quiet.archived = Boolean(args.archived);
+      if (command === "set_muted") quiet.muted_until = Number(args.until);
+      if (command === "set_marked_unread") quiet.marked_unread = Boolean(args.unread);
+      if (command === "set_chat_auto_download") fixture.chatAutoDownload = Boolean(args.enabled);
+    }, onmarkread: noop, archivedChats: 0, onresize: noop,
   };
 </script>
 
 <p role="status">Selected: {selected ?? "none"}</p>
-<div class="sidebar"><ChatSidebar {...props} selectedChat={selected} /></div>
+<button onclick={() => { fixture.chatSettingsFailure = !fixture.chatSettingsFailure; }}>Toggle chat settings failure</button>
+<button onclick={() => { fixture.chatSettingsDelay = true; }}>Delay next chat settings read</button>
+<button onclick={() => { fixture.chatSettingsPending.shift()?.(); }}>Release chat settings read</button>
+<button onclick={() => { account = account === "synthetic-a" ? "synthetic-b" : "synthetic-a"; }}>Switch synthetic account</button>
+<output aria-label="Chat action">{action}</output>
+<div class="sidebar"><ChatSidebar {...props} activeAccount={account} selectedChat={selected} /></div>
 
 <style>
   .sidebar { height: 500px; display: flex; }

@@ -13,6 +13,8 @@
     SearchResult,
   } from "$lib/utils/models";
   import { phoneLabel } from "$lib/utils/phone";
+  import { tick } from "svelte";
+  import { invoke } from "$lib/utils/ipc";
 
   const STATUS_TEXT: Record<string, string> = {
     offline: "Connecting…",
@@ -63,6 +65,7 @@
     archivedChats,
     onresize,
     freezeOnHover = true,
+    globalAutoDownload = true,
   }: {
     searchQuery: string;
     searchResults: SearchResult[];
@@ -106,6 +109,7 @@
     onresize: (event: MouseEvent) => void;
     /** Pause list reordering while the pointer is over the list. */
     freezeOnHover?: boolean;
+    globalAutoDownload?: boolean;
   } = $props();
 
   const MUTES: [string, number][] = [
@@ -120,16 +124,52 @@
 
   /** Right-click menu on a chat row. */
   let chatMenu = $state<{ x: number; y: number; chat: ChatSummary } | null>(null);
+  let menuAutoDownload = $state<boolean | null>(null);
+  let menuLoaded = $state(false);
+  let menuError = $state<string | null>(null);
+  let menuRequest = 0;
+  let menuOwner: HTMLElement | null = null;
 
-  function openChatMenu(event: MouseEvent, chat: ChatSummary) {
+  async function openChatMenu(event: MouseEvent | KeyboardEvent, chat: ChatSummary) {
     event.preventDefault();
     event.stopPropagation();
-    chatMenu = { x: event.clientX, y: event.clientY, chat };
+    menuOwner = event.currentTarget as HTMLElement;
+    const box = menuOwner.getBoundingClientRect();
+    chatMenu = { x: "clientX" in event ? event.clientX : box.left, y: "clientY" in event ? event.clientY : box.bottom, chat };
+    menuLoaded = false;
+    menuError = null;
+    const request = ++menuRequest;
+    const account = activeAccount;
+    void layoutMenu(event.type === "keydown");
+    try {
+      const settings = await invoke<{ auto_download: boolean | null }>("chat_settings", { chat: chat.chat });
+      if (request !== menuRequest || account !== activeAccount) return;
+      menuAutoDownload = settings.auto_download;
+      menuLoaded = true;
+    } catch (e) {
+      if (request !== menuRequest || account !== activeAccount) return;
+      menuError = String(e);
+    }
+    void layoutMenu();
   }
 
-  function closeChatMenu() {
-    chatMenu = null;
+  async function layoutMenu(focus = false) {
+    await tick();
+    const menu = document.querySelector<HTMLElement>(".chat-menu");
+    if (!menu || !chatMenu) return;
+    const box = menu.getBoundingClientRect();
+    menu.style.left = `${Math.max(8, Math.min(chatMenu.x, window.innerWidth - box.width - 8))}px`;
+    menu.style.top = `${Math.max(8, Math.min(chatMenu.y, window.innerHeight - box.height - 8))}px`;
+    if (focus) menu.querySelector<HTMLElement>("[role=menuitem]")?.focus();
   }
+
+  function closeChatMenu(restoreFocus = true) {
+    menuRequest++;
+    chatMenu = null;
+    if (restoreFocus) menuOwner?.focus();
+  }
+
+  $effect(() => { void activeAccount; closeChatMenu(false); });
 
   // Hover freeze: while the pointer is over the list, new arrivals update each
   // row in place but keep the captured order, so the row under the cursor
@@ -266,7 +306,9 @@
           }}
           oncontextmenu={(e) => openChatMenu(e, chat)}
           onkeydown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
+            if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+              void openChatMenu(e, chat);
+            } else if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
               releaseFreeze();
               onopenchat(chat.chat);
@@ -410,6 +452,7 @@
     class="chat-menu"
     role="menu"
     style="left: {Math.min(chatMenu.x, window.innerWidth - 220)}px; top: {Math.min(chatMenu.y, window.innerHeight - 160)}px">
+    {#if menuError}<p role="alert">Could not load chat settings: {menuError}</p>{/if}
     <Button
       variant="menu"
       icon="pin"
@@ -467,6 +510,16 @@
       }}>{menuChat.unread_count > 0 || menuChat.marked_unread ? "Mark as read" : "Mark as unread"}</Button>
     <Button
       variant="menu"
+      icon="download"
+      iconSize={15}
+      role="menuitem"
+      disabled={!menuLoaded}
+      onclick={() => {
+        onchataction("set_chat_auto_download", { chat: menuChat.chat, enabled: !(menuAutoDownload ?? globalAutoDownload) });
+        closeChatMenu();
+      }}>{menuLoaded ? `${menuAutoDownload ?? globalAutoDownload ? "Disable" : "Enable"} media auto-download` : menuError ? "Media settings unavailable" : "Loading media settings…"}</Button>
+    <Button
+      variant="menu"
       icon="edit"
       iconSize={15}
       role="menuitem"
@@ -505,13 +558,13 @@
 
 <svelte:window
   onclick={(e) => {
-    if (chatMenu && !(e.target as Element).closest?.(".chat-menu")) closeChatMenu();
+    if (chatMenu && !(e.target as Element).closest?.(".chat-menu")) closeChatMenu(false);
   }}
   oncontextmenu={(e) => {
-    if (chatMenu && !(e.target as Element).closest?.(".chat-menu")) closeChatMenu();
+    if (chatMenu && !(e.target as Element).closest?.(".chat-menu")) closeChatMenu(false);
   }}
   onkeydown={(e) => {
-    if (e.key === "Escape") closeChatMenu();
+    if (e.key === "Escape" && chatMenu) closeChatMenu();
   }} />
 
 <style>
@@ -947,6 +1000,9 @@
     font-style: italic;
   }
   .chat-menu {
+    max-height: calc(100vh - 16px);
+    max-width: calc(100vw - 16px);
+    overflow-y: auto;
     position: fixed;
     z-index: 100;
     min-width: 200px;

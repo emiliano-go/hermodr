@@ -978,6 +978,7 @@
       onclearchat={(chat) => (ui.chatConfirm = { kind: "clear", chat: chat.chat })}
       ondeletechat={(chat) => (ui.chatConfirm = { kind: "delete", chat: chat.chat })}
       onchataction={(command, args) => chats.chatAction(command, args)}
+      globalAutoDownload={session.settings.auto_download_media}
       onmarkread={(chat) => {
         // Reading the whole chat from the list clears the divider with it.
         if (chat.chat === chats.selectedChat) {

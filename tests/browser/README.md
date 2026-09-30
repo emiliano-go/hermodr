@@ -6,6 +6,18 @@ This harness imports production components but replaces IPC with synthetic
 responses. Unknown commands fail; no account, database or native API is opened.
 The harness is separate from the production SvelteKit routes.
 
+Timestamp layout checks: Check timestamp layouts must pass for Segoe UI, Georgia
+and monospace. The 288 cases cover one/two-character text and photo captions,
+12/24-hour and Arabic times, stars, edits, incoming/outgoing ticks and 100/200%
+UI scale. Geometry rejects overlaps and an extra empty time line.
+
+Chat menu checks: expand Retained chat metadata, focus Quiet contact and press
+Shift+F10. Tab reaches menu actions; Escape restores row focus. Media auto-download
+uses the loaded override or global default. Click it and reopen to see the new
+state. Toggle chat settings failure: an alert appears and the media toggle stays
+disabled. Delay a settings read, open the menu, switch the synthetic account and
+release the read: the old menu must stay closed. All actions stay in fixture state.
+
 Flag diagnostics checks:
 
 1. Expand Server feature flags: true, false and Not received have separate values.

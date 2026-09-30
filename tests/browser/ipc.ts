@@ -13,6 +13,8 @@ export const uploadFixture = { calls: [] as string[], maxChunk: 0, size: 0, writ
 export const archiveFixture = { failure: false, cancelled: false, deferNext: false, pending: [] as (() => void)[],
   calls: [] as string[], accounts: [{ id: "existing", label: "Existing account" }] as { id: string; label: string }[] };
 export const fixture = { updated: false, failure: false, calls: 0, savedRetention: null as unknown,
+  chatSettingsFailure: false, chatAutoDownload: null as boolean | null,
+  chatSettingsDelay: false, chatSettingsPending: [] as (() => void)[],
   storageFailure: false, storageCalls: 0, cacheBytes: 512,
   media: [
     { chat: "a@s", id: "photo", kind: "image", filename: "photo.jpg", timestamp: 200, quoted: false, bytes: 2048, available: true },
@@ -142,10 +144,17 @@ export async function invoke<T>(command: string, args?: Record<string, unknown>)
     fixture.media = fixture.media.filter((file) => !removed.includes(file));
     return { files: removed.length, bytes: removed.reduce((sum, file) => sum + file.bytes, 0) } as T;
   }
-  if (command === "chat_settings") return {
-    auto_download: null,
+  if (command === "chat_settings") {
+    if (fixture.chatSettingsDelay) {
+      fixture.chatSettingsDelay = false;
+      await new Promise<void>((resolve) => fixture.chatSettingsPending.push(resolve));
+    }
+    if (fixture.chatSettingsFailure) throw new Error("Synthetic chat settings failure");
+    return {
+    auto_download: fixture.chatAutoDownload,
     retention: { max_age_hours: { kind: "inherit" }, max_messages: { kind: "limited", value: 200 }, on_demand: true },
-  } as T;
+    } as T;
+  }
   if (command === "set_chat_retention") {
     fixture.savedRetention = JSON.parse(JSON.stringify(args?.retention));
     return undefined as T;

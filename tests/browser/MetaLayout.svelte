@@ -4,11 +4,12 @@
   import { messages, bubbleView, bubbleApi } from "$lib/utils/theme-preview";
 
   const cases = ["09:32", "12:34 PM", "١٢:٣٤ مساءً"].flatMap((time) =>
-    ["ok", "+1"].flatMap((text) => [false, true].flatMap((own) =>
+    ["k", "ok", "+1"].flatMap((text) => [false, true].flatMap((own) =>
       [false, true].flatMap((edited) => [false, true].flatMap((starred) =>
         [1, 2].flatMap((zoom) => [false, true].map((caption) => ({ time, text, own, edited, starred, zoom, caption }))))))));
   let root: HTMLDivElement;
   let result = $state("Not checked");
+  let fontFamily = $state("Segoe UI");
 
   async function check() {
     await tick();
@@ -37,15 +38,16 @@
   }
 </script>
 
-<details open>
+<details>
   <summary>Timestamp layout regression</summary>
+  <label>Fixture font <select bind:value={fontFamily}><option>Segoe UI</option><option>Georgia</option><option>monospace</option></select></label>
   <button onclick={check}>Check timestamp layouts</button>
   <pre aria-label="Timestamp layout result">{result}</pre>
   <div bind:this={root}>
     {#each cases as c, index (index)}
       {@const message = { ...messages[0], id: String(index), text: c.text, from_me: c.own, status: c.own ? "read" : null, media_kind: c.caption ? "image" : null, media_thumb: c.caption ? 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="160" height="60"><rect width="160" height="60" fill="gray"/></svg>' : null }}
       {@const vm = { ...bubbleView(message, 1, "fixture"), isEdited: c.edited, isStarred: c.starred, visual: c.caption, caption: c.caption ? c.text : "" }}
-      <div class="case" data-case={`${c.text} ${c.time} own=${c.own} edited=${c.edited} starred=${c.starred} scale=${c.zoom} caption=${c.caption}`} data-zoom={c.zoom} style:zoom={c.zoom}>
+      <div class="case" data-case={`${c.text} ${c.time} own=${c.own} edited=${c.edited} starred=${c.starred} scale=${c.zoom} caption=${c.caption}`} data-zoom={c.zoom} style:zoom={c.zoom} style:font-family={fontFamily}>
         <MessageBubble {message} {vm} api={{ ...bubbleApi, formatTime: () => c.time }} />
       </div>
     {/each}
