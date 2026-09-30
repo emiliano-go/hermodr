@@ -124,6 +124,7 @@ impl Inbound {
             Event::IdentityChange(change) => self.on_identity_change(change).await,
             Event::DeviceListUpdate(update) => self.on_device_change(update).await,
             Event::PictureUpdate(update) => self.on_picture_update(update).await,
+            Event::Notification(node) => self.on_group_mode_notice(node.get()).await,
             Event::UndecryptableMessage(stub)
                 if stub.unavailable_type
                     == whatsapp_rust::wacore::types::events::UnavailableType::ViewOnce =>

@@ -41,6 +41,12 @@ test("join requests and group permission modes render without guessing missing s
   for (const kind of ["GROUP_MEMBER_ADD_MODE", "GROUP_MEMBER_LINK_MODE", "GROUP_MEMBER_SHARE_GROUP_HISTORY_MODE", "GROUP_CHANGE_RECENT_HISTORY_SHARING"]) {
     assert.ok(noticeText(kind, [], name));
   }
+  assert.equal(noticeText("GROUP_MEMBER_LINK_MODE", ["ADMIN_LINK"], name, "1@lid"), "Alice changed invite-link sharing. Only admins can share the group invite link.");
+  assert.equal(noticeText("GROUP_MEMBER_LINK_MODE", ["all_member_link"], name), "All members can share the group invite link.");
+  assert.equal(noticeText("GROUP_MEMBER_SHARE_GROUP_HISTORY_MODE", ["admin_share"], name), "Only admins can share history with new members.");
+  assert.equal(noticeText("GROUP_MEMBER_SHARE_GROUP_HISTORY_MODE", ["ALL_MEMBER_SHARE"], name), "All members can share history with new members.");
+  assert.equal(noticeText("GROUP_CHANGE_RECENT_HISTORY_SHARING", ["on"], name), "Recent history sharing is enabled.");
+  assert.equal(noticeText("GROUP_CHANGE_RECENT_HISTORY_SHARING", ["off"], name), "Recent history sharing is disabled.");
 });
 
 test("disappearing notices name duration and retain failure and keep states", () => {

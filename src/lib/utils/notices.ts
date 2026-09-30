@@ -73,11 +73,11 @@ export function noticeText(kind: string, params: string[], name: (jid: string) =
     case "GROUP_MEMBER_ADD_MODE":
       return params[0] === "admin_add" ? "Only admins can add members." : params[0] === "all_member_add" ? "All members can add members." : "Who can add group members changed.";
     case "GROUP_MEMBER_LINK_MODE":
-      return "Who can share the group invite link changed.";
+      return `${author ? `${author} changed invite-link sharing. ` : ""}${params[0]?.toLowerCase() === "admin_link" ? "Only admins can share the group invite link." : params[0]?.toLowerCase() === "all_member_link" ? "All members can share the group invite link." : "Who can share the group invite link changed."}`;
     case "GROUP_MEMBER_SHARE_GROUP_HISTORY_MODE":
-      return "Who can share history with new members changed.";
+      return `${author ? `${author} changed history-sharing permissions. ` : ""}${params[0]?.toLowerCase() === "admin_share" ? "Only admins can share history with new members." : params[0]?.toLowerCase() === "all_member_share" ? "All members can share history with new members." : "Who can share history with new members changed."}`;
     case "GROUP_CHANGE_RECENT_HISTORY_SHARING":
-      return "Recent history sharing settings changed.";
+      return `${author ? `${author} changed recent-history sharing. ` : ""}${params[0] === "on" || params[0] === "true" ? "Recent history sharing is enabled." : params[0] === "off" || params[0] === "false" ? "Recent history sharing is disabled." : "Recent history sharing settings changed."}`;
     case "CHANGE_EPHEMERAL_SETTING":
     case "DISAPPEARING_MODE": {
       const seconds = Number(params[0]);

@@ -36,6 +36,41 @@ pub(super) fn system_row(chat: &str, id: String, timestamp: i64, kind: String, p
 }
 
 impl Inbound {
+    pub(super) async fn on_group_mode_notice(&self, node: &whatsapp_rust::wacore_binary::NodeRef<'_>) {
+        use whatsapp_rust::wacore::stanza::groups::GroupNotification;
+        use whatsapp_rust::wacore_binary::NodeContentRef;
+        // ponytail: raw fallback until upstream exposes these mode payloads in typed actions.
+        if node.tag != "notification" || node.attrs().optional_string("type").as_deref() != Some("w:gp2") { return; }
+        let Some(children) = node.children() else { return };
+        if !children.iter().any(|child| matches!(child.tag.as_ref(), "member_link_mode" | "member_share_group_history_mode" | "group_history" | "no_group_history")) { return; }
+        let Some(notification) = GroupNotification::try_from_node_ref(node) else { return };
+        if !notification.group_jid.is_group() { return; }
+        let Ok(at) = i64::try_from(notification.timestamp) else { return };
+        let chat = notification.group_jid.to_non_ad().to_string();
+        let sender = notification.participant.as_ref().map(|jid| jid.to_non_ad().to_string()).unwrap_or_default();
+        if let Some(participant) = notification.participant.as_ref() {
+            remember_lid_pn(&self.store, participant, notification.participant_pn.as_ref()).await;
+        }
+        for (index, child) in children.iter().enumerate() {
+            let (kind, toggle) = match child.tag.as_ref() {
+                "member_link_mode" => ("GROUP_MEMBER_LINK_MODE", None),
+                "member_share_group_history_mode" => ("GROUP_MEMBER_SHARE_GROUP_HISTORY_MODE", None),
+                "group_history" => ("GROUP_CHANGE_RECENT_HISTORY_SHARING", Some("on")),
+                "no_group_history" => ("GROUP_CHANGE_RECENT_HISTORY_SHARING", Some("off")),
+                _ => continue,
+            };
+            let value = match child.content.as_ref() {
+                Some(NodeContentRef::String(value)) if value.len() <= 64 => Some(value.as_ref()),
+                Some(NodeContentRef::Bytes(value)) if value.len() <= 64 => std::str::from_utf8(value.as_ref()).ok(),
+                _ => None,
+            };
+            let params = toggle.or(value).map(str::to_owned).into_iter().collect::<Vec<_>>();
+            let identity = notification.notification_id.as_ref().filter(|id| !id.is_empty()).cloned()
+                .unwrap_or_else(|| format!("live-{at}-{}-{sender}-{}", child.tag, params.join(",")));
+            self.store_notice(&chat, format!("group-mode-{identity}-{index}"), at, kind, params, sender.clone()).await;
+        }
+    }
+
     pub(super) fn check_community_owner(&self, update: &GroupUpdate, previous: Option<&GroupInfo>) {
         let Some(old_owner) = departed_owner(&update.action, previous) else { return };
         let Some(client) = self.client_for_events.get().cloned() else { return };

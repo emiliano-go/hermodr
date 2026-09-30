@@ -312,6 +312,7 @@ const WATCHED_EVENTS: &[EventKind] = &[
     EventKind::DeviceListUpdate,
     EventKind::Presence,
     EventKind::GroupUpdate,
+    EventKind::Notification,
     EventKind::MissedCall,
     EventKind::FavoriteStickerUpdate,
     EventKind::RemoveRecentStickerUpdate,

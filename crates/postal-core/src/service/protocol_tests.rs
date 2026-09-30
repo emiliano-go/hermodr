@@ -251,6 +251,74 @@ async fn private_disappearing_settings_become_read_notices_and_malformed_changes
 }
 
 #[tokio::test]
+async fn raw_group_mode_notices_preserve_values_actors_and_replay_identity() {
+    use whatsapp_rust::wacore_binary::{builder::NodeBuilder, OwnedNodeRef};
+    use whatsapp_rust::wacore::stanza::groups::GroupNotificationAction as Action;
+    let (inbound, _) = inbound().await;
+    let node = NodeBuilder::new("notification").attr("type", "w:gp2").attr("from", "1@g.us")
+        .attr("id", "modes").attr("t", "200").attr("participant", "100@lid").attr("participant_pn", "200@s.whatsapp.net")
+        .children(vec![NodeBuilder::new("subject").attr("subject", "Topic").build(),
+            NodeBuilder::new("member_link_mode").string_content("admin_link").build(),
+            NodeBuilder::new("member_share_group_history_mode").string_content("all_member_share").build(),
+            NodeBuilder::new("group_history").build()]).build();
+    let encoded = whatsapp_rust::wacore_binary::marshal::marshal(&node).unwrap();
+    let event = Event::Notification(Arc::new(OwnedNodeRef::new(encoded[1..].to_vec()).unwrap()));
+    inbound.handle(&event).await;
+    inbound.handle(&event).await;
+    let rows = inbound.store.messages_for("1@g.us", 20).await.unwrap();
+    assert_eq!(rows.len(), 3);
+    assert!(rows.iter().all(|message| message.header.sender == "100@lid" && message.local.read));
+    for (index, kind, value) in [(1, "GROUP_MEMBER_LINK_MODE", "admin_link"),
+        (2, "GROUP_MEMBER_SHARE_GROUP_HISTORY_MODE", "all_member_share"), (3, "GROUP_CHANGE_RECENT_HISTORY_SHARING", "on")] {
+        let row = inbound.store.message("1@g.us", &format!("group-mode-modes-{index}")).await.unwrap();
+        assert_eq!(row.system.kind.as_deref(), Some(kind));
+        assert_eq!(row.system.params, [value]);
+    }
+    assert_eq!(resolve_chat(None, &inbound.store, &"100@lid".parse().unwrap()).await, "200@s.whatsapp.net");
+    let update = whatsapp_rust::wacore::types::events::GroupUpdate::builder()
+        .group_jid("1@g.us".parse().unwrap()).notification_id("modes".into())
+        .timestamp((std::time::UNIX_EPOCH + Duration::from_secs(200)).into()).is_lid_addressing_mode(true)
+        .action(Box::new(Action::Subject { subject: "Topic".into(), subject_owner: None, subject_owner_pn: None,
+            subject_owner_username: None, subject_time: None })).build();
+    inbound.handle(&Event::GroupUpdate(update)).await;
+    assert_eq!(inbound.store.count().await.unwrap(), 4, "raw mode IDs cannot collide with typed notice IDs");
+    let history = wa::HistorySync {
+        sync_type: wa::history_sync::HistorySyncType::RECENT,
+        conversations: vec![wa::Conversation { id: "1@g.us".into(), messages: vec![wa::HistorySyncMsg {
+            message: MessageField::some(wa::WebMessageInfo {
+                key: MessageField::some(wa::MessageKey { remote_jid: Some("1@g.us".into()), id: Some("history-mode".into()), ..Default::default() }),
+                message_timestamp: Some(200), message_stub_type: Some(wa::web_message_info::StubType::GROUP_MEMBER_LINK_MODE),
+                message_stub_parameters: vec!["admin_link".into()], ..Default::default()
+            }), ..Default::default()
+        }], ..Default::default() }], ..Default::default()
+    };
+    let raw = history.encode_to_vec();
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+    encoder.write_all(&raw).unwrap();
+    inbound.on_history_sync(&LazyHistorySync::new(encoder.finish().unwrap().into(), raw.len(), history.sync_type as i32, None, None)).await;
+    assert_eq!(inbound.store.count().await.unwrap(), 4, "history replay does not duplicate live mode notices");
+}
+
+#[tokio::test]
+async fn raw_group_mode_notices_ignore_unrelated_nodes_and_keep_missing_values_unknown() {
+    use whatsapp_rust::wacore_binary::builder::NodeBuilder;
+    let (inbound, _) = inbound().await;
+    let node = |kind: &str, from: &str, id: &str, children| NodeBuilder::new("notification")
+        .attr("type", kind).attr("from", from).attr("id", id).attr("t", "200").children(children).build();
+    for unsupported in [
+        node("mex", "1@g.us", "wrong-type", vec![NodeBuilder::new("member_link_mode").build()]),
+        node("w:gp2", "200@s.whatsapp.net", "private", vec![NodeBuilder::new("member_link_mode").build()]),
+        node("w:gp2", "1@g.us", "typed", vec![NodeBuilder::new("member_add_mode").string_content("admin_add").build()]),
+    ] { inbound.on_group_mode_notice(&unsupported.as_node_ref()).await; }
+    assert_eq!(inbound.store.count().await.unwrap(), 0);
+    let incomplete = node("w:gp2", "1@g.us", "incomplete", vec![NodeBuilder::new("member_link_mode").build(), NodeBuilder::new("no_group_history").build()]);
+    inbound.on_group_mode_notice(&incomplete.as_node_ref()).await;
+    let row = inbound.store.message("1@g.us", "group-mode-incomplete-0").await.unwrap();
+    assert!(row.system.params.is_empty());
+    assert_eq!(inbound.store.message("1@g.us", "group-mode-incomplete-1").await.unwrap().system.params, ["off"]);
+}
+
+#[tokio::test]
 async fn community_owner_departures_require_confirmed_new_identity_and_replay_once() {
     use whatsapp_rust::wacore::{stanza::groups::{GroupNotificationAction as A, GroupParticipantInfo}, types::wire_enums::GroupParticipantType};
     let (inbound, _) = inbound().await;
