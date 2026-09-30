@@ -628,6 +628,25 @@ fn quiet_chats_keep_metadata_without_expired_message_content() {
 }
 
 #[test]
+fn unpinned_pin_tombstones_do_not_freeze_the_chat_order() {
+    let s = MessageStore::open(Path::new(":memory:")).unwrap();
+    s.insert_message(&msg("old@s", "1", 100, "old")).unwrap();
+    s.insert_message(&msg("new@s", "1", 1, "new")).unwrap();
+    // The account's pin state keeps a row for every synced chat, pinned or not,
+    // with a millisecond timestamp. An unpinned tombstone must not outrank a
+    // newer message: doing so pins the whole list to the old account order.
+    s.replace_pin_state(&[pins::PinState {
+        chat: "old@s".into(),
+        pinned: false,
+        timestamp: 1_790_000_000_000,
+        sequence: 5,
+    }])
+    .unwrap();
+    let order: Vec<_> = s.chats().unwrap().iter().map(|chat| chat.chat.clone()).collect();
+    assert_eq!(order, ["new@s", "old@s"]);
+}
+
+#[test]
 fn unread_counts_only_incoming_unread() {
     let s = store(DiskRetention::unlimited());
     let mut incoming = msg("a@s", "1", 0, "hi");

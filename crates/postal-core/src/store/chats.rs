@@ -201,7 +201,10 @@ impl MessageStore {
              LEFT JOIN pins p ON p.jid = c.jid
              LEFT JOIN chat_state cs ON cs.jid = c.jid
              WHERE c.jid NOT IN (SELECT jid FROM hidden_chats)
-             ORDER BY pinned DESC, (SELECT timestamp FROM pin_state WHERE jid=c.jid) DESC, COALESCE(g.last_message_at, c.last_message_at) DESC, m.sort_order DESC, c.jid",
+             -- The pin key applies only to pinned chats: the account's pin state
+             -- also keeps unpinned tombstones with millisecond timestamps, and
+             -- letting those outrank recency freezes the whole list.
+             ORDER BY pinned DESC, (SELECT timestamp FROM pin_state WHERE jid=c.jid AND pinned = 1) DESC, COALESCE(g.last_message_at, c.last_message_at) DESC, m.sort_order DESC, c.jid",
         )?;
         let summaries = stmt
             .query_map([], |row| {
