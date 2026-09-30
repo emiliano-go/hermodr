@@ -9,6 +9,7 @@ pub(crate) async fn chats(state: State<'_, AppState>) -> Result<Vec<ChatSummary>
 }
 
 #[derive(serde::Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub(crate) struct ChatSettings {
     /// The chat's auto download override, `None` when it follows the global one.
     auto_download: Option<bool>,

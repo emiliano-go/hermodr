@@ -3,7 +3,7 @@ import type { Account, BubbleApi, BubbleVm, ChatSummary, StoredMessage } from ".
 import type { MenuItem } from "../messages/MessageMenuPanel.svelte";
 
 export const noop = () => {};
-export const account: Account = { id: "preview", label: "WhatsApp", jid: "598123456789@s.whatsapp.net" };
+export const account: Account = { id: "preview", label: "WhatsApp", jid: "598123456789@s.whatsapp.net", once_paired: false };
 export const selectedChat = "design@g.us";
 
 const rows = [
@@ -38,7 +38,7 @@ export const rowTime = (i: number) => rows[i]?.[2] ?? "";
 
 function message(id: number, author: string, text: string, extra: Partial<StoredMessage> = {}): StoredMessage {
   return {
-    chat: selectedChat, id: String(id), sender: author, sender_name: author,
+    chat: selectedChat, id: String(id), sender: author, sender_name: author, sort_order: id,
     timestamp: 9 * 3600 + (12 + id * 4) * 60, from_me: author === "You", text,
     media_kind: null, media_path: null, media_thumb: null, media_duration: null,
     media_once_kind: null, reply_to_id: null, reply_to_text: null, reply_to_sender: null,

@@ -7,6 +7,7 @@ use crate::{AppState, desktop::shell_open};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub(crate) enum MediaAction { CopyImage, Save, Open }
 
 #[tauri::command]

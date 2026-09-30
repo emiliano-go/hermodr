@@ -6,6 +6,7 @@ use crate::AppState;
 /// Settings the UI can change.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct UiSettings {
     pub retention: DiskRetention,
     pub message_window_size: u32,

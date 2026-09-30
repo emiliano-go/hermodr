@@ -3,6 +3,7 @@ use super::*;
 pub const MAX_MESSAGE_PAGE: u32 = 2_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct MessageCursor {
     pub timestamp: i64,
     pub id: String,
@@ -12,9 +13,11 @@ pub struct MessageCursor {
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub enum MessagePageDirection { #[default] Before, After, Through }
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct MessagePage {
     pub messages: Vec<StoredMessage>,
     pub has_more: bool,

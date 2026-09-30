@@ -86,6 +86,7 @@ pub(crate) async fn send_reply(
 /// The message a context-menu action applies to.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub(crate) struct Target {
     chat: String,
     id: String,

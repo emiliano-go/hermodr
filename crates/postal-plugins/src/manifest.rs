@@ -19,6 +19,7 @@ pub(crate) fn read_bounded(path: &Path, limit: usize) -> std::io::Result<Vec<u8>
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub enum Activation {
     #[default]
     Eager,
@@ -27,6 +28,7 @@ pub enum Activation {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct Manifest {
     pub id: String,
     pub name: String,
@@ -43,6 +45,7 @@ pub struct Manifest {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct Contributions {
     pub commands: Vec<String>,
 }

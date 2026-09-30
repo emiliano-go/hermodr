@@ -5,6 +5,7 @@ use super::*;
 
 /// A sticker pack, received in a message or fetched by id.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct StickerPack {
     #[serde(rename = "pack_id")]
     pub pack_id: String,
@@ -19,6 +20,7 @@ pub struct StickerPack {
 
 /// One sticker in a pack, or one kept from a message.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct Sticker {
     /// Base64 SHA-256 of the decrypted file: the app-state index key.
     pub filehash: String,

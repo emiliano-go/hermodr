@@ -301,7 +301,9 @@ pub(super) async fn incoming_message(
         timestamp: info.timestamp.timestamp(),
         from_me: info.source.is_from_me,
     };
-    stored_message(&inbound.message, header, client, media_dir, auto_download).await
+    let mut stored = stored_message(&inbound.message, header, client, media_dir, auto_download).await?;
+    stored.history_shareable &= inbound.ephemeral_expiration.is_none() && inbound.comment_target.is_none();
+    Some(stored)
 }
 
 /// Builds the stored form of a message that arrived live or through history sync.
@@ -417,6 +419,7 @@ pub(super) async fn stored_message(
     // Names are resolved separately and joined by the store on read; a new
     // message stays unread until its chat is opened.
     Some(StoredMessage {
+        history_shareable: header.chat.ends_with("@g.us") && group_history::is_shareable_text(outer),
         header,
         text,
         media: Media {
@@ -720,5 +723,40 @@ mod live_location_tests {
             ..Default::default()
         };
         assert!(live_location_edit_of(&text_edit, 3000).is_none());
+    }
+}
+
+#[cfg(test)]
+mod incoming_history_tests {
+    use super::*;
+    use whatsapp_rust::wacore::types::message::{MessageInfo, MessageSource};
+
+    #[tokio::test]
+    async fn live_history_selection_rejects_ephemeral_and_threaded_plaintext() {
+        let store = MessageStore::open(Path::new(":memory:")).unwrap();
+        let mut now = 0_i64;
+        for (id, expiration, threaded) in [
+            ("plain", None, false), ("ephemeral", Some(86400), false),
+            ("zero-expiration", Some(0), false), ("threaded", None, true),
+            ("ephemeral-thread", Some(86400), true),
+        ] {
+            let info = MessageInfo { id: id.into(), source: MessageSource {
+                chat: "1@g.us".parse().unwrap(), sender: "100@s.whatsapp.net".parse().unwrap(),
+                is_group: true, ..Default::default()
+            }, ..Default::default() };
+            let inbound = InboundMessage::builder()
+                .message(Arc::new(wa::Message::text(id))).info(Arc::new(info))
+                .maybe_ephemeral_expiration(expiration)
+                .maybe_comment_target(threaded.then(|| Box::new(wa::MessageKey {
+                    remote_jid: Some("2@g.us".into()), id: Some("parent".into()), ..Default::default()
+                }))).build();
+            let stored = incoming_message("1@g.us", &inbound, None, None, false).await.unwrap();
+            assert_eq!(stored.history_shareable, id == "plain", "{id}");
+            now = now.max(stored.header.timestamp);
+            store.insert_message(&stored).unwrap();
+        }
+        assert_eq!(store.count().unwrap(), 5, "privacy metadata must not hide messages from their original chat");
+        let selected = store.group_history_text("1@g.us", now, 10, 100).unwrap();
+        assert_eq!(selected.iter().map(|row| row.header.id.as_str()).collect::<Vec<_>>(), ["plain"]);
     }
 }

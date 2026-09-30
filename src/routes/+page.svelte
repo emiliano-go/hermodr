@@ -31,6 +31,7 @@
   import ChatHeader from "$lib/chat/ChatHeader.svelte";
   import MessageList from "$lib/messages/MessageList.svelte";
   import ComposerBar from "$lib/composer/ComposerBar.svelte";
+  import ScheduledOutbox from "$lib/composer/ScheduledOutbox.svelte";
   import SelectionBar from "$lib/messages/SelectionBar.svelte";
   import { hue } from "$lib/utils/avatar";
   import { bare, captionOf, dayKey, dayLabel, formatTime, isSvg, MEDIA_LABELS } from "$lib/utils/message";
@@ -59,6 +60,8 @@
   import type {
     ChatPrivacy,
     ParticipantChange,
+    GroupHistoryResult,
+    GroupMemberAddResult,
     SearchResult,
     ServiceEvent,
     StoredMessage,
@@ -140,7 +143,7 @@
     ui.scrolledUp = false;
     messages.prepareChat(chat, session.settings.message_window_size);
     composer.chatPrivacy = { send_typing: null, send_receipts: null };
-    invoke<{ retention: ChatRetention } & ChatPrivacy>("chat_settings", { chat })
+    invoke<import("$lib/utils/wire").ChatSettings>("chat_settings", { chat })
       .then((s) => {
         if (chats.selectedChat !== chat) return;
         messages.loadOnScroll = s.retention.on_demand;
@@ -853,6 +856,9 @@
 </svelte:head>
 
 <ThemeLayers />
+<ScheduledOutbox
+  enqueue={<T>(task: (signal: AbortSignal) => Promise<T>) => composer.enqueue(task)}
+  displayName={(chat) => members.displayName(chats.chats.find((item) => item.chat === chat)?.display_name ?? null, chat)} />
 
 <!-- The glass lens: shifts the backdrop by lensMap, strongest at the rim. The map stretches to
      each element; the shift is in pixels, so short pills take a smaller one to avoid smearing. -->
@@ -1208,6 +1214,7 @@
           oninput={(e) => composer.onComposerInput(e)}
           onkey={(e) => composer.onComposerKey(e)}
           onsend={() => void composer.send()}
+          onschedule={(dueAt) => composer.schedule(dueAt)}
           oncancelreply={() => (composer.replyingTo = null)}
           oncanceledit={() => composer.cancelEditing()}
           onremove={(id) => composer.removePending(id)}
@@ -1591,7 +1598,14 @@
     namer={(name, jid) => members.displayName(name, jid)}
     onreports={() => invoke<AdminReport[]>("admin_reports", { chat: selectedChat })}
     onallowreports={(allow) => invoke("set_allow_admin_reports", { chat: selectedChat, allow })}
-    onadd={(jids) => invoke<ParticipantChange[]>("add_group_participants", { chat: selectedChat, jids })}
+    onadd={(jids, optedIn) => {
+      const chat = selectedChat, account = session.activeAccount;
+      return composer.enqueue(() => invoke<GroupMemberAddResult>("add_group_participants_with_history", { account, chat, jids, optedIn }));
+    }}
+    onretryhistory={(retryId) => {
+      const chat = selectedChat, account = session.activeAccount;
+      return composer.enqueue(() => invoke<GroupHistoryResult>("retry_group_history", { account, chat, retryId }));
+    }}
     onremove={(jids) => invoke<ParticipantChange[]>("remove_group_participants", { chat: selectedChat, jids })}
     onpromote={(jids) => invoke<ParticipantChange[]>("promote_group_participants", { chat: selectedChat, jids })}
     ondemote={(jids) => invoke<ParticipantChange[]>("demote_group_participants", { chat: selectedChat, jids })}

@@ -61,6 +61,25 @@ pub(crate) async fn add_group_participants(
         .map_err(|e| command_error(&service, e))
 }
 
+#[tauri::command]
+pub(crate) async fn group_history_offer(state: State<'_, AppState>, account: String, chat: String) -> Result<postal_core::GroupHistoryOffer, String> {
+    Ok(state.account_service(&account)?.group_history_offer(&chat).await)
+}
+
+#[tauri::command]
+pub(crate) async fn add_group_participants_with_history(state: State<'_, AppState>, account: String,
+    chat: String, jids: Vec<String>, opted_in: Vec<String>) -> Result<postal_core::GroupMemberAddResult, String> {
+    let service = state.account_service(&account)?;
+    service.add_group_participants_with_history(&chat, &jids, &opted_in).await.map_err(|e| command_error(&service, e))
+}
+
+#[tauri::command]
+pub(crate) async fn retry_group_history(state: State<'_, AppState>, account: String, chat: String,
+    retry_id: String) -> Result<postal_core::GroupHistoryResult, String> {
+    let service = state.account_service(&account)?;
+    service.retry_group_history(&chat, &retry_id).await.map_err(|e| command_error(&service, e))
+}
+
 /// Removes participants from a group; a community parent also removes them
 /// from its subgroups.
 #[tauri::command]
@@ -144,6 +163,7 @@ pub(crate) async fn invite_info(state: State<'_, AppState>, link: String) -> Res
 }
 
 #[derive(serde::Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub(crate) struct Joined {
     jid: String,
     /// An admin still has to approve the request.

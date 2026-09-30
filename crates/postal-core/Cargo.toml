@@ -6,7 +6,11 @@ license.workspace = true
 repository.workspace = true
 description = "WhatsApp protocol core for Postal, built on whatsapp-rust"
 
+[features]
+wire-types = ["dep:ts-rs"]
+
 [dependencies]
+ts-rs = { workspace = true, optional = true }
 whatsapp-rust = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }

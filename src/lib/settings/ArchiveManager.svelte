@@ -3,7 +3,7 @@
   import Icon from "$lib/ui/Icon.svelte";
   import { session } from "$lib/state/session.svelte";
   import type { ChatSummary } from "$lib/utils/models";
-  type Report = { directory: string; messages: number; attachments: number; missing_attachments: number };
+  import type { ArchiveReport as Report } from "$lib/utils/wire";
   let chats = $state<ChatSummary[]>([]);
   let chat = $state("");
   let busy = $state(false);

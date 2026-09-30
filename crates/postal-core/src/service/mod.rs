@@ -42,6 +42,10 @@ mod storage;
 mod archive;
 pub use storage::{StorageReport, StorageCleanup, CleanupResult, StorageOrder};
 mod groups;
+mod group_history;
+mod group_history_policy;
+mod scheduled;
+pub use group_history::{GroupHistoryOffer, GroupHistoryResult, GroupMemberAddResult};
 mod history;
 mod inbound;
 mod links;
@@ -126,6 +130,7 @@ fn remove_cached_file(path: impl AsRef<Path>) {
 /// Events the UI reacts to.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub enum ServiceEvent {
     /// A pairing QR is ready to display.
     ///
@@ -216,6 +221,7 @@ impl ServiceEvent {
 
 /// The account's own profile and privacy, as the settings panel edits them.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct Profile {
     pub name: String,
     pub about: Option<String>,
@@ -253,6 +259,7 @@ pub struct VoiceNote {
 
 /// A group member, as the mention autocomplete needs it.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct Participant {
     /// JID to put in `mentioned_jid` and to mention in the text.
     pub jid: String,
@@ -272,6 +279,7 @@ pub struct Participant {
 
 /// One row of the chat/contact search.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct SearchResult {
     pub jid: String,
     pub name: String,
@@ -290,6 +298,7 @@ pub struct SearchResult {
 
 /// Everything the group info sidebar shows.
 #[derive(Debug, Clone, Default, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct GroupInfo {
     pub subject: Option<String>,
     pub description: Option<String>,
@@ -322,6 +331,7 @@ pub struct GroupInfo {
 /// The server's answer for one participant of an add, remove, promote or
 /// demote request.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct ParticipantChange {
     pub jid: String,
     /// Whether the server accepted this participant.
@@ -347,6 +357,7 @@ pub fn participant_change(
 
 /// How a group sits in a community, for the chat list.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct GroupKind {
     pub community: bool,
     pub announcements: bool,
@@ -355,6 +366,7 @@ pub struct GroupKind {
 
 /// What an invite link card shows about its group.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct InviteInfo {
     pub jid: String,
     pub subject: Option<String>,
@@ -371,6 +383,7 @@ pub struct InviteInfo {
 
 /// What a profile card shows about someone.
 #[derive(Debug, Clone, Default, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct UserProfile {
     pub jid: String,
     /// Saved, push, business or user name; `None` when only the number is known.
@@ -385,6 +398,7 @@ pub struct UserProfile {
 
 /// A message reported to a group's admins, with who reported it and when.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct AdminReport {
     pub id: String,
     /// The message as stored here, when this device has it.
@@ -399,6 +413,8 @@ pub struct ServiceConfig {
     pub session_path: PathBuf,
     /// Message store database.
     pub messages_path: PathBuf,
+    /// Local outbox, kept even when message history is disabled.
+    pub scheduled_path: PathBuf,
     /// Contact alias database. Kept out of the message store so aliases
     /// survive `messages_path` being turned into an in-memory store.
     pub aliases_path: PathBuf,
@@ -434,6 +450,7 @@ impl ServiceConfig {
         Self {
             session_path: data_dir.join("session.db"),
             messages_path: data_dir.join("messages.db"),
+            scheduled_path: data_dir.join("scheduled.db"),
             aliases_path: data_dir.join("aliases.db"),
             retention: DiskRetention::default(),
             request_full_history: false,
@@ -451,9 +468,11 @@ impl ServiceConfig {
 ///
 /// Dropping this stops the background task and closes the stores.
 pub struct WhatsAppService {
+    history_shares: group_history::PendingHistoryShares,
     user_info_slots: tokio::sync::Semaphore,
     client: Arc<Client>,
     store: StoreWorker,
+    scheduled: crate::store::scheduled::ScheduledWorker,
     disk_retention: Arc<DiskRetentionManager>,
     /// Local, per-contact aliases, kept in their own file beside the messages.
     aliases: AliasWorker,

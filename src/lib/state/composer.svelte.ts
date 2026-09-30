@@ -17,6 +17,7 @@ import { members } from "./members.svelte";
 import { messages } from "./messages.svelte";
 import { session } from "./session.svelte";
 import { ui } from "./ui.svelte";
+import { scheduled } from "./scheduled.svelte";
 
 export class ComposerState {
   draft = $state("");
@@ -450,6 +451,32 @@ export class ComposerState {
     // The same person reached twice, once by name and once by alias, is still
     // one notified participant.
     return { text, jids: [...new Set(jids)] };
+  }
+
+  async schedule(dueAt: number): Promise<boolean> {
+    const chat = chats.selectedChat;
+    const account = session.activeAccount;
+    if (!chat || !account || this.editing || this.replyingTo || this.pending.length || this.recording || !this.draft.trim()) return false;
+    const typed = this.draft;
+    const sequence = this.accountSeq;
+    const { text, jids } = this.mentionPayload();
+    try {
+      await invoke("schedule_message", { account, chat, text, mentions: jids, dueAt });
+      if (sequence !== this.accountSeq) return true;
+      if (chat === chats.selectedChat && typed === this.draft) {
+        this.draft = "";
+        delete this.drafts[chat];
+        this.chosenMentions = [];
+        this.mentionQuery = null;
+        this.stopTyping(chat);
+      }
+      scheduled.selectAccount(account);
+      await scheduled.refresh(account);
+      return true;
+    } catch (error) {
+      if (sequence === this.accountSeq) ui.fail(error);
+      return false;
+    }
   }
 
   async send() {

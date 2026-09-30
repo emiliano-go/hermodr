@@ -1,7 +1,8 @@
 <script lang="ts" module>
   import type { UiSettings } from "$lib/utils/models";
   export type { DiskRetention, UiSettings } from "$lib/utils/models";
-  export type Account = { id: string; label: string; jid: string | null };
+  import type { Account } from "$lib/utils/wire";
+  export type { Account };
   export type Section =
     | "profile"
     | "accounts"
@@ -17,13 +18,7 @@
     | "appearance"
     | "advanced"
     | "about";
-  type Profile = {
-    name: string;
-    about: string | null;
-    username: string | null;
-    username_reserved: boolean;
-    privacy: Record<string, string>;
-  };
+  import type { Profile } from "$lib/utils/wire";
 </script>
 
 <script lang="ts">

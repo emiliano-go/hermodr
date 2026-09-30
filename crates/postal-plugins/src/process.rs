@@ -81,8 +81,11 @@ impl Session {
     }
 
     pub async fn handshake(&mut self) -> Result<()> {
-        self.write(b"{\"type\":\"hello\",\"api_version\":1,\"capabilities\":[\"events:read\"]}\n")
-            .await?;
+        let mut hello = serde_json::to_vec(&protocol::HostMessage::<serde_json::Value>::Hello {
+            api_version: 1, capabilities: vec!["events:read".into()],
+        })?;
+        hello.push(b'\n');
+        self.write(&hello).await?;
         loop {
             if let Reply::Ready { name } = self.next().await? {
                 anyhow::ensure!(!name.trim().is_empty(), "empty ready name");
@@ -113,9 +116,9 @@ impl Session {
                     );
                 }
                 Ok(Reply::Call { id }) => {
-                    let mut response = serde_json::to_vec(
-                        &serde_json::json!({"type":"error", "id":id, "error":"host methods are not available in v1"}),
-                    )?;
+                    let mut response = serde_json::to_vec(&protocol::HostMessage::<serde_json::Value>::Error {
+                        id, error: "host methods are not available in v1".into(),
+                    })?;
                     response.push(b'\n');
                     self.write(&response).await?;
                 }

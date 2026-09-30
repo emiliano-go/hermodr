@@ -1,15 +1,6 @@
 <script lang="ts" module>
-  export type InviteInfo = {
-    jid: string;
-    subject: string | null;
-    description: string | null;
-    size: number;
-    created_at: number | null;
-    approval: boolean;
-    community: boolean;
-    joined: boolean;
-    picture: string | null;
-  };
+  import type { InviteInfo } from "$lib/utils/wire";
+  export type { InviteInfo };
 
   /** Lookups by link, shared by every card so a scroll does not ask again. */
   const cache = new Map<string, Promise<InviteInfo>>();
@@ -57,7 +48,7 @@
     if (info.joined) return onopen(info.jid);
     busy = true;
     try {
-      const joined = await invoke<{ jid: string; pending: boolean }>("join_invite", { link });
+      const joined = await invoke<import("$lib/utils/wire").Joined>("join_invite", { link });
       if (joined.pending) requested = true;
       else {
         cache.delete(link);

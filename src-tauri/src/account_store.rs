@@ -10,6 +10,7 @@ pub(crate) const DEFAULT_ACCOUNT_LABEL: &str = "WhatsApp";
 
 /// One signed-in account.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct Account {
     pub id: String,
     pub label: String,
@@ -56,6 +57,7 @@ impl AccountsFile {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct AccountsView {
     pub accounts: Vec<Account>,
     pub active: Option<String>,
@@ -160,6 +162,7 @@ pub(crate) fn config_for(app: &AppHandle, settings: &UiSettings, account: &str) 
         } else {
             PathBuf::from(":memory:")
         },
+        scheduled_path: base.join("scheduled.db"),
         // Aliases outlive the history setting, so they never travel with it.
         aliases_path: base.join("aliases.db"),
         retention: settings.retention,

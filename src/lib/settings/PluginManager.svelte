@@ -1,9 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "$lib/utils/ipc";
-  type Plugin = { id: string; name: string; version: string; activation: string; idle_timeout_secs: number | null;
-    capabilities: string[]; enabled: boolean; state: string; error: string | null };
-  type View = { plugins: Plugin[]; directory: string; errors: string[] };
+  import type { PluginInfo as Plugin, PluginsView as View } from "$lib/utils/wire";
   let view = $state<View>({ plugins: [], directory: "", errors: [] });
   let error = $state("");
   let loadError = $state("");

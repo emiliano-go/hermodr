@@ -4,6 +4,18 @@ mod protocol;
 
 use anyhow::{ensure, Context, Result};
 pub use manifest::{Activation, Manifest};
+
+#[cfg(feature = "wire-types")]
+pub fn visit_wire_types(visitor: &mut impl ts_rs::TypeVisitor) {
+    visitor.visit::<PluginInfo>();
+    visitor.visit::<protocol::Reply>();
+    visitor.visit::<protocol::HostMessage>();
+}
+
+#[cfg(feature = "wire-types")]
+pub fn wire_fixture(event: Value) -> Value {
+    serde_json::to_value(protocol::HostMessage::Event { seq: 7, event }).unwrap()
+}
 use process::Session;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -22,6 +34,7 @@ const QUEUE_SIZE: usize = 64;
 const MAX_FAILURES: u32 = 3;
 
 #[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct PluginInfo {
     #[serde(flatten)]
     pub manifest: Manifest,
@@ -358,8 +371,7 @@ fn envelope(registry: &mut Registry, event: Value) -> Result<(u64, Arc<Vec<u8>>)
         .checked_add(1)
         .context("plugin sequence exhausted")?;
     let seq = registry.seq;
-    let mut bytes =
-        serde_json::to_vec(&serde_json::json!({"type":"event", "seq":seq, "event":event}))?;
+    let mut bytes = serde_json::to_vec(&protocol::HostMessage::Event { seq, event })?;
     bytes.push(b'\n');
     ensure!(
         bytes.len() <= protocol::MAX_LINE,

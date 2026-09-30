@@ -8,6 +8,7 @@ pub(super) fn boolean_props() -> impl Iterator<Item = AbProp> {
 }
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct BooleanProp {
     pub name: &'static str,
     pub code: u32,

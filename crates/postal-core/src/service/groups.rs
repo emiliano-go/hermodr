@@ -376,7 +376,7 @@ impl WhatsAppService {
 
     /// Drops the cached roster and tells the UI, so an open panel reloads
     /// without waiting for the server's own notification.
-    fn after_group_change(&self, chat: &str) {
+    pub(super) fn after_group_change(&self, chat: &str) {
         self.group_cache.lock().unwrap().remove(chat);
         let _ = self.events.send(ServiceEvent::GroupChanged { chat: chat.to_string() });
     }
@@ -541,14 +541,14 @@ impl WhatsAppService {
 
 /// Parses the addresses a command sends; one bad address fails the call
 /// rather than silently dropping whoever it named.
-fn parse_jids(jids: &[String]) -> Result<Vec<Jid>> {
+pub(super) fn parse_jids(jids: &[String]) -> Result<Vec<Jid>> {
     jids.iter()
         .map(|jid| jid.parse::<Jid>().map_err(|e| anyhow::anyhow!("bad participant address {jid}: {e}")))
         .collect()
 }
 
 /// The UI shape of one server answer.
-fn change_of(response: &ParticipantChangeResponse) -> ParticipantChange {
+pub(super) fn change_of(response: &ParticipantChangeResponse) -> ParticipantChange {
     participant_change(
         response.jid.to_string(),
         response.status.clone(),

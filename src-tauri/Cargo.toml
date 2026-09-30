@@ -5,6 +5,7 @@ description = "Postal: a native WhatsApp client"
 authors = ["emiliano-go"]
 license = "MIT"
 edition = "2021"
+default-run = "postal"
 
 [lib]
 name = "postal_lib"
@@ -13,10 +14,19 @@ name = "postal_lib"
 # link on every build; add them back the day mobile exists.
 crate-type = ["rlib"]
 
+[features]
+wire-types = ["dep:ts-rs", "postal-core/wire-types", "postal-plugins/wire-types"]
+
+[[bin]]
+name = "postal-wire-types"
+path = "src/bin/wire_types.rs"
+required-features = ["wire-types"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+ts-rs = { version = "12.0.1", optional = true, features = ["serde-json-impl"] }
 # The native protocol client. This is what replaced the embedded WhatsApp Web
 # webview, and with it the whole class of memory and history problems.
 postal-core = { path = "../crates/postal-core" }

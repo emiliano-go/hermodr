@@ -3,6 +3,7 @@ use crate::aliases::AliasStore;
 use std::{collections::HashMap, fs::{self, File}, io::{BufReader, BufWriter, Write}, path::{Component, PathBuf}};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct ArchiveReport {
     pub directory: String,
     pub messages: u64,
@@ -11,12 +12,19 @@ pub struct ArchiveReport {
 }
 
 #[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
+#[cfg_attr(feature = "wire-types", ts(rename = "ArchiveManifest"))]
 struct Manifest {
     format: String,
     version: u32,
     messages: u64,
     attachments: usize,
     missing_attachments: usize,
+}
+
+#[cfg(feature = "wire-types")]
+pub fn visit_wire_types(visitor: &mut impl ts_rs::TypeVisitor) {
+    visitor.visit::<Manifest>();
 }
 
 #[derive(Default)]

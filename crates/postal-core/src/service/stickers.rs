@@ -8,6 +8,7 @@ use super::*;
 
 /// The sticker library as the picker and manager see it.
 #[derive(Debug, Clone, Default, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct StickerLibrary {
     pub packs: Vec<StickerPack>,
     pub favorites: Vec<Sticker>,
@@ -16,6 +17,7 @@ pub struct StickerLibrary {
 
 /// What a resync changed, for the UI to report.
 #[derive(Debug, Clone, Default, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct StickerResyncReport {
     pub packs: usize,
     pub stickers: usize,

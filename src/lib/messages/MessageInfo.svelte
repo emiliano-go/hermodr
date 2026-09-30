@@ -1,11 +1,6 @@
 <script lang="ts" module>
-  export type Receipt = {
-    recipient: string;
-    name: string | null;
-    delivered_at: number | null;
-    read_at: number | null;
-    played_at: number | null;
-  };
+  import type { MessageReceipt as Receipt } from "$lib/utils/wire";
+  export type { Receipt };
 </script>
 
 <script lang="ts">

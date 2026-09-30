@@ -3,7 +3,7 @@
   import Icon from "$lib/ui/Icon.svelte";
   import { invoke } from "$lib/utils/ipc";
 
-  type Prop = { name: string; code: number; default: boolean; value: boolean | null };
+  import type { BooleanProp as Prop } from "$lib/utils/wire";
   let open = $state(false);
   let watching = $state(false);
   let loading = $state(false);

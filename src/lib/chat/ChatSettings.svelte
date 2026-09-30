@@ -66,7 +66,7 @@
 
   onMount(async () => {
     try {
-      const got = await invoke<{ auto_download: boolean | null; retention: ChatRetention }>("chat_settings", { chat });
+      const got = await invoke<import("$lib/utils/wire").ChatSettings>("chat_settings", { chat });
       retention = got.retention;
       autoDownload = got.auto_download;
       initial = JSON.stringify([got.retention, got.auto_download]);

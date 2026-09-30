@@ -333,6 +333,15 @@ impl Inbound {
             return (false, learned);
         };
         // Old messages must not raise unread counts.
+        stored.history_shareable &= web.ephemeral_expiration_timestamp.is_none() && web.ephemeral_duration.is_none()
+            && web.ephemeral_start_timestamp.is_none() && matches!(web.status, Some(wa::web_message_info::Status::SERVER_ACK
+                | wa::web_message_info::Status::DELIVERY_ACK | wa::web_message_info::Status::READ | wa::web_message_info::Status::PLAYED));
+        stored.local.status = match web.status {
+            Some(wa::web_message_info::Status::SERVER_ACK) => Some("sent".into()),
+            Some(wa::web_message_info::Status::DELIVERY_ACK) => Some("delivered".into()),
+            Some(wa::web_message_info::Status::READ | wa::web_message_info::Status::PLAYED) => Some("read".into()),
+            _ => None,
+        };
         stored.local.read = true;
         match store.insert_message(&stored).await {
             Ok(()) => {

@@ -1,12 +1,6 @@
 <script lang="ts" module>
-  export type UserProfile = {
-    jid: string;
-    name: string | null;
-    number: string | null;
-    username: string | null;
-    about: string | null;
-    business: string | null;
-  };
+  import type { UserProfile } from "$lib/utils/wire";
+  export type { UserProfile };
 </script>
 
 <script lang="ts">

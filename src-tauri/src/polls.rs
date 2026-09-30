@@ -28,6 +28,7 @@ pub(crate) async fn vote_poll(
 
 /// An event as the create dialog fills it; times are Unix seconds.
 #[derive(serde::Deserialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub(crate) struct EventForm {
     name: String,
     description: Option<String>,

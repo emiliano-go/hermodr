@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use serde::Deserialize;
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct StorageFile {
     pub chat: String,
     pub id: String,
@@ -15,6 +16,7 @@ pub struct StorageFile {
 }
 
 #[derive(Default, Debug, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct ChatStorage {
     pub chat: String,
     pub name: Option<String>,
@@ -23,6 +25,7 @@ pub struct ChatStorage {
 }
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct StorageReport {
     pub database_bytes: u64,
     pub attachment_bytes: u64,
@@ -48,6 +51,7 @@ impl StorageReport {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub enum StorageCleanup {
     Attachment { chat: String, id: String, quoted: bool },
     ChatMedia { chat: String },
@@ -56,9 +60,11 @@ pub enum StorageCleanup {
 
 #[derive(Default, Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub enum StorageOrder { #[default] Largest, Oldest }
 
 #[derive(Default, Debug, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct CleanupResult {
     pub files: usize,
     pub bytes: u64,

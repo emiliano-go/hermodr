@@ -10,6 +10,7 @@ use crate::{AppState, ONCE_EVENT, SERVICE_EVENT, account_store::{Account, DEFAUL
 /// attached, so a subscriber can miss it. Returning the current values lets the
 /// UI recover instead of showing a blank pairing screen forever.
 #[derive(Debug, Clone, serde::Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct ConnectionState {
     pub started: bool,
     pub connected: bool,
@@ -18,6 +19,7 @@ pub struct ConnectionState {
 
 /// The optional Android instance's state, for the toggle and its pairing sheet.
 #[derive(Debug, Clone, serde::Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct OnceState {
     /// Whether a device was ever linked; survives the instance being stopped.
     pub paired: bool,
@@ -89,6 +91,7 @@ pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &s
         format!("failed to start service: {e}")
     })?;
     let service = Arc::new(service);
+    *state.account_service.lock().unwrap() = Some((account.to_owned(), Arc::downgrade(&service)));
     spawn_main_events(app, &service, account, events);
     widen_media_scope(app, &service);
 

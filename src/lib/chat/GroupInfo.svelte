@@ -1,38 +1,6 @@
 <script lang="ts" module>
-  export type Member = {
-    jid: string;
-    name: string;
-    admin: boolean;
-    owner: boolean;
-    number: string | null;
-    username: string | null;
-    label: string | null;
-  };
-  export type GroupInfoData = {
-    subject: string | null;
-    description: string | null;
-    created_at: number | null;
-    owner: string | null;
-    owner_jid: string | null;
-    participants: Member[];
-    allow_admin_reports: boolean;
-    announce: boolean;
-    locked: boolean;
-    community: boolean;
-    announcements: boolean;
-    parent: string | null;
-    parent_name: string | null;
-    admin: boolean;
-    can_send: boolean;
-    /** Members may add participants, not just admins. */
-    members_can_add: boolean;
-  };
-  export type AdminReport = {
-    id: string;
-    message: { text: string; sender: string; sender_name: string | null; timestamp: number } | null;
-    /** Reporter JID and Unix time of each report. */
-    reporters: [string, number][];
-  };
+  import type { Participant as Member, GroupInfo as GroupInfoData, AdminReport } from "$lib/utils/wire";
+  export type { Member, GroupInfoData, AdminReport };
 </script>
 
 <script lang="ts">
@@ -43,7 +11,7 @@
   import AddMembers from "$lib/chat/AddMembers.svelte";
   import ConfirmDialog from "$lib/ui/ConfirmDialog.svelte";
   import { changeText } from "$lib/utils/group-actions";
-  import type { ParticipantChange } from "$lib/utils/models";
+  import type { GroupHistoryResult, GroupMemberAddResult, ParticipantChange } from "$lib/utils/models";
   import { displayName, phoneLabel } from "$lib/utils/phone";
 
   let {
@@ -65,6 +33,7 @@
     onreports,
     onallowreports,
     onadd,
+    onretryhistory,
     onremove,
     onpromote,
     ondemote,
@@ -95,7 +64,8 @@
     onreports: () => Promise<AdminReport[]>;
     onallowreports: (allow: boolean) => Promise<void>;
     /** Adds people to the group; the server answers per person. */
-    onadd: (jids: string[]) => Promise<ParticipantChange[]>;
+    onadd: (jids: string[], optedIn: string[]) => Promise<GroupMemberAddResult>;
+    onretryhistory: (retryId: string) => Promise<GroupHistoryResult>;
     /** Removes people from the group. */
     onremove: (jids: string[]) => Promise<ParticipantChange[]>;
     /** Gives people admin rights. */
@@ -534,14 +504,16 @@
   {/if}
 </Panel>
 
-{#if adding && info}
+{#if adding}
   <AddMembers
-    title={info.subject ?? title}
-    members={info.participants}
+    chat={jid}
+    title={info?.subject ?? title}
+    members={info?.participants ?? []}
     {avatars}
     {me}
     {onavatar}
     {onadd}
+    {onretryhistory}
     onclose={() => (adding = false)} />
 {/if}
 

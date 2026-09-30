@@ -62,6 +62,7 @@ impl WhatsAppService {
                 extended_text_message: MessageField::some(extended),
                 ..Default::default()
             };
+            group_history::guard_ordinary_message(&message)?;
             self.client.send_message(to, message).await?
         };
 
@@ -69,6 +70,7 @@ impl WhatsAppService {
         let thumbnail = preview.as_ref().and_then(|p| p.thumbnail.as_deref()).map(thumb_uri);
 
         let mut message = self.own_message(chat, &result.message_id, text, "", to_self);
+        message.history_shareable = group_history::is_shareable_text(&result.message);
         if let Some(p) = &preview {
             message.link = LinkCard {
                 url: Some(p.url.clone()),
@@ -403,6 +405,7 @@ impl WhatsAppService {
                     }),
                     ..Default::default()
                 };
+                group_history::guard_ordinary_message(&content)?;
                 let result = self.client.send_message(to, content).await?;
                 self.store.set_forwarded(to_chat, &result.message_id).await?;
                 let stored = self.own_message(to_chat, &result.message_id, message.text, "", to_self);
@@ -561,6 +564,7 @@ impl WhatsAppService {
 
         use whatsapp_rust::wacore::proto_helpers::MessageBuilderExt;
         let message = wa::Message::text_with_context(text.clone(), context);
+        group_history::guard_ordinary_message(&message)?;
         let result = self.client.send_message(to, message).await?;
 
         let mut stored = self.own_message(chat, &result.message_id, text, "", to_self);

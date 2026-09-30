@@ -14,6 +14,8 @@
   import { replyIcon } from "$lib/utils/message";
   import type { Emoji } from "$lib/utils/emoji";
   import type { PendingMedia, StoredMessage } from "$lib/utils/models";
+  import { scheduled } from "$lib/state/scheduled.svelte";
+  import ScheduleDialog from "./ScheduleDialog.svelte";
 
   let {
     draft = $bindable(),
@@ -43,6 +45,7 @@
     oninput,
     onkey,
     onsend,
+    onschedule = async () => false,
     oncancelreply,
     oncanceledit,
     onremove,
@@ -89,6 +92,7 @@
     oninput: (event: Event) => void;
     onkey: (event: KeyboardEvent) => void;
     onsend: () => void;
+    onschedule?: (dueAt: number) => Promise<boolean>;
     oncancelreply: () => void;
     oncanceledit: () => void;
     onremove: (id: number) => void;
@@ -102,6 +106,9 @@
   } = $props();
 
   let attachMenu = $state(false);
+  let scheduling = $state(false);
+  let schedulingChat = "";
+  $effect(() => { if (selectedChat !== schedulingChat) { scheduling = false; schedulingChat = selectedChat; } });
   let filePicker: HTMLInputElement | undefined = $state();
 
   function attach(event: Event) {
@@ -337,6 +344,16 @@
   <div class="composer-tools">
     <Button
       variant="icon"
+      icon="clock"
+      iconSize={20}
+      title="Scheduled messages"
+      aria-label="Scheduled messages"
+      onclick={() => { scheduled.open = true; }} />
+    {#if draft.trim() && !editing && !replyingTo && pending.length === 0}
+      <Button variant="ghost" type="button" title="Schedule this message" onclick={() => (scheduling = true)}>Schedule</Button>
+    {/if}
+    <Button
+      variant="icon"
       icon={receiptsHidden ? "eyeOff" : "eye"}
       iconSize={20}
       active={receiptsHidden}
@@ -390,6 +407,10 @@
   {/if}
 </form>
 </div>
+
+{#if scheduling}
+  <ScheduleDialog text={draft} onsave={(_text, dueAt) => onschedule(dueAt)} onclose={() => (scheduling = false)} />
+{/if}
 
 {#if previewItem}
   <!-- svelte-ignore a11y_click_events_have_key_events -->

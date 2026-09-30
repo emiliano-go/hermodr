@@ -2,19 +2,23 @@
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { invoke } from "$lib/utils/ipc";
   import Icon from "$lib/ui/Icon.svelte";
-  import { changeText } from "$lib/utils/group-actions";
-  import type { Member, ParticipantChange, SearchResult } from "$lib/utils/models";
+  import { changeText, historyReceivers, historyResultText } from "$lib/utils/group-actions";
+  import { session } from "$lib/state/session.svelte";
+  import type { GroupHistoryOffer, GroupHistoryResult, GroupMemberAddResult, Member, SearchResult } from "$lib/utils/models";
 
   /** Picks people to add to a group, from the account's contacts. */
   let {
+    chat,
     title,
     members,
     avatars,
     me,
     onavatar,
     onadd,
+    onretryhistory,
     onclose,
   }: {
+    chat: string;
     title: string;
     /** The group's current members, so they are not offered again. */
     members: Member[];
@@ -22,7 +26,8 @@
     /** Our own JID, so we are not offered. */
     me: string | null;
     onavatar: (jid: string) => void;
-    onadd: (jids: string[]) => Promise<ParticipantChange[]>;
+    onadd: (jids: string[], optedIn: string[]) => Promise<GroupMemberAddResult>;
+    onretryhistory: (retryId: string) => Promise<GroupHistoryResult>;
     onclose: () => void;
   } = $props();
 
@@ -33,7 +38,42 @@
   let busy = $state(false);
   let error = $state<string | null>(null);
   let outcomes = $state<{ jid: string; name: string; text: string; bad: boolean }[] | null>(null);
+  let offer = $state<GroupHistoryOffer | null>(null);
+  let shareHistory = $state(false);
+  let history = $state<GroupHistoryResult | null>(null);
+  let retrying = $state(false);
   let debounce: ReturnType<typeof setTimeout> | undefined;
+  let generation = 0;
+
+  function current(target: string, account: string | null, revision: number) {
+    return target === chat && account === session.activeAccount && revision === generation;
+  }
+
+  $effect(() => {
+    const target = chat;
+    const account = session.activeAccount;
+    const revision = ++generation;
+    let active = true;
+    offer = null;
+    shareHistory = false;
+    history = null;
+    outcomes = null;
+    selected = {};
+    results = [];
+    busy = false;
+    retrying = false;
+    error = null;
+    invoke<GroupHistoryOffer>("group_history_offer", { chat: target, account })
+      .then((value) => {
+        if (active && current(target, account, revision)) offer = value;
+      })
+      .catch((e) => {
+        if (active && current(target, account, revision)) {
+          offer = { enabled: false, reason: String(e), max_messages: 0, time_window_seconds: 0 };
+        }
+      });
+    return () => { active = false; ++generation; };
+  });
 
   /** Every address form a member is already known by. */
   const existing = $derived(
@@ -54,23 +94,31 @@
 
   $effect(() => {
     const q = query.trim();
+    const target = chat;
+    const account = session.activeAccount;
+    const revision = generation;
+    let active = true;
     clearTimeout(debounce);
     if (!q) {
       results = [];
+      searching = false;
       return;
     }
     searching = true;
     debounce = setTimeout(async () => {
       try {
-        results = await invoke<SearchResult[]>("search", { query: q });
-        error = null;
+        const found = await invoke<SearchResult[]>("search", { query: q });
+        if (active && current(target, account, revision)) {
+          results = found;
+          error = null;
+        }
       } catch (e) {
-        error = String(e);
+        if (active && current(target, account, revision)) error = String(e);
       } finally {
-        searching = false;
+        if (active && current(target, account, revision)) searching = false;
       }
     }, 180);
-    return () => clearTimeout(debounce);
+    return () => { active = false; clearTimeout(debounce); };
   });
 
   $effect(() => {
@@ -78,6 +126,7 @@
   });
 
   function toggle(jid: string) {
+    if (busy) return;
     const next = { ...selected };
     if (next[jid]) delete next[jid];
     else next[jid] = true;
@@ -87,56 +136,93 @@
   const names = $derived(new Map(results.map((r) => [r.jid, r.name])));
 
   async function add() {
-    if (picked.length === 0) return;
+    if (busy || picked.length === 0) return;
+    const target = chat;
+    const account = session.activeAccount;
+    const revision = generation;
+    const requested = shareHistory;
+    const labels = names;
     busy = true;
     error = null;
     outcomes = null;
     try {
-      const changes = await onadd(picked);
-      const reported: { jid: string; name: string; text: string; bad: boolean }[] = [];
-      for (const change of changes) {
-        const text = changeText(change);
-        if (text) {
-          reported.push({
-            jid: change.jid,
-            name: names.get(change.jid) ?? change.jid,
-            text,
-            bad: !change.pending,
-          });
-        }
-      }
+      const result = await onadd(picked, historyReceivers(picked, requested, offer));
+      if (!current(target, account, revision)) return;
+      const reported = result.participants.map((change) => ({
+        jid: change.jid,
+        name: labels.get(change.jid) ?? change.jid,
+        text: changeText(change) ?? "Added.",
+        bad: !change.ok && !change.pending,
+      }));
       selected = {};
-      if (reported.some((o) => o.bad)) {
+      if (requested || result.participants.some((change) => !change.ok || change.pending)) {
         outcomes = reported;
+        history = requested ? result.history : null;
         results = [];
         query = "";
       } else {
         onclose();
       }
     } catch (e) {
-      error = String(e);
+      if (current(target, account, revision)) error = String(e);
     } finally {
-      busy = false;
+      if (current(target, account, revision)) busy = false;
     }
+  }
+
+  async function retryHistory() {
+    if (busy || !history?.retry_id) return;
+    const target = chat;
+    const account = session.activeAccount;
+    const revision = generation;
+    const retryId = history.retry_id;
+    busy = true;
+    retrying = true;
+    error = null;
+    try {
+      const result = await onretryhistory(retryId);
+      if (current(target, account, revision)) history = result;
+    } catch (e) {
+      if (current(target, account, revision)) error = String(e);
+    } finally {
+      if (current(target, account, revision)) { busy = false; retrying = false; }
+    }
+  }
+
+  function close() {
+    if (!busy) onclose();
+  }
+
+  function escape(event: KeyboardEvent) {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    close();
+  }
+
+  function windowLabel(seconds: number) {
+    const [unit, size] = seconds % 86400 === 0 ? ["day", 86400] : seconds % 3600 === 0 ? ["hour", 3600] : ["second", 1];
+    const count = seconds / Number(size);
+    return `${count.toLocaleString()} ${unit}${count === 1 ? "" : "s"}`;
   }
 </script>
 
-<svelte:window onkeydown={(e) => e.key === "Escape" && onclose()} />
+<svelte:window onkeydowncapture={escape} />
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <div
   class="backdrop"
   role="presentation"
-  onclick={(e) => e.target === e.currentTarget && onclose()}>
+  onclick={(e) => e.target === e.currentTarget && close()}>
   <div class="dialog" role="dialog" aria-modal="true" aria-label="Add participants to {title}">
     <header>
       <h2>Add to {title}</h2>
-      <button class="close" aria-label="Close" onclick={onclose}><Icon name="x" size={18} /></button>
+      <button class="close" aria-label="Close" disabled={busy} onclick={close}><Icon name="x" size={18} /></button>
     </header>
     <label class="search">
       <Icon name="search" size={15} />
       <!-- svelte-ignore a11y_autofocus -->
-      <input placeholder="Search contacts" bind:value={query} autofocus />
+      <input placeholder="Search contacts" bind:value={query} disabled={busy || outcomes !== null} autofocus />
     </label>
     {#if error}<p class="error">{error}</p>{/if}
     {#if outcomes}
@@ -152,7 +238,7 @@
       <ul>
         {#each shown as result (result.jid)}
           <li>
-            <button class="row" onclick={() => toggle(result.jid)}>
+            <button class="row" disabled={busy} onclick={() => toggle(result.jid)}>
               {#if avatars[result.jid]}
                 <img class="avatar" src={convertFileSrc(avatars[result.jid]!)} alt="" />
               {:else}
@@ -161,6 +247,7 @@
               <span class="label">{result.name}</span>
               <input
                 type="checkbox"
+                disabled={busy}
                 tabindex="-1"
                 checked={!!selected[result.jid]}
                 onchange={() => toggle(result.jid)}
@@ -175,11 +262,35 @@
       {/if}
       {#if searching}<p class="empty">Searching…</p>{/if}
     {/if}
+    {#if history}
+      <div class="history-result" role="status">
+        <p class="note">History: {historyResultText(history)}</p>
+        {#if history.retry_id}
+          <button class="button" disabled={busy} onclick={retryHistory}>
+            {retrying ? "Retrying history…" : "Retry history"}
+          </button>
+        {/if}
+      </div>
+    {:else if !outcomes}
+      <div class="history-offer">
+        <label>
+          <input type="checkbox" bind:checked={shareHistory} disabled={busy || !offer?.enabled} />
+          Share recent history with selected people
+        </label>
+        <p class="note">
+          {#if !offer}Checking history sharing availability…
+          {:else if offer.enabled}Up to {offer.max_messages} messages from the last {windowLabel(offer.time_window_seconds)}.
+          {:else}{offer.reason ?? "History sharing is unavailable."}{/if}
+        </p>
+      </div>
+    {/if}
     <footer>
-      <button class="button primary" disabled={busy || picked.length === 0} onclick={add}>
-        {busy ? "Adding…" : `Add${picked.length > 0 ? ` ${picked.length}` : ""}`}
-      </button>
-      <button class="button" onclick={onclose}>Done</button>
+      {#if !outcomes}
+        <button class="button primary" disabled={busy || picked.length === 0} onclick={add}>
+          {busy ? "Adding…" : `Add${picked.length > 0 ? ` ${picked.length}` : ""}`}
+        </button>
+      {/if}
+      <button class="button" disabled={busy} onclick={close}>Done</button>
     </footer>
   </div>
 </div>
@@ -307,6 +418,19 @@
   }
   .note {
     font-size: 12.5px;
+  }
+  .history-offer, .history-result {
+    padding: 0 8px;
+  }
+  .history-offer label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+  }
+  .history-offer .note, .history-result .note {
+    margin: 6px 0;
+    color: var(--muted);
   }
   .empty {
     margin: 12px 8px;

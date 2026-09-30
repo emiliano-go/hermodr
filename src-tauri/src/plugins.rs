@@ -11,6 +11,7 @@ pub(crate) struct Plugins {
 }
 
 #[derive(serde::Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub(crate) struct PluginsView {
     plugins: Vec<PluginInfo>,
     directory: String,

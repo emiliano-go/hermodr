@@ -181,6 +181,7 @@ impl WhatsAppService {
         }
 
         let locator = (!view_once).then(|| media_locator(&message));
+        group_history::guard_ordinary_message(&message)?;
         let result = self.client.send_message(to, message).await?;
         if forwarded {
             self.store.set_forwarded(chat, &result.message_id).await?;
@@ -435,6 +436,7 @@ impl WhatsAppService {
             ..Default::default()
         };
         let locator = media_locator(&message);
+        group_history::guard_ordinary_message(&message)?;
         let result = self.client.send_message(to, message).await?;
         if forwarded {
             self.store.set_forwarded(chat, &result.message_id).await?;

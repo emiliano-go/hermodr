@@ -8,6 +8,10 @@ export const windowFixture = {
 export const mediaFixture = { calls: 0, failure: true, deferNext: false, pending: [] as (() => void)[] };
 export const pluginFixture = { enabled: false, failure: false, crashed: false };
 export const sendFixture = { before: null as ((command: string, args?: Record<string, unknown>) => Promise<void>) | null };
+export const historyFixture = {
+  enabled: true, delayNext: false, pending: [] as (() => void)[],
+  offers: [] as { chat: unknown; account: unknown }[],
+};
 export const previewFixture = { calls: [] as string[], deferNext: false, pending: [] as (() => void)[], failure: false };
 export const selectionFixture = { calls: [] as { command: string; args: unknown }[], failure: false };
 export const uploadFixture = { calls: [] as string[], maxChunk: 0, size: 0, written: 0, chunks: [] as Uint8Array[],
@@ -27,6 +31,18 @@ export const fixture = { updated: false, failure: false, calls: 0, savedRetentio
 
 export async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   previewFixture.calls.push(command);
+  if (command === "group_history_offer") {
+    historyFixture.offers.push({ chat: args?.chat, account: args?.account });
+    const offer = { enabled: historyFixture.enabled, reason: historyFixture.enabled ? null : "WhatsApp disabled group history.", max_messages: 100, time_window_seconds: 7 * 86400 };
+    if (historyFixture.delayNext) {
+      historyFixture.delayNext = false;
+      return new Promise<T>((resolve) => historyFixture.pending.push(() => resolve(offer as T)));
+    }
+    return offer as T;
+  }
+  if (command === "search") return ["Alice", "Bob", "Carol"].map((name, index) => ({
+    jid: `${100 + index}@s.whatsapp.net`, name, number: `${100 + index}`, kind: "contact", saved: true, has_messages: true, aliases: [],
+  })) as T;
   if (["star", "react", "forward_message", "delete_messages"].includes(command)) {
     const target = args?.target as { chat?: string } | undefined;
     if ((target?.chat ?? args?.chat) === "selection@s.whatsapp.net") {

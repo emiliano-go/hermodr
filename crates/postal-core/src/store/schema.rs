@@ -366,6 +366,7 @@ const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
     migrate_v10_message_order,
     migrate_v11_soft_delete,
     migrate_v12_live_location,
+    super::group_history::migrate,
 ];
 
 pub(super) fn migrate(conn: &Connection) -> Result<()> {

@@ -153,7 +153,7 @@
     const account = activeAccount;
     void layoutMenu(event.type === "keydown");
     try {
-      const settings = await invoke<{ auto_download: boolean | null }>("chat_settings", { chat: chat.chat });
+      const settings = await invoke<import("$lib/utils/wire").ChatSettings>("chat_settings", { chat: chat.chat });
       if (request !== menuRequest || account !== activeAccount) return;
       menuAutoDownload = settings.auto_download;
       menuLoaded = true;

@@ -1,9 +1,9 @@
 import type { StoredMessage } from "./models";
+import type { MessageCursor, MessagePage } from "./wire";
+export type { MessageCursor, MessagePage } from "./wire";
 
 export const DEFAULT_MESSAGE_WINDOW = 500;
 export const MAX_MESSAGE_WINDOW = 2_000;
-export type MessageCursor = Pick<StoredMessage, "id" | "timestamp" | "sort_order">;
-export type MessagePage = { messages: StoredMessage[]; has_more: boolean };
 export const cursorOf = (message: StoredMessage): MessageCursor => ({ id: message.id, timestamp: message.timestamp, sort_order: message.sort_order });
 export const compareMessages = (a: MessageCursor, b: MessageCursor) => a.timestamp - b.timestamp ||
   (a.sort_order ?? 0) - (b.sort_order ?? 0) || (a.id === b.id ? 0 : a.id < b.id ? -1 : 1);

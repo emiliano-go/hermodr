@@ -649,6 +649,8 @@ impl WhatsAppService {
     pub async fn start(config: ServiceConfig) -> Result<(Self, broadcast::Receiver<ServiceEvent>)> {
         log_start(&config);
         let store = StoreWorker::open(&config.messages_path).await?;
+        let scheduled_path = if config.one_time_only { Path::new(":memory:") } else { &config.scheduled_path };
+        let scheduled = crate::store::scheduled::ScheduledWorker::open(scheduled_path).await?;
         let disk_retention = Arc::new(DiskRetentionManager::new(config.retention));
         let aliases = AliasWorker::open(&config.aliases_path).await?;
         let (events, initial_rx) = broadcast::channel(256);
@@ -683,8 +685,10 @@ impl WhatsAppService {
 
         Ok((
             Self {
+                history_shares: Default::default(),
                 client,
                 store,
+                scheduled,
                 disk_retention,
                 aliases,
                 events,

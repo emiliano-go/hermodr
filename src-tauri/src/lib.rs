@@ -25,11 +25,16 @@ mod uploads;
 mod plugins;
 mod media_actions;
 mod groups;
+mod scheduled;
 mod contacts;
 mod polls;
 mod desktop;
 mod migration;
 mod logging;
+#[cfg(feature = "wire-types")]
+mod wire;
+#[cfg(feature = "wire-types")]
+pub use wire::{wire_types, wire_fixture};
 #[cfg(test)]
 mod tests;
 
@@ -39,6 +44,7 @@ const SERVICE_EVENT: &str = "service-event";
 const ONCE_EVENT: &str = "once-event";
 
 struct AppState {
+    account_service: Mutex<Option<(String, std::sync::Weak<WhatsAppService>)>>,
     service: Mutex<Option<Arc<WhatsAppService>>>,
     /// The optional Android instance, running beside the main service.
     once_service: Mutex<Option<Arc<WhatsAppService>>>,
@@ -104,6 +110,15 @@ macro_rules! postal_commands {
             chats::set_marked_unread,
             groups::leave_group,
             groups::add_group_participants,
+            groups::group_history_offer,
+            groups::add_group_participants_with_history,
+            groups::retry_group_history,
+            scheduled::schedule_message,
+            scheduled::scheduled_messages,
+            scheduled::update_scheduled_message,
+            scheduled::cancel_scheduled_message,
+            scheduled::retry_scheduled_message,
+            scheduled::send_scheduled_message,
             groups::remove_group_participants,
             groups::promote_group_participants,
             groups::demote_group_participants,
@@ -258,6 +273,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     migrate_media(app.handle(), &accounts);
 
     app.manage(AppState {
+        account_service: Mutex::new(None),
         service: Mutex::new(None),
         once_service: Mutex::new(None),
         once_qr: Mutex::new(None),

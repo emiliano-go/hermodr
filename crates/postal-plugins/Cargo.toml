@@ -4,7 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+wire-types = ["dep:ts-rs"]
+
 [dependencies]
+ts-rs = { workspace = true, optional = true }
 anyhow.workspace = true
 log.workspace = true
 tokio = { workspace = true, features = ["process", "io-util", "sync"] }

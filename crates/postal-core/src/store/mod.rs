@@ -13,6 +13,8 @@ mod schema;
 mod marks;
 mod media;
 mod messages;
+pub mod scheduled;
+mod group_history;
 mod paging;
 pub use paging::{MessageCursor, MessagePage, MessagePageDirection, MAX_MESSAGE_PAGE};
 mod names;
@@ -46,7 +48,10 @@ const PLACEHOLDER_SQL: &str = "(name NOT GLOB '*[^0-9+]*' OR (name GLOB '+*' AND
 /// Each concern is its own type; they serialize flattened, so the IPC shape
 /// stays one flat object with the column names as keys.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct StoredMessage {
+    #[serde(skip)]
+    pub history_shareable: bool,
     #[serde(flatten)]
     pub header: MessageHeader,
     /// Resolved from `names` when read; never stored on the row.
@@ -69,6 +74,7 @@ pub struct StoredMessage {
 /// A live location share as last seen: the position, its accuracy and the
 /// update order, so late or replayed updates never move it backwards.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct LiveLocation {
     pub lat: f64,
     pub lng: f64,
@@ -92,6 +98,7 @@ pub struct LiveLocation {
 
 /// A system line (group change, security notice, …) instead of a message; empty for messages.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct SystemNotice {
     /// The protocol's stub type name, such as `E2E_IDENTITY_CHANGED`.
     #[serde(rename = "system_kind")]
@@ -103,6 +110,7 @@ pub struct SystemNotice {
 
 /// Where a message lives, who sent it and when.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct MessageHeader {
     pub chat: String,
     pub id: String,
@@ -113,6 +121,7 @@ pub struct MessageHeader {
 
 /// The media a message carries.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct Media {
     /// `image`, `video`, `audio`, `document`, `sticker`, `gif`, `poll`, `event`…
     #[serde(rename = "media_kind")]
@@ -142,6 +151,7 @@ pub struct Media {
 
 /// The message a reply quotes, copied so the quote renders without a lookup.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct Quote {
     #[serde(rename = "reply_to_id")]
     pub id: Option<String>,
@@ -181,6 +191,7 @@ pub struct Quote {
 
 /// A link preview: canonical URL, title, description and thumbnail.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct LinkCard {
     #[serde(rename = "preview_url")]
     pub url: Option<String>,
@@ -200,6 +211,7 @@ pub struct LinkCard {
 
 /// What this device knows about a message beyond its content.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct LocalState {
     /// Persistent first-seen order for messages sharing a wire timestamp.
     #[serde(default)]
@@ -221,6 +233,7 @@ pub struct LocalState {
 
 /// A chat summary derived from stored messages.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct ChatSummary {
     pub chat: String,
     /// Resolved display name, when one has been learned.
@@ -258,10 +271,11 @@ const MESSAGE_COLUMNS: &str = "m.chat, m.id, m.sender, m.timestamp, m.from_me, m
     m.reply_to_kind, m.reply_to_thumb, m.media_thumb, m.media_ref, m.reply_to_chat,
     m.preview_site, m.preview_color, m.media_duration, m.system_kind, m.system_params,
     m.reply_to_view_once, m.reply_to_recoverable, m.reply_to_path, m.reply_to_locator,
-  m.media_once_kind, m.sort_order, m.deleted, m.live_location";
+  m.media_once_kind, m.sort_order, m.deleted, m.live_location, m.history_shareable";
 
 fn message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
     Ok(StoredMessage {
+        history_shareable: row.get(38)?,
         header: MessageHeader {
             chat: row.get(0)?,
             id: row.get(1)?,
@@ -322,6 +336,7 @@ fn message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
 
 /// One recipient's receipts for a message we sent, as Unix times.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct MessageReceipt {
     pub recipient: String,
     pub name: Option<String>,
@@ -332,6 +347,7 @@ pub struct MessageReceipt {
 
 /// A chat's own retention, overriding the global policy where set.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct ChatRetention {
     #[serde(deserialize_with = "limits::chat_limit")]
     pub max_age_hours: RetentionLimit,
@@ -360,6 +376,7 @@ fn status_rank(s: &str) -> i32 {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct Reaction {
     pub target: String,
     pub sender: String,
@@ -367,12 +384,14 @@ pub struct Reaction {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct PollVote {
     pub voter: String,
     pub options: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct Poll {
     pub id: String,
     pub name: String,
@@ -383,6 +402,7 @@ pub struct Poll {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct EventResponse {
     pub responder: String,
     /// `going`, `not_going` or `maybe`.
@@ -390,6 +410,7 @@ pub struct EventResponse {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct Event {
     pub id: String,
     pub name: String,
@@ -424,6 +445,7 @@ pub struct NewEvent {
 
 /// Per-message state kept beside the messages of one chat.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct ChatMarks {
     pub reactions: Vec<Reaction>,
     pub starred: Vec<String>,
@@ -439,6 +461,7 @@ pub struct ChatMarks {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct ViewOnce {
     pub id: String,
     pub opened: bool,

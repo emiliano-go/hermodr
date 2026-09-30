@@ -142,7 +142,7 @@ export class SessionState {
   }
 
   async loadAccounts() {
-    const view = await invoke<{ accounts: Account[]; active: string | null }>("accounts");
+    const view = await invoke<import("$lib/utils/wire").AccountsView>("accounts");
     this.accountList = view.accounts;
     this.activeAccount = view.active;
   }
@@ -180,7 +180,7 @@ export class SessionState {
 
   async loadPrivacy() {
     try {
-      const profile = await invoke<{ privacy: Record<string, string> }>("profile");
+      const profile = await invoke<import("$lib/utils/wire").Profile>("profile");
       this.privacy = profile.privacy;
     } catch {
       // Privacy stays unknown; presence still works.

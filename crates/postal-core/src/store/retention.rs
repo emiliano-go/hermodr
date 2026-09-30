@@ -4,6 +4,7 @@ use super::*;
 
 /// Explicit limits on persisted messages, independent of the RAM window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub struct DiskRetention {
     #[serde(deserialize_with = "limits::global_age")]
     pub max_age_hours: RetentionLimit,

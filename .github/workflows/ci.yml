@@ -89,5 +89,5 @@ jobs:
       # The shell embeds the built frontend, so it has to exist before compiling.
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
-      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --features wire-types
       - run: sccache --show-stats

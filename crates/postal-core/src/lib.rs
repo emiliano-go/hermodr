@@ -10,11 +10,15 @@ pub mod ogg;
 pub mod service;
 pub mod store;
 
+#[cfg(feature = "wire-types")]
+pub mod wire;
+
 use anyhow::Result;
 
 pub use aliases::AliasStore;
 pub use history::HistoryPolicy;
 pub use service::{
+    GroupHistoryOffer, GroupHistoryResult, GroupMemberAddResult,
     AdminReport, GroupInfo, GroupKind, InviteInfo, UserProfile, Participant, ParticipantChange, Profile, SearchResult, SendOptions, WhatsAppService, ServiceConfig,
     ServiceEvent, VoiceNote, StickerLibrary, StickerResyncReport,
 };

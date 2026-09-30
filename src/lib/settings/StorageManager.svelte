@@ -36,7 +36,7 @@
     error = "";
     notice = "";
     try {
-      const result = await invoke<{ files: number; bytes: number }>("storage_cleanup", { action: pending.action });
+      const result = await invoke<import("$lib/utils/wire").CleanupResult>("storage_cleanup", { action: pending.action });
       notice = `Removed ${result.files} ${result.files === 1 ? "file" : "files"} · ${storageSize(result.bytes)}`;
     } catch (e) { error = String(e); }
     finally { pending = null; await refresh(false); }
