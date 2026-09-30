@@ -276,6 +276,24 @@ export async function deleteSelected(everyone: boolean) {
   });
 }
 
+/**
+ * The media the viewer can page through: downloaded images, videos and GIFs,
+ * including greyed-out ones whose local copy survived a delete. Messages
+ * still marked one-time are excluded; their copy is shown behind the
+ * one-time filter instead.
+ */
+export function viewableMessages(
+  ordered: StoredMessage[],
+  viewOnce: Set<string>,
+): StoredMessage[] {
+  return ordered.filter(
+    (m) =>
+      !!m.media_path &&
+      !viewOnce.has(m.id) &&
+      (m.media_kind === "image" || m.media_kind === "video" || m.media_kind === "gif"),
+  );
+}
+
 /** The picked messages in the chat's own order, oldest first. */
 export function pickedInOrder(
   picking: Record<string, true> | null,

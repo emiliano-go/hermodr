@@ -4,7 +4,7 @@
   import { addAccount, chooseAccount, connect, reconnect, removeAccount, switchTo, syncState } from "$lib/state/accounts";
   import { onDrop, onPaste } from "$lib/state/attachments";
   import { openPings, openStarred, searchChat } from "$lib/state/finder";
-  import { act, canDeleteForEveryone, canDeletePickedForEveryone, deleteMessage, deleteSelected, eventFields, forwardMessages, menuItems as messageMenuItems, pickedInOrder, saveEvent, target } from "$lib/state/message-actions";
+  import { act, canDeleteForEveryone, canDeletePickedForEveryone, deleteMessage, deleteSelected, eventFields, forwardMessages, menuItems as messageMenuItems, pickedInOrder, saveEvent, target, viewableMessages } from "$lib/state/message-actions";
   import { onMount, tick, untrack } from "svelte";
   import { invoke } from "$lib/utils/ipc";
   import { listen } from "@tauri-apps/api/event";
@@ -704,17 +704,7 @@
       timestamp: m.timestamp,
     };
   }
-  const viewerItems = $derived<ViewerItem[]>(
-    messages.ordered
-      .filter(
-        (m) =>
-          !m.revoked &&
-          !!m.media_path &&
-          !viewOnceIds.has(m.id) &&
-          (m.media_kind === "image" || m.media_kind === "video" || m.media_kind === "gif"),
-      )
-      .map(viewerItem),
-  );
+  const viewerItems = $derived<ViewerItem[]>(viewableMessages(messages.ordered, viewOnceIds).map(viewerItem));
   async function closeViewOnce() {
     const message = ui.onceOpen;
     ui.onceOpen = null;
