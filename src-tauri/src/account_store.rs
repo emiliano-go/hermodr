@@ -170,6 +170,9 @@ pub(crate) fn config_for(app: &AppHandle, settings: &UiSettings, account: &str) 
         // by the optional Android instance instead.
         android_pair: false,
         keep_view_once: false,
+        // The main link ingests everything; only the Android instance runs
+        // one-time-only.
+        one_time_only: false,
         // An unset or empty setting falls back to the app data directory.
         media_dir: settings
             .media_dir
@@ -194,6 +197,7 @@ pub(crate) fn once_config_for(app: &AppHandle, settings: &UiSettings, account: &
     // store but must not download ordinary media twice or ask for old history.
     config.auto_download_media = false;
     config.keep_view_once = true;
+    config.one_time_only = true;
     config.request_full_history = false;
     config.keep_archived = true;
     Ok(config)

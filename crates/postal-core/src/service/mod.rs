@@ -420,6 +420,11 @@ pub struct ServiceConfig {
     /// Whether an arriving view-once whose media this device can fetch is
     /// downloaded and kept as an ordinary attachment instead of one-time.
     pub keep_view_once: bool,
+    /// Whether this link exists only to keep one-time media: it ingests
+    /// nothing but view-once messages, refuses history and skips every other
+    /// store change. The Android companion runs with this on, so its wake
+    /// does not re-read the backlog the main link already stored.
+    pub one_time_only: bool,
 }
 
 impl ServiceConfig {
@@ -436,6 +441,7 @@ impl ServiceConfig {
             keep_archived: true,
             android_pair: true,
             keep_view_once: true,
+            one_time_only: false,
             media_dir: Some(data_dir.join("media")),
         }
     }

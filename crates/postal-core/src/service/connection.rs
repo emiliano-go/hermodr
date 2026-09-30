@@ -385,6 +385,8 @@ impl SessionState {
             auto_download_default: config.auto_download_media,
             keep_archived: self.keep_archived.clone(),
             keep_view_once: self.keep_view_once.clone(),
+            one_time_only: config.one_time_only,
+            tally: Arc::new(CompanionTally::default()),
         }
     }
 
@@ -396,7 +398,11 @@ impl SessionState {
         events: &broadcast::Sender<ServiceEvent>,
         inbound: Inbound,
     ) -> Result<Bot> {
-        let policy = if config.request_full_history {
+        // A one-time companion wants no history at all: chunks are
+        // acknowledged and dropped, so a wake never stores them.
+        let policy = if config.one_time_only {
+            HistoryPolicy::reject_everything()
+        } else if config.request_full_history {
             HistoryPolicy::accept_everything()
         } else {
             HistoryPolicy::default()
