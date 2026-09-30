@@ -83,7 +83,7 @@ export class SessionState {
     keep_archived: true,
     android_instance: false,
     notifications_enabled: true,
-    freeze_chat_list_on_hover: true,
+    freeze_chat_list_on_hover: false,
     verbose_whatsapp_logs: true,
   });
 

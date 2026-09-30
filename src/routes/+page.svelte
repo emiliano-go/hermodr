@@ -1020,7 +1020,7 @@
         return chats.chatAction("mark_read", { chat: chat.chat });
       }}
       archivedChats={chats.archivedChats}
-      freezeOnHover={session.settings.freeze_chat_list_on_hover ?? true}
+      freezeOnHover={session.settings.freeze_chat_list_on_hover ?? false}
       onresize={startResize} />
 
     <section class="conversation">

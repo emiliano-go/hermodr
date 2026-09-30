@@ -74,7 +74,7 @@ export const fixture = {
     "android_instance": false,
     "auto_download_media": true,
     "auto_transcribe": false,
-    "freeze_chat_list_on_hover": true,
+    "freeze_chat_list_on_hover": false,
     "history_dir": null,
     "keep_archived": true,
     "keep_history": true,
