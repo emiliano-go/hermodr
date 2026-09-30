@@ -346,7 +346,7 @@
       onclick={onreceipts} />
     <Button
       variant="icon"
-      icon="keyboard"
+      icon={typingHidden ? "keyboardOff" : "keyboard"}
       iconSize={20}
       active={typingHidden}
       pressed={typingHidden}

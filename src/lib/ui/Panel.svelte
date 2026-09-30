@@ -11,6 +11,7 @@
     nav,
     section = $bindable(),
     header,
+    pageHead,
     children,
     footer,
     onclose,
@@ -19,6 +20,7 @@
     nav: { id: S; label: string; group: string }[];
     section: S;
     header: Snippet;
+    pageHead?: Snippet;
     children: Snippet;
     footer?: Snippet;
     onclose: () => void;
@@ -67,10 +69,13 @@
     </nav>
 
     <main>
-      <button class="close" title="Close" aria-label="Close {label}" onclick={onclose}>
-        <Icon name="x" size={18} />
-        <span>ESC</span>
-      </button>
+      <div class="topbar" class:bare={!pageHead}>
+        <div class="titles">{@render pageHead?.()}</div>
+        <button class="close" title="Close" aria-label="Close {label}" onclick={onclose}>
+          <Icon name="x" size={18} />
+          <span>ESC</span>
+        </button>
+      </div>
       <div class="content">{@render children()}</div>
       {@render footer?.()}
     </main>
@@ -127,9 +132,11 @@
     font-size: 13px;
   }
   .nav-group {
-    margin: 12px 10px 4px;
-    font-size: 12px;
+    margin: 12px 2px 4px;
+    font-size: 11.5px;
     font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
     color: var(--muted);
   }
   .nav-item {
@@ -158,11 +165,42 @@
     min-width: 0;
     min-height: 0;
   }
+  .topbar {
+    flex: none;
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 24px clamp(24px, 6%, 72px) 14px 40px;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg);
+  }
+  .topbar.bare {
+    border-bottom: 0;
+    padding: 18px 22px 0;
+    justify-content: flex-end;
+  }
+  .topbar.bare .titles {
+    display: none;
+  }
+  .titles {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .titles :global(h2) {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+  }
+  .titles :global(.lede) {
+    margin: 0;
+    color: var(--muted);
+    font-size: 14px;
+  }
   .close {
-    position: absolute;
-    top: 18px;
-    right: 22px;
-    z-index: 1;
+    flex: none;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -186,7 +224,7 @@
   .content {
     flex: 1;
     overflow-y: auto;
-    padding: 32px clamp(24px, 6%, 72px) 96px 40px;
+    padding: 20px clamp(24px, 6%, 72px) 96px 40px;
     display: flex;
     flex-direction: column;
     gap: 4px;

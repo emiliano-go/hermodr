@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invoke } from "$lib/utils/ipc";
+  import Icon from "$lib/ui/Icon.svelte";
   import { session } from "$lib/state/session.svelte";
   import type { ChatSummary } from "$lib/utils/models";
   type Report = { directory: string; messages: number; attachments: number; missing_attachments: number };
@@ -29,7 +30,7 @@
 </script>
 
 <details class="archives" ontoggle={loadChats}>
-  <summary>Export and local backup</summary>
+  <summary><span>Export and local backup</span><span class="chev"><Icon name="chevronDown" size={16} /></span></summary>
   <p>Export a conversation as JSON with its downloaded attachments, or back up this account’s message store, marks and aliases.</p>
   <label>Export scope
     <select bind:value={chat} disabled={busy}>
@@ -49,7 +50,10 @@
 
 <style>
   .archives { margin-top: 1rem; border-top: 1px solid var(--border); padding-top: 1rem; }
-  summary { cursor: pointer; font-weight: 600; }
+  summary { display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; list-style: none; user-select: none; }
+  summary::-webkit-details-marker { display: none; }
+  .chev { display: grid; margin-left: auto; color: var(--muted); transition: transform calc(150ms * var(--motion-scale, 1)) var(--ease); }
+  details[open] .chev { transform: rotate(180deg); }
   p { font-size: .85rem; color: var(--muted); overflow-wrap: anywhere; }
   label { display: grid; gap: .4rem; }
   select { padding: .5rem; background: var(--raised); color: var(--text); border: 1px solid var(--border); }

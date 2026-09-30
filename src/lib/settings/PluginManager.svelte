@@ -34,8 +34,6 @@
 </script>
 
 <div class="plugins">
-  <h2>Plugins</h2>
-  <p>Installed plugins are native programs. Enable only plugins you trust. Restart Postal to discover newly installed plugins.</p>
   {#if view.directory}<p class="path">Plugin directory: {view.directory}</p>{/if}
   {#if !view.plugins.length}<p>No plugins discovered.</p>{/if}
   {#each view.plugins as plugin (plugin.id)}

@@ -2,6 +2,7 @@
   import { untrack } from "svelte";
   import { invoke } from "$lib/utils/ipc";
   import ConfirmDialog from "$lib/ui/ConfirmDialog.svelte";
+  import Icon from "$lib/ui/Icon.svelte";
   import Spinner from "$lib/ui/Spinner.svelte";
   import { storageSize, type StorageReport, type StorageCleanup } from "$lib/utils/storage";
   let open = $state(false);
@@ -45,7 +46,7 @@
 </script>
 
 <details bind:open>
-  <summary>Storage Manager</summary>
+  <summary><span>Storage Manager</span><span class="chev"><Icon name="chevronDown" size={16} /></span></summary>
   <p>Local files in the current media folder. Message text and history stay when attachments are removed.</p>
   {#if error}<p role="alert">{error}</p>{/if}
   {#if notice}<p role="status">{notice}</p>{/if}
@@ -112,7 +113,10 @@
 
 <style>
   details { margin-top: 1rem; }
-  summary { cursor: pointer; font-weight: 600; }
+  summary { display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; list-style: none; user-select: none; }
+  summary::-webkit-details-marker { display: none; }
+  .chev { display: grid; margin-left: auto; color: var(--muted); transition: transform calc(150ms * var(--motion-scale, 1)) var(--ease); }
+  details[open] .chev { transform: rotate(180deg); }
   p, small { font-size: .8rem; color: var(--muted); }
   .totals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem; }
   dd { margin: .3rem 0; font-size: 1.15rem; }
