@@ -76,11 +76,13 @@ fn versioned_url_migration_backfills_batches_and_rolls_back_on_failure() {
         conn.execute("INSERT INTO messages (chat,id,sender,timestamp,from_me,text) VALUES ('a@s',?1,'peer@s',100,0,?2)",
             params![n.to_string(), format!("https://synthetic.test/{n}")]).unwrap();
     }
-    conn.execute_batch("CREATE INDEX idx_gallery_media_all ON messages(id)").unwrap();
+    // Abort the backfill midway; the migration must roll back the added column
+    // and leave the version at 15.
+    conn.execute_batch("CREATE TRIGGER fail_link_backfill BEFORE UPDATE ON messages BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END;").unwrap();
     assert!(super::super::schema::migrate_to(&conn, 16).is_err());
     assert_eq!(conn.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), 15);
     assert!(conn.prepare("SELECT link_urls FROM messages").is_err());
-    conn.execute_batch("DROP INDEX idx_gallery_media_all").unwrap();
+    conn.execute_batch("DROP TRIGGER fail_link_backfill").unwrap();
     super::super::schema::migrate_to(&conn, 16).unwrap();
     let count = conn.query_row("SELECT COUNT(*) FROM messages WHERE link_urls != '[]' AND media_path IS NULL", [], |row| row.get::<_, u32>(0)).unwrap();
     assert_eq!(count, 520);
