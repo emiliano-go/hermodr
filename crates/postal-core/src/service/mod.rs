@@ -127,6 +127,19 @@ fn remove_cached_file(path: impl AsRef<Path>) {
     }
 }
 
+/// What a message hint asks the UI to do with the stored row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum HintChange {
+    /// A new message is stored; the UI appends and follows it.
+    Arrival,
+    /// The row's content changed: an edit, media arriving, a kept one-time.
+    Content,
+    /// Only the delivery state changed; `status` carries the new one.
+    Status,
+}
+
 /// Events the UI reacts to.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -152,7 +165,17 @@ pub enum ServiceEvent {
     /// Emitted alongside `Message`; burst paths send only this.
     /// `fresh` is a new arrival (follow, typing clear, subject lookup);
     /// status-only updates (receipts, acks, media fill-in) send `false`.
-    MessageHint { chat: String, id: String, sender: String, from_me: bool, fresh: bool },
+    MessageHint {
+        chat: String,
+        id: String,
+        sender: String,
+        from_me: bool,
+        fresh: bool,
+        /// What changed, so the UI knows whether a refetch is needed.
+        change: HintChange,
+        /// The delivery state a [`HintChange::Status`] change carries.
+        status: Option<String>,
+    },
     /// Message history was changed by retention, so the UI should refresh.
     RetentionApplied { removed: usize },
     /// Address-book names were learned, so cached chats and messages now hold
@@ -215,6 +238,28 @@ impl ServiceEvent {
             sender: message.header.sender.clone(),
             from_me: message.header.from_me,
             fresh,
+            change: if fresh { HintChange::Arrival } else { HintChange::Content },
+            status: None,
+        }
+    }
+
+    /// A live message with its row, so the UI appends and notifies without
+    /// fetching the row back.
+    fn arrival(message: &StoredMessage) -> ServiceEvent {
+        ServiceEvent::Message { message: Box::new(message.clone()) }
+    }
+
+    /// A delivery-state change. The UI patches the loaded row in place instead
+    /// of refetching it, and the chat list does not need a refresh for it.
+    fn status(message: &StoredMessage, status: &str) -> ServiceEvent {
+        ServiceEvent::MessageHint {
+            chat: message.header.chat.clone(),
+            id: message.header.id.clone(),
+            sender: message.header.sender.clone(),
+            from_me: message.header.from_me,
+            fresh: false,
+            change: HintChange::Status,
+            status: Some(status.to_string()),
         }
     }
 }

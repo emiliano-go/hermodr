@@ -122,6 +122,46 @@ async fn decrypted_community_and_plaintext_reactions_share_parent_and_removal_se
 }
 
 #[tokio::test]
+async fn a_live_message_arrives_with_its_row() {
+    let (inbound, mut received) = inbound().await;
+    inbound.handle(&message_event("1@g.us", "100@s.whatsapp.net", "live", wa::Message {
+        conversation: Some("hello".into()), ..Default::default()
+    })).await;
+    let arrived = std::iter::from_fn(|| received.try_recv().ok())
+        .find_map(|event| match event {
+            ServiceEvent::Message { message } => Some(message),
+            _ => None,
+        })
+        .expect("a live arrival goes out with its row");
+    assert_eq!(arrived.header.id, "live");
+    assert_eq!(arrived.text, "hello");
+}
+
+#[tokio::test]
+async fn a_delivery_receipt_arrives_as_a_status_hint() {
+    let (inbound, mut received) = inbound().await;
+    let chat = "1@g.us";
+    inbound.store.insert_message(&StoredMessage {
+        header: MessageHeader { chat: chat.into(), id: "sent".into(), sender: "100@s.whatsapp.net".into(), from_me: true, ..Default::default() },
+        local: LocalState { status: Some("pending".into()), ..Default::default() }, ..Default::default()
+    }).await.unwrap();
+    let receipt = Receipt::builder().source(MessageSource {
+        chat: chat.parse().unwrap(), sender: "200:2@s.whatsapp.net".parse().unwrap(), is_group: true, ..Default::default()
+    }).message_ids(vec!["sent".into()]).timestamp("2026-09-27T00:00:00Z".parse().unwrap()).r#type(ReceiptType::Read).offline(false).build();
+    inbound.handle(&Event::Receipt(receipt)).await;
+    let hint = (0..4).find_map(|_| received.try_recv().ok().filter(|event| matches!(event, ServiceEvent::MessageHint { .. })))
+        .expect("a receipt goes out as a status hint");
+    match hint {
+        ServiceEvent::MessageHint { change, status, id, .. } => {
+            assert_eq!(change, HintChange::Status);
+            assert_eq!(id, "sent");
+            assert_eq!(status.as_deref(), Some("read"));
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn receipt_events_advance_delivery_without_regression() {
     let (inbound, _) = inbound().await;
     let chat = "1@g.us";

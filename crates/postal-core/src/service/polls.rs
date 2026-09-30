@@ -81,7 +81,7 @@ impl WhatsAppService {
             .save_poll(chat, &id, &self.own_jid(), question, &options, multi, Some(&secret)).await?;
         let stored = self.own_message(chat, &id, question.to_string(), "poll", to_self);
         self.store.insert_message(&stored).await?;
-        let _ = self.events.send(ServiceEvent::hint(&stored, true));
+        let _ = self.events.send(ServiceEvent::arrival(&stored));
         Ok(())
     }
 
@@ -129,7 +129,7 @@ impl WhatsAppService {
         self.store.save_event(chat, &id, &self.own_jid(), &event, Some(&secret)).await?;
         let stored = self.own_message(chat, &id, event.name, "event", to_self);
         self.store.insert_message(&stored).await?;
-        let _ = self.events.send(ServiceEvent::hint(&stored, true));
+        let _ = self.events.send(ServiceEvent::arrival(&stored));
         Ok(())
     }
 

@@ -82,7 +82,7 @@ impl WhatsAppService {
             };
         }
         self.store.insert_message(&message).await?;
-        let _ = self.events.send(ServiceEvent::hint(&message, true));
+        let _ = self.events.send(ServiceEvent::arrival(&message));
         Ok(())
     }
 
@@ -410,7 +410,7 @@ impl WhatsAppService {
                 self.store.set_forwarded(to_chat, &result.message_id).await?;
                 let stored = self.own_message(to_chat, &result.message_id, message.text, "", to_self);
                 self.store.insert_message(&stored).await?;
-                let _ = self.events.send(ServiceEvent::hint(&stored, true));
+                let _ = self.events.send(ServiceEvent::arrival(&stored));
             }
         }
         Ok(())
@@ -571,7 +571,7 @@ impl WhatsAppService {
         stored.quote = self.local_quote(&quoted_chat.to_string(), reply_to_id, reply_to_sender, sender.to_string() == self.own_jid()).await;
         stored.quote.chat = quote_chat.map(str::to_string);
         self.store.insert_message(&stored).await?;
-        let _ = self.events.send(ServiceEvent::hint(&stored, true));
+        let _ = self.events.send(ServiceEvent::arrival(&stored));
         Ok(())
     }
 

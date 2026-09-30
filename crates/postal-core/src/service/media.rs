@@ -197,7 +197,7 @@ impl WhatsAppService {
             view_once, stored_path, locator, voice_seconds, reply.as_ref(),
         ).await?;
         self.store.insert_message(&stored).await?;
-        let _ = self.events.send(ServiceEvent::hint(&stored, true));
+        let _ = self.events.send(ServiceEvent::arrival(&stored));
         Ok(warning)
     }
 
@@ -460,7 +460,7 @@ impl WhatsAppService {
         }
         let now = unix_now();
         let _ = self.store.set_sticker_recent(filehash, Some(now), now).await;
-        let _ = self.events.send(ServiceEvent::hint(&stored, true));
+        let _ = self.events.send(ServiceEvent::arrival(&stored));
         Ok(())
     }
 

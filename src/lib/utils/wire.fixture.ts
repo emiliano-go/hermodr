@@ -8,12 +8,14 @@ export const fixture = {
     "missing_attachments": 0
   },
   "event": {
+    "change": "status",
     "chat": "synthetic@invalid",
     "fresh": false,
     "from_me": true,
     "id": "fixture",
     "kind": "messageHint",
-    "sender": "synthetic@invalid"
+    "sender": "synthetic@invalid",
+    "status": "read"
   },
   "message": {
     "chat": "synthetic@invalid",
@@ -55,12 +57,14 @@ export const fixture = {
   },
   "plugin": {
     "event": {
+      "change": "status",
       "chat": "synthetic@invalid",
       "fresh": false,
       "from_me": true,
       "id": "fixture",
       "kind": "messageHint",
-      "sender": "synthetic@invalid"
+      "sender": "synthetic@invalid",
+      "status": "read"
     },
     "seq": 7,
     "type": "event"

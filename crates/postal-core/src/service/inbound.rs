@@ -3,7 +3,7 @@
 use super::*;
 use std::sync::atomic::AtomicUsize;
 use whatsapp_rust::wacore::types::events as wa_events;
-use whatsapp_rust::wacore::types::events::MessageBatch;
+use whatsapp_rust::wacore::types::events::{BatchOrigin, MessageBatch};
 
 /// What the protocol event handler shares with the service, cloned per event.
 #[derive(Clone)]
@@ -75,6 +75,9 @@ struct BatchCtx<'a> {
     own: Vec<String>,
     media_dir: Option<PathBuf>,
     touched: Vec<String>,
+    /// The batch arrived live rather than from the offline drain, so an
+    /// arrival goes out with its full row instead of a hint.
+    live: bool,
 }
 
 /// One inbound message's resolved identity, shared by every step below.
@@ -322,7 +325,7 @@ impl Inbound {
         };
         self.store.set_view_once(&chat, &id, from_me).await.logged();
         if self.store.insert_message(&message).await.observed().is_some() {
-            let _ = self.events.send(ServiceEvent::hint(&message, true));
+            let _ = self.events.send(ServiceEvent::arrival(&message));
         }
     }
 
@@ -421,6 +424,7 @@ impl Inbound {
             own,
             media_dir: self.media_dir.clone(),
             touched: Vec::with_capacity(batch.messages.len()),
+            live: batch.origin == BatchOrigin::Live,
         };
         for inbound in batch.messages.iter() {
             // A companion keeps view-once media only; everything else belongs to
@@ -843,7 +847,7 @@ impl Inbound {
         }
         self.recall_quoted(ctx, &incoming.chat, &message).await;
         self.store_and_track(ctx, &incoming.chat, &message).await;
-        self.spawn_media_fetch(ctx, &incoming.chat, &message, auto_download);
+        self.spawn_media_fetch(ctx, &incoming.chat, &message, auto_download, !inbound.info.is_offline);
     }
 
     /// Whether to fetch this message's media now. Stickers and voice notes are
@@ -937,7 +941,14 @@ impl Inbound {
     /// Fetches the file for an ordinary message, keeping a view-once as
     /// ordinary media when this link can receive it. That overrides the
     /// auto-download setting: the view-once setting decides.
-    fn spawn_media_fetch(&self, ctx: &BatchCtx<'_>, chat: &str, message: &StoredMessage, auto_download: bool) {
+    fn spawn_media_fetch(
+        &self,
+        ctx: &BatchCtx<'_>,
+        chat: &str,
+        message: &StoredMessage,
+        auto_download: bool,
+        live: bool,
+    ) {
         if message.media.kind.as_deref() == Some("view_once") {
             log::debug!(
                 "view-once in {chat}: arrived with fetchable media: {}",
@@ -953,7 +964,14 @@ impl Inbound {
             }
             _ => None,
         };
-        let _ = self.events.send(ServiceEvent::hint(message, true));
+        // A live arrival carries its row, so the UI appends and notifies
+        // without a fetch; drains replay in bulk and keep the hint.
+        let event = if ctx.live && live {
+            ServiceEvent::arrival(message)
+        } else {
+            ServiceEvent::hint(message, true)
+        };
+        let _ = self.events.send(event);
         let Some((client, dir, id, keep_once)) = fetch else { return };
         let (store, events, downloads) = (ctx.store.clone(), self.events.clone(), self.downloads.clone());
         let chat = chat.to_string();
