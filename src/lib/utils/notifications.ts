@@ -11,6 +11,13 @@ import { plain } from "./format.ts";
 import { MEDIA_LABELS, captionOf } from "./message.ts";
 import type { StoredMessage } from "./models.ts";
 
+/**
+ * How old a message may be and still ping. `fresh` only means "arrival-shaped";
+ * a startup drain or redelivery replays old rows as fresh, and those must stay
+ * silent instead of spamming a notification per backlog message.
+ */
+export const NOTIFY_RECENT_SECONDS = 300;
+
 /** A chat is muted when `muted_until` is -1 (forever) or still in the future. */
 export function isChatMuted(mutedUntil: number, nowSec = Math.floor(Date.now() / 1000)): boolean {
   if (mutedUntil < 0) return true;
@@ -32,13 +39,20 @@ export type NotifyDecision = {
   fresh: boolean;
   /** The chat is currently open, so the message is already on screen. */
   isOpenChat: boolean;
+  /** When the message was sent, Unix seconds. A replay older than the window stays silent. */
+  sentAt: number;
 };
 
-/** Single gate for every notification path: muted chats and the global toggle stay silent. */
+/**
+ * Single gate for every notification path: muted chats and the global toggle
+ * stay silent, and only genuinely recent arrivals ping (a future timestamp,
+ * from clock skew, counts as recent).
+ */
 export function shouldNotify(d: NotifyDecision, nowSec = Math.floor(Date.now() / 1000)): boolean {
   if (!d.notificationsEnabled) return false;
   if (d.fromMe) return false;
   if (!d.fresh) return false;
+  if (nowSec - d.sentAt > NOTIFY_RECENT_SECONDS) return false;
   if (d.revoked || d.systemKind) return false;
   if (d.isOpenChat) return false;
   if (isChatMuted(d.mutedUntil, nowSec)) return false;

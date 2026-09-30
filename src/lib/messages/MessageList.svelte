@@ -261,11 +261,14 @@
 
 <div
   class="messages"
-  class:switching
+  class:switching={switching && messages.length > 0}
   class:group={isGroup}
   bind:this={scroller}
   onclickcapture={captureClick}
   onscroll={onscroll}>
+  {#if switching && messages.length === 0}
+    <p class="loading">Loading messages…</p>
+  {/if}
   {#if messages.length > 0}
     <button class="load-older" onclick={onloadolder} disabled={loadingOlder}>
       {loadingOlder ? "Loading messages…" : "Load older messages"}
@@ -335,6 +338,11 @@
   }
   .messages.group {
     --pad-l: max(56px, 7%);
+  }
+  .loading {
+    margin: auto;
+    color: var(--muted);
+    font-size: 13px;
   }
   .day {
     display: flex;

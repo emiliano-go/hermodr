@@ -164,6 +164,7 @@ function notifyForMessage(message: StoredMessage, fresh: boolean) {
         notificationsEnabled: notificationsOn(),
         fresh,
         isOpenChat: isOpenChat(chat),
+        sentAt: message.timestamp,
       },
     )
   ) {

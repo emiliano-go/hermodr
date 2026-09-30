@@ -26,6 +26,7 @@ test("shouldNotify respects the global toggle, mutes, self messages and the open
     notificationsEnabled: true,
     fresh: true,
     isOpenChat: false,
+    sentAt: NOW,
   };
   assert.equal(shouldNotify(base, NOW), true);
   assert.equal(shouldNotify({ ...base, notificationsEnabled: false }, NOW), false);
@@ -37,6 +38,23 @@ test("shouldNotify respects the global toggle, mutes, self messages and the open
   assert.equal(shouldNotify({ ...base, isOpenChat: true }, NOW), false);
   assert.equal(shouldNotify({ ...base, revoked: true }, NOW), false);
   assert.equal(shouldNotify({ ...base, systemKind: "GROUP_PARTICIPANT_ADD" }, NOW), false);
+});
+
+test("catch-up replays stay silent: only recent arrivals ping", () => {
+  const base = {
+    fromMe: false,
+    systemKind: null,
+    revoked: false,
+    mutedUntil: 0,
+    notificationsEnabled: true,
+    fresh: true,
+    isOpenChat: false,
+    sentAt: NOW,
+  };
+  assert.equal(shouldNotify({ ...base, sentAt: NOW - 301 }, NOW), false);
+  assert.equal(shouldNotify({ ...base, sentAt: NOW - 300 }, NOW), true);
+  // A sender's clock ahead of ours must not mute a live message.
+  assert.equal(shouldNotify({ ...base, sentAt: NOW + 30 }, NOW), true);
 });
 
 test("titles name the DM contact and the group", () => {
