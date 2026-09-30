@@ -265,7 +265,8 @@ impl Inbound {
     ) -> (bool, usize) {
         let Some(web) = entry.message.as_option() else { return (false, 0) };
         let Some(key) = web.key.as_option() else { return (false, 0) };
-        if let Some(notice) = web.message_stub_type.and_then(system_kind) {
+        if let Some(stub) = web.message_stub_type {
+            let Some(notice) = system_kind(stub) else { return (false, 0) };
             let Some(id) = key.id.clone() else { return (false, 0) };
             let notice_kind = notice.clone();
             let mut stored = system_row(
@@ -280,7 +281,7 @@ impl Inbound {
                 .unwrap_or_default();
             let seen = store.message(chat, &stored.header.id).await.observed().is_some()
                 || store
-                    .has_system_near(chat, &notice_kind, &stored.system.params, stored.header.timestamp)
+                    .has_system_near(chat, &notice_kind, &stored.system.params, stored.header.timestamp, false)
                     .await
                     .observed()
                     .unwrap_or(false);

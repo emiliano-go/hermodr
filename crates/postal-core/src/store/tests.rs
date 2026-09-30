@@ -827,6 +827,31 @@ fn system_rows_round_trip_and_stay_out_of_the_preview() {
 }
 
 #[test]
+fn chat_unread_marks_survive_reopen_without_changing_message_read_state() {
+    let root = std::env::temp_dir().join(format!("postal-unread-{}-{}", std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("synthetic.db");
+    {
+        let s = MessageStore::open(&path).unwrap();
+        let mut message = msg("200@s.whatsapp.net", "read", 1, "already read");
+        message.local.read = true;
+        s.insert_message(&message).unwrap();
+        s.set_marked_unread("200@s.whatsapp.net", true).unwrap();
+    }
+    {
+        let s = MessageStore::open(&path).unwrap();
+        let chat = s.chats().unwrap().remove(0);
+        assert!(chat.marked_unread);
+        assert_eq!(chat.unread_count, 0);
+        assert!(s.message("200@s.whatsapp.net", "read").unwrap().local.read);
+        s.set_marked_unread("200@s.whatsapp.net", false).unwrap();
+        assert!(!s.chats().unwrap()[0].marked_unread);
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn missed_calls_reach_the_preview_and_notice_only_chats_stay_listed() {
     let s = store(DiskRetention::unlimited());
     s.insert_message(&msg("a@s", "1", 10, "hello")).unwrap();
@@ -845,10 +870,10 @@ fn missed_calls_reach_the_preview_and_notice_only_chats_stay_listed() {
     s.insert_message(&stranger).unwrap();
     assert!(!s.chats().unwrap().iter().any(|c| c.chat == "b@s"));
     let at = call.header.timestamp;
-    assert!(s.has_system_near("a@s", "CALL_MISSED_VOICE", &[], at + 3).unwrap());
-    assert!(!s.has_system_near("a@s", "CALL_MISSED_VOICE", &[], at + 30).unwrap());
-    assert!(!s.has_system_near("a@s", "GROUP_CREATE", &[], at).unwrap());
-    assert!(!s.has_system_near("a@s", "CALL_MISSED_VOICE", &["other@s".into()], at).unwrap());
+    assert!(s.has_system_near("a@s", "CALL_MISSED_VOICE", &[], at + 3, true).unwrap());
+    assert!(!s.has_system_near("a@s", "CALL_MISSED_VOICE", &[], at + 30, true).unwrap());
+    assert!(!s.has_system_near("a@s", "GROUP_CREATE", &[], at, true).unwrap());
+    assert!(!s.has_system_near("a@s", "CALL_MISSED_VOICE", &["other@s".into()], at, true).unwrap());
 }
 
 #[test]

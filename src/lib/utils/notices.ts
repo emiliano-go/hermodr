@@ -98,16 +98,16 @@ export function noticeText(kind: string, params: string[], name: (jid: string) =
     case "COMMUNITY_LINK_PARENT_GROUP_MEMBERSHIP_APPROVAL":
     case "COMMUNITY_LINK_SIBLING_GROUP":
     case "COMMUNITY_LINK_SUB_GROUP":
-      return who ? `${who} was linked to the community.` : "A group was linked to the community.";
+      return author ? `${author} linked ${who || "a group"} to the community.` : who ? `${who} was linked to the community.` : "A group was linked to the community.";
     case "COMMUNITY_UNLINK_PARENT_GROUP":
     case "COMMUNITY_UNLINK_SIBLING_GROUP":
     case "COMMUNITY_UNLINK_SUB_GROUP":
     case "INTEGRITY_UNLINK_PARENT_GROUP":
-      return who ? `${who} was unlinked from the community.` : "A group was unlinked from the community.";
+      return author ? `${author} unlinked ${who || "a group"} from the community.` : who ? `${who} was unlinked from the community.` : "A group was unlinked from the community.";
     case "COMMUNITY_CHANGE_DESCRIPTION":
       return author ? `${author} changed the community description.` : "The community description changed.";
-    case "COMMUNITY_CHANGE_OWNER":
-      return who ? `${who} is now the community owner.` : "The community owner changed.";
+    case "COMMUNITY_OWNER_CHANGED":
+      return names.length === 2 ? `Community ownership changed from ${names[0]} to ${names[1]}.` : "Community ownership changed.";
     case "CALL_MISSED":
       return "Missed call";
     case "CALL_MISSED_VOICE":

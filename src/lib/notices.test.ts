@@ -26,6 +26,7 @@ test("membership and metadata notices retain actor, target and saved names", () 
   assert.equal(noticeText("GROUP_CHANGE_DESCRIPTION", [], name, "1@lid"), "Alice changed the group description.");
   assert.equal(noticeText("GROUP_CREATE", [], name, "3@lid"), "You created the group.");
   assert.equal(noticeText("INDIVIDUAL_CHANGE_NUMBER", ["1@lid", "2"], name), "Alice changed their phone number to Bob.");
+  assert.equal(noticeText("COMMUNITY_OWNER_CHANGED", ["1@lid", "2@s.whatsapp.net"], name), "Community ownership changed from Alice to Bob.");
 });
 
 test("join requests and group permission modes render without guessing missing state", () => {

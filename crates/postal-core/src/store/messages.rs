@@ -213,16 +213,16 @@ impl MessageStore {
         Ok(row)
     }
 
-    /// Whether a system line of `kind` already sits within a few seconds of
-    /// `timestamp`: the live notification and the history stub for one change
-    /// carry different ids but the same server time.
-    pub fn has_system_near(&self, chat: &str, kind: &str, notice_params: &[String], timestamp: i64) -> Result<bool> {
+    /// Matches the opposite delivery source; repeats from one source use their IDs.
+    pub fn has_system_near(&self, chat: &str, kind: &str, notice_params: &[String], timestamp: i64, generated: bool) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let chat = &*names::canonical_chat(&conn, chat)?;
+        // ponytail: generated ID prefixes mark origin; persist origin if wire IDs overlap them.
         let found = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM messages
-             WHERE chat = ?1 AND system_kind = ?2 AND ABS(timestamp - ?3) <= 5 AND COALESCE(system_params, '[]') = ?4)",
-            params![chat, kind, timestamp, serde_json::to_string(notice_params)?],
+             WHERE chat = ?1 AND system_kind = ?2 AND ABS(timestamp - ?3) <= 5 AND COALESCE(system_params, '[]') = ?4
+             AND (id LIKE 'group-%' OR id LIKE 'notice-%' OR id LIKE 'call-%' OR id LIKE 'owner-%') != ?5)",
+            params![chat, kind, timestamp, serde_json::to_string(notice_params)?, generated],
             |r| r.get::<_, bool>(0),
         )?;
         Ok(found)
@@ -392,11 +392,11 @@ impl StoreWorker {
         self.run(move |store| store.oldest_message(&chat)).await
     }
 
-    pub(crate) async fn has_system_near(&self, chat: &str, kind: &str, notice_params: &[String], timestamp: i64) -> Result<bool> {
+    pub(crate) async fn has_system_near(&self, chat: &str, kind: &str, notice_params: &[String], timestamp: i64, generated: bool) -> Result<bool> {
         let chat = chat.to_owned();
         let kind = kind.to_owned();
         let notice_params = notice_params.to_owned();
-        self.run(move |store| store.has_system_near(&chat, &kind, &notice_params, timestamp)).await
+        self.run(move |store| store.has_system_near(&chat, &kind, &notice_params, timestamp, generated)).await
     }
 
     pub(crate) async fn chat_of_message(&self, id: &str) -> Result<Option<String>> {

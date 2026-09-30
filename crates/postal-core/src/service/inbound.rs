@@ -77,7 +77,7 @@ impl Inbound {
             Event::Presence(presence) => self.on_presence(presence).await,
             Event::IdentityChange(change) => self.on_identity_change(change).await,
             Event::DeviceListUpdate(update) => self.on_device_change(update).await,
-            Event::PictureUpdate(update) => self.on_picture_update(update),
+            Event::PictureUpdate(update) => self.on_picture_update(update).await,
             Event::UndecryptableMessage(stub)
                 if stub.unavailable_type
                     == whatsapp_rust::wacore::types::events::UnavailableType::ViewOnce =>
@@ -215,13 +215,19 @@ impl Inbound {
         });
     }
 
-    fn on_picture_update(&self, update: &wa_events::PictureUpdate) {
+    async fn on_picture_update(&self, update: &wa_events::PictureUpdate) {
         let jid = update.jid.to_non_ad().to_string();
         if let Some(dir) = self.media_dir.as_deref() {
             let path = avatar_path(dir, &jid);
             remove_cached_file(path.with_extension("none"));
             remove_cached_file(path);
             remove_cached_file(avatar_full_path(dir, &jid));
+        }
+        if update.jid.is_group() {
+            let at = update.timestamp.timestamp();
+            let id = format!("group-picture-{at}-{}-{}", update.picture_id.as_deref().unwrap_or("removed"), update.removed);
+            let author = update.author.as_ref().map(|jid| jid.to_non_ad().to_string()).unwrap_or_default();
+            self.store_notice(&jid, id, at, "GROUP_CHANGE_ICON", vec![], author).await;
         }
         let _ = self.events.send(ServiceEvent::AvatarChanged { jid });
     }
@@ -272,12 +278,19 @@ impl Inbound {
         use whatsapp_rust::wacore::stanza::groups::GroupNotificationAction;
         let chat = update.group_jid.to_non_ad().to_string();
         log::debug!("group {chat} changed: {:?}", update.action);
-        self.group_cache.lock().unwrap().remove(&chat);
+        let previous = self.group_cache.lock().unwrap().remove(&chat);
+        let community = previous.as_ref().is_some_and(|info| info.community)
+            || self.groups_cache.lock().unwrap().as_ref().is_some_and(|groups|
+                groups.iter().any(|group| group.id.to_non_ad().to_string() == chat && group.is_parent_group()));
         *self.groups_cache.lock().unwrap() = None;
-        if let GroupNotificationAction::Subject { subject, .. } = update.action.as_ref() {
+        if let GroupNotificationAction::Subject { subject, subject_owner, subject_owner_pn, .. } = update.action.as_ref() {
+            if let Some(owner) = subject_owner {
+                remember_lid_pn(&self.store, owner, subject_owner_pn.as_ref()).await;
+            }
             self.store.set_name(&chat, subject).await.logged();
         }
-        self.on_group_update(update).await;
+        self.on_group_update(update, community).await;
+        self.check_community_owner(update, previous.as_ref());
         let _ = self.events.send(ServiceEvent::GroupChanged { chat });
     }
 
@@ -489,6 +502,18 @@ impl Inbound {
     /// edit or a sticker pack. Returns whether it was one.
     async fn apply_control(&self, ctx: &BatchCtx<'_>, inbound: &InboundMessage, incoming: &Incoming) -> bool {
         let base = inbound.message.get_base_message();
+        if let Some(protocol) = base.protocol_message.as_option()
+            .filter(|protocol| protocol.r#type == Some(wa::message::protocol_message::Type::EPHEMERAL_SETTING))
+        {
+            let Some(expiration) = protocol.ephemeral_expiration else { return true };
+            let mut row = system_row(&incoming.chat, incoming.id.clone(), inbound.info.timestamp.timestamp(),
+                "CHANGE_EPHEMERAL_SETTING".into(), vec![expiration.to_string()]);
+            row.header.sender = inbound.info.source.sender.to_non_ad().to_string();
+            if ctx.store.insert_message(&row).await.observed().is_some() {
+                let _ = self.events.send(ServiceEvent::hint(&row, false));
+            }
+            return true;
+        }
         if base.poll_update_message.as_option().is_some() {
             self.apply_poll_vote(ctx, inbound, incoming).await;
             return true;
