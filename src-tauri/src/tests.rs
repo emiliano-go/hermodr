@@ -188,3 +188,46 @@ fn cold_storage_keeps_each_account_in_its_own_folder() {
     assert_eq!(history_base_for(base, Some("/cold"), "default"), PathBuf::from("/cold"));
     assert_eq!(history_base_for(base, Some("/cold"), "acct-1"), PathBuf::from("/cold/accounts/acct-1"));
 }
+
+#[test]
+fn the_companion_forwards_only_store_changes() {
+    use postal_core::ServiceEvent;
+    let store_events = [
+        ServiceEvent::Marks { chat: "a@s".into() },
+        ServiceEvent::ChatStateChanged { chat: "a@s".into() },
+        ServiceEvent::RetentionApplied { removed: 1 },
+    ];
+    for event in &store_events {
+        assert!(crate::connection::instance_store_event(event), "{event:?}");
+    }
+    // Catch-up replay and connection noise stay out of the main UI's stream.
+    let noise = [
+        ServiceEvent::MessageHint { chat: "a@s".into(), id: "1".into(), sender: "b@s".into(), from_me: false, fresh: true },
+        ServiceEvent::Message { message: Box::default() },
+        ServiceEvent::Synced,
+    ];
+    for event in &noise {
+        assert!(!crate::connection::instance_store_event(event), "{event:?}");
+    }
+}
+
+#[test]
+fn the_companion_sheet_skips_catch_up_noise() {
+    use postal_core::ServiceEvent;
+    for event in [
+        ServiceEvent::QrCode { code: "x".into() },
+        ServiceEvent::Connected,
+        ServiceEvent::Disconnected,
+        ServiceEvent::LoggedOut,
+        ServiceEvent::Marks { chat: "a@s".into() },
+    ] {
+        assert!(crate::connection::instance_sheet_event(&event), "{event:?}");
+    }
+    for event in [
+        ServiceEvent::MessageHint { chat: "a@s".into(), id: "1".into(), sender: "b@s".into(), from_me: false, fresh: true },
+        ServiceEvent::Message { message: Box::default() },
+        ServiceEvent::Syncing { pending: 9, applied: 1 },
+    ] {
+        assert!(!crate::connection::instance_sheet_event(&event), "{event:?}");
+    }
+}

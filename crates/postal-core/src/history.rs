@@ -37,16 +37,30 @@ impl From<Option<i32>> for HistoryKind {
 pub struct HistoryPolicy {
     /// Accept deep FULL history; off by default.
     pub accept_full_history: bool,
+    /// Refuse every chunk: a one-time companion only wants live view-once
+    /// messages, and storing the phone's history a second time is waste.
+    pub reject_all: bool,
 }
 
 impl HistoryPolicy {
     pub fn accept_everything() -> Self {
         Self {
             accept_full_history: true,
+            reject_all: false,
+        }
+    }
+
+    pub fn reject_everything() -> Self {
+        Self {
+            accept_full_history: false,
+            reject_all: true,
         }
     }
 
     fn classify(&self, kind: HistoryKind) -> HistorySyncDecision {
+        if self.reject_all {
+            return HistorySyncDecision::RejectAndAcknowledge;
+        }
         match kind {
             HistoryKind::Unknown => HistorySyncDecision::RejectAndAcknowledge,
             HistoryKind::Full if !self.accept_full_history => {
@@ -100,6 +114,18 @@ mod tests {
                 HistoryPolicy::accept_everything().classify(adapted),
                 HistorySyncDecision::Accept,
                 "{kind:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn a_one_time_companion_refuses_every_history_chunk() {
+        let policy = HistoryPolicy::reject_everything();
+        for raw in [None, Some(0), Some(1), Some(2), Some(3), Some(4), Some(5), Some(6), Some(-1)] {
+            assert_eq!(
+                policy.classify(HistoryKind::from(raw)),
+                HistorySyncDecision::RejectAndAcknowledge,
+                "{raw:?}",
             );
         }
     }

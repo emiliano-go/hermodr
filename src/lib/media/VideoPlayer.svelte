@@ -2,6 +2,7 @@
   import { onDestroy } from "svelte";
   import { invoke } from "$lib/utils/ipc";
   import Icon from "$lib/ui/Icon.svelte";
+  import Spinner from "$lib/ui/Spinner.svelte";
 
   let {
     src,
@@ -19,23 +20,73 @@
     onerror?: () => void;
   } = $props();
 
+  /**
+   * How playback is being sourced: the asset scheme first, then the raw bytes
+   * through a blob, then the backend's H.264 + Opus remux for installs whose
+   * system codecs cannot decode the audio track.
+   */
+  let attempt = $state(0);
   /** Blob URL for a video the asset scheme could not stream (WebKitGTK). */
   let fallback = $state<string | null>(null);
-  let triedFallback = false;
-  const source = $derived(fallback ?? src);
+  /** Blob URL for the backend's remux. */
+  let prepared = $state<string | null>(null);
+  /** The backend is remuxing; the element is black until the blob lands. */
+  let preparing = $state(false);
+  const source = $derived(prepared ?? fallback ?? src);
+  let stallTimer: ReturnType<typeof setTimeout> | undefined;
+
+  // A source that neither loads nor errors (an asset scheme that just hangs)
+  // would leave the player black forever, so a source that has no metadata
+  // after a grace period is treated like a failed one.
+  $effect(() => {
+    const generation = attempt;
+    const current = source;
+    clearTimeout(stallTimer);
+    if (generation >= 3 || !current) return;
+    stallTimer = setTimeout(() => {
+      if (generation === attempt && video?.readyState === 0) void onVideoError();
+    }, 5000);
+  });
+
+  /** The type the blob must carry: the URL alone tells the engine nothing. */
+  function mimeFor(file: string) {
+    const extension = file.slice(file.lastIndexOf(".") + 1).toLowerCase();
+    if (extension === "webm") return "video/webm";
+    if (extension === "mkv") return "video/x-matroska";
+    if (extension === "mov") return "video/quicktime";
+    return "video/mp4";
+  }
+
+  async function blobUrl(file: string) {
+    const data = await invoke<string>("read_file", { path: file });
+    const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+    return URL.createObjectURL(new Blob([bytes], { type: mimeFor(file) }));
+  }
 
   async function onVideoError() {
-    if (path && !triedFallback) {
-      triedFallback = true;
+    if (path && attempt === 0) {
+      attempt = 1;
       try {
-        const data = await invoke<string>("read_file", { path });
-        const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
-        fallback = URL.createObjectURL(new Blob([bytes]));
+        fallback = await blobUrl(path);
+        return;
+      } catch {
+        // Fall through to the backend remux.
+      }
+    }
+    if (path && attempt <= 1) {
+      attempt = 2;
+      preparing = true;
+      try {
+        const playable = await invoke<string>("playable_video", { path });
+        prepared = await blobUrl(playable);
         return;
       } catch {
         // Nothing more to try; fall through to the caller.
+      } finally {
+        preparing = false;
       }
     }
+    attempt = 3;
     onerror?.();
   }
 
@@ -174,7 +225,9 @@
 
   onDestroy(() => {
     clearTimeout(idleTimer);
+    clearTimeout(stallTimer);
     if (fallback) URL.revokeObjectURL(fallback);
+    if (prepared) URL.revokeObjectURL(prepared);
   });
 </script>
 
@@ -208,6 +261,10 @@
 
   {#if paused && current === 0}
     <button class="big-play" aria-label="Play" onclick={toggle}><Icon name="play" size={34} filled /></button>
+  {/if}
+
+  {#if preparing}
+    <div class="preparing" role="status"><Spinner /> Preparing video…</div>
   {/if}
 
   <div class="controls">
@@ -357,6 +414,19 @@
   .big-play:hover {
     background: var(--accent);
     color: var(--accent-ink);
+  }
+  .preparing {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: rgba(0, 0, 0, 0.5);
+    color: #fff;
+    font-size: 13px;
   }
   .controls {
     position: absolute;

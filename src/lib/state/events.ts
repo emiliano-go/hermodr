@@ -385,7 +385,21 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       members.presence[payload.jid] = { online: payload.online, last_seen: payload.last_seen };
       break;
     case "marks":
-      if (payload.chat === chats.selectedChat) await messages.loadMarks(payload.chat);
+      if (payload.chat === chats.selectedChat) {
+        await messages.loadMarks(payload.chat);
+        // A kept one-time media arrives as a mark change: the row is ordinary
+        // media now, so reload it behind the marks it just lost.
+        queueReloadMessages(host, payload.chat, false, false);
+      }
+      break;
+    case "storeChanged":
+      // A listener lagged and missed store changes with no chat to name them;
+      // reload everything the open view could be showing.
+      if (!deferRefresh(chats.selectedChat)) {
+        queueRefreshChats();
+        queueReloadMessages(host, chats.selectedChat, false, false);
+        if (chats.selectedChat) await messages.loadMarks(chats.selectedChat);
+      }
       break;
     case "stickerLibraryChanged":
       stickers.touch();

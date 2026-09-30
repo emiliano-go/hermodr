@@ -13,6 +13,7 @@ async fn inbound() -> (Inbound, broadcast::Receiver<ServiceEvent>) {
         group_cache: Arc::default(), groups_cache: Arc::default(), older_waits: Arc::default(),
         downloads: Arc::new(tokio::sync::Semaphore::new(1)), sync_progress: Arc::default(),
         auto_download_default: false, keep_archived: Arc::default(), keep_view_once: Arc::default(),
+        one_time_only: false, tally: Arc::default(),
     }, received)
 }
 
@@ -22,6 +23,37 @@ fn message_event(chat: &str, sender: &str, id: &str, message: wa::Message) -> Ev
     }, ..Default::default() };
     let message = InboundMessage::builder().message(Arc::new(message)).info(Arc::new(info)).build();
     Event::Messages(MessageBatch::builder().messages(vec![message].into()).origin(BatchOrigin::Live).build())
+}
+
+fn view_once_image() -> wa::Message {
+    wa::Message {
+        view_once_message_v2: MessageField::some(wa::message::FutureProofMessage {
+            message: MessageField::some(wa::Message {
+                image_message: MessageField::some(wa::message::ImageMessage::default()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn a_one_time_companion_stores_only_view_once_messages() {
+    let (mut inbound, _) = inbound().await;
+    inbound.one_time_only = true;
+    inbound.handle(&message_event("1@g.us", "100@s.whatsapp.net", "plain", wa::Message {
+        conversation: Some("the main link's to store".into()), ..Default::default()
+    })).await;
+    inbound.handle(&message_event("1@g.us", "100@s.whatsapp.net", "picture", wa::Message {
+        image_message: MessageField::some(wa::message::ImageMessage::default()), ..Default::default()
+    })).await;
+    assert_eq!(inbound.store.count().await.unwrap(), 0, "ordinary media is the main link's");
+    inbound.handle(&message_event("1@g.us", "100@s.whatsapp.net", "once", view_once_image())).await;
+    let stored = inbound.store.message("1@g.us", "once").await.unwrap();
+    assert_eq!(stored.media.kind.as_deref(), Some("view_once"));
+    inbound.handle(&Event::HistorySync(Box::new(history_chunk("1@g.us", "old", None)))).await;
+    assert_eq!(inbound.store.count().await.unwrap(), 1, "history stays out of a companion");
 }
 
 #[tokio::test]

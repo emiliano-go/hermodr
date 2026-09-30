@@ -240,6 +240,14 @@ pub(crate) async fn playable_audio(state: State<'_, AppState>, path: String) -> 
     service.playable_audio(&path).await.map_err(|e| command_error(&service, e))
 }
 
+/// A path the web view can play a video from: the original when its codecs are
+/// decodable, otherwise a cached H.264 + Opus remux ffmpeg writes.
+#[tauri::command]
+pub(crate) async fn playable_video(state: State<'_, AppState>, path: String) -> Result<String, String> {
+    let service = state.service()?;
+    service.playable_video(&path).await.map_err(|e| command_error(&service, e))
+}
+
 /// Deletes downloaded media, keeping the messages.
 #[tauri::command(async)]
 pub(crate) async fn flush_media(state: State<'_, AppState>) -> Result<usize, String> {

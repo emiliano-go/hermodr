@@ -188,6 +188,12 @@ pub enum ServiceEvent {
     GroupChanged { chat: String },
     /// Reactions, stars or the pinned message of a chat changed.
     Marks { chat: String },
+    /// Store changes were missed (a lagging listener skipped events), so the
+    /// UI should reload the chat list, marks and the open chat. The Android
+    /// companion emits its store changes on its own stream; when that stream
+    /// falls behind, nothing names the affected chats, so this asks for a
+    /// blanket refresh instead.
+    StoreChanged,
     /// Packs, favourites or recents in the sticker library changed.
     StickerLibraryChanged { packs: bool, favorites: bool, recents: bool },
     /// Bytes of an outgoing file sent so far, named by the caller's token.
@@ -414,6 +420,11 @@ pub struct ServiceConfig {
     /// Whether an arriving view-once whose media this device can fetch is
     /// downloaded and kept as an ordinary attachment instead of one-time.
     pub keep_view_once: bool,
+    /// Whether this link exists only to keep one-time media: it ingests
+    /// nothing but view-once messages, refuses history and skips every other
+    /// store change. The Android companion runs with this on, so its wake
+    /// does not re-read the backlog the main link already stored.
+    pub one_time_only: bool,
 }
 
 impl ServiceConfig {
@@ -430,6 +441,7 @@ impl ServiceConfig {
             keep_archived: true,
             android_pair: true,
             keep_view_once: true,
+            one_time_only: false,
             media_dir: Some(data_dir.join("media")),
         }
     }

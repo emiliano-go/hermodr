@@ -185,12 +185,16 @@ pub(super) fn cleanup_storage(store: &MessageStore, directory: &Path, action: St
                 std::fs::remove_file(&source)?;
                 result.files += 1;
                 result.bytes += bytes;
-                // The playback conversion is derived from this file, so it goes too.
-                let companion = audio::playable_path(&root, &source);
-                if let Ok(metadata) = companion.metadata() {
-                    if std::fs::remove_file(&companion).is_ok() {
-                        result.files += 1;
-                        result.bytes += metadata.len();
+                // The playback conversions are derived from this file, so they
+                // go too: the WAV an audio play decodes to, the MP4 a video remux
+                // writes.
+                for extension in ["wav", "mp4"] {
+                    let companion = audio::playable_path(&root, &source, extension);
+                    if let Ok(metadata) = companion.metadata() {
+                        if std::fs::remove_file(&companion).is_ok() {
+                            result.files += 1;
+                            result.bytes += metadata.len();
+                        }
                     }
                 }
             }
@@ -236,6 +240,7 @@ mod tests {
         std::fs::write(&video, [2; 80]).unwrap();
         std::fs::write(media.join("avatars/contact.jpg"), [3; 10]).unwrap();
         std::fs::write(media.join("playable/photo.wav"), [5; 30]).unwrap();
+        std::fs::write(media.join("playable/video.mp4"), [6; 20]).unwrap();
         std::fs::write(media.join("unrelated.txt"), [4; 7]).unwrap();
         let locator = wa::Message { image_message: MessageField::some(wa::message::ImageMessage {
             direct_path: Some("/synthetic/photo".into()), media_key: Some(vec![5; 32]),
@@ -257,7 +262,7 @@ mod tests {
         store.set_saved_name("a@s", "Synthetic A").unwrap();
         let report = storage_report(&store, &media).unwrap();
         assert!(report.database_bytes > 0);
-        assert_eq!((report.attachment_bytes, report.cache_bytes, report.other_bytes), (100, 40, 7));
+        assert_eq!((report.attachment_bytes, report.cache_bytes, report.other_bytes), (100, 60, 7));
         assert_eq!(report.chats.iter().find(|c| c.chat == "a@s").unwrap().by_kind["video"], 80);
         assert_eq!(report.page(Some("a@s"), StorageOrder::Largest, 0).files[0].id, "video");
         assert_eq!(storage_report(&store, &media).unwrap().page(Some("a@s"), StorageOrder::Oldest, 0).files[0].id, "photo");
@@ -271,10 +276,13 @@ mod tests {
             assert_eq!(row.media.locator.as_ref(), Some(&locator));
         }
         assert_eq!(store.count().unwrap(), 3);
+        let cleaned = cleanup_storage(&store, &media, StorageCleanup::ChatMedia { chat: "a@s".into() }).unwrap();
+        assert_eq!((cleaned.files, cleaned.bytes), (2, 100), "the video remux goes with its source");
+        assert!(!video.exists());
+        assert!(!media.join("playable/video.mp4").exists());
+        // Only cached files remain for the cache action: the avatar.
         assert_eq!(cleanup_storage(&store, &media, StorageCleanup::Cache).unwrap().bytes, 10);
-        assert!(video.exists());
         assert!(media.join("unrelated.txt").exists());
-        assert_eq!(cleanup_storage(&store, &media, StorageCleanup::ChatMedia { chat: "a@s".into() }).unwrap().bytes, 80);
         assert_eq!(storage_report(&store, &media).unwrap().attachment_bytes, 0);
         assert_eq!(store.chats().unwrap().len(), 2);
         let outside = root.join("outside.jpg");

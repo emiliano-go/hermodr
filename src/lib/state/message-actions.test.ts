@@ -17,6 +17,7 @@ async function withApp(run: (app: {
     ordered: StoredMessage[],
   ) => StoredMessage[];
   forwardMessages: (batch: StoredMessage[], targets: string[]) => Promise<void>;
+  viewableMessages: (ordered: StoredMessage[], viewOnce: Set<string>) => StoredMessage[];
   messages: {
     messages: StoredMessage[];
     marks: { reactions: { target: string; sender: string; emoji: string }[] };
@@ -68,6 +69,7 @@ async function withApp(run: (app: {
       canDeletePickedForEveryone: messageActions.canDeletePickedForEveryone,
       pickedInOrder: messageActions.pickedInOrder,
       forwardMessages: messageActions.forwardMessages,
+      viewableMessages: messageActions.viewableMessages,
       messages, ui, members, session, composer, chats, calls,
     });
   } finally {
@@ -309,5 +311,27 @@ test("the message menu forwards one message, and Select starts picking", async (
     assert.deepEqual(ui.forwarding, [message]);
     items.find((item) => item.label === "Select messages")!.action();
     assert.deepEqual(ui.picking, { a: true });
+  });
+});
+
+test("greyed-out media stays viewable, one-time copies stay behind their filter", async () => {
+  await withApp(async ({ viewableMessages }) => {
+    const media = (id: string, over: Partial<StoredMessage> = {}) => ({
+      chat: "99@g.us", id, media_kind: "image", media_path: `/media/${id}.jpg`, ...over,
+    }) as StoredMessage;
+    const ordered = [
+      media("revoked", { revoked: true }),
+      media("deleted", { deleted: true }),
+      media("plain"),
+      media("video", { media_kind: "video" }),
+      media("unfetched", { media_path: null }),
+      media("once"),
+      { chat: "99@g.us", id: "text", text: "hi" } as StoredMessage,
+    ];
+    const shown = viewableMessages(ordered, new Set(["once"]));
+    assert.deepEqual(
+      shown.map((m) => m.id),
+      ["revoked", "deleted", "plain", "video"],
+    );
   });
 });

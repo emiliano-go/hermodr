@@ -94,6 +94,7 @@ macro_rules! postal_commands {
             media_actions::message_media_action,
             media::read_file,
             media::playable_audio,
+            media::playable_video,
             groups::participants,
             groups::group_info,
             groups::group_kinds,

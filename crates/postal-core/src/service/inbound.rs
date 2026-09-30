@@ -1,6 +1,7 @@
 //! The protocol event handler: live messages and the small state events.
 
 use super::*;
+use std::sync::atomic::AtomicUsize;
 use whatsapp_rust::wacore::types::events as wa_events;
 use whatsapp_rust::wacore::types::events::MessageBatch;
 
@@ -25,6 +26,32 @@ pub(super) struct Inbound {
     /// Whether a fetchable view-once is downloaded at once and kept as an
     /// ordinary attachment instead of one-time.
     pub(super) keep_view_once: Arc<AtomicBool>,
+    /// Whether this link exists only for one-time media: only view-once
+    /// messages are ingested, and every other store change is skipped.
+    pub(super) one_time_only: bool,
+    /// What a companion wake has read and kept, for its one summary line.
+    pub(super) tally: Arc<CompanionTally>,
+}
+
+/// Counters behind the companion's catch-up summary.
+#[derive(Default)]
+pub(super) struct CompanionTally {
+    seen: AtomicUsize,
+    processed: AtomicUsize,
+}
+
+impl CompanionTally {
+    fn note(&self, seen: usize, processed: usize) {
+        self.seen.fetch_add(seen, Ordering::Relaxed);
+        self.processed.fetch_add(processed, Ordering::Relaxed);
+    }
+
+    fn take(&self) -> (usize, usize) {
+        (
+            self.seen.swap(0, Ordering::Relaxed),
+            self.processed.swap(0, Ordering::Relaxed),
+        )
+    }
 }
 
 /// Our own addresses, so a mention can be recognised whichever form it uses.
@@ -59,8 +86,27 @@ struct Incoming {
 }
 
 
+/// Whether the one-time companion cares about an event: the view-once it
+/// keeps, its own link state, and the drain markers its summary hangs off.
+fn one_time_relevant(event: &Event) -> bool {
+    match event {
+        Event::Messages(_)
+        | Event::Disconnected(_)
+        | Event::LoggedOut(_)
+        | Event::OfflineSyncPreview(_)
+        | Event::OfflineSyncCompleted(_) => true,
+        Event::UndecryptableMessage(stub) => {
+            stub.unavailable_type == whatsapp_rust::wacore::types::events::UnavailableType::ViewOnce
+        }
+        _ => false,
+    }
+}
+
 impl Inbound {
     pub(super) async fn handle(&self, event: &Event) {
+        if self.one_time_only && !one_time_relevant(event) {
+            return;
+        }
         match event {
             Event::Messages(batch) => self.on_messages(batch).await,
             Event::Disconnected(_) => self.on_disconnected(),
@@ -141,6 +187,9 @@ impl Inbound {
     fn on_sync_preview(&self, preview: &wa_events::OfflineSyncPreview) {
         let pending = preview.messages.max(0) as usize;
         log::info!("offline sync: {pending} message(s) pending");
+        if self.one_time_only {
+            self.tally.take();
+        }
         {
             let mut p = self.sync_progress.lock().unwrap();
             p.pending = pending;
@@ -155,6 +204,10 @@ impl Inbound {
     }
 
     fn on_sync_completed(&self) {
+        if self.one_time_only {
+            let (seen, processed) = self.tally.take();
+            log::info!("companion catch-up: read {seen} message(s), {processed} one-time ingested");
+        }
         log::info!("offline sync complete");
         {
             let mut p = self.sync_progress.lock().unwrap();
@@ -357,6 +410,7 @@ impl Inbound {
 
     async fn on_messages(&self, batch: &MessageBatch) {
         let started = std::time::Instant::now();
+        let mut ingested = 0usize;
         let batch_guard = self.store.batch().await;
         let client = self.client_for_events.get().cloned();
         let own = own_addresses(client.as_deref());
@@ -368,6 +422,14 @@ impl Inbound {
             touched: Vec::with_capacity(batch.messages.len()),
         };
         for inbound in batch.messages.iter() {
+            // A companion keeps view-once media only; everything else belongs to
+            // the main link, which stored it when it arrived.
+            if self.one_time_only {
+                if !inbound.message.is_view_once() {
+                    continue;
+                }
+                ingested += 1;
+            }
             let Some(incoming) = self.resolve_incoming(inbound, &ctx).await else {
                 continue;
             };
@@ -384,6 +446,9 @@ impl Inbound {
             self.store_incoming(&ctx, inbound, &incoming).await;
         }
         let (removed, pruning) = self.enforce_retention(&mut ctx).await;
+        if self.one_time_only {
+            self.tally.note(batch.messages.len(), ingested);
+        }
         batch_guard.finish().await.logged();
         log::debug!(
             "{} live message(s) in {:?} (retention {:?}, pruned {removed})",
@@ -899,6 +964,7 @@ impl Inbound {
                         if let Err(e) = store.keep_view_once(&chat, &id).await {
                             log::warn!("could not keep view-once {id}: {e}");
                         } else if let Some(kept) = store.message(&chat, &id).await.observed() {
+                            log::info!("kept one-time {id} in {chat}");
                             // The mark is gone, so the row reloads as ordinary
                             // media already holding the file.
                             let _ = events.send(ServiceEvent::hint(&kept, false));
