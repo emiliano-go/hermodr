@@ -27,6 +27,7 @@ pub mod transcription;
 pub mod media_policy;
 mod notification_prefs;
 mod chat_unarchive;
+mod group_create;
 mod paging;
 pub use paging::{MessageCursor, MessagePage, MessagePageDirection, MAX_MESSAGE_PAGE};
 mod names;
@@ -43,6 +44,8 @@ pub(crate) use worker::{StoreWorker, AliasWorker};
 pub use limits::RetentionLimit;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod history_floor_tests;
 
 /// A number standing in for a name: bare digits, or a `+`-prefixed phone label
 /// such as WhatsApp's masked `+598∙∙∙∙∙27`. Never a real contact or push name.

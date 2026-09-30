@@ -43,6 +43,7 @@
     onstage,
     oncreatekind,
     oninput,
+    onbeforeinput = () => {},
     onkey,
     onsend,
     onschedule = async () => false,
@@ -90,6 +91,7 @@
     onstage: (file: File) => void;
     oncreatekind: (kind: "poll" | "event") => void;
     oninput: (event: Event) => void;
+    onbeforeinput?: (event: InputEvent) => void;
     onkey: (event: KeyboardEvent) => void;
     onsend: () => void;
     onschedule?: (dueAt: number) => Promise<boolean>;
@@ -341,6 +343,7 @@
   <textarea
     bind:this={composerInput}
     value={draft}
+    {onbeforeinput}
     oninput={oninput}
     onkeydown={onkey}
     rows="1"

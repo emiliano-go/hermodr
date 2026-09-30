@@ -30,19 +30,149 @@ pub(super) const OLDER_WAIT: Duration = Duration::from_secs(120);
 /// incoming history sync completes; the session is what the phone echoes back.
 #[derive(Default)]
 pub(super) struct OlderWaits {
-    entries: std::collections::HashMap<String, (std::time::Instant, String)>,
+    entries: std::collections::HashMap<String, (std::time::Instant, String, bool)>,
+    generations: std::collections::HashMap<String, u64>,
+    inflight: std::collections::HashMap<u64, OlderInFlight>,
+    next_request: u64,
+}
+
+struct OlderInFlight {
+    chat: String,
+    generation: u64,
+    started: std::time::Instant,
+    early: std::collections::HashMap<String, EarlyHistory>,
+}
+
+#[derive(Default)]
+struct EarlyHistory {
+    floor: Option<i64>,
+    notified: bool,
+}
+
+struct OlderSendGuard {
+    waits: Arc<Mutex<OlderWaits>>,
+    request: u64,
+    generation: u64,
+}
+
+impl Drop for OlderSendGuard {
+    fn drop(&mut self) { self.waits.lock().unwrap().inflight.remove(&self.request); }
 }
 
 impl OlderWaits {
+    pub(super) fn start(&mut self, chat: &str) -> Result<(u64, u64)> {
+        self.inflight.retain(|_, request| request.started.elapsed() < OLDER_WAIT);
+        anyhow::ensure!(self.inflight.len() < 32, "too many pending history requests");
+        self.next_request += 1;
+        let request = self.next_request;
+        let generation = self.generation(chat);
+        self.inflight.insert(request, OlderInFlight {
+            chat: chat.to_owned(), generation, started: std::time::Instant::now(), early: Default::default(),
+        });
+        Ok((request, generation))
+    }
+
+    pub(super) fn protected_chats(&mut self, store: &MessageStore) -> Result<Vec<String>> {
+        self.inflight.retain(|_, request| request.started.elapsed() < OLDER_WAIT);
+        let mut chats = self.inflight.values().map(|request|
+            store.canonical_chat(&request.chat).map(|chat| chat.into_owned())).collect::<Result<Vec<_>>>()?;
+        chats.sort_unstable();
+        chats.dedup();
+        Ok(chats)
+    }
+
+    fn note_early(&mut self, store: &MessageStore, session: &str, chat: &str, floor: i64) -> Result<()> {
+        for request in self.inflight.values_mut() {
+            if request.started.elapsed() >= OLDER_WAIT || store.canonical_chat(&request.chat)?.as_ref() != chat { continue; }
+            if request.early.len() < 8 || request.early.contains_key(session) {
+                let early = request.early.entry(session.to_owned()).or_default();
+                early.floor = Some(early.floor.map_or(floor, |oldest| oldest.min(floor)));
+            }
+        }
+        Ok(())
+    }
+
+    fn note_early_receipt(&mut self, store: &MessageStore, session: &str, notified: &[String]) -> Result<()> {
+        for request in self.inflight.values_mut() {
+            if request.started.elapsed() >= OLDER_WAIT || (request.early.len() >= 8 && !request.early.contains_key(session)) { continue; }
+            let chat = store.canonical_chat(&request.chat)?;
+            let early = request.early.entry(session.to_owned()).or_default();
+            early.notified |= notified.iter().any(|notified| notified == chat.as_ref());
+        }
+        Ok(())
+    }
+
+    pub(super) fn acknowledge_for_store(&mut self, store: &MessageStore, request: u64, generation: u64, session: &str,
+        events: &broadcast::Sender<ServiceEvent>) -> Result<bool> {
+        let Some(intent) = self.inflight.get(&request) else { return Ok(false) };
+        let (chat, early) = (intent.chat.clone(), intent.early.get(session).map(|early| (early.floor, early.notified)));
+        if intent.started.elapsed() >= OLDER_WAIT || intent.generation != generation || self.generation(&chat) != generation {
+            self.inflight.remove(&request);
+            return Ok(false);
+        }
+        if let Some((Some(floor), _)) = early { store.remember_history_floor(&chat, floor)?; }
+        self.remember(std::time::Instant::now(), session, &chat);
+        if early.is_some() { self.resolve(session); }
+        self.inflight.remove(&request);
+        if early.is_some_and(|(_, notified)| !notified) {
+            let _ = events.send(ServiceEvent::HistoryLoaded { chats: vec![store.canonical_chat(&chat)?.into_owned()] });
+        }
+        Ok(true)
+    }
+
     /// Registers a request, dropping any that were never answered.
     pub(super) fn remember(&mut self, now: std::time::Instant, session: &str, chat: &str) {
-        self.entries.retain(|_, (at, _)| now.duration_since(*at) < OLDER_WAIT);
-        self.entries.insert(session.to_string(), (now, chat.to_string()));
+        self.generation(chat);
+        self.entries.retain(|_, (at, _, _)| now.duration_since(*at) < OLDER_WAIT);
+        if self.entries.len() >= 128 && !self.entries.contains_key(session) {
+            if let Some(oldest) = self.entries.iter().min_by_key(|(_, (at, _, answered))| (!*answered, *at))
+                .map(|(session, _)| session.clone()) { self.entries.remove(&oldest); }
+        }
+        self.entries.insert(session.to_string(), (now, chat.to_string(), false));
+    }
+
+    fn generation(&mut self, chat: &str) -> u64 {
+        *self.generations.entry(chat.to_owned()).or_default()
+    }
+
+    fn cancel_chat(&mut self, chat: &str) {
+        *self.generations.entry(chat.to_owned()).or_default() += 1;
+        self.entries.retain(|_, (_, pending, _)| pending != chat);
+        self.inflight.retain(|_, request| request.chat != chat);
+    }
+
+    fn cancel_all(&mut self) {
+        for generation in self.generations.values_mut() { *generation += 1; }
+        self.entries.clear();
+        self.inflight.clear();
+    }
+
+    pub(super) fn cancel_for_store(&mut self, store: &MessageStore, chat: Option<&str>) -> Result<()> {
+        if let Some(chat) = chat {
+            let canonical = store.canonical_chat(chat)?.into_owned();
+            let mut aliases = vec![canonical.clone()];
+            for candidate in self.generations.keys() {
+                if store.canonical_chat(candidate)?.as_ref() == canonical {
+                    aliases.push(candidate.clone());
+                }
+            }
+            for alias in aliases { self.cancel_chat(&alias); }
+        } else { self.cancel_all(); }
+        Ok(())
     }
 
     /// The chat a request was for, once and only once.
     pub(super) fn resolve(&mut self, session: &str) -> Option<String> {
-        self.entries.remove(session).map(|(_, chat)| chat)
+        self.entries.retain(|_, (at, _, _)| at.elapsed() < OLDER_WAIT);
+        let (_, chat, answered) = self.entries.get_mut(session)?;
+        if *answered { return None; }
+        *answered = true;
+        Some(chat.clone())
+    }
+
+    fn floor_target(&mut self, session: &str) -> Option<String> {
+        self.entries.retain(|_, (at, _, _)| at.elapsed() < OLDER_WAIT);
+        self.entries.get(session).map(|(_, chat, _)| chat.clone())
     }
 }
 
@@ -62,17 +192,48 @@ pub(super) fn recall_allowed(chat: &str) -> bool {
 }
 
 impl WhatsAppService {
+    async fn begin_older_request(&self, chat: &str) -> Result<(String, OlderSendGuard)> {
+        let chat = chat.to_owned();
+        let waits = self.older_waits.clone();
+        self.store.run(move |store| {
+            let chat = store.canonical_chat(&chat)?.into_owned();
+            let (request, generation) = waits.lock().unwrap().start(&chat)?;
+            Ok((chat, OlderSendGuard { waits, request, generation }))
+        }).await
+    }
+
+    async fn acknowledge_older_request(&self, guard: &OlderSendGuard, session: &str) -> Result<bool> {
+        let (request, generation) = (guard.request, guard.generation);
+        let waits = guard.waits.clone();
+        let session = session.to_owned();
+        let events = self.events.clone();
+        self.store.run(move |store| {
+            let result = waits.lock().unwrap().acknowledge_for_store(store, request, generation, &session, &events);
+            result
+        }).await
+    }
+
+    pub(super) async fn cancel_older_requests(&self, chat: Option<&str>) -> Result<()> {
+        let chat = chat.map(str::to_owned);
+        let waits = self.older_waits.clone();
+        self.store.run(move |store| {
+            let result = waits.lock().unwrap().cancel_for_store(store, chat.as_deref());
+            result
+        }).await
+    }
+
     /// Asks the phone for older messages in a chat.
     ///
     /// The request goes to our own primary device, and the messages arrive
     /// asynchronously through the normal event stream.
     pub async fn load_older(&self, chat: &str, count: i32) -> Result<()> {
-        match fetch_older(&self.client, &self.store, chat, count).await? {
+        let (chat, guard) = self.begin_older_request(chat).await?;
+        match fetch_older(&self.client, &self.store, &chat, count).await? {
             Some(session) => {
-                self.older_waits
-                    .lock()
-                    .unwrap()
-                    .remember(std::time::Instant::now(), &session, chat);
+                let remembered = self.acknowledge_older_request(&guard, &session).await?;
+                if !remembered {
+                    let _ = self.events.send(ServiceEvent::HistoryLoaded { chats: vec![chat] });
+                }
                 Ok(())
             }
             None => {
@@ -99,8 +260,9 @@ impl WhatsAppService {
             loop {
                 let before = self.store.oldest_message(chat).await?;
                 let mut answers = self.events.subscribe();
-                let Some(session) = fetch_older(&self.client, &self.store, chat, 50).await? else { break };
-                self.older_waits.lock().unwrap().remember(std::time::Instant::now(), &session, chat);
+                let (requested, guard) = self.begin_older_request(chat).await?;
+                let Some(session) = fetch_older(&self.client, &self.store, &requested, 50).await? else { break };
+                if !self.acknowledge_older_request(&guard, &session).await? { break; }
                 // Any HistoryLoaded naming the chat is the answer to this request.
                 let answered = tokio::time::timeout(OLDER_WAIT, async {
                     loop {
@@ -139,6 +301,10 @@ impl Inbound {
             history.phone_number_to_lid_mappings.len(),
         );
         let batch_guard = self.store.batch().await;
+        let request_session = sync.peer_data_request_session_id()
+            .filter(|_| sync.sync_type() == wa::history_sync::HistorySyncType::ON_DEMAND as i32);
+        let requested = request_session.and_then(|session| self.older_waits.lock().unwrap().floor_target(session));
+        let answered = request_session.and_then(|session| self.older_waits.lock().unwrap().resolve(session));
         let mut chats = Vec::new();
         let mut added_chats = 0;
         let mut names_learned;
@@ -152,7 +318,7 @@ impl Inbound {
             self.seed_recent_stickers(&history.recent_stickers).await;
             for conversation in &history.conversations {
                 let (chat, learned) = self
-                    .apply_history_conversation(store, conversation, client.as_ref(), own.as_deref())
+                    .apply_history_conversation(store, conversation, client.as_ref(), own.as_deref(), requested.as_deref(), request_session)
                     .await;
                 names_learned += learned;
                 if let Some(chat) = chat {
@@ -164,9 +330,16 @@ impl Inbound {
         if names_learned > 0 {
             let _ = self.events.send(ServiceEvent::NamesUpdated { count: names_learned });
         }
-        self.finish_history_sync(sync, &mut chats, added_chats);
-        if !chats.is_empty() {
-            let _ = self.events.send(ServiceEvent::HistoryLoaded { chats });
+        self.finish_history_sync(answered, &mut chats, added_chats);
+        let notified = if !chats.is_empty() && self.events.send(ServiceEvent::HistoryLoaded { chats: chats.clone() }).is_ok() {
+            chats
+        } else { Vec::new() };
+        if let Some(session) = request_session {
+            let (waits, session) = (self.older_waits.clone(), session.to_owned());
+            batch_guard.run(move |store| {
+                let result = waits.lock().unwrap().note_early_receipt(store, &session, &notified);
+                result
+            }).await.logged();
         }
         // "Load older" answers are on-demand chunks, not the pairing sync.
         if let Some(percent) = sync.progress().filter(|_| sync.sync_type() != 6) {
@@ -208,6 +381,8 @@ impl Inbound {
         conversation: &wa::Conversation,
         client: Option<&Arc<Client>>,
         own: Option<&str>,
+        requested: Option<&str>,
+        request_session: Option<&str>,
     ) -> (Option<String>, usize) {
         if conversation.id == "status@broadcast" {
             return (None, 0);
@@ -223,12 +398,37 @@ impl Inbound {
             spawn_lid_lookup(client.cloned(), store, &chat);
         }
         self.name_history_chat(store, &chat, conversation).await;
+        let preserve = if let Some(requested) = requested.and_then(|jid| jid.parse::<Jid>().ok()) {
+            resolve_chat(None, store, &requested).await == chat
+        } else { false };
         let mut added = false;
+        let mut floor = None::<i64>;
         for entry in &conversation.messages {
             let (row_added, learned) =
                 self.apply_history_message(store, &chat, entry, client.map(|c| c.as_ref()), own).await;
             added |= row_added;
             names_learned += learned;
+            let timestamp = if row_added {
+                entry.message.as_option().and_then(|web| web.message_timestamp)
+                    .and_then(|timestamp| i64::try_from(timestamp).ok())
+            } else if preserve || request_session.is_some() {
+                if let Some(id) = entry.message.as_option().and_then(|web| web.key.as_option()).and_then(|key| key.id.as_deref()) {
+                    store.message(&chat, id).await.observed().map(|row| row.header.timestamp)
+                } else { None }
+            } else { None };
+            if let Some(timestamp) = timestamp.filter(|timestamp| *timestamp > 0) {
+                floor = Some(floor.map_or(timestamp, |oldest| oldest.min(timestamp)));
+            }
+        }
+        if let Some(floor) = floor {
+            if preserve { store.remember_history_floor(&chat, floor).await.logged(); }
+            else if let Some(session) = request_session {
+                let (waits, session, chat) = (self.older_waits.clone(), session.to_owned(), chat.clone());
+                store.run(move |store| {
+                    let result = waits.lock().unwrap().note_early(store, &session, &chat, floor);
+                    result
+                }).await.logged();
+            }
         }
         (added.then_some(chat), names_learned)
     }
@@ -364,21 +564,54 @@ impl Inbound {
     /// Resolves a waiting "load older" request and records the chunk for the
     /// readiness gate. An answered request is not a conversation the initial
     /// window added, so it is not counted.
-    fn finish_history_sync(&self, sync: &LazyHistorySync, chats: &mut Vec<String>, added_chats: usize) {
-        let answered = sync
-            .peer_data_request_session_id()
-            .and_then(|session| self.older_waits.lock().unwrap().resolve(session));
+    fn finish_history_sync(&self, answered: Option<String>, chats: &mut Vec<String>, added_chats: usize) {
         if let Some(chat) = answered {
             if !chats.contains(&chat) {
                 chats.push(chat);
             }
         }
-        // DiskRetention is left to the next live write, so what was just
-        // loaded can be seen first. Record the chunk even when it added
-        // nothing, so a stream of no-op chunks does not look quiescent while
-        // history is still coming.
+        // Record empty chunks too, while their request still ends the UI wait.
         let mut p = self.sync_progress.lock().unwrap();
         p.history_chats += added_chats;
         p.last_progress = Some(std::time::Instant::now());
+    }
+}
+
+#[cfg(test)]
+mod history_floor_request_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn cancelling_the_send_future_releases_temporary_history_protection() {
+        let store = MessageStore::open(Path::new(":memory:")).unwrap();
+        let waits = Arc::new(Mutex::new(OlderWaits::default()));
+        let (request, generation) = waits.lock().unwrap().start("101@g.us").unwrap();
+        let guard = OlderSendGuard { waits: waits.clone(), request, generation };
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let _guard = guard;
+            let _ = started.send(());
+            std::future::pending::<()>().await;
+        });
+        ready.await.unwrap();
+        assert_eq!(waits.lock().unwrap().protected_chats(&store).unwrap(), vec!["101@g.us"]);
+        task.abort();
+        let _ = task.await;
+        assert!(waits.lock().unwrap().protected_chats(&store).unwrap().is_empty());
+    }
+
+    #[test]
+    fn expired_or_excessive_requests_cannot_keep_temporary_history_protection() {
+        let store = MessageStore::open(Path::new(":memory:")).unwrap();
+        let mut waits = OlderWaits::default();
+        let (events, _) = broadcast::channel(4);
+        let (request, generation) = waits.start("101@g.us").unwrap();
+        waits.inflight.get_mut(&request).unwrap().started = std::time::Instant::now() - OLDER_WAIT - Duration::from_secs(1);
+        assert!(!waits.acknowledge_for_store(&store, request, generation, "expired", &events).unwrap());
+        assert!(waits.protected_chats(&store).unwrap().is_empty());
+        for index in 0..32 { waits.start(&format!("{index}@g.us")).unwrap(); }
+        assert!(waits.start("overflow@g.us").is_err());
+        waits.cancel_all();
+        assert!(waits.protected_chats(&store).unwrap().is_empty());
     }
 }

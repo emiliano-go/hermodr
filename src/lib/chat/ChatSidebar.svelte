@@ -69,6 +69,9 @@
     onchataction,
     onmarkread,
     onmarkallread,
+    onnewgroup,
+    canCreateGroup = false,
+    onblockcontact,
     markingAllRead = false,
     archivedChats,
     onresize,
@@ -122,6 +125,9 @@
     freezeOnHover?: boolean;
     globalAutoDownload: MediaAutoDownload;
     onmarkallread: () => void;
+    onnewgroup: () => void;
+    canCreateGroup?: boolean;
+    onblockcontact: (jid: string) => Promise<void>;
     markingAllRead?: boolean;
   } = $props();
 
@@ -279,6 +285,8 @@
     <Button variant="icon" icon="star" iconSize={18} title="Starred messages" aria-label="Starred messages" onclick={onstarred} />
     <Button variant="icon" icon="check" iconSize={18} title="Mark all chats as read" aria-label="Mark all chats as read"
       disabled={markingAllRead} onclick={onmarkallread} />
+    <Button variant="icon" icon="users" iconSize={18} title="New group" aria-label="New group"
+      disabled={!canCreateGroup} onclick={onnewgroup} />
   </header>
   <label class="search">
     <Icon name="search" size={15} />
@@ -543,6 +551,12 @@
         if (menuChat) ontogglefavorite?.(menuChat);
         closeChatMenu();
       }}>{favoriteChats.includes(menuChat.chat) ? "Remove from favorites" : "Add to favorites"}</Button>
+    {#if /@(s\.whatsapp\.net|lid)$/.test(menuChat.chat) && !members.isMe(menuChat.chat)}
+      <Button variant="menu" icon="x" iconSize={15} role="menuitem" onclick={() => {
+        void onblockcontact(menuChat.chat);
+        closeChatMenu();
+      }}>Block contact</Button>
+    {/if}
     <Button
       variant="menu"
       icon="download"

@@ -30,5 +30,5 @@
     onclose={() => { globalOpen = false; }}
     onsave={async (value) => { settings = value; saved = JSON.stringify(value.retention); globalOpen = false; }}
     onflush={noop} onclearhistory={noop} onrename={noop} onremove={noop} onadd={noop}
-    onswitch={noop} onprivacy={noop} onpicture={noop} />
+    onswitch={noop} onprivacy={noop} onpicture={noop} onblockedload={async () => []} onunblockcontact={async () => {}} />
 {/if}

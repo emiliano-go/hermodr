@@ -34,6 +34,10 @@ mod transcription;
 mod notifications;
 mod bulk_chats;
 mod group_invites;
+mod blocked_contacts;
+mod group_create;
+#[cfg(desktop)]
+mod tray;
 mod transcription_config;
 mod transcription_credentials;
 mod contacts;
@@ -238,6 +242,10 @@ macro_rules! postal_commands {
             chats::set_chat_unarchive,
             group_invites::group_invite_link,
             group_invites::join_group_invite_message,
+            blocked_contacts::blocked_contacts,
+            blocked_contacts::set_contact_blocked,
+            group_create::create_group,
+            group_create::group_creation_contacts,
             chats::set_chat_privacy,
             contacts::contact_aliases,
             contacts::add_contact_alias,
@@ -355,6 +363,8 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     });
     connection::spawn_once_manager(app.handle());
     build_main_window(app.handle())?;
+    #[cfg(desktop)]
+    tray::setup(app.handle())?;
     Ok(())
 }
 

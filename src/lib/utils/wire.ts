@@ -18,6 +18,7 @@ export type AdminReport = { id: string,
 message: StoredMessage | null, reporters: Array<[string, number]>, };
 export type ArchiveManifest = { format: string, version: number, messages: number, attachments: number, missing_attachments: number, };
 export type ArchiveReport = { directory: string, messages: number, attachments: number, missing_attachments: number, };
+export type BlockedContact = { jid: string, jids: Array<string>, identity: ContactIdentity, };
 export type BooleanProp = { name: string, code: number, default: boolean, value: boolean | null, };
 export type ChatMarks = { reactions: Array<Reaction>, starred: Array<string>, pinned: string | null, polls: Array<Poll>, events: Array<Event>,
 /**
@@ -109,6 +110,9 @@ export type GalleryFilter = { chat: string | null, kind: GalleryKind | null, fro
 export type GalleryItem = { message: StoredMessage, urls: Array<string>, };
 export type GalleryKind = "image" | "video" | "audio" | "document" | "sticker" | "gif" | "link";
 export type GalleryPage = { items: Array<GalleryItem>, next_cursor: GalleryCursor | null, };
+export type GroupCreateParticipant = { jid: string, state: GroupCreateParticipantState, };
+export type GroupCreateParticipantState = "added" | "pending" | "unconfirmed";
+export type GroupCreateResult = { jid: string, subject: string, participants: Array<GroupCreateParticipant>, warnings: Array<string>, };
 export type GroupHistoryOffer = { enabled: boolean, reason: string | null, max_messages: number, time_window_seconds: number, };
 export type GroupHistoryResult = { state: string, message: string, retry_id: string | null, };
 export type GroupInfo = { subject: string | null, description: string | null, created_at: number | null,

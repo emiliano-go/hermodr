@@ -9,7 +9,8 @@ import { loadEmojis, rememberEmoji, searchEmojis, type Emoji } from "$lib/utils/
 import type { PickerTab } from "$lib/composer/ExpressionPicker.svelte";
 import { base64Of, imagePreview, rasterizeSvg } from "$lib/utils/files";
 import { sendAttachment } from "$lib/utils/upload";
-import { keybinds, matches } from "$lib/utils/keybinds.svelte";
+import { keybinds, matches, matchesDraftHistory } from "$lib/utils/keybinds.svelte";
+import { ComposerHistory, type DraftSnapshot } from "$lib/utils/composer-history";
 import type { Recording } from "$lib/composer/VoiceRecorder.svelte";
 import type { ChatPrivacy, Outgoing, PendingMedia, StoredMessage } from "$lib/utils/models";
 import { chats } from "./chats.svelte";
@@ -20,7 +21,21 @@ import { ui } from "./ui.svelte";
 import { scheduled } from "./scheduled.svelte";
 
 export class ComposerState {
-  draft = $state("");
+  private draftText = $state("");
+  private draftUndo = new ComposerHistory();
+  private undoChat: string | null = null;
+  private beforeInput: { snapshot: DraftSnapshot; kind: string } | null = null;
+
+  get draft() { return this.draftText; }
+  set draft(text: string) {
+    const before = this.beforeInput?.snapshot ?? this.draftSnapshot();
+    const kind = this.beforeInput?.kind ?? "";
+    this.beforeInput = null;
+    this.draftText = text;
+    if (chats.selectedChat) this.drafts[chats.selectedChat] = text;
+    if (this.undoChat !== chats.selectedChat) this.resetUndo();
+    else this.draftUndo.record(before, this.draftSnapshot(), kind);
+  }
   /** Per-chat composer text, so switching chats does not lose what was typed. */
   drafts: Record<string, string> = $state({});
   replyingTo = $state<StoredMessage | null>(null);
@@ -74,6 +89,40 @@ export class ComposerState {
     scrollToBottom() {},
     focusComposer() {},
   };
+
+  private draftSnapshot(): DraftSnapshot {
+    return { text: this.draft, start: this.inputEl?.selectionStart ?? this.draft.length,
+      end: this.inputEl?.selectionEnd ?? this.draft.length,
+      mentions: this.chosenMentions.map((mention) => ({ ...mention })) };
+  }
+
+  onComposerBeforeInput(event: InputEvent) {
+    this.beforeInput = { snapshot: this.draftSnapshot(), kind: event.inputType };
+  }
+
+  resetUndo() {
+    this.draftUndo.reset();
+    this.beforeInput = null;
+    this.undoChat = chats.selectedChat;
+  }
+
+  async undoDraft(redo = false) {
+    const chat = chats.selectedChat;
+    if (this.undoChat !== chat) { this.resetUndo(); return; }
+    const snapshot = redo ? this.draftUndo.redo(this.draftSnapshot()) : this.draftUndo.undo(this.draftSnapshot());
+    if (!snapshot) return;
+    this.beforeInput = null;
+    this.draftText = snapshot.text;
+    this.chosenMentions = snapshot.mentions;
+    if (chat) this.drafts[chat] = snapshot.text;
+    this.mentionQuery = null;
+    this.emojiToken = null;
+    this.resetHistory();
+    await tick();
+    if (chats.selectedChat !== chat || this.draft !== snapshot.text) return;
+    this.inputEl?.focus();
+    this.inputEl?.setSelectionRange(snapshot.start, snapshot.end);
+  }
 
   /**
    * Autocomplete rows for the `@` being typed, capped at eight. A member is
@@ -223,8 +272,7 @@ export class ComposerState {
     const input = this.inputEl;
     const caret = input?.selectionStart ?? this.draft.length;
     const from = start ?? caret;
-    this.draft = this.draft.slice(0, from) + text + this.draft.slice(caret);
-    if (chats.selectedChat) this.drafts[chats.selectedChat] = this.draft;
+    this.draft = this.draft.slice(0, from) + text + this.draft.slice(start === undefined ? input?.selectionEnd ?? caret : caret);
     await tick();
     const position = from + text.length;
     input?.focus();
@@ -240,7 +288,6 @@ export class ComposerState {
 
   onComposerInput(event: Event) {
     this.draft = (event.currentTarget as HTMLTextAreaElement).value;
-    if (chats.selectedChat) this.drafts[chats.selectedChat] = this.draft;
     // Typing ends a history recall, so the next Up starts from the newest again.
     this.historyIndex = -1;
     if (this.draft.trim()) this.reportTyping();
@@ -307,6 +354,7 @@ export class ComposerState {
     this.editing = { chat, id: candidate.id, original: candidate.text };
     this.replyingTo = null;
     this.draft = candidate.text;
+    this.resetUndo();
     this.resetHistory();
     this.host.focusComposer();
   }
@@ -315,6 +363,7 @@ export class ComposerState {
     if (!this.editing) return;
     this.editing = null;
     this.draft = "";
+    this.resetUndo();
     this.host.focusComposer();
   }
 
@@ -343,6 +392,12 @@ export class ComposerState {
   }
 
   onComposerKey(event: KeyboardEvent) {
+    if (event.isComposing) return;
+    if (matchesDraftHistory(event, "undoDraft") || matchesDraftHistory(event, "redoDraft")) {
+      event.preventDefault();
+      void this.undoDraft(matchesDraftHistory(event, "redoDraft"));
+      return;
+    }
     if (this.emojiToken && this.emojiMatches.length > 0) {
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
@@ -468,6 +523,7 @@ export class ComposerState {
         delete this.drafts[chat];
         this.chosenMentions = [];
         this.mentionQuery = null;
+        this.resetUndo();
         this.stopTyping(chat);
       }
       scheduled.selectAccount(account);
@@ -490,6 +546,7 @@ export class ComposerState {
       this.draft = "";
       delete this.drafts[selectedChat];
       this.editing = null;
+      this.resetUndo();
       this.stopTyping();
       this.resetHistory();
       this.host.focusComposer();
@@ -510,6 +567,7 @@ export class ComposerState {
       delete this.drafts[selectedChat];
       this.chosenMentions = [];
       this.mentionQuery = null;
+      this.resetUndo();
       this.stopTyping();
       await this.sendPending(caption, jids.filter((j) => j !== "@all"));
       return;
@@ -525,6 +583,7 @@ export class ComposerState {
     this.replyingTo = null;
     this.chosenMentions = [];
     this.mentionQuery = null;
+    this.resetUndo();
     // Keep the typed text for the history keybind, newest first, without dupes.
     this.sentHistory = [typed, ...this.sentHistory.filter((t) => t !== typed)].slice(0, 100);
     this.resetHistory();
@@ -708,6 +767,7 @@ export class ComposerState {
     this.editing = null;
     this.sentHistory = [];
     this.chosenMentions = [];
+    this.resetUndo();
     this.resetHistory();
   }
 }

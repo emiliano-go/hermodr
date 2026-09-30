@@ -55,6 +55,10 @@ pub mod transcription;
 mod media_policy;
 mod chat_unarchive;
 mod group_invites;
+mod blocked_contacts;
+pub use blocked_contacts::BlockedContact;
+mod group_create;
+pub use group_create::{GroupCreateResult, GroupCreateParticipant, GroupCreateParticipantState};
 mod group_requests;
 pub use group_requests::GroupJoinRequest;
 mod group_history;
@@ -80,6 +84,8 @@ pub use stickers::{StickerLibrary, StickerResyncReport};
 mod user_info;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod history_floor_tests;
 #[cfg(test)]
 mod protocol_tests;
 

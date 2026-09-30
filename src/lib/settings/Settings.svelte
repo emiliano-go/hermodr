@@ -6,6 +6,7 @@
   export type Section =
     | "profile"
     | "linked"
+    | "blocked"
     | "transcription"
     | "accounts"
     | "whatsapp"
@@ -41,6 +42,7 @@
   import LinkedDevices from "$lib/settings/LinkedDevices.svelte";
   import TranscriptionSettings from "$lib/settings/TranscriptionSettings.svelte";
   import AutoDownloadSettings from "$lib/settings/AutoDownloadSettings.svelte";
+  import BlockedContacts from "$lib/settings/BlockedContacts.svelte";
   import { session } from "$lib/state/session.svelte";
   import { limitValue, parseLimit } from "$lib/utils/retention";
   import type { NotifPermission } from "$lib/utils/notifications";
@@ -80,6 +82,8 @@
     onswitch,
     onprivacy,
     onpicture,
+    onblockedload,
+    onunblockcontact,
   }: {
     settings: UiSettings;
     accounts: Account[];
@@ -99,6 +103,8 @@
     onprivacy: (privacy: Record<string, string>) => void;
     /** Our picture changed, so the cached one is stale. */
     onpicture: () => void;
+    onblockedload: (account: string) => Promise<import("$lib/utils/wire").BlockedContact[]>;
+    onunblockcontact: (account: string, jid: string) => Promise<void>;
   } = $props();
 
   let picker: HTMLInputElement | undefined = $state();
@@ -150,6 +156,7 @@
   const NAV = $derived<{ id: Section; label: string; group: string }[]>([
     ...(me ? [{ id: "profile" as Section, label: "My profile", group: "User settings" }] : []),
     ...(me ? [{ id: "linked" as Section, label: "Linked devices", group: "User settings" }] : []),
+    ...(me ? [{ id: "blocked" as Section, label: "Blocked contacts", group: "User settings" }] : []),
     { id: "accounts", label: "My accounts", group: "User settings" },
     ...(me ? [{ id: "whatsapp" as Section, label: "WhatsApp privacy", group: "User settings" }] : []),
     { id: "privacy", label: "Storage & history", group: "Data & device" },
@@ -342,6 +349,8 @@
   {#snippet pageHead()}
     {#if section === "linked"}
       <h2>Linked devices</h2>
+    {:else if section === "blocked"}
+      <h2>Blocked contacts</h2>
     {:else if section === "transcription"}
       <h2>Transcription</h2>
     {:else if section === "profile"}
@@ -394,7 +403,9 @@
     {/if}
   {/snippet}
 
-        {#if section === "profile"}
+        {#if section === "blocked"}
+          <BlockedContacts account={active} connected={session.connected} onload={onblockedload} onunblock={onunblockcontact} />
+        {:else if section === "profile"}
           {#if profile}
             <div class="profile-card">
               <div class="picture">

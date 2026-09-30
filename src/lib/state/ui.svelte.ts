@@ -25,6 +25,7 @@ export class UiState {
   settingsSection = $state<Section>("accounts");
   accountMenu = $state(false);
   chatSettingsOpen = $state(false);
+  newGroup = $state(false);
 
   /** Message context menu anchor. */
   menu = $state<{ x: number; y: number; message: StoredMessage } | null>(null);
@@ -90,6 +91,7 @@ export class UiState {
   /** Mirrors resetUi: only the account menu is UI-owned there. */
   resetAccount() {
     this.accountMenu = false;
+    this.newGroup = false;
   }
 }
 

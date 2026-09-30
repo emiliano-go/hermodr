@@ -36,6 +36,7 @@
       if (command === "set_marked_unread") quiet.marked_unread = Boolean(args.unread);
       if (command === "set_chat_auto_download") fixture.chatAutoDownload = Boolean(args.enabled);
     }, onmarkread: noop, onmarkallread: noop, archivedChats: 0, onresize: noop,
+    onnewgroup: noop, onblockcontact: async () => {},
     globalAutoDownload: { image: false, video: false, audio: false, document: false, sticker: false, gif: false },
   };
 </script>

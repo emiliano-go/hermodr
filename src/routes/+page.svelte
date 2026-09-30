@@ -12,6 +12,7 @@
   import MessageFinder from "$lib/messages/MessageFinder.svelte";
   import ChatSettings from "$lib/chat/ChatSettings.svelte";
   import { formatBulkReadFailures } from "$lib/utils/bulk-chats";
+  import NewGroup from "$lib/chat/NewGroup.svelte";
   import type { ChatRetention } from "$lib/utils/models";
   import ProfileCard from "$lib/contacts/ProfileCard.svelte";
   import ContactInfo from "$lib/contacts/ContactInfo.svelte";
@@ -164,6 +165,7 @@
     composer.chosenMentions = [];
     composer.mentionQuery = null;
     composer.draft = composer.drafts[chat] ?? "";
+    composer.resetUndo();
     chats.showGroupInfo = false;
     chats.groupInfo = null;
     contactInfoFor = null;
@@ -649,6 +651,18 @@
 
 
   let markingAllRead = $state(false);
+  async function blockContact(jid: string) {
+    const account = session.activeAccount, generation = messages.accountGeneration;
+    if (!account) return;
+    const current = () => account === session.activeAccount && generation === messages.accountGeneration;
+    try {
+      await composer.enqueue((signal) => {
+        if (signal.aborted || !current()) throw new Error("account changed before operation");
+        return invoke("set_contact_blocked", { account, jid, blocked: true });
+      });
+      if (current()) ui.notify("Contact blocked.");
+    } catch (error) { if (current()) ui.fail(error); }
+  }
   async function markAllRead() {
     const accountId = session.activeAccount;
     if (!accountId || markingAllRead) return;
@@ -1024,6 +1038,9 @@
       onchataction={(command, args) => chats.chatAction(command, args)}
       globalAutoDownload={session.settings.auto_download_types}
       onmarkallread={markAllRead}
+      onnewgroup={() => (ui.newGroup = true)}
+      canCreateGroup={!!session.activeAccount && session.connected}
+      onblockcontact={blockContact}
       {markingAllRead}
       onmarkread={(chat) => {
         // Reading the whole chat from the list clears the divider with it.
@@ -1272,6 +1289,7 @@
           onstage={(file) => composer.stageFile(file)}
           oncreatekind={(kind) => (ui.creating = kind)}
           oninput={(e) => composer.onComposerInput(e)}
+          onbeforeinput={(e) => composer.onComposerBeforeInput(e)}
           onkey={(e) => composer.onComposerKey(e)}
           onsend={() => void composer.send()}
           onschedule={(dueAt) => composer.schedule(dueAt)}
@@ -1758,11 +1776,53 @@
   </div>
 {/if}
 
+{#if ui.newGroup && session.activeAccount}
+  {@const account = session.activeAccount}
+  {@const generation = messages.accountGeneration}
+  {#key account}
+    <NewGroup {account} me={session.me} avatars={chats.avatars} onavatar={(jid) => chats.loadAvatar(jid)}
+      onsearch={async (query) => {
+        if (account !== session.activeAccount || generation !== messages.accountGeneration) throw new Error("account changed");
+        const rows = await invoke<import("$lib/utils/wire").SearchResult[]>("group_creation_contacts", { account, query });
+        if (account !== session.activeAccount || generation !== messages.accountGeneration) throw new Error("account changed");
+        return rows;
+      }}
+      oncreate={(subject, jids) => composer.enqueue((signal) => {
+        if (signal.aborted || account !== session.activeAccount || generation !== messages.accountGeneration) throw new Error("account changed before operation");
+        return invoke<import("$lib/utils/wire").GroupCreateResult>("create_group", { account, subject, jids });
+      })}
+      onopen={async (result) => {
+        const opening = chatOpenSeq;
+        if (account !== session.activeAccount || generation !== messages.accountGeneration) return;
+        await chats.refreshChats();
+        if (account !== session.activeAccount || generation !== messages.accountGeneration || opening !== chatOpenSeq) return;
+        await openChat(result.jid, false, result.subject);
+        if (account === session.activeAccount && generation === messages.accountGeneration) ui.newGroup = false;
+      }}
+      onclose={() => (ui.newGroup = false)} />
+  {/key}
+{/if}
+
 {#if ui.showSettings}
   <Settings
     settings={session.settings}
     accounts={session.accountList}
     active={session.activeAccount}
+    onblockedload={async (account) => {
+      const generation = messages.accountGeneration;
+      if (account !== session.activeAccount) throw new Error("account changed");
+      const rows = await invoke<import("$lib/utils/wire").BlockedContact[]>("blocked_contacts", { account });
+      if (account !== session.activeAccount || generation !== messages.accountGeneration) throw new Error("account changed");
+      return rows;
+    }}
+    onunblockcontact={async (account, jid) => {
+      const generation = messages.accountGeneration;
+      await composer.enqueue((signal) => {
+        if (signal.aborted || account !== session.activeAccount || generation !== messages.accountGeneration) throw new Error("account changed before operation");
+        return invoke("set_contact_blocked", { account, jid, blocked: false });
+      });
+      if (account !== session.activeAccount || generation !== messages.accountGeneration) throw new Error("account changed");
+    }}
     me={session.me}
     meAvatar={session.me ? (chats.avatars[session.me] ?? null) : null}
     accountAvatars={chats.accountAvatars}

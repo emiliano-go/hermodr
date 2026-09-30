@@ -14,6 +14,7 @@ pub fn visit_wire_types(visitor: &mut impl TypeVisitor) {
         crate::service::LinkedDevice, crate::store::gallery::GalleryPage, crate::store::gallery::GalleryFilter,
         crate::store::transcription::StoredTranscript,
         crate::store::media_policy::MediaAutoDownload, crate::store::media_policy::MediaAutoDownloadOverrides,
+        crate::service::BlockedContact, crate::service::GroupCreateResult,
         crate::service::BooleanProp, crate::service::StickerLibrary, crate::service::StickerResyncReport,
         crate::service::StorageReport, crate::service::StorageCleanup, crate::service::StorageOrder,
         crate::service::CleanupResult, crate::store::StoredMessage, crate::store::ChatSummary,

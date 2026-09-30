@@ -1009,7 +1009,11 @@ impl Inbound {
         ctx.touched.dedup();
         let retention = self.disk_retention.clone();
         let touched = std::mem::take(&mut ctx.touched);
-        let removed = match ctx.store.run(move |store| retention.enforce_for(store, &touched)).await {
+        let older_waits = self.older_waits.clone();
+        let removed = match ctx.store.run(move |store| {
+            let protected = older_waits.lock().unwrap().protected_chats(store)?;
+            retention.enforce_for_protected(store, &touched, &protected)
+        }).await {
             Ok(removed) => removed,
             Err(e) => {
                 log::error!("retention failed: {e}");

@@ -259,6 +259,7 @@ impl MessageStore {
             paths
         };
         let removed = conn.execute("DELETE FROM messages WHERE chat = ?1", params![jid])?;
+        conn.execute("DELETE FROM chat_history_floor WHERE jid = ?1", params![jid])?;
         for path in paths {
             if let Err(error) = std::fs::remove_file(path) {
                 if error.kind() != std::io::ErrorKind::NotFound {
@@ -328,6 +329,7 @@ pub(crate) fn fold_chat(conn: &Connection, from: &str, to: &str) -> Result<()> {
     super::media_policy::merge(conn, from, to)?;
     super::notification_prefs::merge(conn, from, to)?;
     super::chat_unarchive::merge(conn, from, to)?;
+    super::retention::merge_history_floor(conn, from, to)?;
     move_chat_keyed_tables(conn, from, to, CHAT_SETTING_TABLES, "jid")?;
     move_list_flags(conn, from, to)?;
     adopt_name(conn, from, to)?;

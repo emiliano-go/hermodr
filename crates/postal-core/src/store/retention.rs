@@ -2,6 +2,28 @@
 
 use super::*;
 
+pub(super) fn migrate_history_floor(conn: &Connection) -> Result<()> {
+    conn.execute_batch("CREATE TABLE IF NOT EXISTS chat_history_floor (
+        jid TEXT PRIMARY KEY, timestamp INTEGER NOT NULL CHECK(timestamp > 0));")?;
+    Ok(())
+}
+
+pub(super) fn merge_history_floor(conn: &Connection, from: &str, to: &str) -> Result<()> {
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='chat_history_floor')",
+        [], |row| row.get(0),
+    )?;
+    if !exists || from == to { return Ok(()); }
+    conn.execute(
+        "INSERT INTO chat_history_floor(jid,timestamp)
+         SELECT ?1,timestamp FROM chat_history_floor WHERE jid=?2
+         ON CONFLICT(jid) DO UPDATE SET timestamp=MIN(chat_history_floor.timestamp,excluded.timestamp)",
+        params![to, from],
+    )?;
+    conn.execute("DELETE FROM chat_history_floor WHERE jid=?1", [from])?;
+    Ok(())
+}
+
 /// Explicit limits on persisted messages, independent of the RAM window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
@@ -61,19 +83,31 @@ fn per_chat_limited(conn: &Connection, mode: &str) -> Result<bool> {
 struct PruneScope<'a> {
     conn: &'a Connection,
     json: Option<String>,
+    protected: Option<String>,
 }
 
 impl PruneScope<'_> {
-    fn new<'a>(conn: &'a Connection, chats: Option<&[String]>) -> Result<PruneScope<'a>> {
-        Ok(PruneScope { conn, json: chats.map(serde_json::to_string).transpose()? })
+    fn new<'a>(conn: &'a Connection, chats: Option<&[String]>, protected: &[String]) -> Result<PruneScope<'a>> {
+        Ok(PruneScope { conn, json: chats.map(serde_json::to_string).transpose()?,
+            protected: if protected.is_empty() { None } else { Some(serde_json::to_string(protected)?) } })
     }
 
     fn scope(&self) -> &'static str {
-        if self.json.is_some() { "chat IN (SELECT value FROM json_each(:scope))" } else { "1" }
+        match (self.json.is_some(), self.protected.is_some()) {
+            (true, true) => "chat IN (SELECT value FROM json_each(:scope)) AND chat NOT IN (SELECT value FROM json_each(:protected))",
+            (true, false) => "chat IN (SELECT value FROM json_each(:scope))",
+            (false, true) => "chat NOT IN (SELECT value FROM json_each(:protected))",
+            (false, false) => "1",
+        }
     }
 
     fn scope_m(&self) -> &'static str {
-        if self.json.is_some() { "m.chat IN (SELECT value FROM json_each(:scope))" } else { "1" }
+        match (self.json.is_some(), self.protected.is_some()) {
+            (true, true) => "m.chat IN (SELECT value FROM json_each(:scope)) AND m.chat NOT IN (SELECT value FROM json_each(:protected))",
+            (true, false) => "m.chat IN (SELECT value FROM json_each(:scope))",
+            (false, true) => "m.chat NOT IN (SELECT value FROM json_each(:protected))",
+            (false, false) => "1",
+        }
     }
 
     fn run(&self, sql: &str, extra: &[(&str, &dyn rusqlite::ToSql)]) -> rusqlite::Result<usize> {
@@ -81,6 +115,7 @@ impl PruneScope<'_> {
         if let Some(json) = &self.json {
             params.push((":scope", json));
         }
+        if let Some(protected) = &self.protected { params.push((":protected", protected)); }
         self.conn.execute(sql, params.as_slice())
     }
 
@@ -91,7 +126,9 @@ impl PruneScope<'_> {
         Ok(self.run(
             &format!(
                 "DELETE FROM messages WHERE {} AND timestamp < :oldest AND chat NOT IN
-                     (SELECT jid FROM chat_retention WHERE age_mode != 'inherit')",
+                     (SELECT jid FROM chat_retention WHERE age_mode != 'inherit')
+                     AND NOT EXISTS (SELECT 1 FROM chat_history_floor h
+                         WHERE h.jid = messages.chat AND messages.timestamp >= h.timestamp)",
                 self.scope()
             ),
             &[(":oldest", &oldest)],
@@ -109,7 +146,9 @@ impl PruneScope<'_> {
             &format!(
                 "DELETE FROM messages WHERE {} AND EXISTS (
                      SELECT 1 FROM chat_retention r WHERE r.jid = messages.chat
-                     AND r.age_mode = 'limited' AND messages.timestamp < :now - r.max_age_hours * 3600)",
+                     AND r.age_mode = 'limited' AND messages.timestamp < :now - r.max_age_hours * 3600)
+                     AND NOT EXISTS (SELECT 1 FROM chat_history_floor h
+                         WHERE h.jid = messages.chat AND messages.timestamp >= h.timestamp)",
                 self.scope()
             ),
             &[(":now", &now)],
@@ -125,13 +164,15 @@ impl PruneScope<'_> {
             &format!(
                 "DELETE FROM messages WHERE (chat, id) IN (
                      SELECT chat, id FROM (
-                         SELECT m.chat, m.id,
+                         SELECT m.chat, m.id, m.timestamp, h.timestamp AS history_floor,
                                 ROW_NUMBER() OVER (PARTITION BY m.chat ORDER BY m.timestamp DESC, m.sort_order DESC, m.id DESC) AS rank,
                                 CASE WHEN r.jid IS NULL OR r.count_mode = 'inherit' THEN :cap
                                      WHEN r.count_mode = 'limited' THEN r.max_messages ELSE NULL END AS cap
                          FROM messages m LEFT JOIN chat_retention r ON r.jid = m.chat
+                         LEFT JOIN chat_history_floor h ON h.jid = m.chat
                          WHERE {}
                      ) WHERE cap IS NOT NULL AND rank > cap
+                         AND (history_floor IS NULL OR timestamp < history_floor)
                  )",
                 self.scope_m()
             ),
@@ -173,6 +214,18 @@ fn purge_orphan_state(conn: &Connection) -> Result<()> {
 }
 
 impl MessageStore {
+    pub(crate) fn remember_history_floor(&self, jid: &str, timestamp: i64) -> Result<()> {
+        anyhow::ensure!(timestamp > 0, "requested history has no valid timestamp");
+        let conn = self.conn.lock().unwrap();
+        let jid = names::canonical_chat(&conn, jid)?;
+        conn.execute(
+            "INSERT INTO chat_history_floor(jid,timestamp) VALUES (?1,?2)
+             ON CONFLICT(jid) DO UPDATE SET timestamp=MIN(chat_history_floor.timestamp,excluded.timestamp)",
+            params![jid.as_ref(), timestamp],
+        )?;
+        Ok(())
+    }
+
     pub fn chat_retention(&self, jid: &str) -> Result<ChatRetention> {
         let conn = self.conn.lock().unwrap();
         let jid = &*names::canonical_chat(&conn, jid)?;
@@ -207,6 +260,7 @@ impl MessageStore {
                     retention.max_age_hours.mode(), retention.max_messages.mode()],
             )?;
         }
+        conn.execute("DELETE FROM chat_history_floor WHERE jid=?1", params![jid])?;
         Ok(())
     }
 
@@ -220,8 +274,12 @@ impl DiskRetentionManager {
     /// Applies the retention policy to every chat, returning how many messages
     /// were dropped.
     pub fn enforce(&self, store: &MessageStore) -> Result<usize> {
+        self.enforce_protected(store, &[])
+    }
+
+    pub(crate) fn enforce_protected(&self, store: &MessageStore, protected: &[String]) -> Result<usize> {
         let policy = *self.policy.lock().unwrap();
-        self.prune(store, None, policy)
+        self.prune(store, None, policy, protected)
     }
 
     /// DiskRetention after a live batch: only the chats it wrote to, which stays
@@ -229,17 +287,21 @@ impl DiskRetentionManager {
     /// quiet chats still age out. Called after writes rather than on a timer
     /// so the bound holds even if the process is interrupted.
     pub fn enforce_for(&self, store: &MessageStore, chats: &[String]) -> Result<usize> {
+        self.enforce_for_protected(store, chats, &[])
+    }
+
+    pub(crate) fn enforce_for_protected(&self, store: &MessageStore, chats: &[String], protected: &[String]) -> Result<usize> {
         let policy = *self.policy.lock().unwrap();
         let now = unix_now();
         if now - self.last_full_prune.load(std::sync::atomic::Ordering::Relaxed) >= 3600 {
-            let removed = self.prune(store, None, policy)?;
+            let removed = self.prune(store, None, policy, protected)?;
             let current = self.policy.lock().unwrap();
             if *current == policy {
                 self.last_full_prune.store(now, std::sync::atomic::Ordering::Relaxed);
             }
             return Ok(removed);
         }
-        self.prune(store, Some(chats), policy)
+        self.prune(store, Some(chats), policy, protected)
     }
 
     /// Replaces the global policy; the next prune uses it.
@@ -251,12 +313,12 @@ impl DiskRetentionManager {
         }
     }
 
-    fn prune(&self, store: &MessageStore, chats: Option<&[String]>, policy: DiskRetention) -> Result<usize> {
+    fn prune(&self, store: &MessageStore, chats: Option<&[String]>, policy: DiskRetention, protected: &[String]) -> Result<usize> {
         let conn = store.conn.lock().unwrap();
         if !policy_could_match(&conn, policy)? {
             return Ok(0);
         }
-        let scope = PruneScope::new(&conn, chats)?;
+        let scope = PruneScope::new(&conn, chats, protected)?;
         let mut removed = 0;
         removed += scope.purge_global_age(policy.oldest_allowed())?;
         removed += scope.purge_per_chat_age()?;
@@ -283,7 +345,7 @@ impl MessageStore {
              DELETE FROM secret_edit_revisions; DELETE FROM events;
              DELETE FROM event_responses; DELETE FROM view_once; DELETE FROM forwarded;
              DELETE FROM edited; DELETE FROM receipts; DELETE FROM hidden_chats;
-             DELETE FROM cleared_chats;",
+             DELETE FROM cleared_chats; DELETE FROM chat_history_floor;",
         )?;
         reclaim(&conn, 0)?;
         Ok(removed)
@@ -297,6 +359,11 @@ impl MessageStore {
 }
 
 impl StoreWorker {
+    pub(crate) async fn remember_history_floor(&self, jid: &str, timestamp: i64) -> Result<()> {
+        let jid = jid.to_owned();
+        self.run(move |store| store.remember_history_floor(&jid, timestamp)).await
+    }
+
     pub(crate) async fn chat_retention(&self, jid: &str) -> Result<ChatRetention> {
         let jid = jid.to_owned();
         self.run(move |store| store.chat_retention(&jid)).await

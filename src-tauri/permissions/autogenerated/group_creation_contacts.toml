@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-group-creation-contacts"
+description = "Enables the group_creation_contacts command without any pre-configured scope."
+commands.allow = ["group_creation_contacts"]
+
+[[permission]]
+identifier = "deny-group-creation-contacts"
+description = "Denies the group_creation_contacts command without any pre-configured scope."
+commands.deny = ["group_creation_contacts"]

@@ -224,6 +224,7 @@ impl WhatsAppService {
 
     /// Deletes every message stored on this device; the phone keeps its copy.
     pub async fn clear_history(&self) -> Result<usize> {
+        self.cancel_older_requests(None).await?;
         let removed = self.store.clear_history().await?;
         self.prune_quote_files().await?;
         Ok(removed)
@@ -231,6 +232,7 @@ impl WhatsAppService {
 
     /// Clears one chat locally: its messages go, the empty chat stays.
     pub async fn clear_chat(&self, chat: &str) -> Result<usize> {
+        self.cancel_older_requests(Some(chat)).await?;
         let removed = self.store.clear_chat(chat).await?;
         self.prune_quote_files().await?;
         Ok(removed)
@@ -239,6 +241,7 @@ impl WhatsAppService {
     /// Deletes one chat locally: its messages go and it leaves the list until
     /// a new message arrives. Never touches the phone or the other side.
     pub async fn delete_chat(&self, chat: &str) -> Result<usize> {
+        self.cancel_older_requests(Some(chat)).await?;
         let removed = self.store.delete_chat(chat).await?;
         self.prune_quote_files().await?;
         Ok(removed)
@@ -482,9 +485,14 @@ impl WhatsAppService {
 
     /// Sets a chat's own retention and applies it at once.
     pub async fn set_chat_retention(&self, chat: &str, retention: &crate::store::ChatRetention) -> Result<()> {
+        self.cancel_older_requests(Some(chat)).await?;
         self.store.set_chat_retention(chat, retention).await?;
         let retention = self.disk_retention.clone();
-        self.store.run(move |store| retention.enforce(store)).await?;
+        let older_waits = self.older_waits.clone();
+        self.store.run(move |store| {
+            let protected = older_waits.lock().unwrap().protected_chats(store)?;
+            retention.enforce_protected(store, &protected)
+        }).await?;
         self.prune_quote_files().await?;
         Ok(())
     }
