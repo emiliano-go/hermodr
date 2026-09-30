@@ -222,8 +222,15 @@ pub fn run() {
 /// as much as it did the old one.
 fn disable_dmabuf_renderer() {
     #[cfg(target_os = "linux")]
-    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
-        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    {
+        // WebKitGTK's DMA-BUF renderer trips over Wayland (Gdk Error 71) on
+        // some drivers, NVIDIA included. X11 has no such trouble, so it keeps
+        // the accelerated path.
+        let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some()
+            || std::env::var("XDG_SESSION_TYPE").is_ok_and(|session| session == "wayland");
+        if wayland && std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        }
     }
 }
 
