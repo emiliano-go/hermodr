@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from "svelte";
+  import Icon from "$lib/ui/Icon.svelte";
   import { invoke } from "$lib/utils/ipc";
 
   type Prop = { name: string; code: number; default: boolean; value: boolean | null };
@@ -36,7 +37,7 @@
 </script>
 
 <details bind:open>
-  <summary>Server feature flags</summary>
+  <summary><span>Server feature flags</span><span class="chev"><Icon name="chevronDown" size={16} /></span></summary>
   <p>Boolean A/B properties received from WhatsApp. Available for diagnostics; Postal does not use these flags to gate features.</p>
   <div class="controls">
     <button onclick={refresh} disabled={loading}>Refresh flags</button>
@@ -59,7 +60,10 @@
 
 <style>
   details { margin-top: 1rem; }
-  summary { cursor: pointer; }
+  summary { display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; list-style: none; user-select: none; }
+  summary::-webkit-details-marker { display: none; }
+  .chev { display: grid; margin-left: auto; color: var(--muted); transition: transform calc(150ms * var(--motion-scale, 1)) var(--ease); }
+  details[open] .chev { transform: rotate(180deg); }
   p { color: var(--muted); font-size: .85rem; }
   .controls { display: flex; align-items: center; flex-wrap: wrap; gap: .8rem; }
   .filter { display: grid; gap: .4rem; margin-top: .8rem; }

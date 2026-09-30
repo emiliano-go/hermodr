@@ -150,16 +150,16 @@
     ...(me ? [{ id: "profile" as Section, label: "My profile", group: "User settings" }] : []),
     { id: "accounts", label: "My accounts", group: "User settings" },
     ...(me ? [{ id: "whatsapp" as Section, label: "WhatsApp privacy", group: "User settings" }] : []),
-    { id: "privacy", label: "Storage & history", group: "App settings" },
-    { id: "chats", label: "Chats", group: "App settings" },
-    { id: "notifications", label: "Notifications", group: "App settings" },
-    { id: "device", label: "Device", group: "App settings" },
-    { id: "media", label: "Media", group: "App settings" },
+    { id: "privacy", label: "Storage & history", group: "Data & device" },
+    { id: "chats", label: "Chats", group: "Messaging" },
+    { id: "notifications", label: "Notifications", group: "Messaging" },
+    { id: "device", label: "Device", group: "Data & device" },
+    { id: "media", label: "Media", group: "Messaging" },
     { id: "startup", label: "Startup", group: "App settings" },
-    { id: "plugins", label: "Plugins", group: "App settings" },
+    { id: "plugins", label: "Plugins", group: "Postal" },
     { id: "keybinds", label: "Keybinds", group: "App settings" },
     { id: "appearance", label: "Customization", group: "App settings" },
-    { id: "advanced", label: "Advanced", group: "App settings" },
+    { id: "advanced", label: "Advanced", group: "Postal" },
     { id: "about", label: "About", group: "Postal" },
   ]);
   $effect(() => {
@@ -336,9 +336,58 @@
       </div>
   {/snippet}
 
+  {#snippet pageHead()}
+    {#if section === "profile"}
+      <h2>My profile</h2>
+      <p class="lede">How you appear to others on WhatsApp.</p>
+    {:else if section === "whatsapp"}
+      <h2>WhatsApp privacy</h2>
+      <p class="lede">Account settings stored by WhatsApp, the same ones your phone shows.</p>
+    {:else if section === "accounts"}
+      <h2>My accounts</h2>
+      <p class="lede">Every account keeps its own session, history and settings.</p>
+    {:else if section === "privacy"}
+      <h2>Storage & history</h2>
+      <p class="lede">
+        The RAM window and disk archive have separate limits. Evicting a message from RAM
+        leaves it available on disk. Disk limits below delete stored messages.
+      </p>
+    {:else if section === "chats"}
+      <h2>Chats</h2>
+    {:else if section === "notifications"}
+      <h2>Notifications</h2>
+      <p class="lede">Desktop notifications for new direct messages and group messages.</p>
+    {:else if section === "device"}
+      <h2>Android companion</h2>
+      <p class="lede">
+        View-once photos, videos and voice notes only reach this device through a second,
+        Android-style link. It is not a second inbox: it wakes when a one-time message arrives,
+        fetches it into this chat, then goes dormant. It never replaces your main link and
+        never unlinks anything from your phone.
+      </p>
+    {:else if section === "media"}
+      <h2>Media</h2>
+    {:else if section === "plugins"}
+      <h2>Plugins</h2>
+      <p class="lede">Installed plugins are native programs. Enable only plugins you trust. Restart Postal to discover newly installed plugins.</p>
+    {:else if section === "startup"}
+      <h2>Startup</h2>
+    {:else if section === "keybinds"}
+      <h2>Keybinds</h2>
+      <p class="lede">Composer shortcuts. Click a shortcut, then press the keys you want.</p>
+    {:else if section === "appearance"}
+      <h2>Customization</h2>
+      <p class="lede">Themes and CSS extensions apply instantly and are saved on this device.</p>
+    {:else if section === "advanced"}
+      <h2>Advanced</h2>
+      <p class="lede">Developer-oriented options. These only change logging.</p>
+    {:else}
+      <h2>About</h2>
+      <p class="lede">A native WhatsApp client that speaks the protocol directly.</p>
+    {/if}
+  {/snippet}
+
         {#if section === "profile"}
-          <h2>My profile</h2>
-          <p class="lede">How you appear to others on WhatsApp.</p>
           {#if profile}
             <div class="profile-card">
               <div class="picture">
@@ -406,8 +455,6 @@
           {/if}
           {#if profileError}<p class="error-text">{profileError}</p>{/if}
         {:else if section === "whatsapp"}
-          <h2>WhatsApp privacy</h2>
-          <p class="lede">Account settings stored by WhatsApp, the same ones your phone shows.</p>
           <label class="setting">
             <div>
               <span class="setting-title">Send typing indicator</span>
@@ -453,8 +500,6 @@
           {/if}
           {#if profileError}<p class="error-text">{profileError}</p>{/if}
         {:else if section === "accounts"}
-          <h2>My accounts</h2>
-          <p class="lede">Every account keeps its own session, history and settings.</p>
           <div class="card">
             {#each accounts as account (account.id)}
               <div class="account">
@@ -500,11 +545,6 @@
             <button class="button primary" onclick={onadd}><Icon name="plus" size={15} /> Add account</button>
           </div>
         {:else if section === "privacy"}
-          <h2>Privacy & storage</h2>
-          <p class="lede">
-            The RAM window and disk archive have separate limits. Evicting a message from RAM
-            leaves it available on disk. Disk limits below delete stored messages.
-          </p>
           <div class="setting">
             <div>
               <span class="setting-title">Messages in RAM</span>
@@ -635,8 +675,8 @@
               <button class="button danger" onclick={() => (clearingHistory = true)}>Clear history</button>
             {/if}
           </div>
+          <ArchiveManager />
         {:else if section === "chats"}
-          <h2>Chats</h2>
           <label class="setting">
             <div>
               <span class="setting-title">Keep chats archived</span>
@@ -660,8 +700,6 @@
             <input class="switch" type="checkbox" bind:checked={draft.freeze_chat_list_on_hover} />
           </label>
         {:else if section === "notifications"}
-          <h2>Notifications</h2>
-          <p class="lede">Desktop notifications for new direct messages and group messages.</p>
           <label class="setting">
             <div>
               <span class="setting-title">Enable notifications</span>
@@ -719,13 +757,6 @@
             {/if}
           </div>
         {:else if section === "device"}
-          <h2>Android companion</h2>
-          <p class="lede">
-            View-once photos, videos and voice notes only reach this device through a second,
-            Android-style link. It is not a second inbox: it wakes when a one-time message arrives,
-            fetches it into this chat, then goes dormant. It never replaces your main link and
-            never unlinks anything from your phone.
-          </p>
           {#if !once.paired}
             <p class="lede">
               Pair the companion once before it can be enabled. The pairing link is only kept open
@@ -797,7 +828,6 @@
             </div>
           {/if}
         {:else if section === "media"}
-          <h2>Media</h2>
           <label class="setting">
             <div>
               <span class="setting-title">Download media automatically</span>
@@ -831,11 +861,9 @@
             <button class="button danger" onclick={onflush}>Clear media</button>
           </div>
           <StorageManager />
-          <ArchiveManager />
         {:else if section === "plugins"}
           <PluginManager />
         {:else if section === "startup"}
-          <h2>Startup</h2>
           <label class="setting">
             <div>
               <span class="setting-title">Skip the loading screen</span>
@@ -847,8 +875,6 @@
             <input class="switch" type="checkbox" bind:checked={draft.skip_loading_screen} />
           </label>
         {:else if section === "keybinds"}
-          <h2>Keybinds</h2>
-          <p class="lede">Composer shortcuts. Click a shortcut, then press the keys you want.</p>
           {#each ACTIONS as action (action.id)}
             <div class="setting">
               <div>
@@ -885,12 +911,8 @@
             <button class="button danger" onclick={resetBindings}>Reset all</button>
           </div>
         {:else if section === "appearance"}
-          <h2>Customization</h2>
-          <p class="lede">Themes and CSS extensions apply instantly and are saved on this device.</p>
           <div class="customization"><Customization /></div>
         {:else if section === "advanced"}
-          <h2>Advanced</h2>
-          <p class="lede">Developer-oriented options. These only change logging.</p>
           <label class="setting">
             <div>
               <span class="setting-title">Verbose WhatsApp logs</span>
@@ -902,12 +924,10 @@
             <input class="switch" type="checkbox" bind:checked={draft.verbose_whatsapp_logs} />
           </label>
         {:else}
-          <h2>About</h2>
           <div class="setting">
             <span class="setting-title">Postal</span>
             <span class="muted">{version ? `Version ${version}` : ""}</span>
           </div>
-          <p class="lede">A native WhatsApp client that speaks the protocol directly.</p>
           <div class="setting">
             <div>
               <span class="setting-title">Log file</span>
