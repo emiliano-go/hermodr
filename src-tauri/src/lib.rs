@@ -5,7 +5,7 @@ use postal_core::WhatsAppService;
 use tauri::{Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 use account_store::{AccountsFile, load_accounts};
-use desktop::is_hyprland;
+use desktop::is_tiling;
 use logging::{init_logging, log_path};
 use migration::{migrate_bundle_id, migrate_media};
 use settings::load_settings;
@@ -283,7 +283,7 @@ fn build_main_window(app: &tauri::AppHandle) -> tauri::Result<WebviewWindow> {
         .title("Postal")
         .inner_size(1000.0, 720.0)
         .min_inner_size(480.0, 360.0)
-        .decorations(!is_hyprland())
+        .decorations(!is_tiling())
         .enable_clipboard_access();
     // WebView2 only delivers dropped files to the page's drop handler
     // when Tauri's own drag and drop handler is off.
