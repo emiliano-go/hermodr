@@ -49,6 +49,19 @@ test("scalar file commands and media-library arrays authorize only absolute retu
   assert.equal(calls.length, 6);
 });
 
+test("nonmedia commands preserve absolute path metadata without authorization or mutation", async () => {
+  const calls: string[][] = [];
+  const prepare = createMediaAssetPreparer(async (paths) => { calls.push(paths); return {}; });
+  for (const command of ["storage_report", "transcription_settings", "message_transcript", "unknown_command"]) {
+    const response = { files: [{ path: "C:\\account\\session.db", hash: "kept" }],
+      metadata: { path: "/private/transcription-model.bin", media_path: "/private/input.ogg", picture: "C:\\config\\avatar.png" } };
+    const original = structuredClone(response);
+    assert.equal(await prepare(command, response), response);
+    assert.deepEqual(response, original);
+  }
+  assert.deepEqual(calls, []);
+});
+
 test("coalesced authorization deduplicates simultaneous responses and bounds native batches to 512", async () => {
   const calls: string[][] = [];
   const prepare = createMediaAssetPreparer(async (paths) => {
@@ -73,9 +86,16 @@ test("missing, malformed and failed grants close media paths without failing mes
   assert.equal(await prepare("messages", rows), rows);
   assert.deepEqual(rows.map((row) => row.media_path), [null, null, null]);
   assert.equal(rows[0].text, "kept");
+  await assert.rejects(prepare("playable_audio", "/media/a.png"), { message: "Media file authorization failed for playable_audio" });
   failed = false;
   assert.equal(await prepare("avatar", "/media/a.png"), "/media/a.png");
   assert.equal(await prepare("avatar", "/media/b.png"), null);
   assert.equal(await prepare("avatar", "/media/c.png"), null);
   assert.deepEqual(await prepare("media_library", ["/media/a.png", "/media/b.png", "/media/c.png"]), ["/media/a.png"]);
+  for (const command of ["save_sticker", "download_sticker", "playable_audio", "playable_video"]) {
+    assert.equal(await prepare(command, "/media/a.png"), "/media/a.png");
+    for (const path of ["/media/b.png", "/media/c.png"]) {
+      await assert.rejects(prepare(command, path), { message: `Media file authorization failed for ${command}` });
+    }
+  }
 });

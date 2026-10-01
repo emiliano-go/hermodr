@@ -1,6 +1,8 @@
 type Authorize = (paths: string[]) => Promise<Record<string, string | null>>;
 const FIELDS = new Set(["media_path", "reply_to_path", "reply_to_thumb", "media_thumb", "path", "tray_path", "picture", "avatar"]);
 const SCALARS = new Set(["avatar", "save_sticker", "download_sticker", "playable_audio", "playable_video"]);
+const DTO_COMMANDS = new Set(["messages", "message_page", "starred_messages", "pings", "search_messages", "switcher_messages",
+  "gallery_page", "sticker_library", "sticker_pack", "invite_info", "admin_reports"]);
 
 function absolutePath(value: unknown): value is string {
   return typeof value === "string" && /^(?:[a-z]:[\\/]|\\\\|\/)/i.test(value);
@@ -38,6 +40,7 @@ export function createMediaAssetPreparer(authorize: Authorize) {
   }
 
   return async function prepare<T>(command: string, value: T): Promise<T> {
+    if (!DTO_COMMANDS.has(command) && !SCALARS.has(command) && command !== "media_library") return value;
     let result: unknown = value;
     const targets: { path: string; set: (path: string | null) => void }[] = [];
     function visit(value: unknown) {
@@ -55,8 +58,9 @@ export function createMediaAssetPreparer(authorize: Authorize) {
       const rows = result;
       rows.forEach((path, index) => { if (absolutePath(path)) targets.push({ path, set: (value) => { rows[index] = value; } }); });
     }
-    visit(result);
+    if (DTO_COMMANDS.has(command)) visit(result);
     await Promise.all(targets.map(async ({ path, set }) => set(await preparePath(path))));
+    if (SCALARS.has(command) && command !== "avatar" && result === null) throw new Error(`Media file authorization failed for ${command}`);
     if (command === "media_library" && Array.isArray(result)) result = result.filter((path) => path !== null);
     return result as T;
   };
