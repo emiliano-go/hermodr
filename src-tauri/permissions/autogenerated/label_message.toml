@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-label-message"
+description = "Enables the label_message command without any pre-configured scope."
+commands.allow = ["label_message"]
+
+[[permission]]
+identifier = "deny-label-message"
+description = "Denies the label_message command without any pre-configured scope."
+commands.deny = ["label_message"]

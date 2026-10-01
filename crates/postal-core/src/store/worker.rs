@@ -38,6 +38,14 @@ impl<T: Send + Sync + 'static> Worker<T> {
 }
 
 impl StoreWorker {
+    #[cfg(test)]
+    pub(crate) async fn query_only_for_test(&self) -> Result<()> {
+        self.run(|store| {
+            store.conn.lock().unwrap().execute_batch("PRAGMA query_only = ON")?;
+            Ok(())
+        }).await
+    }
+
     pub(crate) async fn open(path: &Path) -> Result<Self> {
         let path = path.to_path_buf();
         Ok(Self::new(tokio::task::spawn_blocking(move || MessageStore::open(&path)).await??))

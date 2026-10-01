@@ -8,6 +8,7 @@
     ondelete,
     oncopy,
     onstar,
+    onlabel = () => {},
     onreact,
     allStarred = false,
     oncancel,
@@ -17,6 +18,7 @@
     ondelete: () => void;
     oncopy: () => unknown;
     onstar: () => unknown;
+    onlabel?: () => unknown;
     onreact: (event: MouseEvent) => void;
     allStarred?: boolean;
     oncancel: () => void;
@@ -37,6 +39,7 @@
     <Icon name="x" size={18} />
   </button>
   <span class="count">{count} selected</span>
+  <button class="action" disabled={count === 0 || busy} onclick={() => run(onlabel)}>Labels</button>
   <button class="forward" disabled={count === 0 || busy} onclick={onforward}>
     <Icon name="forward" size={16} /> Forward
   </button>

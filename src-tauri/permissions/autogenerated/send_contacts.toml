@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-send-contacts"
+description = "Enables the send_contacts command without any pre-configured scope."
+commands.allow = ["send_contacts"]
+
+[[permission]]
+identifier = "deny-send-contacts"
+description = "Denies the send_contacts command without any pre-configured scope."
+commands.deny = ["send_contacts"]

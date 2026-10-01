@@ -83,6 +83,7 @@ export class SessionState {
     send_receipts: true,
     keep_history: true,
     skip_loading_screen: false,
+    start_on_login: false,
     keep_archived: true,
     android_instance: false,
     notifications_enabled: true,

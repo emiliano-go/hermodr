@@ -2,6 +2,7 @@
   Moved out of +page.svelte. -->
 <script lang="ts">
   import { members } from "$lib/state/members.svelte";
+  import { labels } from "$lib/state/labels.svelte";
   import { MEDIA_TYPES, emptyMediaOverrides } from "$lib/utils/auto-download";
   import type { MediaAutoDownload, MediaAutoDownloadOverrides } from "$lib/utils/wire";
   import Avatar from "$lib/ui/Avatar.svelte";
@@ -71,6 +72,10 @@
     onmarkallread,
     onnewgroup,
     onnewcontact = () => {},
+    oninbox = () => {},
+    onlabels = () => {},
+    onchatlabels = () => {},
+    labelFilter = $bindable(""),
     canCreateGroup = false,
     onblockcontact,
     markingAllRead = false,
@@ -131,6 +136,10 @@
     onmarkallread: () => void;
     onnewgroup: () => void;
     onnewcontact?: () => void;
+    oninbox?: () => void;
+    onlabels?: () => void;
+    onchatlabels?: (chat: string) => void;
+    labelFilter?: string;
     canCreateGroup?: boolean;
     onblockcontact: (jid: string) => Promise<void>;
     markingAllRead?: boolean;
@@ -376,6 +385,14 @@
     />
   </label>
   {#if !searchQuery.trim()}
+    <div class="filters">
+      <Button variant="chip" onclick={oninbox}>Inbox</Button>
+      <Button variant="chip" onclick={onlabels}>Manage labels</Button>
+      <select aria-label="Filter by label" bind:value={labelFilter}>
+        <option value="">All labels</option>
+        {#if labels.account === activeAccount}{#each labels.view.labels as label (label.id)}<option value={label.id}>{label.name}</option>{/each}{/if}
+      </select>
+    </div>
     <div class="filters" role="tablist" aria-label="Filter chats">
       <Button variant="chip" selected={chatFilter === "all"} onclick={() => onfilter("all")}>All</Button>
       <Button variant="chip" selected={chatFilter === "favorites"} onclick={() => onfilter("favorites")}>Favorites</Button>
@@ -491,6 +508,13 @@
                   ><Icon name={icon} size={15} /></span
                 >{/if}{previewTextOf(chat)}</span
             >
+          {/if}
+          {#if labels.account === activeAccount && labels.chatIds(chat.chat).length}
+            <div class="chat-labels" aria-label="Chat labels">
+              {#each labels.view.labels.filter((label) => labels.chatIds(chat.chat).includes(label.id)) as label (label.id)}
+                <span class="chat-label" title={`Label: ${label.name}`}>{label.name}</span>
+              {/each}
+            </div>
           {/if}
           <span class="badges">
             {#if chat.mention_count > 0}
@@ -650,6 +674,9 @@
         closeChatMenu();
       }}>Block contact</Button>
     {/if}
+    <Button variant="menu" icon="edit" iconSize={15} role="menuitem" onclick={() => {
+      onchatlabels(menuChat.chat); closeChatMenu();
+    }}>Labels</Button>
     <Button
       variant="menu"
       icon="download"
@@ -756,6 +783,8 @@
   }} />
 
 <style>
+  .chat-label { max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 5px; border-radius: 6px; background: var(--raised); color: var(--muted); font-size: 10px; }
+  .chat-labels { grid-column: 2 / 4; grid-row: 3; min-width: 0; display: flex; flex-wrap: wrap; gap: 3px; }
   .chats {
     position: relative;
     overflow: hidden;

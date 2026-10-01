@@ -145,8 +145,9 @@ export async function showChatNotification(
     try {
       const note = new Notification(title, { body, tag: `postal-${chat}`, silent: muted });
       note.onclick = () => {
+        if (!current()) return;
         window.focus();
-        window.dispatchEvent(new CustomEvent<string>("postal:open-chat", { detail: chat }));
+        window.dispatchEvent(new CustomEvent("postal:open-chat", { detail: { account_id: accountId, chat } }));
       };
     } catch {
       // Notifications are best-effort; the chat list already shows the message.

@@ -8,6 +8,8 @@ import { session } from "./session.svelte";
 import { keywords } from "./keywords.svelte";
 import { keywordHidden } from "$lib/utils/keywords";
 import { compareMessages } from "$lib/utils/message-window";
+import { labels } from "./labels.svelte";
+import { labelSearch } from "$lib/utils/label-search";
 
 export async function openStarred() {
   ui.showStarred = true;
@@ -92,7 +94,14 @@ export async function searchChat(query: string, more = false) {
     ui.finder = current;
   }
   try {
-    const got = await invoke<StoredMessage[]>("search_messages", { chat, query, limit: SEARCH_LIMIT });
+    const account = session.activeAccount;
+    const generation = messages.accountGeneration;
+    const filter = labelSearch(query);
+    const ids = filter && labels.account === account ? labels.view.labels.filter((label) => label.name.toLocaleLowerCase() === filter.name.toLocaleLowerCase()).map((label) => label.id) : [];
+    const got = filter
+      ? ids.length ? await invoke<StoredMessage[]>("labelled_messages", { accountId: account, labelIds: ids, chat, query: filter.query, limit: SEARCH_LIMIT }) : []
+      : await invoke<StoredMessage[]>("search_messages", { chat, query, limit: SEARCH_LIMIT });
+    if (account !== session.activeAccount || generation !== messages.accountGeneration) return;
     if (ui.finder !== current) return;
     ui.finder = {
       ...current,
@@ -102,6 +111,6 @@ export async function searchChat(query: string, more = false) {
       more: !messages.olderExhausted,
     };
   } catch (e) {
-    ui.fail(e);
+    if (ui.finder === current) ui.fail(e);
   }
 }

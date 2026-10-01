@@ -1,7 +1,19 @@
 use crate::AppState;
 use postal_core::WhatsAppService;
 use std::sync::Arc;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, Manager, State};
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
+pub struct DesktopChatTarget {
+    pub account_id: String,
+    pub chat: String,
+}
+
+fn opens_chat(response: &notify_rust::NotificationResponse) -> bool {
+    matches!(response, notify_rust::NotificationResponse::Default)
+        || matches!(response, notify_rust::NotificationResponse::Action(action) if action == "open-chat")
+}
 
 fn current(state: &AppState, account_id: &str, service: &Arc<WhatsAppService>) -> Result<(), String> {
     if !Arc::ptr_eq(service, &state.service_for_account(account_id)?) {
@@ -31,7 +43,9 @@ pub(crate) async fn set_chat_sound_muted(
 
 fn notification(title: &str, body: &str, muted: bool) -> notify_rust::Notification {
     let mut note = notify_rust::Notification::new();
-    note.summary(title).body(body).auto_icon();
+    note.summary(title).body(body).auto_icon().action("open-chat", "Open chat");
+    #[cfg(all(unix, not(target_os = "macos")))]
+    note.action("default", "Open chat");
     #[cfg(all(unix, not(target_os = "macos")))]
     if muted {
         note.hint(notify_rust::Hint::SuppressSound(true));
@@ -64,13 +78,42 @@ pub(crate) async fn show_chat_notification(
     };
     #[cfg(target_os = "macos")]
     let _ = notify_rust::set_application(if tauri::is_dev() { "com.apple.Terminal" } else { &app.config().identifier });
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let _ = app;
     current(&state, &account_id, &service)?;
     if !state.settings.lock().unwrap().notifications_enabled {
         return Ok(());
     }
-    note.show().map(|_| ()).map_err(|e| e.to_string())
+    let service_ref = Arc::downgrade(&service);
+    drop(service);
+    let target = DesktopChatTarget { account_id, chat };
+    let (shown, result) = tokio::sync::oneshot::channel();
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(service) = service_ref.upgrade() else { let _ = shown.send(Err("account changed".into())); return; };
+        if let Err(error) = current(&app.state::<AppState>(), &target.account_id, &service) {
+            let _ = shown.send(Err(error)); return;
+        }
+        if !app.state::<AppState>().settings.lock().unwrap().notifications_enabled {
+            let _ = shown.send(Ok(())); return;
+        }
+        let handle = match note.show() {
+            Ok(handle) => handle,
+            Err(error) => { let _ = shown.send(Err(error.to_string())); return; }
+        };
+        let _ = shown.send(Ok(()));
+        let service_ref = Arc::downgrade(&service);
+        drop(service);
+        if let Err(error) = handle.wait_for_response(|response: &notify_rust::NotificationResponse| {
+            if !opens_chat(response) { return; }
+            let Some(service) = service_ref.upgrade() else { return; };
+            if current(&app.state::<AppState>(), &target.account_id, &service).is_err() { return; }
+            crate::tray::show_main(&app);
+            if let Err(error) = app.emit("desktop-open-chat", &target) {
+                log::warn!("could not open notification chat: {error}");
+            }
+        }) {
+            log::warn!("could not listen for notification action: {error}");
+        }
+    });
+    result.await.map_err(|_| "notification worker stopped".to_string())?
 }
 
 #[cfg(test)]
@@ -92,5 +135,17 @@ mod tests {
         }
         #[cfg(any(windows, target_os = "macos"))]
         assert_eq!(format!("{normal:?}"), format!("{muted:?}"));
+    }
+
+    #[test]
+    fn desktop_notification_clicks_only_open_matching_actions() {
+        use notify_rust::{CloseReason, NotificationResponse};
+        assert!(opens_chat(&NotificationResponse::Default));
+        assert!(opens_chat(&NotificationResponse::Action("open-chat".into())));
+        assert!(!opens_chat(&NotificationResponse::Action("unrelated".into())));
+        assert!(!opens_chat(&NotificationResponse::Closed(CloseReason::Dismissed)));
+        assert!(!opens_chat(&NotificationResponse::Reply("open-chat".into())));
+        let target = DesktopChatTarget { account_id: "synthetic-account".into(), chat: "synthetic-chat".into() };
+        assert_eq!(serde_json::to_value(target).unwrap(), serde_json::json!({"account_id":"synthetic-account", "chat":"synthetic-chat"}));
     }
 }

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-delete-label"
+description = "Enables the delete_label command without any pre-configured scope."
+commands.allow = ["delete_label"]
+
+[[permission]]
+identifier = "deny-delete-label"
+description = "Denies the delete_label command without any pre-configured scope."
+commands.deny = ["delete_label"]

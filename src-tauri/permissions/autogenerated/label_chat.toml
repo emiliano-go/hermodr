@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-label-chat"
+description = "Enables the label_chat command without any pre-configured scope."
+commands.allow = ["label_chat"]
+
+[[permission]]
+identifier = "deny-label-chat"
+description = "Denies the label_chat command without any pre-configured scope."
+commands.deny = ["label_chat"]

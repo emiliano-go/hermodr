@@ -6,6 +6,9 @@
   import LocationCard from "$lib/messages/cards/LocationCard.svelte";
   import InviteCard, { inviteLink } from "$lib/messages/cards/InviteCard.svelte";
   import MessageText from "$lib/messages/MessageText.svelte";
+  import ContactCard from "$lib/messages/cards/ContactCard.svelte";
+  import { session } from "$lib/state/session.svelte";
+  import { messages } from "$lib/state/messages.svelte";
   import { mediaSrc } from "$lib/media/MediaViewer.svelte";
   import { CARD_LABELS, replyIcon } from "$lib/utils/message";
   import type { BubbleApi, BubbleVm, Poll, StoredMessage } from "$lib/utils/models";
@@ -14,6 +17,7 @@
     message: StoredMessage;
     vm: BubbleVm;
     api: BubbleApi;
+    spoilerRevealed?: boolean;
     variant?: "message" | "quote" | "link";
     meta?: Snippet;
   } | {
@@ -37,7 +41,7 @@
 {#if props.variant === "poll"}
   <PollCard poll={props.poll} question={props.question} namer={props.namer} picture={props.picture} onvote={props.onvote} />
 {:else}
-{@const { message, vm, api, variant = "message", meta } = props}
+{@const { message, vm, api, variant = "message", meta, spoilerRevealed = false } = props}
 {#if variant === "quote"}
   {@const sentHere = message.from_me && message.reply_to_view_once && !message.reply_to_recoverable && !message.reply_to_path}
   {@const onceCopy = message.reply_to_view_once && message.reply_to_recoverable && !sentHere}
@@ -90,6 +94,9 @@
       tooltip={url}
       onopen={() => api.onopenurl(url)} />
   {/if}
+{:else if message.media_kind === "contact"}
+  <ContactCard {message} account={session.activeAccount} generation={messages.accountGeneration} {spoilerRevealed}
+    onopenchat={api.onopenchat} meta={vm.inlineMeta ? meta : undefined} />
 {:else if message.media_kind === "poll"}
   <PollCard
     poll={vm.poll}

@@ -158,6 +158,7 @@ export type BubbleApi = {
   avatarOf: (jid: string) => string | null;
   onprofile: (jid: string, name: string, event: MouseEvent, self?: boolean) => void;
   onopenurl: (url: string) => void;
+  onopenchat?: (chat: string) => void | Promise<void>;
   formatTime: (ts: number) => string;
   namer: (jid: string) => string;
   onreplydraft: (m: StoredMessage) => void;

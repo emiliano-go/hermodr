@@ -6,6 +6,18 @@
     "main"
   ],
   "permissions": [
+    "allow-get-desktop-status",
+    "allow-desktop-unread",
+    "allow-own-contact-link",
+    "allow-resolve-contact-link",
+    "allow-send-contacts",
+    "allow-message-contacts",
+    "allow-labels-view",
+    "allow-save-label",
+    "allow-delete-label",
+    "allow-label-chat",
+    "allow-label-message",
+    "allow-labelled-messages",
     "allow-transcription-settings",
     "allow-set-transcription-settings",
     "allow-grant-transcription-cloud-consent",

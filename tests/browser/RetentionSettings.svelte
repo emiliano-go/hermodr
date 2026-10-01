@@ -11,7 +11,7 @@
     request_full_history: false, auto_download_media: false, auto_transcribe: false, warn_missing_video_preview: true, media_quality: "hd",
     auto_download_types: { image: false, video: false, audio: false, document: false, sticker: false, gif: false },
     media_dir: null, history_dir: null, send_typing: false, send_receipts: false, keep_history: true,
-    skip_loading_screen: false, keep_archived: true, android_instance: false,
+    skip_loading_screen: false, start_on_login: false, keep_archived: true, android_instance: false,
     notifications_enabled: true, freeze_chat_list_on_hover: true, chat_preview: true, verbose_whatsapp_logs: true,
   });
   const noop = () => {};

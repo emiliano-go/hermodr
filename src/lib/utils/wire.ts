@@ -20,6 +20,7 @@ export type ArchiveManifest = { format: string, version: number, messages: numbe
 export type ArchiveReport = { directory: string, messages: number, attachments: number, missing_attachments: number, };
 export type BlockedContact = { jid: string, jids: Array<string>, identity: ContactIdentity, };
 export type BooleanProp = { name: string, code: number, default: boolean, value: boolean | null, };
+export type ChatLabelAssociation = { label_id: string, chat: string, };
 export type ChatMarks = { reactions: Array<Reaction>, starred: Array<string>, pinned: string | null, polls: Array<Poll>, events: Array<Event>,
 /**
  * View-once messages and whether each was opened (or sent by us, which counts).
@@ -96,7 +97,10 @@ marked_unread: boolean, };
 export type CleanupResult = { files: number, bytes: number, };
 export type ConnectionState = { started: boolean, connected: boolean, qr: string | null, };
 export type ContactIdentity = { contact_saved: boolean | null, saved_name: string | null, legacy_name: string | null, push_name: string | null, username: string | null, number: string | null, own: boolean, };
+export type ContactSendResult = { message_id: string, warning: string | null, };
 export type Contributions = { commands: Array<string>, transcription?: TranscriptionContribution | null, };
+export type DesktopChatTarget = { account_id: string, chat: string, };
+export type DesktopStatus = { start_on_login: boolean, shortcut_registered: boolean, };
 export type DiskRetention = { max_age_hours: RetentionLimit, max_messages_per_chat: RetentionLimit, };
 export type Event = { id: string, name: string, description: string | null, start: number | null, end: number | null, location: string | null, link: string | null, canceled: boolean, responses: Array<EventResponse>, };
 export type EventForm = { name: string, description: string | null, start: number | null, end: number | null, location: string | null, link: string | null, canceled: boolean, };
@@ -178,6 +182,8 @@ export type Joined = { jid: string,
  */
 pending: boolean, };
 export type JsonValue = number | string | boolean | Array<JsonValue> | { [key in string]: JsonValue } | null;
+export type Label = { id: string, name: string, color: number, };
+export type LabelsView = { complete: boolean, labels: Array<Label>, chats: Array<ChatLabelAssociation>, messages: Array<MessageLabelAssociation>, };
 export type LinkedDevice = { jid: string, device_id: number, is_current: boolean, can_unlink: boolean, };
 export type LiveLocation = { lat: number, lng: number,
 /**
@@ -218,6 +224,7 @@ export type MediaAutoDownload = { image: boolean, video: boolean, audio: boolean
 export type MediaAutoDownloadOverrides = { image: boolean | null, video: boolean | null, audio: boolean | null, document: boolean | null, sticker: boolean | null, gif: boolean | null, };
 export type MediaQuality = "standard" | "hd";
 export type MessageCursor = { timestamp: number, id: string, sort_order: number, };
+export type MessageLabelAssociation = { label_id: string, chat: string, message_id: string, };
 export type MessagePage = { messages: Array<StoredMessage>, has_more: boolean, };
 export type MessagePageDirection = "before" | "after" | "through";
 export type MessageReceipt = { recipient: string, name: string | null, delivered_at: number | null, read_at: number | null, played_at: number | null, };
@@ -333,7 +340,7 @@ change: HintChange,
 /**
  * The delivery state a [`HintChange::Status`] change carries.
  */
-status: string | null, } | { "kind": "retentionApplied", removed: number, } | { "kind": "namesUpdated", count: number, } | { "kind": "chatStateChanged", chat: string, } | { "kind": "chatPinRemoved", chat: string, } | { "kind": "syncing", pending: number, applied: number, } | { "kind": "initialSyncComplete", messages: number, chats: number, } | { "kind": "synced" } | { "kind": "historyLoaded", chats: Array<string>, } | { "kind": "historyProgress", percent: number, } | { "kind": "backfill", done: number, total: number, } | { "kind": "avatarChanged", jid: string, } | { "kind": "typing", chat: string, sender: string, state: string, } | { "kind": "presence", jid: string, online: boolean, last_seen: number | null, } | { "kind": "memberLabel", chat: string, jid: string, label: string, } | { "kind": "groupChanged", chat: string, } | { "kind": "favoritesChanged" } | { "kind": "marks", chat: string, } | { "kind": "storeChanged" } | { "kind": "stickerLibraryChanged", packs: boolean, favorites: boolean, recents: boolean, } | { "kind": "uploadProgress", token: string, sent: number, total: number, };
+status: string | null, } | { "kind": "retentionApplied", removed: number, } | { "kind": "namesUpdated", count: number, } | { "kind": "chatStateChanged", chat: string, } | { "kind": "chatPinRemoved", chat: string, } | { "kind": "syncing", pending: number, applied: number, } | { "kind": "initialSyncComplete", messages: number, chats: number, } | { "kind": "synced" } | { "kind": "historyLoaded", chats: Array<string>, } | { "kind": "historyProgress", percent: number, } | { "kind": "backfill", done: number, total: number, } | { "kind": "avatarChanged", jid: string, } | { "kind": "typing", chat: string, sender: string, state: string, } | { "kind": "presence", jid: string, online: boolean, last_seen: number | null, } | { "kind": "memberLabel", chat: string, jid: string, label: string, } | { "kind": "groupChanged", chat: string, } | { "kind": "favoritesChanged" } | { "kind": "labelsChanged" } | { "kind": "marks", chat: string, } | { "kind": "storeChanged" } | { "kind": "stickerLibraryChanged", packs: boolean, favorites: boolean, recents: boolean, } | { "kind": "uploadProgress", token: string, sent: number, total: number, };
 export type Sticker = {
 /**
  * Base64 SHA-256 of the decrypted file: the app-state index key.
@@ -498,7 +505,7 @@ keep_history: boolean,
  * Skip the initial-sync loading screen and show the chat UI immediately.
  * Off holds the loading screen until the initial backlog is applied.
  */
-skip_loading_screen: boolean,
+skip_loading_screen: boolean, start_on_login: boolean,
 /**
  * Whether archived chats stay archived when a new message arrives. Off
  * moves the chat back to the main list.

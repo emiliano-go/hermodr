@@ -103,6 +103,7 @@ export const fixture = {
     "send_receipts": true,
     "send_typing": true,
     "skip_loading_screen": false,
+    "start_on_login": false,
     "verbose_whatsapp_logs": true,
     "warn_missing_video_preview": true
   }

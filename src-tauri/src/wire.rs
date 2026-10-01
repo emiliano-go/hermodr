@@ -39,6 +39,10 @@ pub fn wire_types() -> String {
         crate::transcription::TranscriptionView, crate::transcription::ProviderConsent,
         crate::transcription::TranscriptionEvent, crate::transcription_config::TranscriptionSettings,
         crate::bulk_chats::MarkReadResult,
+        postal_core::store::labels::LabelsView,
+        crate::notifications::DesktopChatTarget,
+        crate::desktop::DesktopStatus,
+        postal_core::service::ContactSendResult,
     );
     format!("// Generated from Rust Serde DTOs. Run pnpm generate:wire.\n{}", types.declarations.values().cloned().collect::<String>())
 }

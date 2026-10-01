@@ -25,8 +25,8 @@ pub(crate) async fn messages(
 
 /// Marks a chat as read. Returns how many messages were newly marked.
 #[tauri::command]
-pub(crate) async fn mark_read(state: State<'_, AppState>, chat: String) -> Result<usize, String> {
-    let service = state.service()?;
+pub(crate) async fn mark_read(state: State<'_, AppState>, chat: String, account: Option<String>) -> Result<usize, String> {
+    let service = match account { Some(account) => state.account_service(&account)?, None => state.service()? };
     let receipts = sends_privacy(&state, &service, &chat).await.1;
     service.mark_read(&chat, receipts).await.map_err(|e| command_error(&service, e))
 }

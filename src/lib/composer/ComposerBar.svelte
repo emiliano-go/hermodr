@@ -22,6 +22,7 @@
   import { canChooseMediaQuality } from "$lib/utils/media-quality";
   import type { MediaQuality } from "$lib/utils/wire";
   import ScheduleDialog from "./ScheduleDialog.svelte";
+  import CameraCapture from "./CameraCapture.svelte";
 
   let {
     draft = $bindable(),
@@ -69,6 +70,7 @@
     defaultQuality = "hd",
     onsoundclip = async () => { throw new Error("Audio clip sending is unavailable."); },
     onslashcommand = () => {},
+    onsharecontacts = () => {},
   }: {
     draft: string;
     composerInput: HTMLTextAreaElement | undefined;
@@ -123,17 +125,20 @@
     defaultQuality?: MediaQuality;
     onsoundclip?: (file: File, scope: { account: string; chat: string; generation: number }) => Promise<void>;
     onslashcommand?: (command: SlashCommandId) => void;
+    onsharecontacts?: () => void;
   } = $props();
 
   let attachMenu = $state(false);
   let soundboardOpen = $state(false);
+  let cameraOpen = $state(false);
   let caret = $state({ start: 0, end: 0 });
   let dismissedSlash = $state<string | null>(null);
   const activeSlash = $derived(slashToken(draft, caret.start, caret.end));
   const slashKey = $derived(activeSlash ? JSON.stringify(activeSlash) : null);
   const slashDisabled = $derived({ location: "Location sending is unavailable.", "keep-in-chat": "Keep in chat is unavailable.",
     ...(!selectedChat.endsWith("@g.us") ? { "mention-all": "Mention all is available in groups." } : {}) });
-  $effect(() => { void account; void selectedChat; void generation; soundboardOpen = false; dismissedSlash = null; });
+  $effect(() => { void account; void selectedChat; void generation; soundboardOpen = false; cameraOpen = false; dismissedSlash = null; });
+  $effect(() => { if (disabled || editing) cameraOpen = false; });
 
   function updateCaret() {
     if (composerInput && (caret.start !== composerInput.selectionStart || caret.end !== composerInput.selectionEnd)) {
@@ -374,6 +379,10 @@
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div class="attach-catcher" role="presentation" onclick={() => (attachMenu = false)}></div>
     <div class="attach-menu" role="menu">
+      <button type="button" role="menuitem" disabled={disabled || editing !== null || !account}
+        onclick={() => { attachMenu = false; onsharecontacts(); }}><Icon name="user" size={18} /> Share contacts</button>
+      <button type="button" role="menuitem" disabled={disabled || editing !== null || !account}
+        onclick={() => { attachMenu = false; cameraOpen = true; }}><Icon name="image" size={18} /> Take a photo</button>
       <button
         type="button"
         role="menuitem"
@@ -483,6 +492,15 @@
   {/if}
   {/if}
 </form>
+{#if cameraOpen && account}
+  {#key `${account}:${selectedChat}:${generation}`}
+    <CameraCapture {account} chat={selectedChat} {generation}
+      onstage={(file, scope) => {
+        if (disabled || editing || scope.account !== account || scope.chat !== selectedChat || scope.generation !== generation) throw new Error("Camera attachment target changed.");
+        onstage(file);
+      }} onclose={() => { cameraOpen = false; }} />
+  {/key}
+{/if}
 </div>
 
 {#if scheduling}

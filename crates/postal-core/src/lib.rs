@@ -8,6 +8,7 @@ pub mod aliases;
 pub mod history;
 pub mod ogg;
 pub mod service;
+pub use service::ContactSendResult;
 pub mod store;
 
 #[cfg(feature = "wire-types")]

@@ -444,6 +444,15 @@ pub(super) async fn stored_message(
             media_kind = Some(card.kind.to_string());
             media_thumb = card.thumb.as_deref().map(thumb_uri);
             live_location = card.live;
+            if card.kind == "contact" {
+                if decoded.view_once {
+                    text = "View once message".into();
+                    media_kind = Some("view_once".into());
+                    media_once_kind = Some("contact".into());
+                } else {
+                    media_ref = contact_sharing::contact_payload(message).observed().flatten();
+                }
+            }
         }
     }
 

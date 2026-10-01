@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-own-contact-link"
+description = "Enables the own_contact_link command without any pre-configured scope."
+commands.allow = ["own_contact_link"]
+
+[[permission]]
+identifier = "deny-own-contact-link"
+description = "Denies the own_contact_link command without any pre-configured scope."
+commands.deny = ["own_contact_link"]

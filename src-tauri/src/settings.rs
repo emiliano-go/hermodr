@@ -44,6 +44,8 @@ pub struct UiSettings {
     /// Off holds the loading screen until the initial backlog is applied.
     #[serde(default)]
     pub skip_loading_screen: bool,
+    #[serde(default)]
+    pub start_on_login: bool,
     /// Whether archived chats stay archived when a new message arrives. Off
     /// moves the chat back to the main list.
     #[serde(default = "default_true")]
@@ -93,6 +95,7 @@ impl Default for UiSettings {
             send_receipts: true,
             keep_history: true,
             skip_loading_screen: false,
+            start_on_login: false,
             keep_archived: true,
             android_instance: false,
             notifications_enabled: true,
@@ -154,8 +157,13 @@ pub(crate) async fn sends_privacy(state: &AppState, service: &WhatsAppService, c
 
 /// Current settings.
 #[tauri::command]
-pub(crate) fn get_settings(state: State<'_, AppState>) -> UiSettings {
-    state.settings.lock().unwrap().clone()
+pub(crate) fn get_settings(app: AppHandle, state: State<'_, AppState>) -> UiSettings {
+    let mut settings = state.settings.lock().unwrap().clone();
+    match crate::desktop::get_desktop_status(app) {
+        Ok(status) => settings.start_on_login = status.start_on_login,
+        Err(error) => log::warn!("could not read start-on-login state: {error}"),
+    }
+    settings
 }
 
 /// Updates and saves settings.
@@ -193,7 +201,23 @@ pub(crate) async fn set_settings(app: AppHandle, state: State<'_, AppState>, set
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let json = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
-    std::fs::write(path, json).map_err(|e| e.to_string())?;
+    let saved_startup = state.settings.lock().unwrap().start_on_login;
+    let previous_startup = match crate::desktop::get_desktop_status(app.clone()) {
+        Ok(status) => status.start_on_login,
+        Err(error) if settings.start_on_login != saved_startup => return Err(error),
+        Err(_) => saved_startup,
+    };
+    let startup_changed = previous_startup != settings.start_on_login;
+    let previous_actual_startup = startup_changed.then_some(previous_startup);
+    if startup_changed { crate::desktop::apply_start_on_login(&app, settings.start_on_login)?; }
+    if let Err(error) = std::fs::write(path, json) {
+        if let Some(previous) = previous_actual_startup {
+            if let Err(restore) = crate::desktop::apply_start_on_login(&app, previous) {
+                return Err(format!("Saving settings failed: {error}; restoring start-on-login failed: {restore}"));
+            }
+        }
+        return Err(error.to_string());
+    }
     if let Ok(service) = state.service() {
         service.set_retention(settings.retention);
         service.set_keep_archived(settings.keep_archived);

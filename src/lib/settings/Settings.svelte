@@ -7,6 +7,7 @@
     | "profile"
     | "linked"
     | "blocked"
+    | "contacts"
     | "transcription"
     | "accounts"
     | "whatsapp"
@@ -44,6 +45,8 @@
   import AutoDownloadSettings from "$lib/settings/AutoDownloadSettings.svelte";
   import KeywordSettings from "$lib/settings/KeywordSettings.svelte";
   import NotificationHistory from "$lib/notifications/NotificationHistory.svelte";
+  import ContactSharing from "$lib/contacts/ContactSharing.svelte";
+  import { messages } from "$lib/state/messages.svelte";
   import { notificationHistory } from "$lib/notifications/history-store";
   import BlockedContacts from "$lib/settings/BlockedContacts.svelte";
   import { session } from "$lib/state/session.svelte";
@@ -88,6 +91,7 @@
     onblockedload,
     onunblockcontact,
     onnotificationjump,
+    onopencontact,
   }: {
     settings: UiSettings;
     accounts: Account[];
@@ -110,6 +114,7 @@
     onblockedload: (account: string) => Promise<import("$lib/utils/wire").BlockedContact[]>;
     onunblockcontact: (account: string, jid: string) => Promise<void>;
     onnotificationjump?: (account: string, chat: string, id: string) => Promise<void>;
+    onopencontact?: (jid: string) => Promise<void>;
   } = $props();
 
   let picker: HTMLInputElement | undefined = $state();
@@ -163,6 +168,7 @@
     ...(me ? [{ id: "profile" as Section, label: "My profile", group: "User settings" }] : []),
     ...(me ? [{ id: "linked" as Section, label: "Linked devices", group: "User settings" }] : []),
     ...(me ? [{ id: "blocked" as Section, label: "Blocked contacts", group: "User settings" }] : []),
+    ...(me ? [{ id: "contacts" as Section, label: "Contact QR & links", group: "User settings" }] : []),
     { id: "accounts", label: "My accounts", group: "User settings" },
     ...(me ? [{ id: "whatsapp" as Section, label: "WhatsApp privacy", group: "User settings" }] : []),
     { id: "privacy", label: "Storage & history", group: "Data & device" },
@@ -186,6 +192,19 @@
   let draft = $state<UiSettings>(untrack(() => structuredClone($state.snapshot(settings))));
   const dirty = $derived(JSON.stringify(draft) !== JSON.stringify(settings));
   let saving = $state(false);
+  let desktopStatus = $state<import("$lib/utils/wire").DesktopStatus | null>(null);
+  let desktopError = $state("");
+  $effect(() => {
+    if (section !== "startup") return;
+    void settings.start_on_login;
+    let current = true;
+    desktopStatus = null;
+    desktopError = "";
+    invoke<import("$lib/utils/wire").DesktopStatus>("get_desktop_status")
+      .then((status) => { if (current) desktopStatus = status; })
+      .catch((error) => { if (current) desktopError = String(error); });
+    return () => { current = false; };
+  });
 
   let version = $state("");
   onMount(() => {
@@ -414,6 +433,8 @@
       <h2>Linked devices</h2>
     {:else if section === "blocked"}
       <h2>Blocked contacts</h2>
+    {:else if section === "contacts"}
+      <h2>Contact QR & links</h2>
     {:else if section === "transcription"}
       <h2>Transcription</h2>
     {:else if section === "profile"}
@@ -468,6 +489,9 @@
 
         {#if section === "blocked"}
           <BlockedContacts account={active} connected={session.connected} onload={onblockedload} onunblock={onunblockcontact} />
+        {:else if section === "contacts"}
+          <ContactSharing account={active} connected={session.connected} generation={messages.accountGeneration}
+            onopenchat={async (jid) => { if (!onopencontact) throw new Error("Chat navigation is unavailable."); await onopencontact(jid); }} />
         {:else if section === "profile"}
           {#if profile}
             <div class="profile-card">
@@ -986,6 +1010,14 @@
         {:else if section === "plugins"}
           <PluginManager />
         {:else if section === "startup"}
+          <label class="setting">
+            <div><span class="setting-title">Start on login</span><span class="setting-desc">Launch Postal when you sign into this computer.</span></div>
+            <input class="switch" type="checkbox" bind:checked={draft.start_on_login} />
+          </label>
+          {#if desktopStatus}
+            <p class="setting-desc">Start on login is currently {desktopStatus.start_on_login ? "enabled" : "disabled"}.</p>
+            <p class="setting-desc">{desktopStatus.shortcut_registered ? "Ctrl+Alt+P shows or hides Postal from other apps." : "Ctrl+Alt+P is unavailable. Another app may be using this shortcut."}</p>
+          {:else if desktopError}<p role="alert">{desktopError}</p>{/if}
           <label class="setting">
             <div>
               <span class="setting-title">Skip the loading screen</span>

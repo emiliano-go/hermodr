@@ -36,6 +36,8 @@ mod group_requests;
 mod scheduled;
 mod transcription;
 mod notifications;
+mod labels;
+mod contact_sharing;
 mod bulk_chats;
 mod group_invites;
 mod blocked_contacts;
@@ -48,6 +50,7 @@ mod transcription_credentials;
 mod contacts;
 mod polls;
 mod desktop;
+mod camera;
 mod migration;
 mod logging;
 #[cfg(feature = "wire-types")]
@@ -249,6 +252,16 @@ macro_rules! postal_commands {
             notifications::chat_sound_muted,
             notifications::set_chat_sound_muted,
             notifications::show_chat_notification,
+            labels::labels_view,
+            labels::save_label,
+            labels::delete_label,
+            labels::label_chat,
+            labels::label_message,
+            labels::labelled_messages,
+            contact_sharing::own_contact_link,
+            contact_sharing::resolve_contact_link,
+            contact_sharing::send_contacts,
+            contact_sharing::message_contacts,
             bulk_chats::mark_all_read,
             chats::chat_unarchive,
             chats::set_chat_unarchive,
@@ -269,6 +282,8 @@ macro_rules! postal_commands {
             contacts::search,
             desktop::open_url,
             desktop::qr_svg,
+            desktop::get_desktop_status,
+            tray::desktop_unread,
             settings::get_settings,
             settings::set_settings,
             connection::once_state,
@@ -340,10 +355,15 @@ pub(crate) fn nvidia_module_loaded(modules: &str) -> bool {
 }
 
 fn app_builder() -> tauri::Builder<tauri::Wry> {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_clipboard_manager::init());
+    #[cfg(desktop)]
+    let builder = builder
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build());
+    builder
 }
 
 /// A second launch hands its arguments to the running instance and exits.
@@ -358,7 +378,13 @@ fn single_instance() -> tauri::plugin::TauriPlugin<tauri::Wry> {
 }
 
 fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    init_logging(&log_path(app.handle()), load_settings(app.handle()).verbose_whatsapp_logs);
+    let mut settings = load_settings(app.handle());
+    init_logging(&log_path(app.handle()), settings.verbose_whatsapp_logs);
+    #[cfg(desktop)]
+    match desktop::get_desktop_status(app.handle().clone()) {
+        Ok(status) => settings.start_on_login = status.start_on_login,
+        Err(error) => log::warn!("could not read start-on-login state: {error}"),
+    }
     let accounts = load_accounts(app.handle());
     migrate_media(app.handle(), &accounts);
     app.manage(transcription::TranscriptionState::load(app.handle())?);
@@ -371,15 +397,20 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         once_connected: std::sync::atomic::AtomicBool::new(false),
         once_pairing: std::sync::atomic::AtomicBool::new(false),
         once_wake: tokio::sync::Notify::new(),
-        settings: Mutex::new(load_settings(app.handle())),
+        settings: Mutex::new(settings),
         accounts: Mutex::new(accounts),
         uploads: Arc::default(),
         plugins: plugins::initialize(app.handle()),
     });
     connection::spawn_once_manager(app.handle());
-    build_main_window(app.handle())?;
+    let main = build_main_window(app.handle())?;
+    camera::setup(&main)?;
     #[cfg(desktop)]
     tray::setup(app.handle())?;
+    #[cfg(desktop)]
+    if let Err(error) = tray::setup_shortcut(app.handle()) {
+        log::warn!("could not register Postal window shortcut: {error}");
+    }
     Ok(())
 }
 

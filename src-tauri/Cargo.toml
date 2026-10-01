@@ -36,6 +36,7 @@ postal-plugins = { path = "../crates/postal-plugins" }
 tauri = { version = "2.11.5", features = ["tray-icon", "protocol-asset"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+anyhow = "1"
 # Decodes attachment payloads arriving from the webview.
 base64 = "0.22"
 tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
@@ -56,9 +57,15 @@ log = "0.4"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 notify-rust = "=4.18.1"
+tauri-plugin-autostart = "=2.5.1"
+tauri-plugin-global-shortcut = "=2.3.2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
+[target.'cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "ios"))))'.dependencies]
+gtk = "=0.18.2"
+webkit2gtk = { version = "=2.0.2", features = ["v2_38"] }
 
 [profile.dev]
 # Full debuginfo is what made the debug binary ~900 MB and every link slow;

@@ -17,7 +17,14 @@
   import ProfileCard from "$lib/contacts/ProfileCard.svelte";
   import ContactInfo from "$lib/contacts/ContactInfo.svelte";
   import NewContact from "$lib/contacts/NewContact.svelte";
+  import ContactSharing from "$lib/contacts/ContactSharing.svelte";
+  import type { SharedContact, ContactShareScope } from "$lib/utils/vcard";
   import QuickSwitcher from "$lib/chat/QuickSwitcher.svelte";
+  import UnifiedInbox from "$lib/chat/UnifiedInbox.svelte";
+  import LabelDialog from "$lib/labels/LabelDialog.svelte";
+  import { labels } from "$lib/state/labels.svelte";
+  import { desktopChatTarget, desktopUnreadCount } from "$lib/utils/desktop";
+  import type { InboxAction } from "$lib/utils/inbox";
   import MessageInfo from "$lib/messages/MessageInfo.svelte";
   import { polyfillCountryFlagEmojis } from "country-flag-emoji-polyfill";
   import flagFont from "country-flag-emoji-polyfill/dist/TwemojiCountryFlags.woff2?url";
@@ -82,6 +89,48 @@
     ui.showSettings = true;
   }
 
+  async function inboxAction(account: string, chat: string, action: InboxAction) {
+    const generation = messages.accountGeneration;
+    const current = () => account === session.activeAccount && generation === messages.accountGeneration && session.connected;
+    if (!current()) throw new Error("Inbox account changed or disconnected.");
+    if (action.kind === "label") {
+      await labels.applyChat(action.label, chat, action.applied);
+      return;
+    }
+    await composer.enqueue((signal) => {
+      if (signal.aborted || !current()) throw new Error("Inbox account changed before operation.");
+      if (action.kind === "read") return invoke(action.read ? "mark_read" : "set_marked_unread", { account, chat, unread: true });
+      if (action.kind === "archive") return invoke("set_archived", { account, chat, archived: action.archived });
+      if (!Number.isInteger(action.seconds) || action.seconds < -1) throw new Error("Invalid mute duration.");
+      const until = action.seconds <= 0 ? action.seconds : Math.floor(Date.now() / 1000) + action.seconds;
+      return invoke("set_muted", { account, chat, until });
+    });
+    if (!current()) throw new Error("Inbox account changed during operation.");
+    if (action.kind === "read" && action.read && chat === chats.selectedChat) {
+      messages.firstUnreadId = null;
+      messages.lastUnreadId = null;
+    }
+    await chats.refreshChats();
+  }
+
+  async function sendContacts(contacts: SharedContact[], scope: ContactShareScope): Promise<string> {
+    const current = () => scope.account === session.activeAccount && scope.chat === chats.selectedChat
+      && scope.generation === messages.accountGeneration && session.connected;
+    const allowed = () => current() && !composer.editing && !composer.recording && (!members.chatGroup || members.chatGroup.can_send);
+    if (!allowed()) throw new Error("Contact sharing target changed or is unavailable.");
+    const result = await composer.enqueue((signal) => {
+      if (signal.aborted || !allowed()) throw new Error("Contact sharing target changed before send.");
+      return invoke<import("$lib/utils/wire").ContactSendResult>("send_contacts", { account: scope.account, chat: scope.chat, contacts });
+    });
+    if (!result.message_id) throw new Error("Contact send was not acknowledged.");
+    if (current()) {
+      if (result.warning) ui.notify(result.warning);
+      try { await messages.reloadMessages(scope.chat); await chats.refreshChats(); }
+      catch (error) { if (current()) ui.fail(error); }
+    }
+    return result.message_id;
+  }
+
   $effect(() => {
     const account = session.activeAccount;
     untrack(() => { keywords.load(account); notificationHistory.load(account); });
@@ -97,18 +146,40 @@
     void keywords.revision;
     untrack(() => { if (ui.finder?.mode === "pings") void openPings(ui.finder.chat); });
   });
-  const visibleChats = $derived(chats.visibleChats.map((chat) => {
+  const visibleChats = $derived(chats.visibleChats.filter((chat) => !chats.labelFilter || labels.account === session.activeAccount && labels.chatIds(chat.chat).includes(chats.labelFilter)).map((chat) => {
     const count = keywords.account === session.activeAccount ? keywords.counts[chat.chat] ?? 0 : 0;
     return count ? { ...chat, mention_count: chat.mention_count + count } : chat;
   }));
   const unreadPings = $derived(chats.chats.reduce((sum, chat) => sum + chat.mention_count
     + (keywords.account === session.activeAccount ? keywords.counts[chat.chat] ?? 0 : 0), 0));
+  const inboxChats = $derived(chats.chats.map((chat) => ({ ...chat, mention_count: chat.mention_count
+    + (keywords.account === session.activeAccount ? keywords.counts[chat.chat] ?? 0 : 0) })));
+  const labelsByChat = $derived.by(() => {
+    const result: Record<string, string[]> = {};
+    if (labels.account === session.activeAccount) for (const row of labels.view.chats) (result[row.chat] ??= []).push(row.label_id);
+    return result;
+  });
+  const labelSelection = $derived.by(() => {
+    const targets = ui.labelTargets ?? [];
+    const sets = targets.map((target) => new Set(target.id ? labels.messageIds(target.chat, target.id) : labels.chatIds(target.chat)));
+    return {
+      selected: labels.view.labels.filter((label) => sets.length && sets.every((set) => set.has(label.id))).map((label) => label.id),
+      mixed: labels.view.labels.filter((label) => sets.some((set) => set.has(label.id)) && !sets.every((set) => set.has(label.id))).map((label) => label.id),
+    };
+  });
+  $effect(() => {
+    const accountId = session.activeAccount;
+    const count = desktopUnreadCount(chats.chats);
+    untrack(() => { void invoke("desktop_unread", { accountId, count: accountId ? count : 0 }).catch((error) => ui.fail(error)); });
+  });
 
   $effect(() => {
     session.applyZoom();
   });
 
   let composerInput: HTMLTextAreaElement | undefined = $state();
+  let contactDialog = $state<HTMLDialogElement>();
+  $effect(() => { if (ui.sharingContacts && contactDialog && !contactDialog.open) contactDialog.showModal(); });
   let chatOpenSeq = 0;
   let galleryChat = $state<string | null>(null);
   $effect(() => { session.activeAccount; galleryChat = null; });
@@ -159,6 +230,7 @@
   );
 
   async function openChat(chat: string, jumpToMention = false, label: string | null = null) {
+    ui.showInbox = false;
     const opening = ++chatOpenSeq;
     const account = messages.accountGeneration;
     const current = () => opening === chatOpenSeq && account === messages.accountGeneration && chats.selectedChat === chat;
@@ -868,10 +940,14 @@
 
     // Clicking a desktop notification opens its chat.
     const onOpenChat = (event: Event) => {
-      const chat = (event as CustomEvent<string>).detail;
-      if (chat) void openChat(chat);
+      const target = desktopChatTarget((event as CustomEvent<unknown>).detail, session.activeAccount);
+      if (target && session.connected) void openChat(target.chat);
     };
     window.addEventListener("postal:open-chat", onOpenChat);
+    const desktopListener = listen<unknown>("desktop-open-chat", (event) => {
+      const target = desktopChatTarget(event.payload, session.activeAccount);
+      if (target && session.connected) void openChat(target.chat);
+    });
 
     // Typing anywhere lands in the composer, so a chat can be answered without
     // clicking the field first.
@@ -971,6 +1047,7 @@
       window.removeEventListener("unhandledrejection", onRejection);
       window.removeEventListener("keydown", onAnyKey);
       window.removeEventListener("postal:open-chat", onOpenChat);
+      void desktopListener.then((unlisten) => unlisten()).catch((error) => ui.fail(error));
     };
   });
 </script>
@@ -1101,6 +1178,10 @@
       onmarkallread={markAllRead}
       onnewgroup={() => (ui.newGroup = true)}
       onnewcontact={() => (newContact = true)}
+      oninbox={() => { ui.showInbox = !ui.showInbox; void labels.refresh(); }}
+      onlabels={() => { ui.manageLabels = true; void labels.refresh(); }}
+      onchatlabels={(chat) => { ui.labelTargets = [{ chat }]; void labels.refresh(); }}
+      bind:labelFilter={chats.labelFilter}
       canCreateGroup={!!session.activeAccount && session.connected}
       onblockcontact={blockContact}
       {markingAllRead}
@@ -1118,7 +1199,17 @@
       onresize={startResize} />
 
     <section class="conversation">
-      {#if chats.selectedChat}
+      {#if ui.showInbox}
+        <UnifiedInbox account={session.activeAccount} requestKey={messages.accountGeneration} connected={session.connected}
+          chats={inboxChats} labels={labels.loaded ? labels.view.labels : null} {labelsByChat}
+          labelsWritable={session.connected && labels.loaded && !labels.busy} labelsLoading={labels.loading} labelsError={labels.error ?? ""} labelsComplete={labels.view.complete}
+          chatLabelOf={(chat) => chats.chatLabel(chat)} avatarOf={(jid) => chats.avatars[jid] ?? null}
+          previewTextOf={(chat) => chats.previewText(chat)} {formatTime}
+          syncPending={session.syncPending} syncApplied={session.syncApplied} historyPercent={session.historyPercent}
+          backfill={session.backfill} finalizing={session.finalizing}
+          onopen={(chat, mention) => { ui.showInbox = false; void openChat(chat, mention); }}
+          onaction={inboxAction} onretry={() => { void chats.refreshChats(); void labels.refresh(); }} />
+      {:else if chats.selectedChat}
         {@const selectedChat = chats.selectedChat}
         {@const title =
           members.displayName(chats.chats.find((c) => c.chat === selectedChat)?.display_name ?? chats.titleOverride, selectedChat)}
@@ -1216,6 +1307,7 @@
           targetOf={(user) => members.mentionTarget(user)}
           onprofile={openProfile}
           onopenurl={openUrl}
+          onopenchat={openChat}
           {formatTime}
           onreplydraft={(m) => {
             if (isUnavailable(m)) return;
@@ -1304,6 +1396,12 @@
               if (batch.length > 0) ui.forwarding = batch;
             }}
             ondelete={() => (ui.bulkDelete = Object.keys(ui.picking ?? {}))}
+            onlabel={() => {
+              ui.labelTargets = pickedInOrder(ui.picking, messages.ordered).filter((m) => !isUnavailable(m) && !m.revoked && !m.deleted && !m.spoiler && !m.system_kind && !m.media_once_kind)
+                .map((m) => ({ chat: m.chat, id: m.id }));
+              if (!ui.labelTargets.length) { ui.labelTargets = null; ui.notify("Select a message that can be labelled."); }
+              else void labels.refresh();
+            }}
             oncopy={() => copyMessages(pickedInOrder(ui.picking, messages.ordered))}
             onstar={() => {
               const batch = pickedInOrder(ui.picking, messages.ordered);
@@ -1364,6 +1462,7 @@
           }}
           onpickererror={(message) => (ui.error = message)}
           onstage={(file) => composer.stageFile(file)}
+          onsharecontacts={() => { ui.sharingContacts = true; }}
           oncreatekind={(kind) => (ui.creating = kind)}
           oninput={(e) => composer.onComposerInput(e)}
           onbeforeinput={(e) => composer.onComposerBeforeInput(e)}
@@ -1934,6 +2033,33 @@
   {/key}
 {/if}
 
+{#if ui.sharingContacts && chats.selectedChat}
+  <dialog bind:this={contactDialog} aria-label="Share contacts" oncancel={(event) => { event.preventDefault(); event.stopPropagation(); ui.sharingContacts = false; }}
+    onkeydown={(event) => { if (event.key === "Escape") event.stopPropagation(); }}>
+    <button class="button" aria-label="Close contact sharing" onclick={() => { ui.sharingContacts = false; }}>Close</button>
+    <ContactSharing mode="share" account={session.activeAccount} connected={session.connected} chat={chats.selectedChat}
+      generation={messages.accountGeneration} canSend={!composer.editing && !composer.recording && (!members.chatGroup || members.chatGroup.can_send)}
+      choices={Object.entries(members.identities).map(([jid, identity]) => ({ jid, identity }))} onopenchat={openChat} onshare={sendContacts} />
+  </dialog>
+{/if}
+
+{#if ui.manageLabels || ui.labelTargets}
+  <LabelDialog account={session.activeAccount} requestKey={JSON.stringify([messages.accountGeneration, ui.labelTargets, ui.manageLabels])}
+    labels={labels.account === session.activeAccount ? labels.view.labels : []}
+    selected={labelSelection.selected} mixed={labelSelection.mixed} mode={ui.labelTargets ? "apply" : "manage"}
+    busy={labels.busy || !session.connected || !labels.loaded} error={labels.error} complete={labels.view.complete}
+    onsave={(id, name, color) => labels.save(id, name, color)} ondelete={(id) => labels.delete(id)}
+    onapply={async (id, labeled) => {
+      const targets = ui.labelTargets?.map((target) => ({ ...target })) ?? [];
+      if (!targets.length) throw new Error("Choose a chat or message to label.");
+      if (targets.every((target): target is { chat: string; id: string } => typeof target.id === "string")) {
+        await labels.applyMessages(id, targets, labeled);
+      } else if (targets.length === 1 && !targets[0].id) {
+        await labels.applyChat(id, targets[0].chat, labeled);
+      } else throw new Error("Chat and message labels must be applied separately.");
+    }} onclose={() => { ui.manageLabels = false; ui.labelTargets = null; }} />
+{/if}
+
 {#if ui.showSettings}
   <Settings
     settings={session.settings}
@@ -1962,6 +2088,7 @@
       if (account !== session.activeAccount || generation !== messages.accountGeneration) throw new Error("account changed");
     }}
     me={session.me}
+    onopencontact={async (jid) => { await openChat(jid); ui.showSettings = false; }}
     meAvatar={session.me ? (chats.avatars[session.me] ?? null) : null}
     accountAvatars={chats.accountAvatars}
     bind:section={ui.settingsSection}

@@ -15,6 +15,7 @@ mod media;
 mod messages;
 mod quick_switcher;
 mod keywords;
+pub mod labels;
 mod unavailable;
 use unavailable::VISIBLE_MESSAGE_SQL;
 pub mod scheduled;

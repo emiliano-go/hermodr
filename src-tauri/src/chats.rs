@@ -58,20 +58,23 @@ pub(crate) async fn set_pinned(state: State<'_, AppState>, chat: String, pinned:
 
 /// Archives or unarchives a chat on the account.
 #[tauri::command]
-pub(crate) async fn set_archived(state: State<'_, AppState>, chat: String, archived: bool) -> Result<(), String> {
-    state.service()?.set_archived(&chat, archived).await.map_err(|e| e.to_string())
+pub(crate) async fn set_archived(state: State<'_, AppState>, chat: String, archived: bool, account: Option<String>) -> Result<(), String> {
+    let service = match account { Some(account) => state.account_service(&account)?, None => state.service()? };
+    service.set_archived(&chat, archived).await.map_err(|e| e.to_string())
 }
 
 /// Mutes a chat until `until` (Unix seconds; -1 indefinitely, 0 unmutes).
 #[tauri::command]
-pub(crate) async fn set_muted(state: State<'_, AppState>, chat: String, until: i64) -> Result<(), String> {
-    state.service()?.set_muted(&chat, until).await.map_err(|e| e.to_string())
+pub(crate) async fn set_muted(state: State<'_, AppState>, chat: String, until: i64, account: Option<String>) -> Result<(), String> {
+    let service = match account { Some(account) => state.account_service(&account)?, None => state.service()? };
+    service.set_muted(&chat, until).await.map_err(|e| e.to_string())
 }
 
 /// Sets or lifts a chat's manual unread mark on the account.
 #[tauri::command]
-pub(crate) async fn set_marked_unread(state: State<'_, AppState>, chat: String, unread: bool) -> Result<(), String> {
-    state.service()?.set_marked_unread(&chat, unread).await.map_err(|e| e.to_string())
+pub(crate) async fn set_marked_unread(state: State<'_, AppState>, chat: String, unread: bool, account: Option<String>) -> Result<(), String> {
+    let service = match account { Some(account) => state.account_service(&account)?, None => state.service()? };
+    service.set_marked_unread(&chat, unread).await.map_err(|e| e.to_string())
 }
 
 /// Deletes every message stored on this device; the phone keeps its copy.

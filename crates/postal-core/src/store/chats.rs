@@ -319,6 +319,7 @@ pub(crate) fn fold_chat(conn: &Connection, from: &str, to: &str) -> Result<()> {
     super::secret_edits::merge(conn, from, to)?;
     move_chat_keyed_tables(conn, from, to, MESSAGE_STATE_TABLES, "chat")?;
     super::history_pins::merge(conn, from, to)?;
+    super::labels::merge(conn, from, to)?;
     // Messages last, so `to` knows it has history before the state below.
     conn.execute("UPDATE OR IGNORE messages SET chat = ?1 WHERE chat = ?2", params![to, from])?;
     conn.execute("DELETE FROM messages WHERE chat = ?1", params![from])?;

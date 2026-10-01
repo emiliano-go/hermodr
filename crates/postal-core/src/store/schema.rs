@@ -379,6 +379,7 @@ pub(super) const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
     super::notification_prefs::migrate,
     super::chat_unarchive::migrate,
     super::retention::migrate_history_floor,
+    super::labels::migrate,
 ];
 
 pub(super) fn migrate(conn: &Connection) -> Result<()> {

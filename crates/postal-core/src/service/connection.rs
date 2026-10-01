@@ -297,6 +297,9 @@ const WATCHED_EVENTS: &[EventKind] = &[
     EventKind::ServerAck,
     EventKind::ContactUpdate,
     EventKind::ContactRemoved,
+    EventKind::LabelEditUpdate,
+    EventKind::LabelAssociationUpdate,
+    EventKind::MessageLabelAssociationUpdate,
     EventKind::SelfPushNameUpdated,
     EventKind::OfflineSyncPreview,
     EventKind::OfflineSyncCompleted,
@@ -474,6 +477,12 @@ impl SessionState {
                             spawn_address_book_resync(client.clone(), events.clone(), store.clone(), session_path.clone());
                         }
                         if sync_favorites {
+                            let label_client = client.clone();
+                            tokio::spawn(async move {
+                                if let Err(error) = labels::replay_labels(&label_client).await {
+                                    log::warn!("label replay failed: {error}");
+                                }
+                            });
                             let client = client.clone();
                             tokio::spawn(async move {
                                 if let Err(error) = pins.synchronize(&client).await {

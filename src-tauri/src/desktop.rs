@@ -1,6 +1,32 @@
 use tauri::{AppHandle, State};
 use crate::{AppState, account_store::{active_account, config_for}};
 
+pub(crate) fn apply_start_on_login(app: &AppHandle, enabled: bool) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let manager = app.autolaunch();
+    if manager.is_enabled().map_err(|error| error.to_string())? != enabled {
+        if enabled { manager.enable() } else { manager.disable() }.map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
+pub struct DesktopStatus {
+    pub start_on_login: bool,
+    pub shortcut_registered: bool,
+}
+
+#[tauri::command]
+pub(crate) fn get_desktop_status(app: AppHandle) -> Result<DesktopStatus, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    Ok(DesktopStatus {
+        start_on_login: app.autolaunch().is_enabled().map_err(|error| error.to_string())?,
+        shortcut_registered: app.global_shortcut().is_registered(crate::tray::WINDOW_SHORTCUT),
+    })
+}
+
 /// Opens a downloaded media file with the desktop's default application.
 ///
 /// The path is restricted to the configured media folder. The webview is the

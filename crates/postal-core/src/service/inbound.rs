@@ -121,6 +121,13 @@ impl Inbound {
             Event::ContactUpdate(update) => self.on_contact_update(update).await,
             Event::ContactRemoved(removed) => self.on_contact_removed(removed).await,
             Event::SelfPushNameUpdated(update) => self.on_self_push_name_updated(update).await,
+            Event::LabelEditUpdate(_) | Event::LabelAssociationUpdate(_) | Event::MessageLabelAssociationUpdate(_) => {
+                match labels::apply_label_event(&self.store, event).await {
+                    Ok(true) => { let _ = self.events.send(ServiceEvent::LabelsChanged); }
+                    Ok(false) => {}
+                    Err(error) => log::warn!("label update failed: {error}"),
+                }
+            }
             Event::OfflineSyncPreview(preview) => self.on_sync_preview(preview),
             Event::OfflineSyncCompleted(_) => self.on_sync_completed(),
             Event::OfflineSyncInterrupted(interrupted) => self.on_sync_interrupted(interrupted),

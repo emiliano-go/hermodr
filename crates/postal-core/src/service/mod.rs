@@ -37,8 +37,11 @@ use crate::{
 mod audio;
 mod connection;
 mod contacts;
+mod contact_sharing;
+pub use contact_sharing::ContactSendResult;
 mod quick_switcher;
 mod keywords;
+mod labels;
 mod diagnostics;
 mod storage;
 mod archive;
@@ -255,6 +258,7 @@ pub enum ServiceEvent {
     /// A group's settings, admins, members or name changed.
     GroupChanged { chat: String },
     FavoritesChanged,
+    LabelsChanged,
     /// Reactions, stars or the pinned message of a chat changed.
     Marks { chat: String },
     /// Store changes were missed (a lagging listener skipped events), so the

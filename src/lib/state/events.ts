@@ -17,6 +17,7 @@ import {
 } from "$lib/utils/notifications";
 import { isPlaceholder } from "$lib/utils/phone";
 import { chats } from "./chats.svelte";
+import { labels } from "./labels.svelte";
 import { composer } from "./composer.svelte";
 import { favorites } from "./favorites.svelte";
 import { members } from "./members.svelte";
@@ -455,6 +456,7 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       }
       break;
     case "storeChanged":
+      labels.queueRefresh();
       // A listener lagged and missed store changes with no chat to name them;
       // reload everything the open view could be showing.
       if (!deferRefresh(chats.selectedChat)) {
@@ -490,6 +492,11 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       break;
     case "favoritesChanged":
       void favorites.refresh();
+      void labels.refresh();
+      break;
+    case "labelsChanged":
+      labels.queueRefresh();
+      if (!deferRefresh(null)) queueRefreshChats();
       break;
   }
 }

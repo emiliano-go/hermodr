@@ -30,6 +30,7 @@ export class ChatsState {
   selectedChat = $state<string | null>(null);
   titleOverride = $state<string | null>(null);
   chatFilter = $state<ChatFilter>("all");
+  labelFilter = $state("");
 
   searchQuery = $state("");
   searchResults = $state.raw<SearchResult[]>([]);
@@ -280,6 +281,7 @@ export class ChatsState {
 
   /** Mirrors resetUi: list, selection, pictures and the group panel are dropped. */
   resetAccount() {
+    this.labelFilter = "";
     this.clearSearch();
     this.chats = [];
     this.avatars = {};

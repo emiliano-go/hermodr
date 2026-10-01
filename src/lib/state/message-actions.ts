@@ -37,6 +37,7 @@ export type MenuId =
   | "forward"
   | "pin"
   | "star"
+  | "labels"
   | "report"
   | "delete"
   | "select";
@@ -53,6 +54,8 @@ export type MenuCtx = {
 type MenuBuilder = (ctx: MenuCtx) => MenuItem | MenuItem[] | null;
 
 const MENU_BUILDERS: Record<MenuId, MenuBuilder> = {
+  labels: ({ m }) => !m.revoked && !m.deleted && !m.spoiler && !m.system_kind && !m.media_once_kind && !isUnavailable(m)
+    ? { label: "Labels", icon: "edit", action: () => { ui.labelTargets = [{ chat: m.chat, id: m.id }]; } } : null,
   // Under the quick-reaction row, and only once somebody has reacted: an entry
   // leading to an empty list is a dead end.
   reactions: ({ m }) =>
@@ -203,6 +206,7 @@ export const MESSAGE_MENU_ORDER: MenuId[] = [
   "edit",
   "pin",
   "star",
+  "labels",
   "media",
   "report",
   "delete",

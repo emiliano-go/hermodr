@@ -70,6 +70,7 @@
     targetOf,
     onprofile,
     onopenurl,
+    onopenchat,
     formatTime,
     onreplydraft,
     onmenu,
@@ -147,6 +148,7 @@
     targetOf: (user: string) => MentionTarget;
     onprofile: (jid: string, name: string, event: MouseEvent, self?: boolean) => void;
     onopenurl: (url: string) => void;
+    onopenchat?: (chat: string) => void | Promise<void>;
     formatTime: (ts: number) => string;
     onreplydraft: (m: StoredMessage) => void;
     onmenu: (e: MouseEvent, m: StoredMessage) => void;
@@ -185,6 +187,7 @@
     avatarOf,
     onprofile,
     onopenurl,
+    onopenchat,
     formatTime,
     namer,
     onreplydraft,

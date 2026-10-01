@@ -26,6 +26,10 @@ export class UiState {
   accountMenu = $state(false);
   chatSettingsOpen = $state(false);
   newGroup = $state(false);
+  showInbox = $state(false);
+  labelTargets = $state<{ chat: string; id?: string }[] | null>(null);
+  manageLabels = $state(false);
+  sharingContacts = $state(false);
 
   /** Message context menu anchor. */
   menu = $state<{ x: number; y: number; message: StoredMessage } | null>(null);
@@ -91,6 +95,10 @@ export class UiState {
   resetAccount() {
     this.accountMenu = false;
     this.newGroup = false;
+    this.showInbox = false;
+    this.labelTargets = null;
+    this.manageLabels = false;
+    this.sharingContacts = false;
     this.viewerId = null;
     this.finder = null;
     this.pendingJump = null;

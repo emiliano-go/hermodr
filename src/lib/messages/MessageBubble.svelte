@@ -14,12 +14,14 @@
   import { mediaSrc } from "$lib/media/MediaViewer.svelte";
   import {
     isSvg,
+    isUnavailable,
     DRAWN_KINDS,
     VIEW_ONCE_LABEL,
   } from "$lib/utils/message";
   import type { BubbleApi, BubbleVm, StoredMessage } from "$lib/utils/models";
   import { session } from "$lib/state/session.svelte";
   import { keywords } from "$lib/state/keywords.svelte";
+  import { labels } from "$lib/state/labels.svelte";
   import { transcription } from "$lib/state/transcription.svelte";
   import Transcript from "$lib/messages/Transcript.svelte";
 
@@ -30,6 +32,8 @@
   let revealedFor = $state<string | null>(null);
   const revealKey = $derived(JSON.stringify([session.activeAccount, message.chat, message.id, message.text]));
   const spoilerHidden = $derived(message.spoiler && revealedFor !== revealKey);
+  const messageLabels = $derived(labels.account === session.activeAccount && !message.revoked && !message.deleted && !message.spoiler && !message.system_kind && !message.media_once_kind && !isUnavailable(message)
+    ? labels.view.labels.filter((label) => labels.messageIds(message.chat, message.id).includes(label.id)) : []);
 
   /** The media kind a downloaded file's extension implies. */
   function kindOfFile(path: string) {
@@ -121,6 +125,9 @@
     <button class="spoiler-reveal" onclick={() => { revealedFor = revealKey; }}>Reveal spoiler</button>
     {#if vm.inlineMeta}<span class="meta">{@render metadata()}</span>{/if}
   {:else}
+    {#if messageLabels.length}
+      <div class="message-labels" aria-label="Message labels">{#each messageLabels as label (label.id)}<span>{label.name}</span>{/each}</div>
+    {/if}
     {#if vm.isForwarded}
       <span class="forwarded-mark"><Icon name="forward" size={13} /> Forwarded</span>
     {/if}
@@ -331,7 +338,7 @@
     {:else if message.media_kind === "live_location" && message.live_location}
       <MessageCard {message} {vm} {api} />
     {:else if message.media_kind && !DRAWN_KINDS.has(message.media_kind)}
-      <MessageCard {message} {vm} {api} meta={metadata} />
+      <MessageCard {message} {vm} {api} meta={metadata} spoilerRevealed={!spoilerHidden} />
     {:else if message.media_kind && (message.media_path || message.media_thumb)}
       <button
         class="file"
@@ -420,6 +427,8 @@
 </div>
 
 <style>
+  .message-labels { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 5px; }
+  .message-labels span { border-radius: 8px; padding: 2px 6px; background: var(--raised); color: var(--muted); font-size: 11px; }
   .spoiler-reveal { padding: 8px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--raised); color: var(--text); font: inherit; cursor: pointer; }
   .round-video-pending { position: relative; display: grid; place-items: center; width: 240px; height: 240px; padding: 0; border: 0; border-radius: 50%; overflow: hidden; background: var(--raised); color: var(--text); cursor: pointer; }
   .round-video-pending img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
