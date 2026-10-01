@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-keyword-mentions"
+description = "Enables the keyword_mentions command without any pre-configured scope."
+commands.allow = ["keyword_mentions"]
+
+[[permission]]
+identifier = "deny-keyword-mentions"
+description = "Denies the keyword_mentions command without any pre-configured scope."
+commands.deny = ["keyword_mentions"]

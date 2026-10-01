@@ -3,14 +3,8 @@
   import { limitKey, parseLimit } from "$lib/utils/retention";
   import { onMount } from "svelte";
   import { fade, scale } from "svelte/transition";
-  import {
-    chatPicture,
-    customization,
-    motion,
-    pictureDataUrl,
-    removeChatPicture,
-    setChatPicture,
-  } from "$lib/utils/theme.svelte";
+  import { motion } from "$lib/utils/theme.svelte";
+  import ChatWallpaper from "$lib/chat/ChatWallpaper.svelte";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { invoke } from "$lib/utils/ipc";
   import Button from "$lib/ui/Button.svelte";
@@ -94,31 +88,6 @@
     } finally {
       busy = false;
     }
-  }
-
-  // The chat's picture applies at once; it is not part of Save.
-  let picker: HTMLInputElement | undefined = $state();
-  let pictureUrl = $state<string | null>(null);
-  const pictureMeta = $derived(customization.chatBackgrounds?.[chat]);
-  $effect(() => {
-    void pictureMeta?.v;
-    if (!pictureMeta) {
-      pictureUrl = null;
-      return;
-    }
-    chatPicture(chat)
-      .then((url) => (pictureUrl = url ?? null))
-      .catch(() => {});
-  });
-
-  async function choosePicture(file: File | undefined) {
-    if (!file) return;
-    try {
-      await setChatPicture(chat, await pictureDataUrl(file));
-    } catch (e) {
-      failed = String(e);
-    }
-    if (picker) picker.value = "";
   }
 
   function initials(label: string) {
@@ -218,40 +187,7 @@
 
         <section>
           <h3><Icon name="image" size={14} /> Background</h3>
-          <div class="picture-row">
-            {#if pictureUrl}<img class="picture" src={pictureUrl} alt="" />{/if}
-            <span class="grow">
-              <span class="name">Picture for this chat</span>
-              <span class="desc">Shown behind its messages instead of the app's background.</span>
-            </span>
-            <input
-              class="file"
-              type="file"
-              accept="image/*"
-              bind:this={picker}
-              onchange={(e) => choosePicture(e.currentTarget.files?.[0])} />
-            <button class="choice" onclick={() => picker?.click()}>{pictureMeta ? "Change" : "Choose…"}</button>
-            {#if pictureMeta}
-              <button class="choice" onclick={() => removeChatPicture(chat)}>Remove</button>
-            {/if}
-          </div>
-          {#if pictureMeta}
-            <label class="toggle-row">
-              <span>
-                <span class="name">Darken picture</span>
-                <span class="desc">{Math.round(pictureMeta.dim * 100)} %</span>
-              </span>
-              <input
-                class="range"
-                type="range"
-                min="0"
-                max="0.85"
-                step="0.05"
-                value={pictureMeta.dim}
-                aria-label="Darken picture"
-                oninput={(e) => (pictureMeta.dim = Number(e.currentTarget.value))} />
-            </label>
-          {/if}
+          <ChatWallpaper account={session.activeAccount ?? ""} {chat} />
         </section>
 
         <section>
@@ -464,12 +400,6 @@
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
-  .picture-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding-bottom: 12px;
-  }
   .danger-row {
     display: flex;
     align-items: center;
@@ -485,20 +415,6 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
-  }
-  .picture {
-    width: 56px;
-    height: 40px;
-    object-fit: cover;
-    border-radius: 6px;
-    box-shadow: 0 0 0 1px var(--line-strong);
-  }
-  .file {
-    display: none;
-  }
-  .range {
-    width: 160px;
-    accent-color: var(--accent);
   }
   .error {
     margin: 4px 0;

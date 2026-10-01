@@ -8,6 +8,7 @@ import type { Marks, Reaction, ReactionGroup, StoredMessage } from "$lib/utils/m
 import { ui } from "./ui.svelte";
 import { MessageWindow, DEFAULT_MESSAGE_WINDOW, cursorOf, type MessagePage } from "$lib/utils/message-window";
 import { isUnavailable } from "$lib/utils/message";
+import { keywords } from "./keywords.svelte";
 
 const PAGE = 200;
 export const MAX_DOWNLOAD_TRIES = 3;
@@ -411,7 +412,7 @@ export class MessagesState {
   /** Queues the note after `finished`; true when one was found to play next. */
   playNextVoice(finished: StoredMessage): boolean {
     const at = this.ordered.findIndex((m) => m.id === finished.id);
-    const next = this.ordered.slice(at + 1).find((m) => m.media_kind === "audio" && m.media_path);
+    const next = this.ordered.slice(at + 1).find((m) => m.media_kind === "audio" && m.media_path && !keywords.hidden(m));
     this.autoplayId = next?.id ?? null;
     return !!next;
   }

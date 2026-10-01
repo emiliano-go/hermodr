@@ -1,4 +1,6 @@
 const COMMANDS: &[&str] = &[
+    "keyword_mentions",
+    "keyword_matches",
     "transcription_settings",
     "set_transcription_settings",
     "grant_transcription_cloud_consent",

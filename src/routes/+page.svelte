@@ -45,6 +45,8 @@
   import { dispatchServiceEvent, queueRefreshChats } from "$lib/state/events";
   import { members } from "$lib/state/members.svelte";
   import { messages } from "$lib/state/messages.svelte";
+  import { keywords } from "$lib/state/keywords.svelte";
+  import { notificationHistory } from "$lib/notifications/history-store";
   import type { MessagePage } from "$lib/utils/message-window";
   import { once } from "$lib/state/once.svelte";
   import { player } from "$lib/state/player.svelte";
@@ -79,6 +81,28 @@
     ui.accountMenu = false;
     ui.showSettings = true;
   }
+
+  $effect(() => {
+    const account = session.activeAccount;
+    untrack(() => { keywords.load(account); notificationHistory.load(account); });
+  });
+  $effect(() => {
+    const account = session.activeAccount;
+    void keywords.revision;
+    void chats.chats;
+    void messages.accountGeneration;
+    untrack(() => void keywords.refreshCounts(account, () => messages.accountGeneration));
+  });
+  $effect(() => {
+    void keywords.revision;
+    untrack(() => { if (ui.finder?.mode === "pings") void openPings(ui.finder.chat); });
+  });
+  const visibleChats = $derived(chats.visibleChats.map((chat) => {
+    const count = keywords.account === session.activeAccount ? keywords.counts[chat.chat] ?? 0 : 0;
+    return count ? { ...chat, mention_count: chat.mention_count + count } : chat;
+  }));
+  const unreadPings = $derived(chats.chats.reduce((sum, chat) => sum + chat.mention_count
+    + (keywords.account === session.activeAccount ? keywords.counts[chat.chat] ?? 0 : 0), 0));
 
   $effect(() => {
     session.applyZoom();
@@ -175,13 +199,17 @@
       // Invalidate any in-flight reload from the previous chat.
       const seq = messages.nextSeq();
       // Mentions are captured before the chat is marked read, since that clears them.
-      const [mentions, page] = await Promise.all([
+      const [mentions, page, keywordMatches] = await Promise.all([
         invoke<string[]>("unread_mentions", { chat }).catch(() => [] as string[]),
         invoke<MessagePage>("message_page", { chat, limit: messages.messageLimit }),
+        session.activeAccount && keywords.rules.highlight.length
+          ? invoke<StoredMessage[]>("keyword_matches", { accountId: session.activeAccount, chat,
+            unreadOnly: true, highlight: [...keywords.rules.highlight], hide: [...keywords.rules.hide] }).catch(() => [] as StoredMessage[])
+          : Promise.resolve([] as StoredMessage[]),
       ]);
       // A quicker click on another chat has already taken over.
       if (!current()) return;
-      messages.mentionQueue = mentions;
+      messages.mentionQueue = [...new Set([...mentions, ...keywordMatches.slice().reverse().map((message) => message.id)])];
       messages.mentionCursor = 0;
       if (seq === messages.messagesSeq) messages.acceptMessages(page.messages);
       else await messages.reloadMessages(chat, true);
@@ -611,46 +639,66 @@
   }
 
   /** Opens a chat at a message; one older than the loaded window offers to fetch it. */
+  let jumpSeq = 0;
   async function jumpTo(chat: string, id: string) {
+    const account = session.activeAccount, generation = messages.accountGeneration, request = ++jumpSeq;
+    if (!account) return;
+    const current = () => account === session.activeAccount && generation === messages.accountGeneration && request === jumpSeq;
+    ui.pendingJump = null;
+    ui.seeking = false;
     if (chat !== chats.selectedChat) await openChat(chat);
+    if (!current() || chats.selectedChat !== chat) return;
     await tick();
+    if (!current() || chats.selectedChat !== chat) return;
     if (scroller?.querySelector(`[data-id="${id}"]`)) scrollToMessage(id);
     else {
       ui.pendingJump = { chat, id };
-      void loadAndJump();
+      await loadAndJump();
     }
   }
 
   /** Walks the chat's past back from the phone until the pending jump's message lands. */
   async function loadAndJump() {
-    if (!ui.pendingJump || ui.seeking) return;
-    const { chat, id } = ui.pendingJump;
+    if (!ui.pendingJump) return;
+    const pending = ui.pendingJump, { chat, id } = pending;
+    const account = session.activeAccount, generation = messages.accountGeneration, request = jumpSeq;
+    const owns = () => account === session.activeAccount && generation === messages.accountGeneration
+      && request === jumpSeq && ui.pendingJump === pending;
+    const current = () => owns() && chats.selectedChat === chat;
+    if (!account || !current()) return;
     ui.seeking = true;
     try {
-      if (await messages.showStoredMessage(chat, id)) {
+      const stored = await messages.showStoredMessage(chat, id);
+      if (!current()) return;
+      if (stored) {
         await tick();
+        if (!current()) return;
+        const row = messages.messages.find((message) => message.id === id);
+        if (row && keywords.hidden(row)) { ui.fail("This message is hidden by your keyword rules."); return; }
         scrollToMessage(id);
         return;
       }
-      for (let round = 0; round < 10 && chats.selectedChat === chat; round++) {
+      for (let round = 0; round < 10 && current(); round++) {
         const before = messages.messages.at(-1)?.id;
         await messages.recallDay(chat, scroller ?? null);
-        if (chats.selectedChat !== chat) return;
+        if (!current()) return;
         await messages.showStoredMessage(chat, id);
+        if (!current()) return;
         await tick();
+        if (!current()) return;
+        const row = messages.messages.find((message) => message.id === id);
+        if (row && keywords.hidden(row)) { ui.fail("This message is hidden by your keyword rules."); return; }
         if (scroller?.querySelector(`[data-id="${id}"]`)) {
-          ui.pendingJump = null;
           scrollToMessage(id);
           return;
         }
         if (messages.messages.at(-1)?.id === before) break;
       }
-      ui.fail("Your phone did not send that message; it may be older than it keeps, or deleted.");
+      if (current()) ui.fail("Your phone did not send that message; it may be older than it keeps, or deleted.");
     } catch (e) {
-      ui.fail(e);
+      if (current()) ui.fail(e);
     } finally {
-      ui.seeking = false;
-      ui.pendingJump = null;
+      if (owns()) { ui.seeking = false; ui.pendingJump = null; }
     }
   }
 
@@ -771,7 +819,10 @@
       timestamp: m.timestamp,
     };
   }
-  const viewerItems = $derived<ViewerItem[]>(viewableMessages(messages.ordered, viewOnceIds).map(viewerItem));
+  const viewerItems = $derived<ViewerItem[]>(viewableMessages(messages.ordered.filter((message) => !keywords.hidden(message)), viewOnceIds).map(viewerItem));
+  function viewerPosition() { return viewerItems.findIndex((item) => item.id === ui.viewerId); }
+  function setViewerPosition(index: number) { ui.viewerId = viewerItems[index]?.id ?? null; }
+  $effect(() => { if (ui.viewerId !== null && viewerPosition() < 0) ui.viewerId = null; });
   async function closeViewOnce() {
     const message = ui.onceOpen;
     ui.onceOpen = null;
@@ -787,8 +838,7 @@
   }
 
   function openViewer(message: StoredMessage) {
-    const at = viewerItems.findIndex((item) => item.id === message.id);
-    if (at >= 0) ui.viewerIndex = at;
+    if (viewerItems.some((item) => item.id === message.id)) ui.viewerId = message.id;
   }
 
   /** Opens a downloaded media file in the desktop's default application. */
@@ -1003,7 +1053,7 @@
     <ChatSidebar
       bind:searchQuery={chats.searchQuery}
       searchResults={chats.searchResults}
-      visibleChats={chats.visibleChats}
+      {visibleChats}
       selectedChat={chats.selectedChat}
       chatFilter={chats.chatFilter}
       favoriteChats={favorites.chats}
@@ -1011,7 +1061,7 @@
       ontogglefavorite={(chat) => void act(() => composer.enqueue(() => favorites.toggle(chat.chat)))}
       onfilter={(filter) => (chats.chatFilter = filter)}
       unreadChats={chats.unreadChats}
-      unreadPings={chats.unreadPings}
+      {unreadPings}
       avatars={chats.avatars}
       chatLabelOf={(chat) => chats.chatLabel(chat)}
       {formatTime}
@@ -1644,20 +1694,20 @@
     onjump={() => void closeViewOnce()} />
 {/if}
 
-{#if ui.viewerIndex !== null && viewerItems.length > 0}
+{#if viewerPosition() >= 0}
   <MediaViewer
     items={viewerItems}
-    bind:index={ui.viewerIndex}
-    onclose={() => (ui.viewerIndex = null)}
+    bind:index={viewerPosition, setViewerPosition}
+    onclose={() => (ui.viewerId = null)}
     onopen={openMedia}
     onreply={(id) => {
       composer.editing = null;
       composer.replyingTo = messages.messages.find((m) => m.id === id) ?? null;
-      ui.viewerIndex = null;
+      ui.viewerId = null;
       composerInput?.focus();
     }}
     onjump={(id) => {
-      ui.viewerIndex = null;
+      ui.viewerId = null;
       scrollToMessage(id);
     }} />
 {/if}
@@ -1876,6 +1926,13 @@
     settings={session.settings}
     accounts={session.accountList}
     active={session.activeAccount}
+    onnotificationjump={async (account, chat, id) => {
+      if (account !== session.activeAccount) throw new Error("account changed");
+      const generation = messages.accountGeneration;
+      await jumpTo(chat, id);
+      if (account !== session.activeAccount || generation !== messages.accountGeneration) throw new Error("account changed");
+      ui.showSettings = false;
+    }}
     onblockedload={async (account) => {
       const generation = messages.accountGeneration;
       if (account !== session.activeAccount) throw new Error("account changed");

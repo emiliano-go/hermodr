@@ -1,5 +1,6 @@
 <script lang="ts">
   import { chats } from "$lib/state/chats.svelte";
+  import { session } from "$lib/state/session.svelte";
   import { activeTheme, appPicture, applyTheme, chatPicture, customization, save as saveCustomization } from "$lib/utils/theme.svelte";
 
   $effect(() => {
@@ -57,27 +58,26 @@
   );
 
   /** The open chat's own background picture, loaded from IndexedDB. */
-  let chatPictureUrl = $state<string | null>(null);
+  let chatPictureValue = $state<{ account: string; jid: string; url: string } | null>(null);
   $effect(() => {
     const jid = chats.selectedChat;
+    const account = session.activeAccount;
     const meta = jid ? customization.chatBackgrounds?.[jid] : undefined;
-    if (!jid || !meta) {
-      chatPictureUrl = null;
-      return;
-    }
+    chatPictureValue = null;
+    if (!jid || !account || !meta) return;
     let live = true;
     void meta.v;
     chatPicture(jid)
-      .then((url) => live && (chatPictureUrl = url ?? null))
+      .then((url) => { if (live && account === session.activeAccount && jid === chats.selectedChat) chatPictureValue = url ? { account, jid, url } : null; })
       .catch(() => {});
     return () => {
       live = false;
     };
   });
   const chatPictureCss = $derived.by(() => {
-    if (!chatPictureUrl || !chats.selectedChat) return "";
-    const dim = `rgba(0, 0, 0, ${customization.chatBackgrounds?.[chats.selectedChat]?.dim ?? 0.25})`;
-    return `<style data-chat-picture>.conversation { background: linear-gradient(${dim}, ${dim}), url("${chatPictureUrl}") center / cover no-repeat !important; }</style>`;
+    if (!chatPictureValue || chatPictureValue.account !== session.activeAccount || chatPictureValue.jid !== chats.selectedChat) return "";
+    const dim = `rgba(0, 0, 0, ${customization.chatBackgrounds?.[chatPictureValue.jid]?.dim ?? 0.25})`;
+    return `<style data-chat-picture>.conversation { background: linear-gradient(${dim}, ${dim}), url("${chatPictureValue.url}") center / cover no-repeat !important; }</style>`;
   });
 </script>
 

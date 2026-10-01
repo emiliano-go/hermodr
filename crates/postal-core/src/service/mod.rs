@@ -38,6 +38,7 @@ mod audio;
 mod connection;
 mod contacts;
 mod quick_switcher;
+mod keywords;
 mod diagnostics;
 mod storage;
 mod archive;

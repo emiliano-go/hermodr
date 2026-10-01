@@ -4,6 +4,10 @@ import { chats } from "./chats.svelte";
 import { members } from "./members.svelte";
 import { messages } from "./messages.svelte";
 import { ui } from "./ui.svelte";
+import { session } from "./session.svelte";
+import { keywords } from "./keywords.svelte";
+import { keywordHidden } from "$lib/utils/keywords";
+import { compareMessages } from "$lib/utils/message-window";
 
 export async function openStarred() {
   ui.showStarred = true;
@@ -27,6 +31,7 @@ export async function openStarred() {
 }
 
 const SEARCH_LIMIT = 500;
+let pingsRequest = 0;
 
 function found(m: StoredMessage, across: boolean): FoundItem {
   return {
@@ -41,16 +46,28 @@ function found(m: StoredMessage, across: boolean): FoundItem {
 }
 
 export async function openPings(chat: string | null) {
+  const account = session.activeAccount;
+  if (!account) return;
+  if (keywords.account !== account) keywords.load(account);
   ui.finder = { mode: "pings", chat, items: null };
+  const opened = ui.finder, generation = messages.accountGeneration, revision = keywords.revision, request = ++pingsRequest;
+  const rules = { highlight: [...keywords.rules.highlight], hide: [...keywords.rules.hide] };
+  const current = () => ui.finder === opened && account === session.activeAccount && generation === messages.accountGeneration
+    && revision === keywords.revision && request === pingsRequest;
   try {
-    const got = await invoke<StoredMessage[]>("pings", { chat });
-    const current = ui.finder;
-    if (current?.mode === "pings" && current.chat === chat) {
-      ui.finder = { ...current, items: got.map((m) => found(m, chat === null)) };
+    const [pings, matches] = await Promise.all([
+      invoke<StoredMessage[]>("pings", { chat }),
+      rules.highlight.length ? invoke<StoredMessage[]>("keyword_matches", { accountId: account, chat, unreadOnly: false, ...rules }) : Promise.resolve([]),
+    ]);
+    if (!current()) return;
+    const unique = new Map<string, StoredMessage>();
+    for (const message of [...pings, ...matches]) {
+      if (!keywordHidden(message, rules)) unique.set(JSON.stringify([message.chat, message.id]), message);
     }
+    const got = [...unique.values()].sort((a, b) => compareMessages(b, a) || a.chat.localeCompare(b.chat)).slice(0, SEARCH_LIMIT);
+    ui.finder = { ...opened, items: got.map((m) => found(m, chat === null)) };
   } catch (e) {
-    ui.finder = null;
-    ui.fail(e);
+    if (current()) { ui.finder = null; ui.fail(e); }
   }
 }
 

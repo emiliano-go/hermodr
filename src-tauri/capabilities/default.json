@@ -18,6 +18,8 @@
     "allow-chat-auto-transcribe",
     "allow-set-chat-auto-transcribe",
     "core:default",
+    "allow-keyword-mentions",
+    "allow-keyword-matches",
     "notification:default",
     "allow-connect",
     "allow-accounts",

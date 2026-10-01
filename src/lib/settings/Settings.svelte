@@ -42,6 +42,9 @@
   import LinkedDevices from "$lib/settings/LinkedDevices.svelte";
   import TranscriptionSettings from "$lib/settings/TranscriptionSettings.svelte";
   import AutoDownloadSettings from "$lib/settings/AutoDownloadSettings.svelte";
+  import KeywordSettings from "$lib/settings/KeywordSettings.svelte";
+  import NotificationHistory from "$lib/notifications/NotificationHistory.svelte";
+  import { notificationHistory } from "$lib/notifications/history-store";
   import BlockedContacts from "$lib/settings/BlockedContacts.svelte";
   import { session } from "$lib/state/session.svelte";
   import { limitValue, parseLimit } from "$lib/utils/retention";
@@ -84,6 +87,7 @@
     onpicture,
     onblockedload,
     onunblockcontact,
+    onnotificationjump,
   }: {
     settings: UiSettings;
     accounts: Account[];
@@ -105,6 +109,7 @@
     onpicture: () => void;
     onblockedload: (account: string) => Promise<import("$lib/utils/wire").BlockedContact[]>;
     onunblockcontact: (account: string, jid: string) => Promise<void>;
+    onnotificationjump?: (account: string, chat: string, id: string) => Promise<void>;
   } = $props();
 
   let picker: HTMLInputElement | undefined = $state();
@@ -754,6 +759,8 @@
           </div>
           <ArchiveManager />
         {:else if section === "chats"}
+          <h3>Keyword rules</h3>
+          <KeywordSettings account={active} />
           <label class="setting">
             <div>
               <span class="setting-title">Keep chats archived</span>
@@ -833,6 +840,20 @@
               <button class="button" onclick={() => void sendTestNotification()}>Test</button>
             {/if}
           </div>
+          <div class="setting">
+            <div><span class="setting-title">Notification history</span><span class="setting-desc">Up to 100 recent events, stored locally for this account.</span></div>
+            <button class="button" disabled={!active || $notificationHistory.account !== active
+              || (!$notificationHistory.entries.length && !$notificationHistory.error && $notificationHistory.writable)}
+              onclick={() => {
+                const account = active;
+                if (account) notificationHistory.clear(account, () => account === active && account === session.activeAccount);
+              }}>Clear notification history</button>
+          </div>
+          <NotificationHistory account={active} connected={session.connected} onjump={async (account, chat, id) => {
+            if (account !== active || account !== session.activeAccount) throw new Error("account changed");
+            if (!onnotificationjump) throw new Error("Message navigation is unavailable.");
+            await onnotificationjump(account, chat, id);
+          }} />
         {:else if section === "device"}
           {#if !once.paired}
             <p class="lede">

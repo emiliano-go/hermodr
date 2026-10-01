@@ -2,6 +2,7 @@
   outgoing uploads and the typing indicator. Moved out of +page.svelte. -->
 <script lang="ts">
   import MessageRow from "$lib/messages/MessageRow.svelte";
+  import { keywords } from "$lib/state/keywords.svelte";
   import type { BubbleApi, BubbleCtx } from "$lib/utils/models";
   import OutgoingItem from "$lib/messages/OutgoingItem.svelte";
   import TypingIndicator from "$lib/media/TypingIndicator.svelte";
@@ -245,6 +246,7 @@
   const typerItems = $derived(
     typers.map((t) => ({ ...t, label: typerLabelOf(t.sender), hue: hue(t.sender) })),
   );
+  const visibleMessages = $derived(messages.filter((message) => !keywords.hidden(message)));
 
   // One capture listener for the list instead of one per row: picking and
   // ctrl-click intercept before any inner button sees the click.
@@ -280,8 +282,11 @@
       Messages are end-to-end encrypted. No one outside of this chat, not even WhatsApp, can read or listen to them.
     </p>
   {/if}
-  {#each messages as message, i (message.id)}
-    {@const prev = messages[i - 1]}
+  {#if messages.length > 0 && visibleMessages.length === 0}
+    <p class="system" role="status">Loaded messages are hidden by your keyword rules.</p>
+  {/if}
+  {#each visibleMessages as message, i (message.id)}
+    {@const prev = visibleMessages[i - 1]}
     {@const newDay = !prev || dayKey(prev.timestamp) !== dayKey(message.timestamp)}
     {#if newDay}
       <div class="day"><span>{dayLabel(message.timestamp)}</span></div>

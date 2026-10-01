@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-keyword-matches"
+description = "Enables the keyword_matches command without any pre-configured scope."
+commands.allow = ["keyword_matches"]
+
+[[permission]]
+identifier = "deny-keyword-matches"
+description = "Denies the keyword_matches command without any pre-configured scope."
+commands.deny = ["keyword_matches"]

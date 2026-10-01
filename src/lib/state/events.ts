@@ -24,6 +24,8 @@ import { messages } from "./messages.svelte";
 import { session } from "./session.svelte";
 import { stickers } from "./stickers.svelte";
 import { ui } from "./ui.svelte";
+import { keywords } from "./keywords.svelte";
+import { notificationHistory } from "$lib/notifications/history-store";
 
 export type EventHost = {
   scrollToBottom(): void;
@@ -159,6 +161,7 @@ function notifyForMessage(message: StoredMessage, fresh: boolean) {
   if (!account) return;
   const generation = messages.accountGeneration;
   const current = () => account === session.activeAccount && generation === messages.accountGeneration
+    && !message.deleted && keywords.account === account && !keywords.hidden(message)
     && shouldNotify(
       {
         fromMe: message.from_me,
@@ -175,10 +178,16 @@ function notifyForMessage(message: StoredMessage, fresh: boolean) {
   const isGroup = chat.endsWith("@g.us");
   const chatName = notifyChatName(chat);
   const senderName = message.from_me ? "You" : notifySenderName(message);
-  const body = notificationBody(message, (user) => members.mentionName(user));
+  const preview = notificationBody({ ...message, media_kind: message.media_once_kind ? "view_once" : message.media_kind }, (user) => members.mentionName(user));
+  const title = notificationTitle({ isGroup, chatName, senderName });
+  const body = isGroup ? groupNotificationBody(senderName, preview) : preview;
+  notificationHistory.record(account, {
+    chat, id: message.id, sender: message.sender, chat_name: chatName, sender_name: senderName,
+    title, body, timestamp: Date.now(),
+  }, current);
   showChatNotification(
-    notificationTitle({ isGroup, chatName, senderName }),
-    isGroup ? groupNotificationBody(senderName, body) : body,
+    title,
+    body,
     chat,
     account,
     current,
@@ -437,6 +446,7 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       members.setPresence(payload.jid, payload.online, payload.last_seen);
       break;
     case "marks":
+      if (!deferRefresh(payload.chat)) queueRefreshChats();
       if (payload.chat === chats.selectedChat) {
         await messages.loadMarks(payload.chat);
         // A kept one-time media arrives as a mark change: the row is ordinary

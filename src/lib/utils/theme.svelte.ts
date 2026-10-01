@@ -86,9 +86,22 @@ function pictureStore<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore) 
     open.onupgradeneeded = () => open.result.createObjectStore("pictures");
     open.onerror = () => reject(open.error);
     open.onsuccess = () => {
-      const request = run(open.result.transaction("pictures", mode).objectStore("pictures"));
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+      const db = open.result;
+      let transaction: IDBTransaction | undefined;
+      try {
+        transaction = db.transaction("pictures", mode);
+        let result!: T;
+        let failure: DOMException | null = null;
+        transaction.oncomplete = () => { db.close(); resolve(result); };
+        transaction.onerror = transaction.onabort = () => { db.close(); reject(transaction?.error ?? failure ?? new Error("Picture transaction aborted.")); };
+        const request = run(transaction.objectStore("pictures"));
+        request.onsuccess = () => { result = request.result; };
+        request.onerror = () => { failure = request.error; };
+      } catch (error) {
+        try { transaction?.abort(); } catch {}
+        db.close();
+        reject(error);
+      }
     };
   });
 }

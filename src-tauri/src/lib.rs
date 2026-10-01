@@ -24,6 +24,7 @@ mod media;
 mod media_access;
 mod contact_actions;
 mod quick_switcher;
+mod keywords;
 mod uploads;
 mod plugins;
 mod media_actions;
@@ -137,6 +138,8 @@ macro_rules! postal_commands {
             contact_actions::remove_contact,
             quick_switcher::switcher_catalog,
             quick_switcher::switcher_messages,
+            keywords::keyword_mentions,
+            keywords::keyword_matches,
             media::playable_audio,
             media::playable_video,
             groups::participants,

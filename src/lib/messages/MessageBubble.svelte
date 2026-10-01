@@ -25,6 +25,7 @@
   } from "$lib/utils/message";
   import type { BubbleApi, BubbleVm, StoredMessage } from "$lib/utils/models";
   import { session } from "$lib/state/session.svelte";
+  import { keywords } from "$lib/state/keywords.svelte";
   import { transcription } from "$lib/state/transcription.svelte";
   import Transcript from "$lib/messages/Transcript.svelte";
 
@@ -75,7 +76,7 @@
   class="msg-row"
   class:replying={vm.isReplying}
   class:jumped={vm.highlighted}
-  class:for-me={vm.forMe}
+  class:for-me={vm.forMe || keywords.highlighted(message)}
   class:first-row={vm.first}
   class:mine={message.from_me}
   class:picking={vm.picking}

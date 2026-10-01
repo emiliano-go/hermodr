@@ -53,7 +53,7 @@ export class UiState {
   showStarred = $state(false);
   finder = $state.raw<Finder | null>(null);
 
-  viewerIndex = $state<number | null>(null);
+  viewerId = $state<string | null>(null);
   /** The view-once message being shown; closing it spends it. */
   onceOpen = $state<StoredMessage | null>(null);
   onceIndex = $state(0);
@@ -88,10 +88,13 @@ export class UiState {
     this.notice = message;
   }
 
-  /** Mirrors resetUi: only the account menu is UI-owned there. */
   resetAccount() {
     this.accountMenu = false;
     this.newGroup = false;
+    this.viewerId = null;
+    this.finder = null;
+    this.pendingJump = null;
+    this.seeking = false;
   }
 }
 
