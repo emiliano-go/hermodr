@@ -1397,7 +1397,7 @@
             }}
             ondelete={() => (ui.bulkDelete = Object.keys(ui.picking ?? {}))}
             onlabel={() => {
-              ui.labelTargets = pickedInOrder(ui.picking, messages.ordered).filter((m) => !isUnavailable(m) && !m.revoked && !m.deleted && !m.spoiler && !m.system_kind && !m.media_once_kind)
+              ui.labelTargets = pickedInOrder(ui.picking, messages.ordered).filter((m) => !isUnavailable(m) && !m.revoked && !m.deleted && !m.spoiler && !m.system_kind && !m.media_once_kind && m.media_kind !== "view_once" && m.media_kind !== "unknown")
                 .map((m) => ({ chat: m.chat, id: m.id }));
               if (!ui.labelTargets.length) { ui.labelTargets = null; ui.notify("Select a message that can be labelled."); }
               else void labels.refresh();

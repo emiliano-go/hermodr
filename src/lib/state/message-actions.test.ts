@@ -581,7 +581,8 @@ test("the message menu forwards one message, and Select starts picking", async (
     items.find((item) => item.label === "Labels")!.action();
     assert.deepEqual(ui.labelTargets, [{ chat: message.chat, id: message.id }]);
     for (const privateMessage of [{ ...message, spoiler: true }, { ...message, revoked: true },
-      { ...message, deleted: true }, { ...message, media_once_kind: "image" }, { ...message, system_kind: "UNAVAILABLE_MESSAGE" }]) {
+      { ...message, deleted: true }, { ...message, media_once_kind: "image" }, { ...message, system_kind: "UNAVAILABLE_MESSAGE" },
+      { ...message, media_kind: "view_once" }, { ...message, media_kind: "unknown" }]) {
       assert.ok(!menuItems(privateMessage, async () => {}).some((item) => item.label === "Labels"));
     }
     items.find((item) => item.label === "Forward")!.action();

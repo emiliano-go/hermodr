@@ -54,7 +54,8 @@ export type MenuCtx = {
 type MenuBuilder = (ctx: MenuCtx) => MenuItem | MenuItem[] | null;
 
 const MENU_BUILDERS: Record<MenuId, MenuBuilder> = {
-  labels: ({ m }) => !m.revoked && !m.deleted && !m.spoiler && !m.system_kind && !m.media_once_kind && !isUnavailable(m)
+  labels: ({ m }) => !m.revoked && !m.deleted && !m.spoiler && !m.system_kind && !m.media_once_kind
+    && m.media_kind !== "view_once" && m.media_kind !== "unknown" && !isUnavailable(m)
     ? { label: "Labels", icon: "edit", action: () => { ui.labelTargets = [{ chat: m.chat, id: m.id }]; } } : null,
   // Under the quick-reaction row, and only once somebody has reacted: an entry
   // leading to an empty list is a dead end.
