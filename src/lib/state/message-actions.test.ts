@@ -46,6 +46,7 @@ async function withApp(run: (app: {
     picking: Record<string, StoredMessage> | null;
     bulkDelete: string[] | null;
     forwarding: StoredMessage[] | null;
+    labelTargets: { chat: string; id?: string }[] | null;
     error: string | null;
     scrolledUp: boolean;
   };
@@ -344,7 +345,7 @@ test("the group and DM menus offer their entries, dividers never first", async (
       text: "Hi", revoked: false } as StoredMessage;
     const items = menuItems(message, async () => {});
     assert.deepEqual(labels(items), [
-      "Copy", "Delete", "Forward", "Message Ana", "Pin", "Reactions",
+      "Copy", "Delete", "Forward", "Labels", "Message Ana", "Pin", "Reactions",
       "Remove Ana from group", "Reply", "Reply privately", "Report to admins",
       "Select messages", "Star",
     ]);
@@ -353,7 +354,7 @@ test("the group and DM menus offer their entries, dividers never first", async (
       text: "Hello", revoked: false } as StoredMessage;
     const dm = menuItems(own, async () => {});
     assert.deepEqual(labels(dm), [
-      "Copy", "Delete", "Edit", "Forward", "Message info", "Pin",
+      "Copy", "Delete", "Edit", "Forward", "Labels", "Message info", "Pin",
       "Reply", "Select messages", "Star",
     ]);
     // A divider draws above an entry, never above the first one, and each
@@ -577,6 +578,12 @@ test("the message menu forwards one message, and Select starts picking", async (
     const message = { chat: "99@g.us", id: "a", sender: "1@s", from_me: false,
       text: "hi", revoked: false } as StoredMessage;
     const items = menuItems(message, async () => {});
+    items.find((item) => item.label === "Labels")!.action();
+    assert.deepEqual(ui.labelTargets, [{ chat: message.chat, id: message.id }]);
+    for (const privateMessage of [{ ...message, spoiler: true }, { ...message, revoked: true },
+      { ...message, deleted: true }, { ...message, media_once_kind: "image" }, { ...message, system_kind: "UNAVAILABLE_MESSAGE" }]) {
+      assert.ok(!menuItems(privateMessage, async () => {}).some((item) => item.label === "Labels"));
+    }
     items.find((item) => item.label === "Forward")!.action();
     assert.deepEqual(ui.forwarding, [message]);
     items.find((item) => item.label === "Select messages")!.action();

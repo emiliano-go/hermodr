@@ -118,8 +118,10 @@ test("account reset clears completed finder snippets, viewer and pending navigat
   const state = tree.statements.find(ts.isClassDeclaration)!;
   const method = state.members.find((member) => ts.isMethodDeclaration(member) && member.name.getText(tree) === "resetAccount")!.getText(tree);
   const reset = new Function(compile(`class State { ${method} }`) + "\nreturn State.prototype.resetAccount;")();
-  const ui = { accountMenu: true, newGroup: true, finder: { items: ["account-a snippet"] }, viewerId: "a",
+  const ui = { accountMenu: true, newGroup: true, showInbox: true, manageLabels: true, sharingContacts: true,
+    labelTargets: [{ chat: "old", id: "private" }], finder: { items: ["account-a snippet"] }, viewerId: "a",
     pendingJump: { chat: "room@g.us", id: "a" }, seeking: true, starredItems: ["kept"] };
   reset.call(ui);
-  assert.deepEqual(ui, { accountMenu: false, newGroup: false, finder: null, viewerId: null, pendingJump: null, seeking: false, starredItems: ["kept"] });
+  assert.deepEqual(ui, { accountMenu: false, newGroup: false, showInbox: false, manageLabels: false, sharingContacts: false,
+    labelTargets: null, finder: null, viewerId: null, pendingJump: null, seeking: false, starredItems: ["kept"] });
 });

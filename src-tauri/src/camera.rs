@@ -1,7 +1,7 @@
 #[cfg(target_os = "linux")]
 use gtk::{glib::translate::ToGlibPtr, prelude::*};
 #[cfg(target_os = "linux")]
-use webkit2gtk::prelude::*;
+use webkit2gtk::{PermissionRequestExt, SettingsExt, UserMediaPermissionRequestExt, WebViewExt};
 
 #[cfg(target_os = "linux")]
 pub(crate) fn setup(window: &tauri::WebviewWindow) -> tauri::Result<()> {
@@ -26,7 +26,7 @@ pub(crate) fn setup(window: &tauri::WebviewWindow) -> tauri::Result<()> {
             }
         };
         let view = platform.inner();
-        if let Some(settings) = view.settings() {
+        if let Some(settings) = WebViewExt::settings(&view) {
             settings.set_enable_media_stream(true);
         }
         view.connect_permission_request(move |view, request| {
