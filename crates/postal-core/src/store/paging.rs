@@ -43,7 +43,7 @@ impl MessageStore {
         let filter = if cursor.is_some() { format!("AND (m.timestamp, m.sort_order, m.id) {comparison} (?3, ?4, ?5)") } else { String::new() };
         let mut statement = conn.prepare(&format!(
             "SELECT {MESSAGE_COLUMNS} FROM messages m LEFT JOIN names n ON n.jid = m.sender
-             WHERE m.chat = ?1 {filter} ORDER BY m.timestamp {order}, m.sort_order {order}, m.id {order} LIMIT ?2"
+             WHERE m.chat = ?1 AND {VISIBLE_MESSAGE_SQL} {filter} ORDER BY m.timestamp {order}, m.sort_order {order}, m.id {order} LIMIT ?2"
         ))?;
         let mut values: Vec<&dyn rusqlite::ToSql> = vec![&chat, &fetch];
         if let Some(cursor) = cursor { values.extend([&cursor.timestamp as &dyn rusqlite::ToSql, &sort_order, &cursor.id]); }

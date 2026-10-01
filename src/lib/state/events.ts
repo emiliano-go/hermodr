@@ -4,7 +4,7 @@
 // dispatcher cannot own (scrolling, reconnecting) arrive via host.
 import { tick } from "svelte";
 import { invoke } from "$lib/utils/ipc";
-import { bare } from "$lib/utils/message";
+import { bare, isUnavailable } from "$lib/utils/message";
 import type { MessagePage } from "$lib/utils/message-window";
 import type { ServiceEvent, StoredMessage } from "$lib/utils/models";
 import {
@@ -83,6 +83,7 @@ function queueMarkRead(chat: string) {
   setTimeout(() => {
     if (markReadQueued === chat) markReadQueued = null;
     if (chat !== chats.selectedChat || ui.scrolledUp || !document.hasFocus()) return;
+    if (!messages.ordered.some((message) => !message.from_me && !message.read && !isUnavailable(message))) return;
     invoke("mark_read", { chat })
       .then(() => queueRefreshChats())
       .catch(() => {});
@@ -286,7 +287,9 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
           // busy account otherwise pays for on each message. Bursts above
           // still take one deferred full reload.
           if (payload.kind === "message") messages.append(payload.message);
-          else void messages.refreshRow(chat, payload.id, fresh);
+          else if (!fresh && !messages.messages.some((message) => message.chat === chat && message.id === payload.id)) {
+            queueReloadMessages(host, chat, false, false);
+          } else void messages.refreshRow(chat, payload.id, fresh);
           // Follow the stream when already at the bottom, but never yank
           // the view down while reading older messages. Status-only
           // updates never follow or mark.

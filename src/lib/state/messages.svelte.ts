@@ -7,6 +7,7 @@ import { invoke } from "$lib/utils/ipc";
 import type { Marks, Reaction, ReactionGroup, StoredMessage } from "$lib/utils/models";
 import { ui } from "./ui.svelte";
 import { MessageWindow, DEFAULT_MESSAGE_WINDOW, cursorOf, type MessagePage } from "$lib/utils/message-window";
+import { isUnavailable } from "$lib/utils/message";
 
 const PAGE = 200;
 export const MAX_DOWNLOAD_TRIES = 3;
@@ -231,8 +232,14 @@ export class MessagesState {
       });
       if (account !== this.accountSeq || window !== this.window || chat !== this.chat || this.rowRequests.get(key) !== request) return;
       let row = page.messages.find((m) => m.chat === chat && m.id === id);
-      if (!row) return;
       const current = this.messages.find((m) => m.chat === chat && m.id === id);
+      if (!row) {
+        if (current && isUnavailable(current)) {
+          this.messagesSeq++;
+          this.messages = this.window.replace(this.messages.filter((m) => m.chat !== chat || m.id !== id));
+        }
+        return;
+      }
       if (current && current.status !== status) row = { ...row, status: current.status };
       if (known) this.patch(row);
       else this.append(row);
@@ -354,7 +361,7 @@ export class MessagesState {
   async downloadMedia(chat: string | null, message: StoredMessage, quiet = false) {
     const account = this.accountSeq;
     const tries = this.downloadTries[message.id] ?? 0;
-    if (!chat || this.downloading[message.id] || tries >= MAX_DOWNLOAD_TRIES) return;
+    if (!chat || isUnavailable(message) || this.downloading[message.id] || tries >= MAX_DOWNLOAD_TRIES) return;
     this.downloading[message.id] = true;
     delete this.downloadErrors[message.id];
     try {
@@ -377,7 +384,7 @@ export class MessagesState {
 
   /** Takes back the view-once a reply quotes, returning where the copy landed. */
   async recoverQuote(chat: string | null, message: StoredMessage): Promise<string | null> {
-    if (!chat || this.recovering[message.id]) return null;
+    if (!chat || isUnavailable(message) || this.recovering[message.id]) return null;
     this.recovering[message.id] = true;
     delete this.downloadErrors[message.id];
     try {
@@ -395,7 +402,7 @@ export class MessagesState {
 
   /** Tells the sender a voice note was heard or view-once media opened; the core honours the receipts setting. */
   markPlayed(message: StoredMessage) {
-    if (message.from_me) return;
+    if (message.from_me || isUnavailable(message)) return;
     invoke("mark_played", { chat: message.chat, id: message.id, sender: message.sender }).catch(
       () => {},
     );

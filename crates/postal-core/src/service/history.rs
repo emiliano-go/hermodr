@@ -470,6 +470,9 @@ impl Inbound {
         self.apply_history_pin(store, chat, web).await;
         let Some(key) = web.key.as_option() else { return (false, 0) };
         if let Some(stub) = web.message_stub_type {
+            if stub == wa::web_message_info::StubType::CIPHERTEXT {
+                return (self.history_unavailable(store, chat, web, own).await, 0);
+            }
             let Some(notice) = system_kind(stub) else { return (false, 0) };
             let Some(id) = key.id.clone() else { return (false, 0) };
             let notice_kind = notice.clone();
@@ -516,11 +519,13 @@ impl Inbound {
         }
         // A stored row is already complete; rebuilding it would only rewrite
         // its thumbnails.
-        if store.message(chat, &id).await.observed().is_some() {
+        if store.message(chat, &id).await.observed().is_some_and(|row| !row.is_unavailable() || row.local.revoked || row.local.deleted) {
             return (false, learned);
         }
         if let Some(target) = revoke_target(message) {
             store.revoke_message(chat, &target).await.logged();
+            self.retire_unavailable(store, chat, &target).await;
+            self.retire_unavailable(store, chat, &id).await;
             return (false, learned);
         }
         remember_structures(store, chat, &id, &sender, message).await;
@@ -547,13 +552,14 @@ impl Inbound {
             _ => None,
         };
         stored.local.read = true;
-        match store.insert_message(&stored).await {
-            Ok(()) => {
+        match store.insert_history_row(&stored).await {
+            Ok(Some(_)) => {
                 if decoded_message(&message).view_once {
                     store.set_view_once(chat, &stored.header.id, stored.header.from_me).await.logged();
                 }
                 (true, learned)
             }
+            Ok(None) => (false, learned),
             Err(e) => {
                 log::error!("could not store history message in {chat}: {e}");
                 (false, learned)

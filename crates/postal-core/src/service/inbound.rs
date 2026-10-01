@@ -138,7 +138,7 @@ impl Inbound {
             }
             Event::GroupUpdate(update) => self.on_group_changed(update).await,
             Event::MissedCall(call) => self.on_missed_call(call).await,
-            Event::UndecryptableMessage(stub) => self.on_undecryptable(stub),
+            Event::UndecryptableMessage(stub) => self.on_undecryptable(stub).await,
             Event::ArchiveUpdate(update) => self.on_archive_update(update).await,
             Event::MuteUpdate(update) => self.on_mute_update(update).await,
             Event::MarkChatAsReadUpdate(update) => self.on_mark_read_update(update).await,
@@ -305,9 +305,6 @@ impl Inbound {
         )
         .await;
         let id = info.id.to_string();
-        if self.store.message(&chat, &id).await.observed().is_some() {
-            return;
-        }
         log::debug!("view-once in {chat}: arrived as a bare stub (no media)");
         let from_me = info.source.is_from_me;
         let message = StoredMessage {
@@ -326,8 +323,7 @@ impl Inbound {
             local: LocalState { read: from_me, ..Default::default() },
             ..Default::default()
         };
-        self.store.set_view_once(&chat, &id, from_me).await.logged();
-        if let Some(message) = self.store.insert_message_row(&message).await.observed() {
+        if let Some(message) = self.store.insert_view_once_stub(&message).await.observed().flatten() {
             let _ = self.events.send(ServiceEvent::arrival(&message));
         }
     }
@@ -354,7 +350,7 @@ impl Inbound {
         let _ = self.events.send(ServiceEvent::GroupChanged { chat });
     }
 
-    fn on_undecryptable(&self, stub: &wa_events::UndecryptableMessage) {
+    async fn on_undecryptable(&self, stub: &wa_events::UndecryptableMessage) {
         log::warn!(
             "could not decrypt message {} in {} from {} ({:?})",
             stub.info.id,
@@ -362,6 +358,7 @@ impl Inbound {
             stub.info.source.sender,
             stub.unavailable_type,
         );
+        self.store_unavailable(&stub.info).await;
     }
 
     async fn on_archive_update(&self, update: &wa_events::ArchiveUpdate) {
@@ -400,7 +397,7 @@ impl Inbound {
                 .and_then(|range| range.last_message_timestamp);
             let changed = match through {
                 Some(ts) => self.store.mark_read_through(&jid, ts).await.observed().unwrap_or(0),
-                None => self.store.mark_read(&jid).await.observed().unwrap_or(0),
+                None => self.store.mark_read_through(&jid, i64::MAX).await.observed().unwrap_or(0),
             };
             log::debug!("chat read on another device: {jid} ({changed} message(s))");
         }
@@ -441,9 +438,13 @@ impl Inbound {
                     }
                     let _ = self.events.send(ServiceEvent::Marks { chat: incoming.chat.clone() });
                     ctx.touched.push(incoming.chat.clone());
+                    self.retire_unavailable(ctx.store, &incoming.chat, &incoming.id).await;
                     continue;
                 },
-                Ok(secret_edits::Outcome::Drop) => continue,
+                Ok(secret_edits::Outcome::Drop) => {
+                    self.retire_unavailable(ctx.store, &incoming.chat, &incoming.id).await;
+                    continue;
+                },
                 Err(error) => { log::warn!("secret edit rejected: {error}"); continue; },
             }
             ctx.touched.push(incoming.chat.clone());
@@ -454,6 +455,7 @@ impl Inbound {
             };
             remember_structures(ctx.store, &incoming.chat, &incoming.id, &author, &inbound.message).await;
             if self.apply_control(&ctx, inbound, &incoming).await {
+                self.retire_unavailable(ctx.store, &incoming.chat, &incoming.id).await;
                 continue;
             }
             self.store_incoming(&ctx, inbound, &incoming).await;
@@ -773,6 +775,7 @@ impl Inbound {
                 let _ = self.events.send(ServiceEvent::hint(&updated, false));
             }
         }
+        self.retire_unavailable(ctx.store, chat, target).await;
     }
 
     /// A live location edit moves the share in place. Late or replayed updates

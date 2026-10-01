@@ -125,7 +125,7 @@ impl PruneScope<'_> {
         let Some(oldest) = oldest else { return Ok(0) };
         Ok(self.run(
             &format!(
-                "DELETE FROM messages WHERE {} AND timestamp < :oldest AND chat NOT IN
+                "DELETE FROM messages WHERE {} AND {VISIBLE_MESSAGE_SQL} AND timestamp < :oldest AND chat NOT IN
                      (SELECT jid FROM chat_retention WHERE age_mode != 'inherit')
                      AND NOT EXISTS (SELECT 1 FROM chat_history_floor h
                          WHERE h.jid = messages.chat AND messages.timestamp >= h.timestamp)",
@@ -144,7 +144,7 @@ impl PruneScope<'_> {
         let now = unix_now();
         Ok(self.run(
             &format!(
-                "DELETE FROM messages WHERE {} AND EXISTS (
+                "DELETE FROM messages WHERE {} AND {VISIBLE_MESSAGE_SQL} AND EXISTS (
                      SELECT 1 FROM chat_retention r WHERE r.jid = messages.chat
                      AND r.age_mode = 'limited' AND messages.timestamp < :now - r.max_age_hours * 3600)
                      AND NOT EXISTS (SELECT 1 FROM chat_history_floor h
@@ -170,7 +170,7 @@ impl PruneScope<'_> {
                                      WHEN r.count_mode = 'limited' THEN r.max_messages ELSE NULL END AS cap
                          FROM messages m LEFT JOIN chat_retention r ON r.jid = m.chat
                          LEFT JOIN chat_history_floor h ON h.jid = m.chat
-                         WHERE {}
+                         WHERE {} AND {VISIBLE_MESSAGE_SQL}
                      ) WHERE cap IS NOT NULL AND rank > cap
                          AND (history_floor IS NULL OR timestamp < history_floor)
                  )",

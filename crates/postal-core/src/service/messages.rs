@@ -94,6 +94,7 @@ impl WhatsAppService {
             anyhow::bail!("an edit cannot be empty");
         }
         let existing = self.store.message(chat, id).await?;
+        anyhow::ensure!(!existing.is_unavailable(), "this message is unavailable on this device");
         if !existing.header.from_me {
             anyhow::bail!("only your own messages can be edited");
         }
@@ -370,6 +371,7 @@ impl WhatsAppService {
     /// Sends a copy of a stored message to another chat.
     pub async fn forward(&self, from_chat: &str, id: &str, to_chat: &str) -> Result<()> {
         let message = self.store.message(from_chat, id).await?;
+        anyhow::ensure!(!message.is_unavailable(), "this message is unavailable on this device");
         anyhow::ensure!(!message.spoiler, "spoiler forwarding is unavailable until every media path preserves its wrapper");
         // Uncaptioned media is stored as `[kind]`, which must not become a caption.
         let placeholder = message.media.kind.as_ref().map(|kind| format!("[{kind}]"));

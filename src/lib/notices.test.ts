@@ -2,6 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { noticeText } from "./utils/notices.ts";
 
+test("unavailable notices explain the current limit without claiming retry or permanent failure", () => {
+  const text = noticeText("UNAVAILABLE_MESSAGE", ["PRIVATE PAYLOAD"], () => { throw new Error("Unavailable notice must not resolve payload contacts"); })!;
+  assert.match(text, /Message unavailable/);
+  assert.match(text, /could not be decrypted/);
+  assert.match(text, /cannot request it again from your phone/);
+  assert.doesNotMatch(text, /PRIVATE|retry sent|permanent|timed out|waiting/i);
+});
+
 test("new-chat caps explain authoritative quotas and reset times without guessing absent values", () => {
   const name = () => { throw new Error("Cap notices must not resolve a contact"); };
   const reset = 2_000_000_000;

@@ -13,6 +13,7 @@ import { keybinds, matches, matchesDraftHistory } from "$lib/utils/keybinds.svel
 import { ComposerHistory, type DraftSnapshot } from "$lib/utils/composer-history";
 import type { Recording } from "$lib/composer/VoiceRecorder.svelte";
 import type { ChatPrivacy, Outgoing, PendingMedia, StoredMessage } from "$lib/utils/models";
+import { isUnavailable } from "$lib/utils/message";
 import { chats } from "./chats.svelte";
 import { members } from "./members.svelte";
 import { messages } from "./messages.svelte";
@@ -348,9 +349,9 @@ export class ComposerState {
     const candidate =
       message ??
       messages.messages.find(
-        (m) => m.from_me && !m.media_kind && !m.deleted && m.text.trim() && !m.revoked,
+        (m) => m.from_me && !m.media_kind && !m.deleted && m.text.trim() && !m.revoked && !isUnavailable(m),
       );
-    if (!candidate) return;
+    if (!candidate || isUnavailable(candidate)) return;
     this.editing = { chat, id: candidate.id, original: candidate.text };
     this.replyingTo = null;
     this.draft = candidate.text;

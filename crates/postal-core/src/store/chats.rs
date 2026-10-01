@@ -184,20 +184,23 @@ impl MessageStore {
             // message would copy the whole table into a temporary sort.
             "SELECT c.jid, COALESCE(g.last_message_at, c.last_message_at), COALESCE(g.message_count, 0),
                     n.name, COALESCE(g.unread_count, 0), COALESCE(g.mention_count, 0), p.jid IS NOT NULL AS pinned,
-                    COALESCE(CASE WHEN m.spoiler = 1 THEN '[Spoiler]' ELSE m.text END, ''), COALESCE(m.from_me, 0), s.name, COALESCE(m.sender, ''),
-                    CASE WHEN m.system_kind IS NOT NULL THEN 'missed_call' ELSE m.media_kind END,
+                    COALESCE(CASE WHEN m.system_kind = 'UNAVAILABLE_MESSAGE' THEN 'Message unavailable'
+                                  WHEN m.spoiler = 1 THEN '[Spoiler]' ELSE m.text END, ''), COALESCE(m.from_me, 0), s.name, COALESCE(m.sender, ''),
+                    CASE WHEN m.system_kind = 'UNAVAILABLE_MESSAGE' THEN NULL
+                         WHEN m.system_kind IS NOT NULL THEN 'missed_call' ELSE m.media_kind END,
                     COALESCE(cs.archived, 0), COALESCE(cs.muted_until, 0), COALESCE(cs.marked_unread, 0)
              FROM chats c
              LEFT JOIN (SELECT chat,
                           MAX(timestamp) AS last_message_at,
                           COUNT(*) AS message_count,
-                          SUM(read = 0 AND from_me = 0 AND deleted = 0) AS unread_count,
-                          SUM(read = 0 AND from_me = 0 AND mentioned = 1 AND deleted = 0) AS mention_count
-                   FROM messages GROUP BY chat) g ON g.chat = c.jid
+                          SUM(read = 0 AND from_me = 0 AND deleted = 0 AND COALESCE(system_kind, '') <> 'UNAVAILABLE_MESSAGE') AS unread_count,
+                          SUM(read = 0 AND from_me = 0 AND mentioned = 1 AND deleted = 0 AND COALESCE(system_kind, '') <> 'UNAVAILABLE_MESSAGE') AS mention_count
+                   FROM messages WHERE NOT (deleted <> 0 AND text = '' AND media_kind IS NULL AND system_kind IS NULL)
+                   GROUP BY chat) g ON g.chat = c.jid
              LEFT JOIN messages m ON m.rowid =
                   (SELECT rowid FROM messages WHERE chat = c.jid
                      AND deleted = 0
-                     AND (system_kind IS NULL OR system_kind LIKE 'CALL_MISSED%' OR system_kind LIKE 'SILENCED_UNKNOWN_CALLER%')
+                     AND (system_kind IS NULL OR system_kind = 'UNAVAILABLE_MESSAGE' OR system_kind LIKE 'CALL_MISSED%' OR system_kind LIKE 'SILENCED_UNKNOWN_CALLER%')
                    ORDER BY timestamp DESC, sort_order DESC, id DESC LIMIT 1)
              LEFT JOIN names n ON n.jid = c.jid
              LEFT JOIN names s ON s.jid = m.sender

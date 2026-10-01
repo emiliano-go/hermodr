@@ -107,8 +107,9 @@ impl WhatsAppService {
         let changed = self.store.mark_read(chat).await?;
         self.send_read_receipts(chat, unread).await?;
         if changed > 0 {
-            let range = self.read_range(chat, None).await;
-            self.sync_chat_read(chat, range).await;
+            if let Some(range) = self.read_range(chat, None).await {
+                self.sync_chat_read(chat, Some(range)).await;
+            }
         }
         self.clear_unread_mark(chat).await;
         Ok(changed)
@@ -123,8 +124,9 @@ impl WhatsAppService {
         let changed = self.store.mark_read_until(chat, id).await?;
         self.send_read_receipts(chat, unread).await?;
         if changed > 0 {
-            let range = self.read_range(chat, Some(id)).await;
-            self.sync_chat_read(chat, range).await;
+            if let Some(range) = self.read_range(chat, Some(id)).await {
+                self.sync_chat_read(chat, Some(range)).await;
+            }
         }
         self.clear_unread_mark(chat).await;
         Ok(changed)
@@ -154,6 +156,7 @@ impl WhatsAppService {
             Some(id) => self.store.message(chat, id).await.observed()?,
             None => self.store.messages_for(chat, 1).await.observed()?.into_iter().next()?,
         };
+        if boundary.is_unavailable() || self.store.unavailable_unread(chat, up_to).await.observed()? { return None; }
         let participant = (remote.is_group() && !boundary.header.from_me)
             .then(|| boundary.header.sender.parse::<Jid>().ok().map(|j| j.to_non_ad()))
             .flatten();

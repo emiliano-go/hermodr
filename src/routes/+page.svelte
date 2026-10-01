@@ -35,7 +35,7 @@
   import ScheduledOutbox from "$lib/composer/ScheduledOutbox.svelte";
   import SelectionBar from "$lib/messages/SelectionBar.svelte";
   import { hue } from "$lib/utils/avatar";
-  import { bare, captionOf, dayKey, dayLabel, formatTime, MEDIA_LABELS } from "$lib/utils/message";
+  import { bare, captionOf, dayKey, dayLabel, formatTime, isUnavailable, MEDIA_LABELS } from "$lib/utils/message";
   import { chats } from "$lib/state/chats.svelte";
   import { composer } from "$lib/state/composer.svelte";
   import { favorites } from "$lib/state/favorites.svelte";
@@ -190,8 +190,8 @@
       // Enter at the unread divider when there is one, as Discord does, rather
       // than at the newest message. The unread flags are still intact here
       // because marking is now driven by scrolling, not by opening.
-      const oldestUnread = [...loaded].reverse().find((m) => !m.read && !m.from_me);
-      const newestUnread = loaded.find((m) => !m.read && !m.from_me);
+      const oldestUnread = [...loaded].reverse().find((m) => !m.read && !m.from_me && !isUnavailable(m));
+      const newestUnread = loaded.find((m) => !m.read && !m.from_me && !isUnavailable(m));
       messages.firstUnreadId = oldestUnread?.id ?? null;
       messages.lastUnreadId = newestUnread?.id ?? null;
       messages.lastMarkedId = null;
@@ -1154,12 +1154,14 @@
           onopenurl={openUrl}
           {formatTime}
           onreplydraft={(m) => {
+            if (isUnavailable(m)) return;
             composer.editing = null;
             composer.replyingTo = m;
             composerInput?.focus();
           }}
           onmenu={(e, m) => {
             e.preventDefault();
+            if (isUnavailable(m)) return;
             ui.menu = { x: e.clientX, y: e.clientY, message: m };
           }}
           onjumpquoted={jumpToQuoted}

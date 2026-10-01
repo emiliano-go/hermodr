@@ -31,6 +31,12 @@ the error stays visible without opening or marking read. Test narrow viewports,
 dark/light themes and 200% text scale: the preview stays within the viewport and
 messages remain readable without horizontal clipping.
 
+Unavailable message checks: expand Unavailable message fixture. The passive row
+retains sender, time and message identity; no payload, retry, reply, reaction,
+forward or media controls appear. Double-click/right-click it, then Show unavailable
+actions: no action is recorded. Replace unavailable with recovered message keeps
+the same ID and renders normal chat content; double-click now records Reply.
+
 Message selection checks: expand Message selection fixture and reset it. Ctrl-click
 or Command-click one message, then click two more. Evict the oldest visible row:
 the count stays three. Star/Unstar and React must target all three IDs, including

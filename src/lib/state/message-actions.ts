@@ -1,5 +1,5 @@
 import { invoke } from "$lib/utils/ipc";
-import { bare, captionOf } from "$lib/utils/message";
+import { bare, captionOf, isUnavailable } from "$lib/utils/message";
 import { compareMessages } from "$lib/utils/message-window";
 import type { ChatEvent, StoredMessage } from "$lib/utils/models";
 import type { MenuItem } from "$lib/messages/MessageMenu.svelte";
@@ -224,6 +224,7 @@ export const DIVIDER_BEFORE: DividerRule[] = [
 ];
 
 export function menuItems(m: StoredMessage, openChat: (chat: string) => Promise<void>): MenuItem[] {
+  if (isUnavailable(m)) return [];
   const other = m.chat.endsWith("@g.us") && !m.from_me;
   const senderParticipant = m.sender ? members.memberOf(m.sender) : undefined;
   const ctx: MenuCtx = {
@@ -293,6 +294,7 @@ export function viewableMessages(
 ): StoredMessage[] {
   return ordered.filter(
     (m) =>
+      !isUnavailable(m) &&
       !!m.media_path &&
       !viewOnce.has(m.id) &&
       (m.media_kind === "image" || m.media_kind === "video" || m.media_kind === "gif"),
@@ -306,11 +308,11 @@ export function pickedInOrder(
 ): StoredMessage[] {
   if (!picking) return [];
   const current = new Map(ordered.map((message) => [message.id, message]));
-  return Object.values(picking).map((message) => current.get(message.id) ?? message).sort(compareMessages);
+  return Object.values(picking).map((message) => current.get(message.id) ?? message).filter((message) => !isUnavailable(message)).sort(compareMessages);
 }
 
 export async function copyMessages(batch: StoredMessage[]) {
-  const text = batch.filter((message) => !message.revoked).map((message) => message.text).filter(Boolean).join("\n");
+  const text = batch.filter((message) => !message.revoked && !isUnavailable(message)).map((message) => message.text).filter(Boolean).join("\n");
   if (text) await act(() => navigator.clipboard.writeText(text));
 }
 
@@ -318,7 +320,7 @@ export async function starMessages(batch: StoredMessage[], starred: boolean) {
   await act(() => composer.enqueue(async (signal) => {
     for (const message of batch) {
       signal.throwIfAborted();
-      if (!message.revoked) await invoke("star", { target: target(message), starred });
+      if (!message.revoked && !isUnavailable(message)) await invoke("star", { target: target(message), starred });
     }
   }));
 }
@@ -327,13 +329,15 @@ export async function reactMessages(batch: StoredMessage[], emoji: string) {
   await act(() => composer.enqueue(async (signal) => {
     for (const message of batch) {
       signal.throwIfAborted();
-      if (!message.revoked) await invoke("react", { target: target(message), emoji });
+      if (!message.revoked && !isUnavailable(message)) await invoke("react", { target: target(message), emoji });
     }
   }));
 }
 
 /** Forwards one chat's messages to every chosen chat, in the batch's order. */
 export async function forwardMessages(batch: StoredMessage[], targets: string[]) {
+  batch = batch.filter((message) => !isUnavailable(message));
+  if (batch.length === 0) return;
   const selection = ui.picking;
   await composer.enqueue(async (signal) => {
     for (const to of targets) {
@@ -349,7 +353,7 @@ export async function forwardMessages(batch: StoredMessage[], targets: string[])
 
 /** Whether we may delete this message for everyone: ours, or ours to moderate. */
 export function canDeleteForEveryone(m: StoredMessage) {
-  if (m.revoked) return false;
+  if (m.revoked || isUnavailable(m)) return false;
   if (m.from_me) return true;
   return members.isAdmin();
 }

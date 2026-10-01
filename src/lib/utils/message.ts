@@ -27,6 +27,10 @@ export function captionOf(message: StoredMessage) {
   return text === `[${message.media_kind}]` ? "" : text;
 }
 
+export function isUnavailable(message: Pick<StoredMessage, "system_kind">) {
+  return message.system_kind === "UNAVAILABLE_MESSAGE";
+}
+
 export function dayKey(ts: number) {
   return new Date(ts * 1000).toDateString();
 }

@@ -13,6 +13,8 @@ mod schema;
 mod marks;
 mod media;
 mod messages;
+mod unavailable;
+use unavailable::VISIBLE_MESSAGE_SQL;
 pub mod scheduled;
 mod group_history;
 pub mod contact_identity;

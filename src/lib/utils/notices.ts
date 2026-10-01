@@ -2,7 +2,11 @@
 // Null draws nothing: E2E_ENCRYPTED is the chat's fixed header instead, and a
 // kind without a sentence here is kept but not shown.
 
+export const UNAVAILABLE_LABEL = "Message unavailable";
+export const UNAVAILABLE_EXPLANATION = "This message could not be decrypted. This version of Postal cannot request it again from your phone.";
+
 export function noticeText(kind: string, params: string[], name: (jid: string) => string, actor = ""): string | null {
+  if (kind === "UNAVAILABLE_MESSAGE") return `${UNAVAILABLE_LABEL}. ${UNAVAILABLE_EXPLANATION}`;
   if (kind === "NEW_CHAT_MESSAGE_CAPPED") {
     const total = /^\d+$/.test(params[0] ?? "") ? params[0] : null;
     const used = /^\d+$/.test(params[1] ?? "") ? params[1] : null;

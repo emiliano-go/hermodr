@@ -32,6 +32,11 @@ test("passive preview preserves full text while concealing deleted, spoiler and 
     assert.deepEqual(previewContent({ ...message, media_kind: "image", text: "[image]" }), { text: "", media: "Photo", notice: false });
     assert.deepEqual(previewContent({ ...message, media_kind: "audio", text: "*Voice caption*" }), { text: "Voice caption", media: "Audio", notice: false });
     assert.deepEqual(previewContent({ ...message, media_kind: "poll", text: "Question" }), { text: "Question", media: "Poll", notice: false });
+    const unavailable = previewContent({ ...message, system_kind: "UNAVAILABLE_MESSAGE", media_kind: "image", text: "PRIVATE PAYLOAD" });
+    assert.match(unavailable.text, /Message unavailable/);
+    assert.match(unavailable.text, /cannot request it again from your phone/);
+    assert.equal(unavailable.media, null);
+    assert.doesNotMatch(JSON.stringify(unavailable), /PRIVATE|unopened/);
   } finally {
     await server.close();
   }

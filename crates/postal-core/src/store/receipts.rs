@@ -118,7 +118,8 @@ impl MessageStore {
         let chat = &*names::canonical_chat(&conn, chat)?;
         let mut stmt = conn.prepare(
             "SELECT id, sender FROM messages
-             WHERE chat = ?1 AND read = 0 AND from_me = 0 ORDER BY timestamp, sort_order, id",
+             WHERE chat = ?1 AND read = 0 AND from_me = 0 AND COALESCE(system_kind, '') <> 'UNAVAILABLE_MESSAGE'
+             ORDER BY timestamp, sort_order, id",
         )?;
         let rows = stmt.query_map(params![chat], |r| Ok((r.get(0)?, r.get(1)?)))?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
@@ -132,7 +133,8 @@ impl MessageStore {
         let conn = self.conn.lock().unwrap();
         let chat = &*names::canonical_chat(&conn, chat)?;
         let changed = conn.execute(
-            "UPDATE messages SET read = 1 WHERE chat = ?1 AND read = 0 AND from_me = 0",
+            "UPDATE messages SET read = 1 WHERE chat = ?1 AND read = 0 AND from_me = 0
+             AND COALESCE(system_kind, '') <> 'UNAVAILABLE_MESSAGE'",
             params![chat],
         )?;
         Ok(changed)
@@ -160,6 +162,7 @@ impl MessageStore {
         let mut stmt = conn.prepare(
             "SELECT id, sender FROM messages
              WHERE chat = ?1 AND read = 0 AND from_me = 0
+               AND COALESCE(system_kind, '') <> 'UNAVAILABLE_MESSAGE'
                AND (timestamp, sort_order, id) <= (SELECT timestamp, sort_order, id FROM messages WHERE chat = ?1 AND id = ?2)
              ORDER BY timestamp, sort_order, id",
         )?;
@@ -174,6 +177,7 @@ impl MessageStore {
         let changed = conn.execute(
             "UPDATE messages SET read = 1
              WHERE chat = ?1 AND read = 0 AND from_me = 0
+               AND COALESCE(system_kind, '') <> 'UNAVAILABLE_MESSAGE'
                AND (timestamp, sort_order, id) <= (SELECT timestamp, sort_order, id FROM messages WHERE chat = ?1 AND id = ?2)",
             params![chat, id],
         )?;

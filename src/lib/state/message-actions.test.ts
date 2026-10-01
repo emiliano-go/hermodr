@@ -3,7 +3,8 @@ import test from "node:test";
 import { createServer } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { fileURLToPath } from "node:url";
-import type { StoredMessage } from "../utils/models.ts";
+import type { ChatSummary, ServiceEvent, StoredMessage } from "../utils/models.ts";
+import type { EventHost } from "./events.ts";
 
 type Item = { label: string; separated?: boolean; action: () => unknown };
 
@@ -21,6 +22,7 @@ async function withApp(run: (app: {
   copyMessages: (batch: StoredMessage[]) => Promise<void>;
   starMessages: (batch: StoredMessage[], starred: boolean) => Promise<void>;
   reactMessages: (batch: StoredMessage[], emoji: string) => Promise<void>;
+  loadEvents: () => Promise<{ dispatchServiceEvent: (payload: ServiceEvent, host: EventHost) => Promise<void> }>;
   messages: {
     messages: StoredMessage[];
     marks: { reactions: { target: string; sender: string; emoji: string }[] };
@@ -32,8 +34,11 @@ async function withApp(run: (app: {
     patch: (row: StoredMessage) => void;
     refreshRow: (chat: string, id: string, mayAppend: boolean) => Promise<void>;
     reloadMessages: (chat: string) => Promise<boolean>;
-    prepareChat: (chat: string) => void;
+    prepareChat: (chat: string, limit?: number) => void;
     resetAccount: () => void;
+    downloadMedia: (chat: string | null, message: StoredMessage) => Promise<void>;
+    recoverQuote: (chat: string | null, message: StoredMessage) => Promise<string | null>;
+    markPlayed: (message: StoredMessage) => void;
   };
   ui: {
     reactionsFor: StoredMessage | null;
@@ -42,12 +47,13 @@ async function withApp(run: (app: {
     bulkDelete: string[] | null;
     forwarding: StoredMessage[] | null;
     error: string | null;
+    scrolledUp: boolean;
   };
   members: {
     participants: { jid: string; name: string; admin: boolean; owner: boolean; number: string | null; username: string | null; label: string | null }[];
     chatGroup: { admin: boolean } | null;
   };
-  session: { me: string | null; activeAccount: string | null };
+  session: { me: string | null; activeAccount: string | null; gateDone: boolean; syncPending: number; settings: { notifications_enabled: boolean } };
   composer: { editing: { chat: string; id: string; original: string } | null; startEditing: (m?: StoredMessage) => void; resetAccount: () => void };
   chats: {
     selectedChat: string | null;
@@ -55,6 +61,7 @@ async function withApp(run: (app: {
     searchResults: unknown[];
     runSearch: () => void;
     resetAccount: () => void;
+    chats: ChatSummary[];
   };
   calls: { command: string; args: unknown }[];
 }) => Promise<void>, beforeInvoke?: (command: string, args: unknown) => unknown) {
@@ -92,6 +99,10 @@ async function withApp(run: (app: {
       copyMessages: messageActions.copyMessages,
       starMessages: messageActions.starMessages,
       reactMessages: messageActions.reactMessages,
+      loadEvents: async () => {
+        const events = await server.ssrLoadModule("/src/lib/state/events.ts");
+        return { dispatchServiceEvent: events.dispatchServiceEvent };
+      },
       messages, ui, members, session, composer, chats, calls,
     });
   } finally {
@@ -103,6 +114,138 @@ async function withApp(run: (app: {
 
 /** Menu labels in sorted order, so assertions never pin down the sequence. */
 const labels = (items: Item[]) => items.map((item) => item.label).sort();
+
+test("unavailable rows reject content actions and recovered rows regain normal eligibility", async () => {
+  await withApp(async ({ menuItems, pickedInOrder, copyMessages, starMessages, reactMessages, forwardMessages, viewableMessages, messages, composer, chats, calls }) => {
+    const marker = { chat: "unavailable@s", id: "same-id", sender: "1@s", from_me: true,
+      text: "PRIVATE PAYLOAD", system_kind: "UNAVAILABLE_MESSAGE", media_kind: "image", media_path: "PRIVATE FILE" } as StoredMessage;
+    chats.selectedChat = marker.chat;
+    messages.prepareChat(marker.chat);
+    messages.acceptMessages([marker]);
+    assert.deepEqual(menuItems(marker, async () => {}), []);
+    assert.deepEqual(viewableMessages([marker], new Set()), []);
+    assert.deepEqual(pickedInOrder({ [marker.id]: { ...marker, system_kind: null } }, [marker]), []);
+    composer.startEditing(marker);
+    assert.equal(composer.editing, null);
+    const previous = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    const copied: string[] = [];
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: { clipboard: { writeText: async (text: string) => { copied.push(text); } } } });
+    try {
+      await copyMessages([marker]);
+      await starMessages([marker], true);
+      await reactMessages([marker], "👍");
+      await forwardMessages([marker], ["target@s"]);
+      await messages.downloadMedia(marker.chat, marker);
+      assert.equal(await messages.recoverQuote(marker.chat, marker), null);
+      messages.markPlayed(marker);
+      assert.deepEqual(copied, []);
+      assert.deepEqual(calls, []);
+      const recovered = { ...marker, system_kind: null, media_kind: null, media_path: null, text: "Recovered message" };
+      messages.acceptMessages([recovered]);
+      assert.deepEqual(pickedInOrder({ [marker.id]: marker }, [recovered]), [recovered]);
+      assert.ok(menuItems(recovered, async () => {}).some((item) => item.label === "Reply"));
+      await copyMessages([recovered]);
+      assert.deepEqual(copied, ["Recovered message"]);
+    } finally {
+      if (previous) Object.defineProperty(globalThis, "navigator", previous); else Reflect.deleteProperty(globalThis, "navigator");
+    }
+  });
+});
+
+test("unavailable hints stay within the local window, read no placeholders, and reconcile healed badges", async () => {
+  const chat = "unavailable@s";
+  const marker = { chat, id: "marker", sender: "1@s", timestamp: 100, from_me: false, read: false,
+    text: "", system_kind: "UNAVAILABLE_MESSAGE", mentioned: false } as StoredMessage;
+  let archive = [marker];
+  await withApp(async ({ loadEvents, messages, chats, session, ui, calls }) => {
+    const { dispatchServiceEvent } = await loadEvents();
+    Object.defineProperty(globalThis, "document", { configurable: true, value: { addEventListener() {}, hasFocus: () => true } });
+    const host: EventHost = { scrollToBottom() {}, getScroller: () => null, reconnect: async () => {} };
+    const hint = (id = marker.id): ServiceEvent => ({ kind: "messageHint", chat, id, sender: "1@s", from_me: false, fresh: false, change: "content", status: null });
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 950));
+    session.gateDone = true;
+    session.activeAccount = "synthetic-unavailable";
+    session.settings.notifications_enabled = false;
+    chats.selectedChat = chat;
+    ui.scrolledUp = false;
+    messages.prepareChat(chat, 50);
+    await dispatchServiceEvent(hint(), host);
+    await settle();
+    assert.equal(messages.messages[0].system_kind, "UNAVAILABLE_MESSAGE");
+    assert.equal(chats.chats[0].unread_count, 0);
+    assert.equal(calls.some((call) => call.command === "mark_read"), false);
+
+    session.syncPending = 1;
+    await dispatchServiceEvent(hint(), host);
+    await dispatchServiceEvent({ kind: "synced" }, host);
+    await settle();
+    assert.equal(calls.some((call) => call.command === "mark_read"), false);
+
+    archive = [{ ...marker, system_kind: null, text: "Recovered message", mentioned: true }];
+    ui.scrolledUp = true;
+    await dispatchServiceEvent(hint(), host);
+    await settle();
+    assert.equal(messages.messages[0].text, "Recovered message");
+    assert.equal(chats.chats[0].unread_count, 1);
+    assert.equal(chats.chats[0].mention_count, 1);
+    assert.equal(calls.some((call) => call.command === "mark_read"), false);
+
+    ui.scrolledUp = false;
+    session.syncPending = 1;
+    await dispatchServiceEvent(hint(), host);
+    await dispatchServiceEvent({ kind: "synced" }, host);
+    await settle();
+    assert.equal(calls.filter((call) => call.command === "mark_read").length, 1);
+
+    archive = [{ ...marker, system_kind: null, text: "Unseen recovered message" }];
+    messages.acceptMessages([]);
+    chats.selectedChat = "other@s";
+    await dispatchServiceEvent(hint(), host);
+    await settle();
+    assert.equal(chats.chats[0].unread_count, 1);
+    assert.equal(messages.messages.length, 0);
+
+    const ordinary = Array.from({ length: 50 }, (_, n) => ({ ...marker, id: `ordinary-${n}`, timestamp: 1000 + n, system_kind: null, read: true }));
+    chats.selectedChat = chat;
+    messages.acceptMessages(ordinary.toReversed());
+    archive = [...ordinary, { ...marker, timestamp: 0 }];
+    await dispatchServiceEvent(hint(), host);
+    await settle();
+    assert.equal(messages.messages.some((row) => row.id === marker.id), false);
+    assert.equal(messages.messages.length, 50);
+    messages.atLatest = false;
+    ui.scrolledUp = true;
+    archive = [...ordinary, { ...marker, timestamp: 5000 }];
+    await dispatchServiceEvent(hint(), host);
+    await settle();
+    assert.equal(messages.messages.some((row) => row.id === marker.id), false);
+    assert.equal(messages.atLatest, false);
+    assert.equal(calls.filter((call) => call.command === "mark_read").length, 1);
+  }, (command, value) => {
+    const args = value as { anchorId?: string; limit?: number; cursor?: { timestamp: number } };
+    if (command === "message_page") return { messages: archive.filter((row) => args.anchorId ? row.id === args.anchorId : !args.cursor || row.timestamp <= args.cursor.timestamp).toSorted((a, b) => b.timestamp - a.timestamp).slice(0, args.limit), has_more: false };
+    if (command === "chats") return [{ chat, unread_count: archive.filter((row) => row.system_kind !== "UNAVAILABLE_MESSAGE" && !row.read).length,
+      mention_count: archive.filter((row) => row.system_kind !== "UNAVAILABLE_MESSAGE" && row.mentioned && !row.read).length }];
+    if (command === "mark_read") archive = archive.map((row) => row.system_kind === "UNAVAILABLE_MESSAGE" ? row : { ...row, read: true });
+  });
+});
+
+test("a successful local query miss retires only an unavailable cached row", async () => {
+  let fail = false;
+  await withApp(async ({ messages }) => {
+    const marker = { chat: "retired@s", id: "marker", timestamp: 1, system_kind: "UNAVAILABLE_MESSAGE" } as StoredMessage;
+    const ordinary = { ...marker, id: "ordinary", system_kind: null };
+    messages.prepareChat(marker.chat);
+    messages.acceptMessages([marker, ordinary]);
+    fail = true;
+    await messages.refreshRow(marker.chat, marker.id, false);
+    assert.equal(messages.messages.some((row) => row.id === marker.id), true);
+    fail = false;
+    await messages.refreshRow(marker.chat, marker.id, false);
+    await messages.refreshRow(ordinary.chat, ordinary.id, false);
+    assert.deepEqual(messages.messages.map((row) => row.id), [ordinary.id]);
+  }, (command) => { if (command === "message_page") { if (fail) throw new Error("Synthetic local query failure"); return { messages: [], has_more: false }; } });
+});
 
 test("status and pending search updates stay inside their account and chat", async () => {
   await withApp(async ({ messages, chats, calls }) => {

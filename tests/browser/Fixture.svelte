@@ -4,6 +4,7 @@
   import Customization from "$lib/settings/Customization.svelte";
   import BooleanProps from "$lib/ui/BooleanProps.svelte";
   import ChatMetadata from "./ChatMetadata.svelte";
+  import Unavailable from "./Unavailable.svelte";
   import RetentionSettings from "./RetentionSettings.svelte";
   import StorageManager from "$lib/settings/StorageManager.svelte";
   import MessageWindow from "./MessageWindow.svelte";
@@ -30,6 +31,7 @@
 <output aria-label="Read count">{calls}</output>
 {#if mounted}<BooleanProps />{/if}
 <details><summary>Retained chat metadata</summary><ChatMetadata /></details>
+<Unavailable />
 <RetentionSettings />
 <button onclick={() => { fixture.storageFailure = !fixture.storageFailure; }}>Toggle cleanup failure</button>
 <button onclick={() => { cleanupCalls = fixture.storageCalls; }}>Count cleanup calls</button>

@@ -77,6 +77,7 @@ mod media_download;
 mod media_wire;
 mod message_decode;
 mod message_capping;
+mod unavailable;
 mod messages;
 mod notices;
 mod polls;

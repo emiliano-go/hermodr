@@ -5,8 +5,8 @@
   import type { BubbleApi, BubbleCtx } from "$lib/utils/models";
   import OutgoingItem from "$lib/messages/OutgoingItem.svelte";
   import TypingIndicator from "$lib/media/TypingIndicator.svelte";
-  import { bare } from "$lib/utils/message";
-  import { noticeText } from "$lib/utils/notices";
+  import { bare, isUnavailable } from "$lib/utils/message";
+  import { noticeText, UNAVAILABLE_LABEL, UNAVAILABLE_EXPLANATION } from "$lib/utils/notices";
   import { MAX_DOWNLOAD_TRIES } from "$lib/state/messages.svelte";
   import type {
     ChatEvent,
@@ -286,12 +286,21 @@
     {#if newDay}
       <div class="day"><span>{dayLabel(message.timestamp)}</span></div>
     {/if}
-    {#if firstUnreadId === message.id}
+    {#if firstUnreadId === message.id && !isUnavailable(message)}
       <button class="unread-divider" data-unread-divider onclick={() => onjumpunread(message.id)}>
         <span>Unread messages</span>
       </button>
     {/if}
-    {#if message.system_kind}
+    {#if isUnavailable(message)}
+      <article class="unavailable-message" class:mine={message.from_me} data-id={message.id} data-chat={message.chat}>
+        <header>
+          <b>{message.from_me ? "You" : senderLabel(message)}</b>
+          <time datetime={new Date(message.timestamp * 1000).toISOString()}>{formatTime(message.timestamp)}</time>
+        </header>
+        <strong>{UNAVAILABLE_LABEL}</strong>
+        <p>{UNAVAILABLE_EXPLANATION}</p>
+      </article>
+    {:else if message.system_kind}
       {@const line = noticeText(message.system_kind, message.system_params, namer, message.sender)}
       {#if line}<p class="system">{line}</p>{/if}
     {:else}
@@ -400,6 +409,12 @@
   .system.e2e {
     color: var(--faint);
   }
+  .unavailable-message { align-self: flex-start; max-width: min(60ch, calc(100% - var(--pad-l) - var(--pad-r))); box-sizing: border-box; margin: 6px var(--pad-r) 6px var(--pad-l); padding: 12px 14px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); color: var(--text); overflow-wrap: anywhere; }
+  .unavailable-message.mine { align-self: flex-end; }
+  .unavailable-message header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; font-size: 0.9em; }
+  .unavailable-message time { color: var(--muted); }
+  .unavailable-message strong { display: block; }
+  .unavailable-message p { margin: 5px 0 0; color: var(--muted); font-size: 0.95em; line-height: 1.45; }
   .load-older {
     align-self: center;
     background: var(--surface);

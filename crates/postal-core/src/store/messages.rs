@@ -12,10 +12,10 @@ const INSERT_MESSAGE_SQL: &str = "INSERT INTO messages
       reply_to_kind, reply_to_thumb, media_thumb, media_ref, reply_to_chat,
       preview_site, preview_color, media_duration, system_kind, system_params,
       reply_to_view_once, reply_to_recoverable, reply_to_path, reply_to_locator,
-      media_once_kind, sort_order, live_location, history_shareable, spoiler)
+      media_once_kind, sort_order, live_location, history_shareable, spoiler, deleted)
  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
          ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?29, ?30,
-         ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39)
+         ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40)
  ON CONFLICT(chat, id) DO UPDATE SET
      sort_order = CASE WHEN excluded.sort_order > 0 THEN MIN(messages.sort_order, excluded.sort_order) ELSE messages.sort_order END,
      sender = excluded.sender,
@@ -59,8 +59,9 @@ const INSERT_MESSAGE_SQL: &str = "INSERT INTO messages
       media_once_kind = COALESCE(excluded.media_once_kind, media_once_kind),
       live_location = COALESCE(excluded.live_location, live_location),
       history_shareable = MIN(history_shareable, excluded.history_shareable),
-      spoiler = MAX(spoiler, excluded.spoiler)
-  WHERE revoked = 0";
+      spoiler = MAX(spoiler, excluded.spoiler),
+      deleted = MAX(deleted, excluded.deleted)
+  WHERE revoked = 0 AND (?41 = 0 OR messages.system_kind = 'UNAVAILABLE_MESSAGE')";
 
 impl MessageStore {
     /// Records a message. A repeat of a stored one (a replayed or duplicate
@@ -155,8 +156,20 @@ impl MessageStore {
                 message.live_location.as_ref().map(serde_json::to_string).transpose()?,
                 message.history_shareable,
                 message.spoiler,
+                message.local.deleted,
+                message.is_unavailable() || message.is_hidden_tombstone(),
             ],
         )?;
+        if message.is_unavailable() || message.is_hidden_tombstone() {
+            conn.execute("UPDATE messages SET read = MAX(read, ?3), revoked = MAX(revoked, ?4),
+                deleted = MAX(deleted, ?5), spoiler = MAX(spoiler, ?6), history_shareable = MIN(history_shareable, ?7),
+                status = CASE WHEN ?8 > (CASE status WHEN 'pending' THEN 0 WHEN 'sent' THEN 1
+                    WHEN 'delivered' THEN 2 WHEN 'read' THEN 3 ELSE -1 END) THEN ?9 ELSE status END
+                WHERE chat = ?1 AND id = ?2", params![message.header.chat, message.header.id,
+                    !message.is_hidden_tombstone() && message.local.read, message.local.revoked,
+                    !message.is_hidden_tombstone() && message.local.deleted, message.spoiler, message.history_shareable,
+                    message.local.status.as_deref().map(status_rank).unwrap_or(-1), message.local.status])?;
+        }
         super::links::refresh(conn, &message.header.chat, &message.header.id)?;
         Ok(())
     }
@@ -169,7 +182,7 @@ impl MessageStore {
             "SELECT {MESSAGE_COLUMNS}
              FROM messages m
              LEFT JOIN names n ON n.jid = m.sender
-             WHERE m.chat = ?1
+             WHERE m.chat = ?1 AND {VISIBLE_MESSAGE_SQL}
              ORDER BY m.timestamp DESC, m.sort_order DESC, m.id DESC LIMIT ?2"
         ))?;
         let rows = stmt.query_map(params![chat, limit], message_row)?;
@@ -218,6 +231,7 @@ impl MessageStore {
              FROM stars s
              JOIN messages m ON m.chat = s.chat AND m.id = s.id
              LEFT JOIN names n ON n.jid = m.sender
+             WHERE {VISIBLE_MESSAGE_SQL}
              ORDER BY m.timestamp DESC, m.sort_order DESC, m.id DESC"
         ))?;
         let rows = stmt.query_map([], message_row)?;
@@ -230,8 +244,8 @@ impl MessageStore {
         let chat = &*names::canonical_chat(&conn, chat)?;
         let row = conn
             .query_row(
-                "SELECT id, from_me, timestamp FROM messages
-                 WHERE chat = ?1 ORDER BY timestamp ASC, sort_order ASC, id ASC LIMIT 1",
+                &format!("SELECT id, from_me, timestamp FROM messages
+                 WHERE chat = ?1 AND {VISIBLE_MESSAGE_SQL} ORDER BY timestamp ASC, sort_order ASC, id ASC LIMIT 1"),
                 params![chat],
                 |r| {
                     Ok((
@@ -377,7 +391,7 @@ impl MessageStore {
                 "SELECT {MESSAGE_COLUMNS}
                  FROM messages m
                  LEFT JOIN names n ON n.jid = m.sender
-                 WHERE m.chat = ?1 AND m.id = ?2"
+                 WHERE m.chat = ?1 AND m.id = ?2 AND {VISIBLE_MESSAGE_SQL}"
             ),
             params![chat, id],
             message_row,
@@ -392,12 +406,24 @@ impl MessageStore {
     /// like a message deleted on this device. Returns whether a row was
     /// updated.
     pub fn revoke_message(&self, chat: &str, id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
-        let chat = &*names::canonical_chat(&conn, chat)?;
-        let changed = conn.execute(
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.savepoint()?;
+        let chat = names::canonical_chat(&tx, chat)?.into_owned();
+        let mut changed = tx.execute(
             "UPDATE messages SET revoked = 1 WHERE chat = ?1 AND id = ?2 AND revoked = 0",
             params![chat, id],
         )?;
+        let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM messages WHERE chat = ?1 AND id = ?2)",
+            params![chat, id], |row| row.get(0))?;
+        if !exists {
+            Self::insert_row(&tx, &StoredMessage {
+                header: MessageHeader { chat, id: id.to_owned(), ..Default::default() },
+                local: LocalState { read: true, revoked: true, deleted: true, ..Default::default() },
+                ..Default::default()
+            })?;
+            changed = 1;
+        }
+        tx.commit()?;
         Ok(changed > 0)
     }
 }

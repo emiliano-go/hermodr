@@ -1,9 +1,11 @@
 <script module lang="ts">
   import type { StoredMessage } from "$lib/utils/models";
-  import { captionOf, MEDIA_LABELS, CARD_LABELS } from "$lib/utils/message";
+  import { captionOf, isUnavailable, MEDIA_LABELS, CARD_LABELS } from "$lib/utils/message";
   import { plain } from "$lib/utils/format";
+  import { UNAVAILABLE_LABEL, UNAVAILABLE_EXPLANATION } from "$lib/utils/notices";
 
   export function previewContent(message: StoredMessage) {
+    if (isUnavailable(message)) return { text: `${UNAVAILABLE_LABEL}. ${UNAVAILABLE_EXPLANATION}`, media: null, notice: true };
     if (message.deleted || message.revoked) return { text: "Message deleted", media: null, notice: true };
     if (message.spoiler) return { text: "Spoiler", media: null, notice: true };
     if (message.media_kind === "view_once") return { text: "", media: "One-time media", notice: false };
