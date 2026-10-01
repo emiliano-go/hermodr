@@ -28,6 +28,8 @@ pub struct UiSettings {
     /// Whether to warn when a video goes out without a preview.
     #[serde(default = "default_true")]
     pub warn_missing_video_preview: bool,
+    #[serde(default)]
+    pub media_quality: postal_core::MediaQuality,
     /// Whether others see "typing…" while we write.
     #[serde(default = "default_true")]
     pub send_typing: bool,
@@ -86,6 +88,7 @@ impl Default for UiSettings {
             media_dir: None,
             history_dir: None,
             warn_missing_video_preview: true,
+            media_quality: Default::default(),
             send_typing: true,
             send_receipts: true,
             keep_history: true,

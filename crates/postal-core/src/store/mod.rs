@@ -26,6 +26,7 @@ pub mod links;
 pub(crate) mod pins;
 pub(crate) mod history_pins;
 mod secret_edits;
+mod structured_notices;
 pub(crate) use secret_edits::{PollOption, PollEdit, EventEdit, SecretEdit, EditRevision};
 pub mod transcription;
 pub mod media_policy;

@@ -4,24 +4,18 @@
   // api so the page keeps owning state and IPC.
   import { convertFileSrc } from "@tauri-apps/api/core";
   import AudioPlayer from "$lib/media/AudioPlayer.svelte";
-  import Embed from "$lib/messages/cards/Embed.svelte";
-  import LocationCard from "$lib/messages/cards/LocationCard.svelte";
-  import EventCard from "$lib/messages/cards/EventCard.svelte";
+  import MessageCard from "$lib/messages/cards/MessageCard.svelte";
   import Icon from "$lib/ui/Icon.svelte";
-  import InviteCard, { inviteLink } from "$lib/messages/cards/InviteCard.svelte";
   import MessageText from "$lib/messages/MessageText.svelte";
-  import PollCard from "$lib/messages/cards/PollCard.svelte";
   import Spinner from "$lib/ui/Spinner.svelte";
   import VideoPlayer from "$lib/media/VideoPlayer.svelte";
   import Avatar from "$lib/ui/Avatar.svelte";
   import { initials } from "$lib/utils/avatar";
   import { mediaSrc } from "$lib/media/MediaViewer.svelte";
   import {
-    CARD_LABELS,
     isSvg,
     DRAWN_KINDS,
     VIEW_ONCE_LABEL,
-    replyIcon,
   } from "$lib/utils/message";
   import type { BubbleApi, BubbleVm, StoredMessage } from "$lib/utils/models";
   import { session } from "$lib/state/session.svelte";
@@ -44,13 +38,6 @@
     return "image";
   }
 
-  function hostOf(url: string) {
-    try {
-      return new URL(url).hostname;
-    } catch {
-      return url;
-    }
-  }
 </script>
 
 {#snippet metadata()}
@@ -138,46 +125,7 @@
       <span class="forwarded-mark"><Icon name="forward" size={13} /> Forwarded</span>
     {/if}
     {#if message.reply_to_text}
-      <!-- A reply sent from this app never carries the view-once it quotes; one from the phone,
-           though also ours, does, and is told apart by holding the copy. -->
-      {@const sentHere =
-        message.from_me && message.reply_to_view_once && !message.reply_to_recoverable && !message.reply_to_path}
-      {@const onceCopy = message.reply_to_view_once && message.reply_to_recoverable && !sentHere}
-      <Embed
-        compact
-        tooltip={message.reply_to_path
-          ? "Open the copy"
-          : onceCopy
-            ? "Save the copy"
-            : sentHere
-              ? "Only a reply sent from your phone, or by someone else, carries a copy of a view-once"
-              : "Go to message"}
-        label={vm.quoteAuthor}
-        text={vm.quoteText}
-        image={message.reply_to_thumb && ["image", "sticker", "gif"].includes(message.reply_to_kind ?? "")
-          ? mediaSrc(message.reply_to_thumb)
-          : null}
-        icon={message.reply_to_kind ? replyIcon(message.reply_to_kind) : null}
-        onclick={message.reply_to_path
-          ? () => api.onopenquote(message)
-          : onceCopy
-            ? () => api.onrecoverquote(message)
-            : () => api.onjumpquoted(message)}>
-        {#if vm.quoteChatName}
-          <span class="quote-where">in {vm.quoteChatName}</span>
-        {/if}
-        {#if onceCopy && !message.reply_to_path}
-          <span class="quote-once">
-            <span class="once-mark">1</span>
-            {api.recovering[message.id] ? "Saving the copy…" : "Tap to save"}
-          </span>
-        {:else if sentHere}
-          <span class="quote-once">
-            <span class="once-mark">1</span>
-            No copy from this app
-          </span>
-        {/if}
-      </Embed>
+      <MessageCard {message} {vm} {api} variant="quote" />
     {/if}
 
     {#if vm.viewOnce && !message.media_path}
@@ -373,56 +321,17 @@
       {#if session.activeAccount && !vm.onceKept}
         <Transcript accountId={session.activeAccount} chat={message.chat} id={message.id} enabled={transcription.enabled} hidden={spoilerHidden} />
       {/if}
-    {:else if message.media_kind === "poll"}
-      <PollCard
-        poll={vm.poll}
-        question={message.text}
-        namer={api.namer}
-        picture={api.avatarOf}
-        onvote={async (options) => {
-          await api.onvote(message, options);
-        }} />
-    {:else if message.media_kind === "event"}
-      <EventCard
-        event={vm.chatEvent}
-        title={message.text}
-        onopenurl={api.onopenurl}
-        onrespond={async (response) => {
-          await api.onrespond(message, response);
-        }}
-        onedit={message.from_me && vm.chatEvent
-          ? () => api.oneditrequest(message)
-          : undefined}
-        oncancel={message.from_me && vm.chatEvent
-          ? async () => {
-              await api.oncancelevent(message);
-            }
-          : undefined} />
+    {:else if message.media_kind === "poll" || message.media_kind === "event"}
+      <MessageCard {message} {vm} {api} />
     {:else if isSvg(message) && message.media_path}
       <!-- An <img> never runs an SVG's scripts, so drawing it in place is safe. -->
       <span class="svg-file">
         <img class="media" src={convertFileSrc(message.media_path)} alt={message.text} />
       </span>
     {:else if message.media_kind === "live_location" && message.live_location}
-      <LocationCard {message} {api} />
+      <MessageCard {message} {vm} {api} />
     {:else if message.media_kind && !DRAWN_KINDS.has(message.media_kind)}
-      <!-- Kinds without a view of their own: a card with what the core could read. -->
-      {@const link = message.text.match(/https?:\/\/\S+/)?.[0]}
-      <Embed
-        label={CARD_LABELS[message.media_kind] ?? message.media_kind}
-        image={message.media_thumb ? mediaSrc(message.media_thumb) : null}
-        tooltip={link}
-        onopen={link ? () => api.onopenurl(link) : undefined}>
-        <MessageText
-          text={message.text}
-          mine={message.from_me}
-          meta={vm.inlineMeta ? metadata : undefined}
-          toWire={api.toWire}
-          targetOf={api.targetOf}
-          avatarOf={api.avatarOf}
-          onprofile={api.onprofile}
-          onopenurl={api.onopenurl} />
-      </Embed>
+      <MessageCard {message} {vm} {api} meta={metadata} />
     {:else if message.media_kind && (message.media_path || message.media_thumb)}
       <button
         class="file"
@@ -483,27 +392,7 @@
       </button>
     {/if}
 
-    {@const invite = inviteLink(message.text)}
-    {#if invite || message.media_kind === "group_invite"}
-      <InviteCard
-        link={invite}
-        message={message.media_kind === "group_invite" ? message : null}
-        onjoin={() => api.oninvitejoin(message, invite)}
-        onopen={(jid) => api.oninviteopen(jid)} />
-    {:else if message.preview_url}
-      {@const url = message.preview_url}
-      {@const provider = message.preview_site?.trim() || hostOf(url)}
-      {@const title = message.preview_title?.trim() !== provider ? message.preview_title?.trim() : null}
-      {@const desc = message.preview_desc?.trim() !== url ? message.preview_desc?.trim() : null}
-      <Embed
-        label={provider}
-        {title}
-        text={desc}
-        image={message.preview_thumb ? mediaSrc(message.preview_thumb) : null}
-        color={message.preview_color}
-        tooltip={url}
-        onopen={() => api.onopenurl(url)} />
-    {/if}
+    <MessageCard {message} {vm} {api} variant="link" />
   {/if}
 
   <button
@@ -973,27 +862,8 @@
     padding: 4px 12px 4px 10px;
     cursor: pointer;
   }
-  .quote-where {
-    flex: none;
-    max-width: 16ch;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 11px;
-    color: #71717a;
-  }
   .download-failed:disabled {
     cursor: default;
-  }
-  .quote-once {
-    display: flex;
-    flex: none;
-    align-items: center;
-    gap: 4px;
-    margin-left: auto;
-    font-size: 11px;
-    color: color-mix(in srgb, var(--text) 60%, transparent);
-    white-space: nowrap;
   }
   .meta, :global(.meta-spacer) {
     font-size: 11px;

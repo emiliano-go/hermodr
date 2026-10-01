@@ -2,12 +2,14 @@
   outgoing uploads and the typing indicator. Moved out of +page.svelte. -->
 <script lang="ts">
   import MessageRow from "$lib/messages/MessageRow.svelte";
+  import StructuredNotice from "$lib/messages/StructuredNotice.svelte";
   import { keywords } from "$lib/state/keywords.svelte";
   import type { BubbleApi, BubbleCtx } from "$lib/utils/models";
   import OutgoingItem from "$lib/messages/OutgoingItem.svelte";
   import TypingIndicator from "$lib/media/TypingIndicator.svelte";
   import { bare, isUnavailable } from "$lib/utils/message";
-  import { noticeText, UNAVAILABLE_LABEL, UNAVAILABLE_EXPLANATION } from "$lib/utils/notices";
+  import { UNAVAILABLE_LABEL, UNAVAILABLE_EXPLANATION } from "$lib/utils/notices";
+  import { isPollNotice } from "$lib/utils/structured-notices";
   import { MAX_DOWNLOAD_TRIES } from "$lib/state/messages.svelte";
   import type {
     ChatEvent,
@@ -305,11 +307,11 @@
         <strong>{UNAVAILABLE_LABEL}</strong>
         <p>{UNAVAILABLE_EXPLANATION}</p>
       </article>
-    {:else if message.system_kind}
-      {@const line = noticeText(message.system_kind, message.system_params, namer, message.sender)}
-      {#if line}<p class="system">{line}</p>{/if}
+    {:else if message.system_kind || isPollNotice(message)}
+      <StructuredNotice {message} poll={polls.find((poll) => poll.id === message.id)} {namer}
+        picture={avatarOf} onvote={async (options) => { await onvote(message, options); }} highlighted={highlightedId === message.id || keywords.highlighted(message)} />
     {:else}
-      <MessageRow {message} {prev} {ctx} {api} />
+      <MessageRow {message} prev={prev?.system_kind || (prev && isPollNotice(prev)) ? undefined : prev} {ctx} {api} />
     {/if}
   {/each}
   {#each uploads as upload (upload.token)}

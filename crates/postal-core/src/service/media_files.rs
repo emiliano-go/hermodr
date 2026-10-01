@@ -23,7 +23,14 @@ pub(super) struct TemporaryFile {
 
 impl TemporaryFile {
     fn create(path: PathBuf) -> Result<(Self, File)> {
-        let file = File::create_new(&path)?;
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true).write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let file = options.open(&path)?;
         Ok((Self { path }, file))
     }
 
@@ -56,6 +63,15 @@ pub(super) fn encrypt_file(path: &Path, media_type: MediaType) -> Result<(FileSo
 mod tests {
     use super::*;
     use std::io::Read;
+
+    #[cfg(unix)]
+    #[test]
+    fn transfer_temporary_files_are_private_and_cannot_overwrite() {
+        use std::os::unix::fs::PermissionsExt;
+        let (owned, file) = TemporaryFile::download(&std::env::temp_dir()).unwrap();
+        assert_eq!(file.metadata().unwrap().permissions().mode() & 0o777, 0o600);
+        assert!(TemporaryFile::create(owned.path.clone()).is_err());
+    }
 
     #[test]
     fn file_previews_decode_staged_video_without_loading_its_bytes() {

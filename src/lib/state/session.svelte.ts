@@ -76,6 +76,7 @@ export class SessionState {
     auto_download_types: { image: false, video: false, audio: false, document: false, sticker: false, gif: false },
     auto_transcribe: false,
     warn_missing_video_preview: true,
+    media_quality: "hd",
     media_dir: null,
     history_dir: null,
     send_typing: true,

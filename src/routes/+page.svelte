@@ -1321,6 +1321,16 @@
             }} />
         {:else}
           <ComposerBar
+            account={session.activeAccount}
+            generation={messages.accountGeneration}
+            disabled={!session.connected || !!(members.chatGroup && !members.chatGroup.can_send)}
+            defaultQuality={session.settings.media_quality}
+            onsoundclip={(file, scope) => composer.sendSoundClip(file, scope)}
+            onslashcommand={(command) => {
+              if (command === "mention-all" && selectedChat.endsWith("@g.us") && !composer.chosenMentions.some((mention) => mention.jid === "@all")) {
+                composer.chosenMentions = [...composer.chosenMentions, { jid: "@all", name: "all" }];
+              }
+            }}
             bind:draft={composer.draft}
           bind:composerInput
           replyingTo={composer.replyingTo}

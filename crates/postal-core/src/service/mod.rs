@@ -73,6 +73,8 @@ mod history;
 mod inbound;
 mod links;
 mod media;
+mod media_quality;
+pub use media_quality::MediaQuality;
 mod media_files;
 mod media_codec;
 mod media_download;
@@ -82,6 +84,7 @@ mod message_capping;
 mod unavailable;
 mod messages;
 mod notices;
+mod structured_notices;
 mod polls;
 mod profile;
 mod receipts;
@@ -319,6 +322,7 @@ pub struct Profile {
 /// How [`WhatsAppService::send_media`] sends a file beyond its type.
 #[derive(Debug, Default)]
 pub struct SendOptions {
+    pub quality: Option<MediaQuality>,
     /// A video that plays muted and looping, as WhatsApp's GIFs are.
     pub gif: bool,
     /// Opens once for the recipient, then is gone.

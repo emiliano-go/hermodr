@@ -216,6 +216,7 @@ export type MarkReadResult = { chat: string, changed: number | null, error: stri
 export type MediaAction = "copy_image" | "save" | "open";
 export type MediaAutoDownload = { image: boolean, video: boolean, audio: boolean, document: boolean, sticker: boolean, gif: boolean, };
 export type MediaAutoDownloadOverrides = { image: boolean | null, video: boolean | null, audio: boolean | null, document: boolean | null, sticker: boolean | null, gif: boolean | null, };
+export type MediaQuality = "standard" | "hd";
 export type MessageCursor = { timestamp: number, id: string, sort_order: number, };
 export type MessagePage = { messages: Array<StoredMessage>, has_more: boolean, };
 export type MessagePageDirection = "before" | "after" | "through";
@@ -479,7 +480,7 @@ auto_download_media: boolean, auto_download_types: MediaAutoDownload, auto_trans
 /**
  * Whether to warn when a video goes out without a preview.
  */
-warn_missing_video_preview: boolean,
+warn_missing_video_preview: boolean, media_quality: MediaQuality,
 /**
  * Whether others see "typing…" while we write.
  */

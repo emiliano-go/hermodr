@@ -26,7 +26,7 @@ struct CountingReader {
     report: Arc<dyn Fn(u64) + Send + Sync>,
 }
 
-enum MediaInput { Bytes(Vec<u8>), File(PathBuf) }
+pub(super) enum MediaInput { Bytes(Vec<u8>), File(PathBuf) }
 
 impl std::io::Read for CountingReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
@@ -158,23 +158,27 @@ impl WhatsAppService {
         &self, chat: &str, file_name: &str, input: MediaInput, caption: Option<String>,
         reply: Option<(String, String, String)>, options: SendOptions,
     ) -> Result<Option<String>> {
-        let SendOptions { gif, view_once, voice, forwarded, mentions, progress } = options;
+        let SendOptions { gif, view_once, voice, forwarded, mentions, progress, quality } = options;
         let to: Jid = chat.parse()?;
+        let original_extension = file_extension(file_name);
+        let (_, original_kind) = media_kind_for(&original_extension);
+        let prepared = super::media_quality::prepare(input, file_name.to_string(), original_kind, quality, gif).await?;
+        let input = &prepared.input;
         self.unarchive_on_send(chat).await;
         let to_self = self.is_self_jid(&to);
         let chat_jid = to.to_string();
-        let file_name = file_name.to_string();
-        let extension = file_extension(&file_name);
+        let file_name = &prepared.file_name;
+        let extension = file_extension(file_name);
         let (media_type, kind) = media_kind_for(&extension);
 
-        let upload = self.upload_media(&input, media_type, progress).await?;
+        let upload = self.upload_media(input, media_type, progress).await?;
         let mimetype = mime_for(&extension).map(str::to_string);
-        let thumb = self.outgoing_thumbnail(kind, &input).await?;
+        let thumb = self.outgoing_thumbnail(kind, input).await?;
         let warning = missing_preview_warning(kind, &thumb);
         let context = self.media_context(&to, reply.as_ref(), forwarded, mentions).await?;
         let voice_seconds = voice.as_ref().map(|note| note.seconds);
         let mut message = build_media_message(
-            &file_name, kind, upload, &caption, mimetype, &thumb, context, gif, voice, extension == "ogg",
+            file_name, kind, upload, &caption, mimetype, &thumb, context, gif, voice, extension == "ogg",
         );
         if view_once {
             message = apply_view_once(kind, message)?;
@@ -190,7 +194,7 @@ impl WhatsAppService {
         let stored_path = if view_once {
             None
         } else {
-            self.keep_sent_copy(&input, &result.message_id, &extension).await
+            self.keep_sent_copy(input, &result.message_id, &extension).await
         };
         let stored = self.record_sent_media(
             chat, &chat_jid, &result.message_id, caption.unwrap_or_default(), kind, to_self,

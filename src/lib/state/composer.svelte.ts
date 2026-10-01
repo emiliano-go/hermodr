@@ -9,6 +9,7 @@ import { loadEmojis, rememberEmoji, searchEmojis, type Emoji } from "$lib/utils/
 import type { PickerTab } from "$lib/composer/ExpressionPicker.svelte";
 import { base64Of, imagePreview, rasterizeSvg } from "$lib/utils/files";
 import { sendAttachment } from "$lib/utils/upload";
+import { canChooseMediaQuality } from "$lib/utils/media-quality";
 import { keybinds, matches, matchesDraftHistory } from "$lib/utils/keybinds.svelte";
 import { ComposerHistory, type DraftSnapshot } from "$lib/utils/composer-history";
 import type { Recording } from "$lib/composer/VoiceRecorder.svelte";
@@ -393,7 +394,7 @@ export class ComposerState {
   }
 
   onComposerKey(event: KeyboardEvent) {
-    if (event.isComposing) return;
+    if (event.isComposing || event.keyCode === 229) return;
     if (matchesDraftHistory(event, "undoDraft") || matchesDraftHistory(event, "redoDraft")) {
       event.preventDefault();
       void this.undoDraft(matchesDraftHistory(event, "redoDraft"));
@@ -626,7 +627,8 @@ export class ComposerState {
       const id = this.pendingSeq++;
       this.pending = [
         ...this.pending,
-        { id, file, url: kind === "video" ? URL.createObjectURL(file) : "", kind, caption: "", once: false },
+        { id, file, url: kind === "video" ? URL.createObjectURL(file) : "", kind, caption: "", once: false,
+          quality: canChooseMediaQuality(file) ? session.settings.media_quality : undefined },
       ];
       this.host.focusComposer();
       if (kind === "image") {
@@ -683,6 +685,7 @@ export class ComposerState {
             viewOnce: item.once,
             mentions: captioned && item.id === firstId ? mentions : [],
             progress: token,
+            quality: item.quality ?? null,
           }, signal);
           if (account !== this.accountSeq) return;
           if (warning && session.settings.warn_missing_video_preview) ui.notify(warning);
@@ -703,6 +706,24 @@ export class ComposerState {
     }, account).catch((e) => { if (account === this.accountSeq) ui.fail(e); });
     if (account !== this.accountSeq) return;
     await chats.refreshChats();
+  }
+
+  async sendSoundClip(file: File, scope: { account: string; chat: string; generation: number }) {
+    const account = this.accountSeq;
+    const current = () => account === this.accountSeq && scope.account === session.activeAccount
+      && scope.chat === chats.selectedChat && scope.generation === messages.accountGeneration;
+    const allowed = () => current() && session.connected && !this.editing && !this.recording
+      && (!members.chatGroup || members.chatGroup.can_send);
+    if (!allowed()) throw new Error("Conversation changed or cannot send audio clips.");
+    await this.enqueue(async (signal) => {
+      if (!allowed()) throw new Error("Conversation changed before sending the audio clip.");
+      await sendAttachment(file, { chat: scope.chat }, signal);
+    }, account);
+    if (!current()) return;
+    await Promise.all([messages.reloadMessages(scope.chat), chats.refreshChats()]).catch((error) => {
+      if (current()) ui.fail(error);
+    });
+    if (current()) this.host.scrollToBottom();
   }
 
   async sendVoice(note: Recording) {

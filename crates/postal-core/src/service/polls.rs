@@ -161,13 +161,17 @@ impl WhatsAppService {
             ..Default::default()
         };
         let to: Jid = chat.parse()?;
-        self.client
+        let timestamp_ms = unix_now() * 1000;
+        let result = self.client
             .edit_message_encrypted(to, id, &def.secret, content)
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        anyhow::ensure!(self.store.replace_event_content(chat, id, &event).await?, "event changed or was removed while sending");
+        let revision = crate::store::EditRevision { timestamp_ms, message_id: result.message_id };
+        anyhow::ensure!(self.store.replace_event_content(chat, id, &event, &revision).await?, "event changed or was removed while sending");
         let updated = self.store.message(chat, id).await?;
         let _ = self.events.send(ServiceEvent::hint(&updated, false));
+        let notice = self.store.message(chat, &revision.message_id).await?;
+        let _ = self.events.send(ServiceEvent::hint(&notice, false));
         let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
         Ok(())
     }

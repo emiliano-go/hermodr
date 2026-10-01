@@ -22,7 +22,7 @@ pub use service::{
     GroupJoinRequest,
     GroupCreateResult, GroupCreateParticipant, GroupCreateParticipantState,
     GroupSettings, GroupSettingChange,
-    AdminReport, GroupInfo, GroupKind, InviteInfo, UserProfile, Participant, ParticipantChange, Profile, SearchResult, SendOptions, WhatsAppService, ServiceConfig,
+    AdminReport, GroupInfo, GroupKind, InviteInfo, UserProfile, Participant, ParticipantChange, Profile, SearchResult, SendOptions, MediaQuality, WhatsAppService, ServiceConfig,
     HintChange, ServiceEvent, VoiceNote, StickerLibrary, StickerResyncReport,
 };
 pub use store::{

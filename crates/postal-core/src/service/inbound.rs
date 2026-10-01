@@ -417,6 +417,7 @@ impl Inbound {
     async fn on_messages(&self, batch: &MessageBatch) {
         let started = std::time::Instant::now();
         let mut ingested = 0usize;
+        let mut event_notices = Vec::new();
         let batch_guard = self.store.batch().await;
         let client = self.client_for_events.get().cloned();
         let own = own_addresses(client.as_deref());
@@ -445,6 +446,11 @@ impl Inbound {
                 Ok(secret_edits::Outcome::Applied { id }) => {
                     if let Some(updated) = ctx.store.message(&incoming.chat, &id).await.observed() {
                         let _ = self.events.send(ServiceEvent::hint(&updated, false));
+                        if updated.media.kind.as_deref() == Some("event") {
+                            if let Some(notice) = ctx.store.message(&incoming.chat, &incoming.id).await.observed() {
+                                event_notices.push(ServiceEvent::hint(&notice, false));
+                            }
+                        }
                     }
                     let _ = self.events.send(ServiceEvent::Marks { chat: incoming.chat.clone() });
                     ctx.touched.push(incoming.chat.clone());
@@ -474,7 +480,9 @@ impl Inbound {
         if self.one_time_only {
             self.tally.note(batch.messages.len(), ingested);
         }
-        batch_guard.finish().await.logged();
+        if batch_guard.finish().await.observed().is_some() {
+            for notice in event_notices { let _ = self.events.send(notice); }
+        }
         log::debug!(
             "{} live message(s) in {:?} (retention {:?}, pruned {removed})",
             batch.messages.len(),

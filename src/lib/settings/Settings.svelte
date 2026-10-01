@@ -936,6 +936,13 @@
             </div>
           {/if}
         {:else if section === "media"}
+          <label class="setting">
+            <div><span class="setting-title">Default upload quality</span>
+              <span class="setting-desc">Standard limits photos to 1600 pixels and videos to 480p. HD keeps the original file. Choose again for each attachment before sending.</span></div>
+            <select bind:value={draft.media_quality} aria-label="Default upload quality">
+              <option value="standard">Standard</option><option value="hd">HD (original)</option>
+            </select>
+          </label>
           <div class="setting stack">
             <AutoDownloadSettings value={draft.auto_download_types} onchange={(next) => {
               draft.auto_download_types = next;

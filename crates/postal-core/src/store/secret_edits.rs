@@ -204,20 +204,28 @@ impl MessageStore {
         Ok(result)
     }
 
-    pub(crate) fn replace_event_content(&self, chat: &str, id: &str, event: &NewEvent) -> Result<bool> {
+    pub(crate) fn replace_event_content(&self, chat: &str, id: &str, event: &NewEvent, revision: &EditRevision) -> Result<bool> {
         ensure!(!event.name.is_empty(), "event title is empty");
+        ensure!(revision.timestamp_ms >= 0 && !revision.message_id.trim().is_empty(), "invalid edit revision");
         let mut conn = self.conn.lock().unwrap();
         let chat = names::canonical_chat(&conn, chat)?.into_owned();
         let transaction = conn.savepoint()?;
-        let exists: bool = transaction.query_row(
-            "SELECT EXISTS(SELECT 1 FROM messages m JOIN events e ON e.chat = m.chat AND e.id = m.id
-             WHERE m.chat = ?1 AND m.id = ?2 AND m.media_kind = 'event' AND m.revoked = 0 AND m.deleted = 0)",
+        let target: Option<(String, bool, bool)> = transaction.query_row(
+            "SELECT m.sender, m.from_me, m.spoiler FROM messages m JOIN events e ON e.chat = m.chat AND e.id = m.id
+             WHERE m.chat = ?1 AND m.id = ?2 AND m.media_kind = 'event' AND m.revoked = 0 AND m.deleted = 0",
             params![chat, id],
-            |row| row.get(0),
-        )?;
-        if !exists {
-            return Ok(false);
-        }
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).optional()?;
+        let Some((sender, from_me, spoiler)) = target else { return Ok(false) };
+        let previous: Option<(i64, String)> = transaction.query_row(
+            "SELECT timestamp_ms, message_id FROM secret_edit_revisions WHERE chat = ?1 AND id = ?2",
+            params![chat, id], |row| Ok((row.get(0)?, row.get(1)?)),
+        ).optional()?;
+        let timestamp_ms = match previous {
+            Some((timestamp, message_id)) if message_id == revision.message_id => timestamp.max(revision.timestamp_ms),
+            Some((timestamp, _)) if timestamp >= revision.timestamp_ms => return Ok(false),
+            _ => revision.timestamp_ms,
+        };
         transaction.execute(
             "UPDATE events SET name = ?3, description = ?4, start_at = ?5, end_at = ?6,
              location = ?7, link = ?8, canceled = ?9 WHERE chat = ?1 AND id = ?2",
@@ -239,6 +247,12 @@ impl MessageStore {
         )?;
         transaction.execute("INSERT OR IGNORE INTO edited (chat, id) VALUES (?1, ?2)", params![chat, id])?;
         super::links::refresh(&transaction, &chat, id)?;
+        super::structured_notices::insert_event_notice(&transaction, MessageHeader {
+            chat: chat.clone(), id: revision.message_id.clone(), sender, timestamp: timestamp_ms / 1000, from_me,
+        }, id, if spoiler { "" } else { &event.name }, event.canceled)?;
+        transaction.execute("INSERT INTO secret_edit_revisions (chat, id, timestamp_ms, message_id) VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(chat, id) DO UPDATE SET timestamp_ms = excluded.timestamp_ms, message_id = excluded.message_id",
+            params![chat, id, timestamp_ms, revision.message_id])?;
         transaction.commit()?;
         Ok(true)
     }
@@ -261,14 +275,14 @@ impl MessageStore {
         let chat = &*names::canonical_chat(&conn, chat)?;
         conn.execute_batch("SAVEPOINT postal_secret_edit")?;
         let result = (|| -> Result<bool> {
-            let target: Option<(String, Option<String>, i64)> = conn
+            let target: Option<(String, Option<String>, i64, bool, bool)> = conn
                 .query_row(
-                    "SELECT sender, media_kind, timestamp FROM messages WHERE chat = ?1 AND id = ?2 AND revoked = 0 AND deleted = 0",
+                    "SELECT sender, media_kind, timestamp, from_me, spoiler FROM messages WHERE chat = ?1 AND id = ?2 AND revoked = 0 AND deleted = 0",
                     params![chat, id],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
                 )
                 .optional()?;
-            let Some((sender, kind, created_at)) = target else {
+            let Some((sender, kind, created_at, from_me, spoiler)) = target else {
                 return Ok(false);
             };
             if !matching(&authors, &sender) {
@@ -398,6 +412,9 @@ impl MessageStore {
                     if !matching(&authors, &creator) || !matching(&editors, &creator) {
                         return Ok(false);
                     }
+                    let replay: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM messages WHERE chat = ?1 AND id = ?2
+                        AND system_kind IN ('EVENT_UPDATED', 'EVENT_CANCELED'))", params![chat, revision.message_id], |row| row.get(0))?;
+                    if replay { return Ok(false); }
                     if !revision_is_fresh(&conn, chat, id, created_at, revision)? {
                         return Ok(false);
                     }
@@ -424,6 +441,10 @@ impl MessageStore {
                         "UPDATE messages SET text = ?3 WHERE chat = ?1 AND id = ?2",
                         params![chat, id, new_name],
                     )?;
+                    super::structured_notices::insert_event_notice(&conn, MessageHeader {
+                        chat: chat.to_string(), id: revision.message_id.clone(), sender: sender.clone(),
+                        timestamp: revision.timestamp_ms / 1000, from_me,
+                    }, id, if spoiler { "" } else { new_name }, change.canceled == Some(true))?;
                 }
             }
             conn.execute("INSERT OR IGNORE INTO edited (chat, id) VALUES (?1, ?2)", params![chat, id])?;
@@ -448,9 +469,9 @@ impl MessageStore {
 }
 
 impl StoreWorker {
-    pub(crate) async fn replace_event_content(&self, chat: &str, id: &str, event: &NewEvent) -> Result<bool> {
-        let (chat, id, event) = (chat.to_owned(), id.to_owned(), event.clone());
-        self.run(move |store| store.replace_event_content(&chat, &id, &event)).await
+    pub(crate) async fn replace_event_content(&self, chat: &str, id: &str, event: &NewEvent, revision: &EditRevision) -> Result<bool> {
+        let (chat, id, event, revision) = (chat.to_owned(), id.to_owned(), event.clone(), revision.clone());
+        self.run(move |store| store.replace_event_content(&chat, &id, &event, &revision)).await
     }
 
     pub(crate) async fn remember_poll_options(&self, chat: &str, id: &str, options: &[PollOption], allow_add_option: bool) -> Result<()> {
@@ -1091,7 +1112,7 @@ mod tests {
             ..Default::default()
         };
         assert!(store
-            .replace_event_content(CHAT, "item", &replacement)
+            .replace_event_content(CHAT, "item", &replacement, &rev(2000, "outbound"))
             .unwrap_err()
             .to_string()
             .contains("synthetic link failure"));
@@ -1112,7 +1133,7 @@ mod tests {
             );
             conn.execute_batch("DROP TRIGGER fail_outbound_link_refresh;").unwrap();
         }
-        assert!(store.replace_event_content(CHAT, "item", &replacement).unwrap());
+        assert!(store.replace_event_content(CHAT, "item", &replacement, &rev(2000, "outbound")).unwrap());
         let marks = store.marks(CHAT).unwrap();
         let updated = &marks.events[0];
         assert_eq!(updated.name, replacement.name);
@@ -1139,8 +1160,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(serde_json::from_str::<Vec<String>>(&links).unwrap(), ["https://new.test"]);
-        assert!(!store.replace_event_content(CHAT, "missing", &replacement).unwrap());
-        assert!(!setup("poll").replace_event_content(CHAT, "item", &replacement).unwrap());
+        assert!(!store.replace_event_content(CHAT, "missing", &replacement, &rev(2000, "outbound")).unwrap());
+        assert!(!setup("poll").replace_event_content(CHAT, "item", &replacement, &rev(2000, "outbound")).unwrap());
     }
 
     #[test]

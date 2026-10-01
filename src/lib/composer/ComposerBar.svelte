@@ -15,6 +15,12 @@
   import type { Emoji } from "$lib/utils/emoji";
   import type { PendingMedia, StoredMessage } from "$lib/utils/models";
   import { scheduled } from "$lib/state/scheduled.svelte";
+  import { tick } from "svelte";
+  import Soundboard from "$lib/soundboard/Soundboard.svelte";
+  import SlashCommandMenu from "$lib/composer/SlashCommandMenu.svelte";
+  import { slashToken, replaceSlashToken, type SlashCommandId, type SlashSelection } from "$lib/utils/slash-commands";
+  import { canChooseMediaQuality } from "$lib/utils/media-quality";
+  import type { MediaQuality } from "$lib/utils/wire";
   import ScheduleDialog from "./ScheduleDialog.svelte";
 
   let {
@@ -57,6 +63,12 @@
     ontyping,
     receiptsHidden,
     typingHidden,
+    account = null,
+    generation = 0,
+    disabled = false,
+    defaultQuality = "hd",
+    onsoundclip = async () => { throw new Error("Audio clip sending is unavailable."); },
+    onslashcommand = () => {},
   }: {
     draft: string;
     composerInput: HTMLTextAreaElement | undefined;
@@ -105,9 +117,46 @@
     ontyping: () => void;
     receiptsHidden: boolean;
     typingHidden: boolean;
+    account?: string | null;
+    generation?: number;
+    disabled?: boolean;
+    defaultQuality?: MediaQuality;
+    onsoundclip?: (file: File, scope: { account: string; chat: string; generation: number }) => Promise<void>;
+    onslashcommand?: (command: SlashCommandId) => void;
   } = $props();
 
   let attachMenu = $state(false);
+  let soundboardOpen = $state(false);
+  let caret = $state({ start: 0, end: 0 });
+  let dismissedSlash = $state<string | null>(null);
+  const activeSlash = $derived(slashToken(draft, caret.start, caret.end));
+  const slashKey = $derived(activeSlash ? JSON.stringify(activeSlash) : null);
+  const slashDisabled = $derived({ location: "Location sending is unavailable.", "keep-in-chat": "Keep in chat is unavailable.",
+    ...(!selectedChat.endsWith("@g.us") ? { "mention-all": "Mention all is available in groups." } : {}) });
+  $effect(() => { void account; void selectedChat; void generation; soundboardOpen = false; dismissedSlash = null; });
+
+  function updateCaret() {
+    if (composerInput && (caret.start !== composerInput.selectionStart || caret.end !== composerInput.selectionEnd)) {
+      caret = { start: composerInput.selectionStart, end: composerInput.selectionEnd };
+    }
+  }
+  async function chooseSlash(selection: SlashSelection) {
+    if (disabled || selection.account !== account || selection.chat !== selectedChat || selection.generation !== generation
+      || !composerInput || composerInput.selectionStart !== selection.token.end || composerInput.selectionEnd !== selection.token.end) return;
+    const replacement = selection.command === "mention-all" ? "@all " : "";
+    const next = replaceSlashToken(draft, selection.token, replacement);
+    if (next === null) return;
+    draft = next;
+    dismissedSlash = slashKey;
+    if (selection.command === "poll" || selection.command === "event") oncreatekind(selection.command);
+    else if (selection.command === "sticker" || selection.command === "gif") pickerTab = selection.command;
+    else onslashcommand(selection.command);
+    await tick();
+    if (selection.account !== account || selection.chat !== selectedChat || selection.generation !== generation) return;
+    const at = selection.token.start + replacement.length;
+    composerInput?.setSelectionRange(at, at);
+    updateCaret();
+  }
   let scheduling = $state(false);
   let schedulingChat = "";
   $effect(() => { if (selectedChat !== schedulingChat) { scheduling = false; schedulingChat = selectedChat; } });
@@ -148,6 +197,7 @@
     if (!item) return;
     if (item.url.startsWith("blob:")) URL.revokeObjectURL(item.url);
     item.file = file;
+    item.quality = canChooseMediaQuality(file) ? item.quality ?? defaultQuality : undefined;
     item.url = await imagePreview(file);
     cropping = false;
   }
@@ -221,6 +271,12 @@
             onclick={() => ontoggleonce(item.id)}>1</button>
         {/if}
         <span class="pending-name" title={item.file.name}>{item.file.name}</span>
+        {#if canChooseMediaQuality(item.file)}
+          <select class="quality" aria-label="Upload quality for {item.file.name}" value={item.quality ?? defaultQuality}
+            onchange={(event) => { item.quality = event.currentTarget.value as MediaQuality; }}>
+            <option value="standard">Standard</option><option value="hd">HD (original)</option>
+          </select>
+        {/if}
         {#if item.caption}
           <span class="pending-caption">{item.caption}</span>
         {/if}
@@ -260,6 +316,14 @@
 {/if}
 
 <div class="composer-area">
+{#if activeSlash && slashKey !== dismissedSlash && !editing && !recording && !disabled}
+  {#key `${account}/${selectedChat}/${generation}`}
+    <SlashCommandMenu input={composerInput} token={activeSlash} {account} chat={selectedChat} {generation}
+      disabled={slashDisabled} onchoose={(selection) => { void chooseSlash(selection); }} onclose={() => { dismissedSlash = slashKey; }} />
+  {/key}
+{/if}
+<Soundboard open={soundboardOpen} {account} chat={selectedChat} {generation} disabled={disabled || !!editing || recording}
+  onsend={onsoundclip} onclose={() => { soundboardOpen = false; }} />
 {#if emojiToken && emojiMatches.length > 0}
   <div class="suggest" role="listbox" aria-label="Emoji suggestions">
     <span class="suggest-title">Emoji matching :{emojiToken.query}</span>
@@ -344,12 +408,17 @@
     bind:this={composerInput}
     value={draft}
     {onbeforeinput}
-    oninput={oninput}
+    oninput={(event) => { oninput(event); dismissedSlash = null; updateCaret(); }}
+    onkeyup={updateCaret}
+    onclick={updateCaret}
+    onselect={updateCaret}
     onkeydown={onkey}
     rows="1"
     placeholder={editing ? "Edit message" : pending.length > 0 ? "Add a caption (optional)" : "Type a message"}
   ></textarea>
   <div class="composer-tools">
+    <Button variant="icon" icon="volume" iconSize={20} active={soundboardOpen} title="Soundboard" aria-label="Soundboard"
+      onclick={() => { soundboardOpen = !soundboardOpen; }} />
     <Button
       variant="icon"
       icon="clock"
@@ -461,6 +530,7 @@
 {/if}
 
 <style>
+  .quality { width: 100%; padding: 3px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font-size: 11px; }
   .reply-preview {
     display: flex;
     align-items: center;

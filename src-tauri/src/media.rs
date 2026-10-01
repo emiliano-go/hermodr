@@ -40,6 +40,7 @@ pub(crate) async fn send_media(
     view_once: Option<bool>,
     mentions: Option<Vec<String>>,
     progress: Option<String>,
+    quality: Option<postal_core::MediaQuality>,
 ) -> Result<Option<String>, String> {
     let reply = match (reply_to_id, reply_to_sender, reply_to_text) {
         (Some(id), Some(sender), Some(text)) => Some((id, sender, text)),
@@ -50,6 +51,7 @@ pub(crate) async fn send_media(
         view_once: view_once.unwrap_or(false),
         mentions: mentions.unwrap_or_default(),
         progress,
+        quality,
         ..Default::default()
     };
     let service = state.service()?;

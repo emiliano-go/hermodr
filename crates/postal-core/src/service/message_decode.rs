@@ -335,6 +335,12 @@ pub(super) async fn stored_message(
         || message.keep_in_chat_message.is_set() || message.sender_key_distribution_message.is_set() {
         return None;
     }
+    if let Some(system) = super::structured_notices::scheduled_call_notice(outer) {
+        let text = if system.kind.as_deref() == Some("SCHEDULED_CALL_CREATED") {
+            system.params.first().cloned().unwrap_or_default()
+        } else { String::new() };
+        return Some(StoredMessage { header, text, system, local: LocalState { read: true, ..Default::default() }, ..Default::default() });
+    }
     let mut text = message.text_content().unwrap_or_default().to_string();
     if text.is_empty() && !decoded.view_once {
         text = message.get_caption().or_else(|| message.ptv_message.as_option().and_then(|video| video.caption.as_deref()))
