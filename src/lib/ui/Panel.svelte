@@ -115,10 +115,10 @@
     align-items: center;
     gap: 8px;
     margin-bottom: 10px;
-    padding: 0 10px;
+    padding: 7px 10px;
     height: 32px;
     background: var(--bg);
-    border-radius: 6px;
+    border-radius: var(--radius-lg);
     color: var(--muted);
   }
   .nav-search input {
@@ -143,7 +143,7 @@
     text-align: left;
     background: transparent;
     border: 0;
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     color: var(--muted);
     font: inherit;
     font-size: 14.5px;
@@ -282,7 +282,7 @@
   .content :global(.field) {
     background: var(--surface);
     border: 1px solid var(--line-strong);
-    border-radius: 6px;
+    border-radius: var(--radius);
     padding: 7px 10px;
     color: inherit;
     font: inherit;
@@ -329,7 +329,7 @@
     gap: 6px;
     background: var(--raised);
     border: 0;
-    border-radius: 6px;
+    border-radius: var(--radius);
     color: var(--text);
     font: inherit;
     font-size: 14px;

@@ -16,8 +16,16 @@
 </div>
 
 <style>
-  .downloads { display: flex; flex-direction: column; gap: .8rem; }
-  label { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
-  p { color: var(--muted); font-size: .85rem; margin: 0; }
+  .downloads { display: flex; flex-direction: column; }
+  label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .75rem;
+    padding: 1rem 0;
+    border-bottom: 1px solid var(--line);
+  }
+  label:last-of-type { border-bottom: 0; }
+  p { color: var(--muted); font-size: .85rem; margin: 0 0 .4rem; }
   input { accent-color: var(--accent); }
 </style>

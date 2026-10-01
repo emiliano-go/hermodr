@@ -783,6 +783,16 @@
             </div>
             <input class="switch" type="checkbox" bind:checked={draft.freeze_chat_list_on_hover} />
           </label>
+          <label class="setting">
+            <div>
+              <span class="setting-title">Show chat preview on hover</span>
+              <span class="setting-desc">
+                On: hovering a chat shows its recent messages in a popup.
+                Off: no popup.
+              </span>
+            </div>
+            <input class="switch" type="checkbox" bind:checked={draft.chat_preview} />
+          </label>
         {:else if section === "notifications"}
           <label class="setting">
             <div>

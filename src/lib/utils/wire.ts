@@ -521,6 +521,11 @@ notifications_enabled: boolean,
  */
 freeze_chat_list_on_hover: boolean,
 /**
+ * Whether hovering a chat shows its recent messages in a popup.
+ * Off disables the popup. Applies immediately.
+ */
+chat_preview: boolean,
+/**
  * Log the library's keepalive pings and transport frames, so a stalled
  * link is diagnosable. Applies the next time Postal starts.
  */

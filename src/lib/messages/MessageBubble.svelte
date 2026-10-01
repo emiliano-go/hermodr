@@ -96,7 +96,7 @@
     !message.preview_url &&
     !vm.showSender}
   class:mine={message.from_me}
-  class:first={true}
+  class:first={vm.first}
   class:inline-meta={vm.inlineMeta}
   class:has-reactions={!!vm.reactions}
   class:sticker-only={message.media_kind === "sticker" &&

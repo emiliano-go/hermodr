@@ -1114,6 +1114,7 @@
       }}
       archivedChats={chats.archivedChats}
       freezeOnHover={session.settings.freeze_chat_list_on_hover ?? false}
+      chatPreview={session.settings.chat_preview ?? true}
       onresize={startResize} />
 
     <section class="conversation">
@@ -2185,6 +2186,12 @@
     display: grid;
     grid-template-columns: 300px 1fr;
     overflow: hidden;
+  }
+  /* Fullscreen overlays (Panel, dialogs, viewer, preview sheet) are modal:
+     the conversation and the chat list behind them must not scroll. */
+  :global(body:has(.backdrop, .sheet-backdrop, .viewer, .lightbox) .messages),
+  :global(body:has(.backdrop, .sheet-backdrop, .viewer, .lightbox) .chats ul) {
+    overflow-y: hidden;
   }
   :global(.avatar) {
     grid-area: avatar;

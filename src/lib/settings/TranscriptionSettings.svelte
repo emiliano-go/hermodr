@@ -78,14 +78,26 @@
         </select>
       </label>
       {#if !plugin.enabled}
-        <label class="toggle"><input type="checkbox" bind:checked={trust} disabled={busy} /> I trust this native plugin and grant transcription of selected audio. Native plugins can access files and networks.</label>
+        <label class="setting">
+          <div>
+            <span class="setting-title">I trust this native plugin and grant transcription of selected audio</span>
+            <span class="setting-desc">Native plugins can access files and networks.</span>
+          </div>
+          <input class="switch" type="checkbox" bind:checked={trust} disabled={busy} />
+        </label>
         <button class="button" disabled={busy || !trust || !provider} onclick={() => perform(() => enable(true), true)}>Grant and enable</button>
       {:else}
         <button class="button" disabled={busy} onclick={() => perform(() => enable(false), true)}>Disable transcription plugin</button>
       {/if}
       {#if provider?.transmits_audio}
         <p>This provider sends voice-note audio off-device. API usage may incur charges.</p>
-        <label class="toggle"><input type="checkbox" checked={cloudConsent} disabled={busy} onchange={(event) => perform(() => consent(event.currentTarget.checked), true)} /> I consent to this provider receiving audio, including automatically transcribed notes.</label>
+        <label class="setting">
+          <div>
+            <span class="setting-title">I consent to this provider receiving audio</span>
+            <span class="setting-desc">Including automatically transcribed notes.</span>
+          </div>
+          <input class="switch" type="checkbox" checked={cloudConsent} disabled={busy} onchange={(event) => perform(() => consent(event.currentTarget.checked), true)} />
+        </label>
         {#if provider.requires_key}
           <p>API key {view.settings.plugin_id === draft.plugin_id && view.settings.provider === draft.provider && view.key_configured ? "configured" : "not configured"}. Keys stay in the operating-system credential store; entry opens a native prompt.</p>
           <button class="button" disabled={busy} onclick={() => perform(() => key(false), true)}>Configure API key</button>
@@ -110,8 +122,13 @@
     {:else}
       <button class="button" disabled={busy} onclick={() => perform(save, true)}>Save transcription settings</button>
     {/if}
-    <label class="toggle"><input type="checkbox" checked={autoTranscribe} disabled={busy} onchange={(event) => perform(() => onAutoTranscribe(event.currentTarget.checked))} /> Auto-transcribe downloaded voice notes</label>
-    <p>Off by default. Chat overrides take precedence. Automatic transcription never downloads audio and skips concealed spoilers.</p>
+    <label class="setting">
+      <div>
+        <span class="setting-title">Auto-transcribe downloaded voice notes</span>
+        <span class="setting-desc">Off by default. Chat overrides take precedence. Automatic transcription never downloads audio and skips concealed spoilers.</span>
+      </div>
+      <input class="switch" type="checkbox" checked={autoTranscribe} disabled={busy} onchange={(event) => perform(() => onAutoTranscribe(event.currentTarget.checked))} />
+    </label>
     {#each view.errors as failure}<p role="alert">{failure}</p>{/each}
   {/if}
   {#if busy}<p role="status">Working…</p>{/if}
@@ -121,10 +138,8 @@
 <style>
   section { padding: 1rem 0; }
   h3 { margin: 0 0 .8rem; }
-  label { display: flex; flex-direction: column; gap: .4rem; margin: .7rem 0; }
-  .toggle { flex-direction: row; align-items: start; }
+  label:not(.setting) { display: flex; flex-direction: column; gap: .4rem; margin: .7rem 0; }
   input, select { color: var(--text); background: var(--raised); border: 1px solid var(--line); border-radius: 4px; padding: .5rem; }
-  input[type="checkbox"] { margin-top: .2rem; }
   p { color: var(--muted); font-size: .85rem; overflow-wrap: anywhere; }
   button { margin: .3rem .5rem .3rem 0; }
   [role="alert"] { color: var(--danger, #b91c1c); }

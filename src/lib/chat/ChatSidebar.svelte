@@ -77,6 +77,7 @@
     archivedChats,
     onresize,
     freezeOnHover = true,
+    chatPreview = true,
     globalAutoDownload,
   }: {
     searchQuery: string;
@@ -124,6 +125,8 @@
     onresize: (event: MouseEvent) => void;
     /** Pause list reordering while the pointer is over the list. */
     freezeOnHover?: boolean;
+    /** Whether hovering a row shows the recent-messages popup. */
+    chatPreview?: boolean;
     globalAutoDownload: MediaAutoDownload;
     onmarkallread: () => void;
     onnewgroup: () => void;
@@ -163,6 +166,7 @@
   }
 
   function showPreview(owner: HTMLElement, chat: ChatSummary) {
+    if (!chatPreview) return;
     cancelPreviewFocus();
     holdPreview();
     if (chatMenu || restoringPreviewFocus) return;
@@ -288,6 +292,7 @@
   }
 
   $effect(() => { void activeAccount; closeChatMenu(false); hidePreview(); });
+  $effect(() => { if (!chatPreview) hidePreview(); });
   $effect(() => {
     const chat = preview?.chat.chat;
     if (chat && !visibleChats.some((row) => row.chat === chat)) hidePreview();
@@ -599,6 +604,10 @@
 {#if preview}
   <ChatPreview chat={preview.chat.chat} account={activeAccount} name={chatLabelOf(preview.chat)} x={preview.x} y={preview.y}
     onpointerenter={holdPreview} onpointerleave={leavePreview} onfocusin={holdPreview} onfocusout={leavePreview} ondismiss={dismissPreview}
+    onsettings={() => {
+      hidePreview();
+      onsettings("chats");
+    }}
     onopen={(jid) => {
       if (jid === selectedChat) return;
       hidePreview();

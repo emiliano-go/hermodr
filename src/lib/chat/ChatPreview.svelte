@@ -18,13 +18,14 @@
 
 <script lang="ts">
   import { invoke } from "$lib/utils/ipc";
+  import Icon from "$lib/ui/Icon.svelte";
   import type { MessagePage } from "$lib/utils/message-window";
   import { dayKey, dayLabel, formatTime } from "$lib/utils/message";
   import { displayName } from "$lib/utils/phone";
 
   let {
     chat, account, name, x, y,
-    onpointerenter, onpointerleave, onfocusin, onfocusout, ondismiss, onopen,
+    onpointerenter, onpointerleave, onfocusin, onfocusout, ondismiss, onopen, onsettings,
   }: {
     chat: string;
     account: string | null;
@@ -37,6 +38,8 @@
     onfocusout?: (event: FocusEvent) => void;
     ondismiss?: () => void;
     onopen?: (chat: string) => void;
+    /** Opens Settings at the section with the preview toggle. */
+    onsettings?: () => void;
   } = $props();
   let rows = $state<StoredMessage[] | null>(null);
   let error = $state<string | null>(null);
@@ -95,8 +98,19 @@
     style:left={`${Math.max(12, Math.min(x, viewportWidth - 412))}px`}
     style:top={`${Math.max(12, Math.min(y, viewportHeight - 532))}px`}>
     <header>
-      <strong>{name}</strong>
-      <span>Read-only preview</span>
+      <div class="titles">
+        <strong>{name}</strong>
+        <span>Read-only preview</span>
+      </div>
+      <button
+        type="button"
+        class="gear"
+        title="Chat preview settings"
+        aria-label="Chat preview settings"
+        onclick={(e) => {
+          e.stopPropagation();
+          onsettings?.();
+        }}><Icon name="settings" size={16} /></button>
     </header>
     <!-- svelte-ignore a11y_no_noninteractive_tabindex (Scrollable content needs keyboard focus.) -->
     <div class="preview-messages" role="region" aria-label="Recent stored messages" tabindex="0" bind:this={scroller}>
@@ -146,7 +160,21 @@
     cursor: pointer;
   }
   #chat-preview:focus-visible, .preview-messages:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
-  header { flex: none; padding: 14px 18px; border-bottom: 1px solid var(--line-strong); }
+  header { flex: none; display: flex; align-items: center; gap: 8px; padding: 14px 12px 14px 18px; border-bottom: 1px solid var(--line-strong); }
+  .titles { flex: 1; min-width: 0; }
+  .gear {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .gear:hover { background: var(--raised); color: var(--text); }
   header strong { display: block; overflow-wrap: anywhere; font-size: 1.08em; line-height: 1.3; }
   header span { display: block; margin-top: 3px; font-size: 0.85em; color: var(--muted); }
   .preview-messages {
