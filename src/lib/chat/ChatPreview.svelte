@@ -24,7 +24,7 @@
 
   let {
     chat, account, name, x, y,
-    onpointerenter, onpointerleave, onfocusin, onfocusout, ondismiss,
+    onpointerenter, onpointerleave, onfocusin, onfocusout, ondismiss, onopen,
   }: {
     chat: string;
     account: string | null;
@@ -36,6 +36,7 @@
     onfocusin?: (event: FocusEvent) => void;
     onfocusout?: (event: FocusEvent) => void;
     ondismiss?: () => void;
+    onopen?: (chat: string) => void;
   } = $props();
   let rows = $state<StoredMessage[] | null>(null);
   let error = $state<string | null>(null);
@@ -74,6 +75,7 @@
     role="dialog"
     aria-modal="false"
     aria-label={`${name} message preview`}
+    title="Open chat"
     tabindex="0"
     {onpointerenter}
     {onpointerleave}
@@ -84,8 +86,12 @@
         event.preventDefault();
         event.stopPropagation();
         ondismiss?.();
+      } else if (event.key === "Enter" && (event.target === event.currentTarget)) {
+        event.preventDefault();
+        onopen?.(chat);
       }
     }}
+    onclick={() => onopen?.(chat)}
     style:left={`${Math.max(12, Math.min(x, viewportWidth - 412))}px`}
     style:top={`${Math.max(12, Math.min(y, viewportHeight - 532))}px`}>
     <header>
@@ -137,6 +143,7 @@
     box-shadow: 0 12px 36px #0005;
     font-size: max(15px, var(--font-size, 15px));
     line-height: 1.45;
+    cursor: pointer;
   }
   #chat-preview:focus-visible, .preview-messages:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
   header { flex: none; padding: 14px 18px; border-bottom: 1px solid var(--line-strong); }

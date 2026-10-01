@@ -166,6 +166,7 @@
     cancelPreviewFocus();
     holdPreview();
     if (chatMenu || restoringPreviewFocus) return;
+    if (chat.chat === selectedChat) { hidePreview(); return; }
     previewOwner = owner;
     const box = previewOwner.getBoundingClientRect();
     preview = { chat, x: box.right + 8, y: box.top };
@@ -290,6 +291,9 @@
   $effect(() => {
     const chat = preview?.chat.chat;
     if (chat && !visibleChats.some((row) => row.chat === chat)) hidePreview();
+  });
+  $effect(() => {
+    if (preview && preview.chat.chat === selectedChat) hidePreview();
   });
 
   // Hover freeze: while the pointer is over the list, new arrivals update each
@@ -594,7 +598,13 @@
 
 {#if preview}
   <ChatPreview chat={preview.chat.chat} account={activeAccount} name={chatLabelOf(preview.chat)} x={preview.x} y={preview.y}
-    onpointerenter={holdPreview} onpointerleave={leavePreview} onfocusin={holdPreview} onfocusout={leavePreview} ondismiss={dismissPreview} />
+    onpointerenter={holdPreview} onpointerleave={leavePreview} onfocusin={holdPreview} onfocusout={leavePreview} ondismiss={dismissPreview}
+    onopen={(jid) => {
+      if (jid === selectedChat) return;
+      hidePreview();
+      releaseFreeze();
+      onopenchat(jid);
+    }} />
 {/if}
 
 {#if chatMenu}

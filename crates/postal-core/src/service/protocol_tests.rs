@@ -206,6 +206,133 @@ async fn receipt_events_advance_delivery_without_regression() {
     assert_eq!(receipts[0].recipient, "200@s.whatsapp.net");
 }
 
+fn member(jid: &str) -> Participant {
+    Participant {
+        jid: jid.into(),
+        name: jid.into(),
+        admin: false,
+        owner: false,
+        number: None,
+        username: None,
+        label: None,
+    }
+}
+
+fn group_receipt(chat: &str, sender: &str, id: &str, kind: ReceiptType) -> Event {
+    Event::Receipt(
+        Receipt::builder()
+            .source(MessageSource {
+                chat: chat.parse().unwrap(),
+                sender: sender.parse().unwrap(),
+                is_group: true,
+                ..Default::default()
+            })
+            .message_ids(vec![id.into()])
+            .timestamp("2026-09-27T00:00:00Z".parse().unwrap())
+            .r#type(kind)
+            .offline(false)
+            .build(),
+    )
+}
+
+#[tokio::test]
+async fn group_ticks_need_every_member() {
+    let (inbound, _) = inbound().await;
+    let chat = "1@g.us";
+    // Us plus two members: each tick needs both members' receipts.
+    inbound.group_cache.lock().unwrap().insert(
+        chat.into(),
+        GroupInfo {
+            participants: vec![
+                member("100@s.whatsapp.net"),
+                member("200@s.whatsapp.net"),
+                member("300@s.whatsapp.net"),
+            ],
+            ..Default::default()
+        },
+    );
+    inbound
+        .store
+        .insert_message(&StoredMessage {
+            header: MessageHeader {
+                chat: chat.into(),
+                id: "sent".into(),
+                sender: "100@s.whatsapp.net".into(),
+                from_me: true,
+                ..Default::default()
+            },
+            local: LocalState {
+                status: Some("pending".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let status = || async {
+        inbound
+            .store
+            .message(chat, "sent")
+            .await
+            .unwrap()
+            .local
+            .status
+            .clone()
+    };
+    inbound
+        .handle(&group_receipt(
+            chat,
+            "200:2@s.whatsapp.net",
+            "sent",
+            ReceiptType::Delivered,
+        ))
+        .await;
+    assert_eq!(
+        status().await.as_deref(),
+        Some("pending"),
+        "one member's delivery is not delivered for the group"
+    );
+    inbound
+        .handle(&group_receipt(
+            chat,
+            "200:2@s.whatsapp.net",
+            "sent",
+            ReceiptType::Read,
+        ))
+        .await;
+    assert_eq!(
+        status().await.as_deref(),
+        Some("pending"),
+        "one member's read is neither delivered nor read for the group"
+    );
+    inbound
+        .handle(&group_receipt(
+            chat,
+            "300:2@s.whatsapp.net",
+            "sent",
+            ReceiptType::Delivered,
+        ))
+        .await;
+    assert_eq!(
+        status().await.as_deref(),
+        Some("delivered"),
+        "the last member's delivery is the group's delivery (a read implies it)"
+    );
+    inbound
+        .handle(&group_receipt(
+            chat,
+            "300:2@s.whatsapp.net",
+            "sent",
+            ReceiptType::Read,
+        ))
+        .await;
+    assert_eq!(
+        status().await.as_deref(),
+        Some("read"),
+        "the last member's read turns the tick blue"
+    );
+}
+
 pub(super) fn history_chunk(chat: &str, id: &str, session: Option<&str>) -> LazyHistorySync {
     let kind = if session.is_some() { wa::history_sync::HistorySyncType::ON_DEMAND }
         else { wa::history_sync::HistorySyncType::RECENT };

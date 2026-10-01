@@ -36,7 +36,23 @@ impl Inbound {
         }
         if let Some(status) = status {
             let chat = receipt.source.chat.to_string();
+            let group = receipt.source.chat.is_group();
             for id in receipt.message_ids.iter() {
+                // Group ticks need every current member besides us: blue only
+                // when all read, double-grey only when all got it (WhatsApp
+                // parity: members who left are gone from the roster, so they
+                // stop blocking the ticks). Until then the receipt is kept
+                // per recipient above, but the row does not advance.
+                let status = if group {
+                    match self
+                        .group_effective_status(&chat, id.as_str(), status)
+                        .await
+                    {                        Some(status) => status,
+                        None => continue,
+                    }
+                } else {
+                    status
+                };
                 if let Some(true) =
                     store.set_delivery_state(&chat, id.as_str(), status).await.observed()
                 {
@@ -52,6 +68,50 @@ impl Inbound {
                 }
             }
         }
+    }
+
+    /// The delivery state a group receipt actually earns: `read` only when
+    /// every current roster member besides us has read (a played receipt
+    /// implies read), `delivered` only when every member got it (a read
+    /// implies delivery), otherwise nothing yet.
+    ///
+    /// Members who left are gone from the roster, so they stop blocking the
+    /// ticks. A roster this run never loaded (the chat was never opened)
+    /// falls back to the receipt's state, keeping the old first-receipt
+    /// promotion instead of sticking grey forever with no later receipt to
+    /// repair it.
+    async fn group_effective_status<'a>(
+        &self,
+        chat: &str,
+        id: &str,
+        status: &'a str,
+    ) -> Option<&'a str> {
+        if status == "sent" {
+            return Some(status);
+        }
+        let quorum = match self.group_cache.lock().unwrap().get(chat) {
+            Some(info) => info.participants.len().saturating_sub(1),
+            None => return Some(status),
+        };
+        if quorum == 0 {
+            return Some(status);
+        }
+        let receipts = match self.store.receipts(id).await {
+            Ok(receipts) => receipts,
+            Err(e) => {
+                log::warn!("could not count delivery receipts for {id}: {e}");
+                return Some(status);
+            }
+        };
+        if status == "read" && receipts.iter().filter(|r| r.read_at.is_some()).count() >= quorum {
+            return Some("read");
+        }
+        if (status == "read" || status == "delivered")
+            && receipts.iter().filter(|r| r.delivered_at.is_some()).count() >= quorum
+        {
+            return Some("delivered");
+        }
+        None
     }
 
     // The server accepted our stanza, so it is at least sent.

@@ -1152,6 +1152,7 @@
           onclearchat={() => (ui.chatConfirm = { kind: "clear", chat: selectedChat })}
           ondeletechat={() => (ui.chatConfirm = { kind: "delete", chat: selectedChat })} />
 
+        <div class="list-wrap">
         <MessageList
           messages={messages.ordered}
           isGroup={selectedChat.endsWith("@g.us")}
@@ -1289,6 +1290,7 @@
             Latest <Icon name="chevronDown" size={15} />
           </button>
         {/if}
+        </div>
 
         {@render syncStatus()}
 
@@ -2396,10 +2398,18 @@
     font-size: 15px;
     font-weight: 600;
   }
+  .list-wrap {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
   .jump {
     position: absolute;
-    bottom: 76px;
+    bottom: 12px;
     right: 20px;
+    z-index: 5;
     display: flex;
     align-items: center;
     gap: 4px;
