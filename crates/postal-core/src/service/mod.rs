@@ -37,6 +37,7 @@ use crate::{
 mod audio;
 mod connection;
 mod contacts;
+mod quick_switcher;
 mod diagnostics;
 mod storage;
 mod archive;

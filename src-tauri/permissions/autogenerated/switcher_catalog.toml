@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-switcher-catalog"
+description = "Enables the switcher_catalog command without any pre-configured scope."
+commands.allow = ["switcher_catalog"]
+
+[[permission]]
+identifier = "deny-switcher-catalog"
+description = "Denies the switcher_catalog command without any pre-configured scope."
+commands.deny = ["switcher_catalog"]

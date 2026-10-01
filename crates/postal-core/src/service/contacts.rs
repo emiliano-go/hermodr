@@ -235,7 +235,72 @@ pub(super) fn backfill_lid_names(session_path: &std::path::Path, store: &Message
     }
 }
 
+fn editable_contact(address: &str) -> Result<Jid> {
+    let jid: Jid = address.parse()?;
+    anyhow::ensure!((jid.is_pn() || jid.is_lid()) && jid.device == 0 && jid.agent == 0 && jid.integrator == 0
+        && !jid.user.is_empty() && jid.user.chars().all(|c| c.is_ascii_digit()), "Contact address must be a bare phone number or LID.");
+    Ok(jid)
+}
+
+fn mapped_contact_phone(target: &Jid, mapping: Option<(String, String)>) -> Result<Jid> {
+    if target.is_pn() { return Ok(target.clone()); }
+    let (lid, pn) = mapping.ok_or_else(|| anyhow::anyhow!("This contact's phone number is not known yet."))?;
+    anyhow::ensure!(lid == target.user.as_str(), "Contact mapping belongs to another address.");
+    let phone = editable_contact(&format!("{pn}@s.whatsapp.net"))?;
+    anyhow::ensure!(phone.is_pn(), "Contact mapping has no phone number.");
+    Ok(phone)
+}
+
+async fn contact_phone(client: &Client, store: &StoreWorker, address: &str) -> Result<Jid> {
+    let target = editable_contact(address)?;
+    if target.is_pn() { return Ok(target); }
+    if let Some(mapping) = store.lid_pn(&target.user).await? {
+        return mapped_contact_phone(&target, Some(mapping));
+    }
+    let mapping = client.get_lid_pn_entry(&target).await?
+        .map(|entry| (entry.lid.to_string(), entry.phone_number.to_string()));
+    let phone = mapped_contact_phone(&target, mapping)?;
+    store.set_lid_pn(&target.user, &phone.user).await?;
+    Ok(phone)
+}
+
+async fn commit_contact_change(
+    store: &StoreWorker, target: &Jid, name: Option<&str>, timestamp: i64,
+    authorize: impl FnOnce() -> bool, send: impl std::future::Future<Output = Result<()>>,
+) -> Result<bool> {
+    anyhow::ensure!(authorize(), "Account changed or disconnected before editing contact.");
+    send.await?;
+    store.set_contact_state(&target.to_string(), name, name.is_some(), timestamp).await
+}
+
 impl WhatsAppService {
+    pub async fn save_contact(&self, address: &str, full_name: &str, first_name: Option<&str>, save_on_primary_addressbook: bool,
+        authorize: impl FnOnce() -> bool) -> Result<()> {
+        let full_name = full_name.trim();
+        anyhow::ensure!(!full_name.is_empty(), "Contact name cannot be empty.");
+        anyhow::ensure!(self.is_connected(), "not connected yet");
+        let target = contact_phone(&self.client, &self.store, address).await?;
+        let timestamp = whatsapp_rust::wacore::time::now_millis();
+        let first_name = first_name.map(str::trim).filter(|name| !name.is_empty()).map(str::to_owned);
+        let changed = commit_contact_change(&self.store, &target, Some(full_name), timestamp, || authorize() && self.is_connected(), async {
+            self.client.chat_actions().save_contact(&target, Some(full_name.to_owned()), first_name, save_on_primary_addressbook)
+                .await.map_err(|error| anyhow::anyhow!(error.to_string()))
+        }).await?;
+        if changed { let _ = self.events.send(ServiceEvent::NamesUpdated { count: 1 }); }
+        Ok(())
+    }
+
+    pub async fn remove_contact(&self, address: &str, authorize: impl FnOnce() -> bool) -> Result<()> {
+        anyhow::ensure!(self.is_connected(), "not connected yet");
+        let target = contact_phone(&self.client, &self.store, address).await?;
+        let timestamp = whatsapp_rust::wacore::time::now_millis();
+        let changed = commit_contact_change(&self.store, &target, None, timestamp, || authorize() && self.is_connected(), async {
+            self.client.chat_actions().remove_contact(&target).await.map_err(|error| anyhow::anyhow!(error.to_string()))
+        }).await?;
+        if changed { let _ = self.events.send(ServiceEvent::NamesUpdated { count: 1 }); }
+        Ok(())
+    }
+
     /// Our own JID without a device suffix, or empty before pairing.
     pub fn own_jid(&self) -> String {
         self.client
@@ -633,3 +698,7 @@ mod contact_identity_tests {
         assert!(store.run(|store| store.contact_identity("99@lid")).await.unwrap().number.is_none());
     }
 }
+
+#[cfg(test)]
+#[path = "contact_actions_tests.rs"]
+mod contact_actions_tests;

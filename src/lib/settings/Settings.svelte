@@ -25,7 +25,7 @@
 </script>
 
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+  import { onDestroy, onMount, untrack } from "svelte";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { invoke } from "$lib/utils/ipc";
   import { base64Of as toBase64 } from "$lib/utils/files";
@@ -138,6 +138,7 @@
   /** Uploads a new picture, or removes it when `file` is null. */
   async function setPicture(file: File | null) {
     pictureBusy = true;
+    invalidateProfileFetch();
     profileError = null;
     try {
       const data = file ? await toBase64(file) : "";
@@ -269,35 +270,85 @@
   let nameDraft = $state("");
   let aboutDraft = $state("");
   let profileSaved = $state(false);
+  let profileLoading = $state(false);
+  let profileBusy = $state(false);
+  let profileSeenVersion = $state(-1);
+  let profileAccount: string | null = null;
+  let profileEpoch = 0;
+  let profileRequest = 0;
+  const profileDirty = $derived(!!profile && (nameDraft !== profile.name || aboutDraft !== (profile.about ?? "")));
+
+  function currentProfile(account: string, epoch: number) {
+    return account === session.activeAccount && epoch === profileEpoch;
+  }
+
+  function invalidateProfileFetch() {
+    ++profileRequest;
+    profileLoading = false;
+  }
+
+  onDestroy(() => { ++profileEpoch; ++profileRequest; });
 
   $effect(() => {
-    if ((section === "profile" || section === "whatsapp") && !profile && !profileError) {
-      invoke<Profile>("profile")
-        .then((p) => {
-          profile = p;
-          nameDraft = p.name;
-          aboutDraft = p.about ?? "";
-        })
-        .catch((e) => (profileError = String(e)));
+    const account = session.activeAccount, version = session.profileVersion;
+    if (account !== profileAccount) {
+      profileAccount = account;
+      ++profileEpoch;
+      invalidateProfileFetch();
+      profile = null;
+      profileBusy = profileSaved = false;
+      profileError = null;
+      nameDraft = aboutDraft = "";
+      profileSeenVersion = -1;
     }
+    if (!account || (section !== "profile" && section !== "whatsapp") || profileLoading
+      || profileBusy || pictureBusy || profileError || profileDirty || profileSeenVersion === version) return;
+    const epoch = profileEpoch;
+    const timer = setTimeout(() => {
+      const request = ++profileRequest;
+      profileLoading = true;
+      invoke<Profile>("profile").then((p) => {
+        if (!currentProfile(account, epoch) || request !== profileRequest || version !== session.profileVersion
+          || profileDirty || profileBusy || pictureBusy || profileError) return;
+        profile = p;
+        nameDraft = p.name;
+        aboutDraft = p.about ?? "";
+        profileSeenVersion = version;
+      }).catch((e) => {
+        if (currentProfile(account, epoch) && request === profileRequest) profileError = String(e);
+      }).finally(() => {
+        if (currentProfile(account, epoch) && request === profileRequest) profileLoading = false;
+      });
+    }, profile ? 200 : 0);
+    return () => clearTimeout(timer);
   });
 
   async function saveProfile() {
-    if (!profile) return;
+    if (!profile || profileBusy || !session.activeAccount) return;
+    const account = session.activeAccount, epoch = profileEpoch, cached = profile;
+    const name = nameDraft.trim(), about = aboutDraft;
+    invalidateProfileFetch();
+    profileBusy = true;
     profileError = null;
     try {
-      if (nameDraft.trim() && nameDraft !== profile.name) {
-        await invoke("set_push_name", { name: nameDraft.trim() });
-        profile.name = nameDraft.trim();
+      if (name && name !== cached.name) {
+        await invoke("set_push_name", { name });
+        if (!currentProfile(account, epoch)) return;
+        cached.name = name;
+        nameDraft = name;
       }
-      if (aboutDraft !== (profile.about ?? "")) {
-        await invoke("set_about", { text: aboutDraft });
-        profile.about = aboutDraft;
+      if (about !== (cached.about ?? "")) {
+        await invoke("set_about", { text: about });
+        if (!currentProfile(account, epoch)) return;
+        cached.about = about;
       }
+      if (!currentProfile(account, epoch)) return;
       profileSaved = true;
-      setTimeout(() => (profileSaved = false), 1500);
+      setTimeout(() => { if (currentProfile(account, epoch)) profileSaved = false; }, 1500);
     } catch (e) {
-      profileError = String(e);
+      if (currentProfile(account, epoch)) profileError = String(e);
+    } finally {
+      if (currentProfile(account, epoch)) profileBusy = false;
     }
   }
 
@@ -318,15 +369,22 @@
   ];
 
   async function setPrivacy(category: string, value: string) {
-    if (!profile) return;
-    const previous = profile.privacy[category];
-    profile.privacy[category] = value;
+    if (!profile || profileBusy || !session.activeAccount) return;
+    const account = session.activeAccount, epoch = profileEpoch, cached = profile;
+    const previous = cached.privacy[category];
+    invalidateProfileFetch();
+    profileBusy = true;
+    cached.privacy[category] = value;
     try {
       await invoke("set_privacy", { category, value });
-      onprivacy($state.snapshot(profile.privacy));
+      if (currentProfile(account, epoch)) onprivacy($state.snapshot(cached.privacy));
     } catch (e) {
-      profile.privacy[category] = previous;
-      profileError = String(e);
+      if (currentProfile(account, epoch)) {
+        cached.privacy[category] = previous;
+        profileError = String(e);
+      }
+    } finally {
+      if (currentProfile(account, epoch)) profileBusy = false;
     }
   }
 </script>
@@ -445,11 +503,11 @@
               <div class="profile-fields">
                 <label class="field-label">
                   Name
-                  <input class="field" maxlength="25" bind:value={nameDraft} />
+                  <input class="field" maxlength="25" bind:value={nameDraft} disabled={profileBusy} />
                 </label>
                 <label class="field-label">
                   About
-                  <textarea class="field" rows="3" maxlength="139" bind:value={aboutDraft}></textarea>
+                  <textarea class="field" rows="3" maxlength="139" bind:value={aboutDraft} disabled={profileBusy}></textarea>
                 </label>
                 {#if profile.username}
                   <div class="field-label">
@@ -465,8 +523,8 @@
             <div class="actions-row">
               <button
                 class="button primary"
-                disabled={nameDraft === profile.name && aboutDraft === (profile.about ?? "")}
-                onclick={saveProfile}>{profileSaved ? "Saved" : "Save profile"}</button>
+                disabled={profileBusy || pictureBusy || (nameDraft === profile.name && aboutDraft === (profile.about ?? ""))}
+                onclick={saveProfile}>{profileBusy ? "Saving…" : profileSaved ? "Saved" : "Save profile"}</button>
             </div>
           {:else if !profileError}
             <p class="muted">Loading your profile…</p>
@@ -503,6 +561,7 @@
                 <select
                   class="field"
                   {value}
+                  disabled={profileBusy}
                   onchange={(e) => setPrivacy(item.category, e.currentTarget.value)}>
                   {#each item.options as [option, label] (option)}
                     <option value={option}>{label}</option>

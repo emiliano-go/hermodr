@@ -21,6 +21,9 @@ mod settings;
 mod chats;
 mod messages;
 mod media;
+mod media_access;
+mod contact_actions;
+mod quick_switcher;
 mod uploads;
 mod plugins;
 mod media_actions;
@@ -129,6 +132,11 @@ macro_rules! postal_commands {
             desktop::open_path,
             media_actions::message_media_action,
             media::read_file,
+            media_access::authorize_media_assets,
+            contact_actions::save_contact,
+            contact_actions::remove_contact,
+            quick_switcher::switcher_catalog,
+            quick_switcher::switcher_messages,
             media::playable_audio,
             media::playable_video,
             groups::participants,
@@ -383,9 +391,7 @@ fn build_main_window(app: &tauri::AppHandle) -> tauri::Result<WebviewWindow> {
         .min_inner_size(480.0, 360.0)
         .decorations(!is_tiling())
         .enable_clipboard_access();
-    // WebView2 only delivers dropped files to the page's drop handler
-    // when Tauri's own drag and drop handler is off.
-    #[cfg(target_os = "windows")]
+    // Browser File objects stage bytes; native drops must not grant asset directories.
     let builder = builder.disable_drag_drop_handler();
     builder.build()
 }

@@ -159,6 +159,9 @@ pub(crate) async fn set_settings(app: AppHandle, state: State<'_, AppState>, set
     if !(50..=postal_core::store::MAX_MESSAGE_PAGE).contains(&settings.message_window_size) {
         return Err("The RAM window must contain 50–2,000 messages".into());
     }
+    if let Some(directory) = settings.media_dir.as_deref().filter(|directory| !directory.trim().is_empty()) {
+        crate::media_access::validate_directory(&app, std::path::Path::new(directory))?;
+    }
     let instance_changed = state.settings.lock().unwrap().android_instance != settings.android_instance;
     // A folder the app cannot write would only fail the next start.
     if settings.keep_history {

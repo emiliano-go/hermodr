@@ -334,6 +334,7 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       if (!deferRefresh(null)) queueRefreshChats();
       break;
     case "namesUpdated":
+      ++session.profileVersion;
       void favorites.refresh();
       // Address-book names arrived after the initial fetch, so the cached
       // display names are stale until both lists reload.

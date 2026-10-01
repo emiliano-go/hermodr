@@ -13,6 +13,7 @@ mod schema;
 mod marks;
 mod media;
 mod messages;
+mod quick_switcher;
 mod unavailable;
 use unavailable::VISIBLE_MESSAGE_SQL;
 pub mod scheduled;

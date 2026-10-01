@@ -63,6 +63,7 @@ export class SessionState {
   me = $state<string | null>(null);
   /** Bumped when we replace our picture, which keeps its file name. */
   meVersion = $state(0);
+  profileVersion = $state(0);
 
   /** WhatsApp privacy categories to values, for who can see us online. */
   privacy = $state<Record<string, string>>({});

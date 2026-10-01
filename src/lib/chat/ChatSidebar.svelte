@@ -70,6 +70,7 @@
     onmarkread,
     onmarkallread,
     onnewgroup,
+    onnewcontact = () => {},
     canCreateGroup = false,
     onblockcontact,
     markingAllRead = false,
@@ -126,6 +127,7 @@
     globalAutoDownload: MediaAutoDownload;
     onmarkallread: () => void;
     onnewgroup: () => void;
+    onnewcontact?: () => void;
     canCreateGroup?: boolean;
     onblockcontact: (jid: string) => Promise<void>;
     markingAllRead?: boolean;
@@ -352,6 +354,8 @@
       disabled={markingAllRead} onclick={onmarkallread} />
     <Button variant="icon" icon="users" iconSize={18} title="New group" aria-label="New group"
       disabled={!canCreateGroup} onclick={onnewgroup} />
+    <Button variant="icon" icon="user" iconSize={18} title="New contact" aria-label="New contact"
+      disabled={!canCreateGroup} onclick={onnewcontact} />
   </header>
   <label class="search">
     <Icon name="search" size={15} />

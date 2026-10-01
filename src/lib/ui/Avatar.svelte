@@ -1,6 +1,7 @@
 <!-- One profile picture with an initials fallback, wherever it is shown. -->
 <script lang="ts">
   import { convertFileSrc } from "@tauri-apps/api/core";
+  import { invoke } from "$lib/utils/ipc";
   import Icon from "$lib/ui/Icon.svelte";
   import { hue, initials } from "$lib/utils/avatar";
 
@@ -28,9 +29,16 @@
 
   const tint = $derived(hue(seed ?? label));
   const short = $derived(initials(label));
-  const url = $derived(
-    src ? convertFileSrc(src) + (version !== undefined ? `?v=${version}` : "") : null,
-  );
+  let authorized = $state<string | null>(null);
+  $effect(() => {
+    const path = src;
+    let current = true;
+    authorized = null;
+    if (path) void invoke<Record<string, string | null>>("authorize_media_assets", { paths: [path] })
+      .then((paths) => { if (current) authorized = paths[path] ?? null; }).catch(() => {});
+    return () => { current = false; };
+  });
+  const url = $derived(authorized ? convertFileSrc(authorized) + (version !== undefined ? `?v=${version}` : "") : null);
   const showIcon = $derived(iconFallback && !/\p{L}/u.test(label));
 </script>
 

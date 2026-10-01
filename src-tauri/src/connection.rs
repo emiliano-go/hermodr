@@ -83,6 +83,10 @@ pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &s
     // A change of cold storage moves the archive before it is opened.
     crate::account_store::migrate_history(app, &settings, account);
     let config = config_for(app, &settings, account);
+    if let Some(directory) = &config.media_dir {
+        let directory = crate::media_access::validate_directory(app, directory)?;
+        std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    }
 
     let base = account_base(app, account);
     remove_stale_sessions(&base, &current_sessions(&base));
@@ -95,7 +99,6 @@ pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &s
     *state.account_service.lock().unwrap() = Some((account.to_owned(), Arc::downgrade(&service)));
     *state.service.lock().unwrap() = Some(service.clone());
     spawn_main_events(app, &service, account, events);
-    widen_media_scope(app, &service);
 
     // The manager decides whether the companion is needed for this account.
     wake_once(app);
@@ -394,15 +397,6 @@ fn current_once_event(state: &AppState, account: &str, service: &Arc<WhatsAppSer
     event_owner_matches(active.as_deref(), account, slot, true)
 }
 
-/// The media folder may sit outside the app data directory, so the asset
-/// scope is widened to whatever was configured.
-fn widen_media_scope(app: &AppHandle, service: &WhatsAppService) {
-    if let Some(dir) = service.media_dir() {
-        let _ = std::fs::create_dir_all(&dir);
-        let _ = app.asset_protocol_scope().allow_directory(&dir, true);
-    }
-}
-
 /// Store changes the Android instance makes that the main UI must reload
 /// for. Its per-message traffic is catch-up replay the main link reports
 /// itself; forwarding it floods the shared channel and starves these sparse
@@ -509,7 +503,9 @@ fn spawn_instance_events(
 
 fn emit_service_event(app: &AppHandle, event: &ServiceEvent) {
     crate::plugins::publish(&app.state::<AppState>().plugins, event);
-    if let Err(error) = app.emit(SERVICE_EVENT, event) {
+    let mut rendered = event.clone();
+    if let ServiceEvent::Message { message, .. } = &mut rendered { crate::media_access::prepare_message(app, message); }
+    if let Err(error) = app.emit(SERVICE_EVENT, &rendered) {
         log::error!("could not emit service event to UI: {error}");
     }
 }

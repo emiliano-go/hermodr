@@ -120,6 +120,7 @@ impl Inbound {
             Event::ServerAck(ack) => self.on_server_ack(ack).await,
             Event::ContactUpdate(update) => self.on_contact_update(update).await,
             Event::ContactRemoved(removed) => self.on_contact_removed(removed).await,
+            Event::SelfPushNameUpdated(update) => self.on_self_push_name_updated(update).await,
             Event::OfflineSyncPreview(preview) => self.on_sync_preview(preview),
             Event::OfflineSyncCompleted(_) => self.on_sync_completed(),
             Event::OfflineSyncInterrupted(interrupted) => self.on_sync_interrupted(interrupted),
@@ -192,6 +193,15 @@ impl Inbound {
             .await.observed().unwrap_or(false) {
             let _ = self.events.send(ServiceEvent::NamesUpdated { count: 1 });
         }
+    }
+
+    async fn on_self_push_name_updated(&self, update: &wa_events::SelfPushNameUpdated) {
+        if let Some(client) = self.client_for_events.get() {
+            for jid in [client.pn(), client.lid()].into_iter().flatten() {
+                self.store.set_push_name(&jid.to_non_ad().to_string(), &update.new_name).await.logged();
+            }
+        }
+        let _ = self.events.send(ServiceEvent::NamesUpdated { count: 1 });
     }
 
     /// Progress for the initial catch-up, so the UI can show how much of the
@@ -1038,7 +1048,7 @@ mod contact_identity_tests {
     #[tokio::test]
     async fn alternate_push_name_is_not_promoted_to_a_saved_contact() {
         let store = StoreWorker::open(Path::new(":memory:")).await.unwrap();
-        let (events, _) = broadcast::channel(16);
+        let (events, mut notices) = broadcast::channel(16);
         let inbound = Inbound {
             store: store.clone(), events, connected: Arc::default(), client_for_events: Arc::default(),
             disk_retention: Arc::new(DiskRetentionManager::new(DiskRetention::unlimited())),
@@ -1061,5 +1071,9 @@ mod contact_identity_tests {
             .action(Box::new(wa::sync_action_value::ContactAction { full_name: Some(" ".into()), first_name: Some("Saved first name".into()), ..Default::default() })).build();
         inbound.on_contact_update(&update).await;
         assert_eq!(store.name_for("77@lid").await.unwrap().as_deref(), Some("Saved first name"));
+        while notices.try_recv().is_ok() {}
+        inbound.handle(&Event::SelfPushNameUpdated(wa_events::SelfPushNameUpdated::builder()
+            .from_server(true).old_name("Old own name".into()).new_name("New own name".into()).build())).await;
+        assert!(matches!(notices.recv().await.unwrap(), ServiceEvent::NamesUpdated { count: 1 }));
     }
 }

@@ -212,23 +212,11 @@ pub(crate) const READABLE_EXTENSIONS: &[&str] = &[
     "m4a", "aac", "wav",
 ];
 
-/// Reads a media file and returns it base64-encoded.
-///
-/// WebKitGTK's media pipeline cannot load the custom asset scheme, so audio and
-/// video have to arrive as bytes and be turned into a blob URL by the page. The
-/// extension allowlist keeps this from becoming a general file-read primitive,
-/// which matters because a pasted file can live anywhere on disk.
-#[tauri::command]
-pub(crate) fn read_file(path: String) -> Result<String, String> {
-    let extension = std::path::Path::new(&path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_ascii_lowercase())
-        .unwrap_or_default();
-    if !READABLE_EXTENSIONS.contains(&extension.as_str()) {
-        return Err("unsupported file type".into());
-    }
-    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+/// Reads an authorized media file for WebKitGTK's blob playback fallback.
+#[tauri::command(async)]
+pub(crate) fn read_file(app: tauri::AppHandle, state: State<'_, AppState>, path: String) -> Result<String, String> {
+    let target = crate::media_access::readable_file(&app, &state, &path)?;
+    let bytes = std::fs::read(target).map_err(|e| e.to_string())?;
     Ok(BASE64.encode(bytes))
 }
 

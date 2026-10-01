@@ -16,6 +16,8 @@
   import type { ChatRetention } from "$lib/utils/models";
   import ProfileCard from "$lib/contacts/ProfileCard.svelte";
   import ContactInfo from "$lib/contacts/ContactInfo.svelte";
+  import NewContact from "$lib/contacts/NewContact.svelte";
+  import QuickSwitcher from "$lib/chat/QuickSwitcher.svelte";
   import MessageInfo from "$lib/messages/MessageInfo.svelte";
   import { polyfillCountryFlagEmojis } from "country-flag-emoji-polyfill";
   import flagFont from "country-flag-emoji-polyfill/dist/TwemojiCountryFlags.woff2?url";
@@ -406,6 +408,9 @@
 
   /** The direct chat whose contact panel is open. */
   let contactInfoFor = $state<string | null>(null);
+  let newContact = $state(false);
+  let quickSwitcher = $state(false);
+  $effect(() => { session.activeAccount; newContact = quickSwitcher = false; });
 
   function openProfile(jid: string, name: string, event: MouseEvent, self = false) {
     event.stopPropagation();
@@ -821,6 +826,12 @@
     // Typing anywhere lands in the composer, so a chat can be answered without
     // clicking the field first.
     const onAnyKey = (event: KeyboardEvent) => {
+      if (!event.altKey && !event.shiftKey && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        if (session.activeAccount && session.started) quickSwitcher = !quickSwitcher;
+        return;
+      }
+      if (event.defaultPrevented || quickSwitcher) return;
       // Ctrl +/-/0 resize the whole interface, whether or not a chat is open.
       if (event.ctrlKey) {
         if (event.key === "=" || event.key === "+") {
@@ -1039,6 +1050,7 @@
       globalAutoDownload={session.settings.auto_download_types}
       onmarkallread={markAllRead}
       onnewgroup={() => (ui.newGroup = true)}
+      onnewcontact={() => (newContact = true)}
       canCreateGroup={!!session.activeAccount && session.connected}
       onblockcontact={blockContact}
       {markingAllRead}
@@ -1666,6 +1678,9 @@
   {@const jid = contactInfoFor}
   <ContactInfo
     {jid}
+    account={session.activeAccount}
+    connected={session.connected}
+    oncontactchange={() => { members.forgetUnresolvedNames(); void chats.refreshChats(); }}
     title={members.displayName(chats.chats.find((c) => c.chat === jid)?.display_name ?? null, jid)}
     picture={chats.pictureOf(jid)}
     aliases={members.aliasesFor(jid)}
@@ -1826,6 +1841,33 @@
         if (account === session.activeAccount && generation === messages.accountGeneration) ui.newGroup = false;
       }}
       onclose={() => (ui.newGroup = false)} />
+  {/key}
+{/if}
+
+{#if newContact && session.activeAccount}
+  {#key session.activeAccount}
+    <NewContact account={session.activeAccount} connected={session.connected} onclose={() => (newContact = false)} onsaved={(jid) => {
+        members.forgetUnresolvedNames();
+        void chats.refreshChats();
+        newContact = false;
+        contactInfoFor = jid;
+      }} />
+  {/key}
+{/if}
+
+{#if quickSwitcher && session.activeAccount}
+  {@const account = session.activeAccount}
+  {@const generation = messages.accountGeneration}
+  {#key account}
+    <QuickSwitcher {account} chats={chats.chats}
+      onload={() => invoke<SearchResult[]>("switcher_catalog", { accountId: account })}
+      onmessages={(query) => invoke<StoredMessage[]>("switcher_messages", { accountId: account, query, limit: 50 })}
+      onchoose={async (target) => {
+        if (account !== session.activeAccount || generation !== messages.accountGeneration) return;
+        quickSwitcher = false;
+        if (target.messageId) await jumpTo(target.chat, target.messageId);
+        else await openChat(target.chat, false, target.label);
+      }} onclose={() => (quickSwitcher = false)} />
   {/key}
 {/if}
 

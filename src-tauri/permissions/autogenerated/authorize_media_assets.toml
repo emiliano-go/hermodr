@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-authorize-media-assets"
+description = "Enables the authorize_media_assets command without any pre-configured scope."
+commands.allow = ["authorize_media_assets"]
+
+[[permission]]
+identifier = "deny-authorize-media-assets"
+description = "Denies the authorize_media_assets command without any pre-configured scope."
+commands.deny = ["authorize_media_assets"]

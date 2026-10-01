@@ -8,18 +8,26 @@
   import type { UserProfile } from "$lib/contacts/ProfileCard.svelte";
   import { phoneLabel } from "$lib/utils/phone";
   import { members } from "$lib/state/members.svelte";
+  import { bare } from "$lib/utils/message";
+  import ContactEditor from "./ContactEditor.svelte";
 
   let {
     jid,
     title,
     picture,
     aliases = [],
+    account,
+    connected,
+    oncontactchange,
     onclose,
   }: {
     jid: string;
     title: string;
     picture: string | null;
     aliases?: string[];
+    account: string | null;
+    connected: boolean;
+    oncontactchange: (jid: string) => void;
     onclose: () => void;
   } = $props();
 
@@ -27,14 +35,18 @@
   let failed = $state(false);
   let enlarged = $state(false);
   let section = $state<"overview">("overview");
+  let profileGeneration = 0;
   const nav = $derived([{ id: "overview" as const, label: "Overview", group: title }]);
 
   $effect(() => {
+    const id = account, target = jid, online = connected, generation = ++profileGeneration;
     profile = null;
     failed = false;
-    invoke<UserProfile>("user_profile", { jid })
-      .then((p) => (profile = p))
-      .catch(() => (failed = true));
+    if (!id || !online) return;
+    invoke<UserProfile>("user_profile", { jid: target })
+      .then((p) => { if (id === account && generation === profileGeneration) profile = p; })
+      .catch(() => { if (id === account && generation === profileGeneration) failed = true; });
+    return () => { ++profileGeneration; };
   });
 
   const shown = $derived(members.displayName(profile?.name ?? profile?.business ?? title, jid));
@@ -105,6 +117,10 @@
     <h3>Aliases</h3>
     <p class="about">{aliases.map((a) => `@${a}`).join("  ")}</p>
   {/if}
+
+  <h3>Saved contact</h3>
+  <ContactEditor {account} {connected} jid={bare(jid)} identity={members.identities[jid] ?? members.identities[bare(jid)] ?? null}
+    onsaved={oncontactchange} />
 </Panel>
 
 {#if enlarged && picture}

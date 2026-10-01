@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-switcher-messages"
+description = "Enables the switcher_messages command without any pre-configured scope."
+commands.allow = ["switcher_messages"]
+
+[[permission]]
+identifier = "deny-switcher-messages"
+description = "Denies the switcher_messages command without any pre-configured scope."
+commands.deny = ["switcher_messages"]

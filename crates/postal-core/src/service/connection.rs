@@ -297,6 +297,7 @@ const WATCHED_EVENTS: &[EventKind] = &[
     EventKind::ServerAck,
     EventKind::ContactUpdate,
     EventKind::ContactRemoved,
+    EventKind::SelfPushNameUpdated,
     EventKind::OfflineSyncPreview,
     EventKind::OfflineSyncCompleted,
     EventKind::OfflineSyncInterrupted,
