@@ -50,6 +50,7 @@
   import { messages } from "$lib/state/messages.svelte";
   import { notificationHistory } from "$lib/notifications/history-store";
   import BlockedContacts from "$lib/settings/BlockedContacts.svelte";
+  import AtAllMuteList from "$lib/settings/AtAllMuteList.svelte";
   import { session } from "$lib/state/session.svelte";
   import { limitValue, parseLimit } from "$lib/utils/retention";
   import type { NotifPermission } from "$lib/utils/notifications";
@@ -852,6 +853,25 @@
               Notifications are on here, but the system has not allowed them yet — see below.
             {/if}
           </p>
+          <label class="setting">
+            <div>
+              <span class="setting-title">Mute @all mentions in every chat</span>
+              <span class="setting-desc">
+                On: @all mentions stay silent everywhere; direct mentions still ping.
+                Off: each chat decides for itself — chats muting @all are listed below.
+              </span>
+            </div>
+            <input class="switch" type="checkbox" bind:checked={draft.mute_all_at_all} />
+          </label>
+          {#if !draft.mute_all_at_all}
+            <div class="setting stack">
+              <div>
+                <span class="setting-title">Chats muting @all</span>
+                <span class="setting-desc">Turn the mute off again for one chat.</span>
+              </div>
+              <AtAllMuteList />
+            </div>
+          {/if}
           <div class="setting">
             <div>
               <span class="setting-title">System permission</span>

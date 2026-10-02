@@ -4,8 +4,8 @@ use crate::AppState;
 
 /// Chat summaries, most recently active first.
 #[tauri::command(async)]
-pub(crate) async fn chats(state: State<'_, AppState>) -> Result<Vec<ChatSummary>, String> {
-    state.service()?.chats().await.map_err(|e| e.to_string())
+pub(crate) async fn chats(state: State<'_, AppState>, mute_all_at_all: Option<bool>) -> Result<Vec<ChatSummary>, String> {
+    state.service()?.chats_with(mute_all_at_all.unwrap_or(false)).await.map_err(|e| e.to_string())
 }
 
 #[derive(serde::Serialize)]

@@ -195,6 +195,12 @@ impl MessageStore {
     /// Messages that mention us, in one chat or all of them, newest first.
     /// Chats muting @all hide their @all-only mentions; direct mentions still show.
     pub fn pings(&self, chat: Option<&str>, limit: u32) -> Result<Vec<StoredMessage>> {
+        self.pings_with(chat, limit, false)
+    }
+
+    /// Pings where `mute_all_at_all` additionally hides every @all-only
+    /// mention, for the global "mute @all everywhere" setting.
+    pub fn pings_with(&self, chat: Option<&str>, limit: u32, mute_all_at_all: bool) -> Result<Vec<StoredMessage>> {
         let conn = self.conn.lock().unwrap();
         let chat = chat.map(|jid| names::canonical_chat(&conn, jid)).transpose()?;
         let chat = chat.as_deref();
@@ -204,10 +210,10 @@ impl MessageStore {
              LEFT JOIN names n ON n.jid = m.sender
              LEFT JOIN chat_settings cset ON cset.jid = m.chat
              WHERE m.mentioned = 1 AND m.from_me = 0 AND m.deleted = 0 AND (?1 IS NULL OR m.chat = ?1)
-               AND NOT (COALESCE(m.mentioned_all_only, 0) = 1 AND COALESCE(cset.mute_at_all, 0) = 1)
+               AND NOT (COALESCE(m.mentioned_all_only, 0) = 1 AND (COALESCE(cset.mute_at_all, 0) = 1 OR ?3 = 1))
              ORDER BY m.timestamp DESC, m.sort_order DESC, m.id DESC LIMIT ?2"
         ))?;
-        let rows = stmt.query_map(params![chat, limit], message_row)?;
+        let rows = stmt.query_map(params![chat, limit, mute_all_at_all as i32], message_row)?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
     }
 
@@ -378,16 +384,22 @@ impl MessageStore {
     /// Unread messages in `chat` that mention us, oldest first.
     /// @all-only mentions are hidden while the chat mutes them.
     pub fn unread_mentions(&self, chat: &str) -> Result<Vec<String>> {
+        self.unread_mentions_with(chat, false)
+    }
+
+    /// Unread mentions where `mute_all_at_all` additionally hides every
+    /// @all-only mention, for the global "mute @all everywhere" setting.
+    pub fn unread_mentions_with(&self, chat: &str, mute_all_at_all: bool) -> Result<Vec<String>> {
         let conn = self.conn.lock().unwrap();
         let chat = &*names::canonical_chat(&conn, chat)?;
         let mut stmt = conn.prepare(
             "SELECT m.id FROM messages m
              LEFT JOIN chat_settings cset ON cset.jid = m.chat
              WHERE m.chat = ?1 AND m.read = 0 AND m.from_me = 0 AND m.mentioned = 1 AND m.deleted = 0
-               AND NOT (COALESCE(m.mentioned_all_only, 0) = 1 AND COALESCE(cset.mute_at_all, 0) = 1)
+               AND NOT (COALESCE(m.mentioned_all_only, 0) = 1 AND (COALESCE(cset.mute_at_all, 0) = 1 OR ?2 = 1))
              ORDER BY m.timestamp ASC, m.sort_order ASC, m.id ASC",
         )?;
-        let rows = stmt.query_map(params![chat], |r| r.get::<_, String>(0))?;
+        let rows = stmt.query_map(params![chat, mute_all_at_all as i32], |r| r.get::<_, String>(0))?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
     }
 
@@ -463,6 +475,11 @@ impl StoreWorker {
         self.run(move |store| store.pings(chat.as_deref(), limit)).await
     }
 
+    pub(crate) async fn pings_with(&self, chat: Option<&str>, limit: u32, mute_all_at_all: bool) -> Result<Vec<StoredMessage>> {
+        let chat = chat.map(str::to_owned);
+        self.run(move |store| store.pings_with(chat.as_deref(), limit, mute_all_at_all)).await
+    }
+
     pub(crate) async fn search_messages(&self, chat: &str, query: &str, limit: u32) -> Result<Vec<StoredMessage>> {
         let chat = chat.to_owned();
         let query = query.to_owned();
@@ -530,6 +547,11 @@ impl StoreWorker {
     pub(crate) async fn unread_mentions(&self, chat: &str) -> Result<Vec<String>> {
         let chat = chat.to_owned();
         self.run(move |store| store.unread_mentions(&chat)).await
+    }
+
+    pub(crate) async fn unread_mentions_with(&self, chat: &str, mute_all_at_all: bool) -> Result<Vec<String>> {
+        let chat = chat.to_owned();
+        self.run(move |store| store.unread_mentions_with(&chat, mute_all_at_all)).await
     }
 
     pub(crate) async fn message(&self, chat: &str, id: &str) -> Result<StoredMessage> {

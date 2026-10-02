@@ -123,7 +123,7 @@ export class ChatsState {
   async refreshChats() {
     const seq = ++this.chatsSeq;
     try {
-      const next = await invoke<ChatSummary[]>("chats");
+      const next = await invoke<ChatSummary[]>("chats", { mute_all_at_all: session.settings.mute_all_at_all ?? false });
       // A slow response must not overwrite a newer list.
       if (seq !== this.chatsSeq) return;
       // Keep the objects of rows that did not change, so the sidebar

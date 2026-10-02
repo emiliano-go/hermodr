@@ -148,6 +148,11 @@ function muteAtAllOf(chat: string): boolean {
   return chats.chats.find((c) => c.chat === chat)?.mute_at_all ?? false;
 }
 
+/** Effective @all mute: the chat's own mute, or the global mute-everywhere setting. */
+function muteAtAllEffective(chat: string): boolean {
+  return muteAtAllOf(chat) || (session.settings.mute_all_at_all ?? false);
+}
+
 function notificationsOn(): boolean {
   return session.settings.notifications_enabled ?? true;
 }
@@ -185,7 +190,7 @@ function notifyForMessage(message: StoredMessage, fresh: boolean) {
         isOpenChat: isOpenChat(chat),
         sentAt: message.timestamp,
         mentionedAllOnly: message.mentioned_all_only,
-        muteAtAll: muteAtAllOf(chat),
+        muteAtAll: muteAtAllEffective(chat),
       },
     );
   if (!current()) return;

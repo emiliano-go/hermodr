@@ -276,7 +276,7 @@
       const seq = messages.nextSeq();
       // Mentions are captured before the chat is marked read, since that clears them.
       const [mentions, page, keywordMatches] = await Promise.all([
-        invoke<string[]>("unread_mentions", { chat }).catch(() => [] as string[]),
+        invoke<string[]>("unread_mentions", { chat, mute_all_at_all: session.settings.mute_all_at_all ?? false }).catch(() => [] as string[]),
         invoke<MessagePage>("message_page", { chat, limit: messages.messageLimit }),
         session.activeAccount && keywords.rules.highlight.length
           ? invoke<StoredMessage[]>("keyword_matches", { accountId: session.activeAccount, chat,
@@ -2124,9 +2124,11 @@
     bind:section={ui.settingsSection}
     onclose={() => (ui.showSettings = false)}
     onsave={async (next) => {
+      const atAllChanged = (session.settings.mute_all_at_all ?? false) !== (next.mute_all_at_all ?? false);
       await session.saveSettings(next);
       messages.resizeWindow(session.settings.message_window_size);
       await once.refresh();
+      if (atAllChanged) await chats.refreshChats();
     }}
     onflush={flushMedia}
     onclearhistory={clearHistory}

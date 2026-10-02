@@ -59,6 +59,11 @@ pub struct UiSettings {
     /// notify, whatever this is set to.
     #[serde(default = "default_true")]
     pub notifications_enabled: bool,
+    /// Mutes @all mentions in every chat. Direct mentions still ping.
+    /// Per-chat mutes keep working underneath; the muted-chats list hides
+    /// while this is on.
+    #[serde(default)]
+    pub mute_all_at_all: bool,
     /// Whether the chat list keeps its order while the pointer is over it.
     /// Previews still update in place; the new order applies once the pointer
     /// leaves or a chat is opened. Off reorders immediately.
@@ -99,6 +104,7 @@ impl Default for UiSettings {
             keep_archived: true,
             android_instance: false,
             notifications_enabled: true,
+            mute_all_at_all: false,
             freeze_chat_list_on_hover: false,
             chat_preview: true,
             verbose_whatsapp_logs: true,
@@ -282,6 +288,10 @@ mod tests {
         assert!(parse_settings("{}").unwrap().notifications_enabled);
         assert!(parse_settings(legacy).unwrap().notifications_enabled);
         assert!(!parse_settings(r#"{"notifications_enabled":false}"#).unwrap().notifications_enabled);
+        // Muting every @all defaults to off, including for older settings files.
+        assert!(!parse_settings("{}").unwrap().mute_all_at_all);
+        assert!(!parse_settings(legacy).unwrap().mute_all_at_all);
+        assert!(parse_settings(r#"{"mute_all_at_all":true}"#).unwrap().mute_all_at_all);
         // The hover freeze defaults to off, including for settings saved before it existed.
         assert!(!parse_settings("{}").unwrap().freeze_chat_list_on_hover);
         assert!(!parse_settings(legacy).unwrap().freeze_chat_list_on_hover);

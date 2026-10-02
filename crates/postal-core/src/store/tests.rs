@@ -1049,6 +1049,34 @@ fn muting_at_all_hides_only_at_all_mentions() {
 }
 
 #[test]
+fn global_mute_hides_every_at_all_mention() {
+    let s = store(DiskRetention::unlimited());
+    let mut all_only = msg("g@g.us", "1", 0, "@all hello");
+    all_only.local.mentioned = true;
+    all_only.local.mentioned_all_only = true;
+    s.insert_message(&all_only).unwrap();
+    let mut direct = msg("g@g.us", "2", 0, "@me hello");
+    direct.local.mentioned = true;
+    direct.local.mentioned_all_only = false;
+    s.insert_message(&direct).unwrap();
+    let mut other = msg("h@s", "3", 0, "@all hi");
+    other.local.mentioned = true;
+    other.local.mentioned_all_only = true;
+    s.insert_message(&other).unwrap();
+
+    // Without the global flag, per-chat state decides.
+    assert_eq!(s.chats_with(false).unwrap().iter().map(|c| c.mention_count).sum::<i64>(), 3);
+    assert_eq!(s.pings_with(None, 10, false).unwrap().len(), 3);
+    assert_eq!(s.unread_mentions_with("g@g.us", false).unwrap().len(), 2);
+
+    // With it, every @all-only mention hides but direct ones stay.
+    assert_eq!(s.chats_with(true).unwrap().iter().map(|c| c.mention_count).sum::<i64>(), 1);
+    assert_eq!(s.pings_with(None, 10, true).unwrap().len(), 1);
+    assert_eq!(s.unread_mentions_with("g@g.us", true).unwrap(), vec!["2".to_string()]);
+    assert!(s.unread_mentions_with("h@s", true).unwrap().is_empty());
+}
+
+#[test]
 fn reopen_heals_version_stamped_databases_missing_new_columns() {
     use rusqlite::Connection;
     let root = std::env::temp_dir().join(format!("postal-heal-{}-{}",

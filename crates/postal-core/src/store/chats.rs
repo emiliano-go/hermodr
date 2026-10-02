@@ -178,6 +178,13 @@ impl MessageStore {
     /// Deleted chats stay hidden until a new message arrives; cleared chats
     /// stay as empty rows so the conversation keeps its place in the list.
     pub fn chats(&self) -> Result<Vec<ChatSummary>> {
+        self.chats_with(false)
+    }
+
+    /// Chat summaries where `mute_all_at_all` additionally hides every
+    /// @all-only mention, for the global "mute @all everywhere" setting.
+    /// Direct mentions still count.
+    pub fn chats_with(&self, mute_all_at_all: bool) -> Result<Vec<ChatSummary>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare_cached(
             // The preview row is one index seek per chat; a window over every
@@ -197,7 +204,7 @@ impl MessageStore {
                           SUM(messages.read = 0 AND messages.from_me = 0 AND messages.deleted = 0 AND COALESCE(messages.system_kind, '') <> 'UNAVAILABLE_MESSAGE') AS unread_count,
                           SUM(messages.read = 0 AND messages.from_me = 0 AND messages.mentioned = 1 AND messages.deleted = 0 AND COALESCE(messages.system_kind, '') <> 'UNAVAILABLE_MESSAGE'
                               AND NOT (COALESCE(messages.mentioned_all_only, 0) = 1
-                                       AND COALESCE(cset.mute_at_all, 0) = 1)) AS mention_count
+                                       AND (COALESCE(cset.mute_at_all, 0) = 1 OR ? = 1))) AS mention_count
                    FROM messages LEFT JOIN chat_settings cset ON cset.jid = messages.chat
                    WHERE NOT (messages.deleted <> 0 AND messages.text = '' AND messages.media_kind IS NULL AND messages.system_kind IS NULL)
                    GROUP BY messages.chat) g ON g.chat = c.jid
@@ -218,7 +225,7 @@ impl MessageStore {
              ORDER BY pinned DESC, (SELECT timestamp FROM pin_state WHERE jid=c.jid AND pinned = 1) DESC, COALESCE(g.last_message_at, c.last_message_at) DESC, m.sort_order DESC, c.jid",
         )?;
         let summaries = stmt
-            .query_map([], |row| {
+            .query_map([mute_all_at_all as i32], |row| {
                 Ok(ChatSummary {
                     chat: row.get(0)?,
                     last_message_at: row.get(1)?,
@@ -513,6 +520,10 @@ impl StoreWorker {
 
     pub(crate) async fn chats(&self) -> Result<Vec<ChatSummary>> {
         self.run(move |store| store.chats()).await
+    }
+
+    pub(crate) async fn chats_with(&self, mute_all_at_all: bool) -> Result<Vec<ChatSummary>> {
+        self.run(move |store| store.chats_with(mute_all_at_all)).await
     }
 
     pub(crate) async fn clear_chat(&self, jid: &str) -> Result<usize> {

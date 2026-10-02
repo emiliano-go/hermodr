@@ -58,7 +58,7 @@ export async function openPings(chat: string | null) {
     && revision === keywords.revision && request === pingsRequest;
   try {
     const [pings, matches] = await Promise.all([
-      invoke<StoredMessage[]>("pings", { chat }),
+      invoke<StoredMessage[]>("pings", { chat, mute_all_at_all: session.settings.mute_all_at_all ?? false }),
       rules.highlight.length ? invoke<StoredMessage[]>("keyword_matches", { accountId: account, chat, unreadOnly: false, ...rules }) : Promise.resolve([]),
     ]);
     if (!current()) return;

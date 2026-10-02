@@ -582,6 +582,12 @@ android_instance: boolean,
  */
 notifications_enabled: boolean,
 /**
+ * Mutes @all mentions in every chat. Direct mentions still ping.
+ * Per-chat mutes keep working underneath; the muted-chats list hides
+ * while this is on.
+ */
+mute_all_at_all: boolean,
+/**
  * Whether the chat list keeps its order while the pointer is over it.
  * Previews still update in place; the new order applies once the pointer
  * leaves or a chat is opened. Off reorders immediately.

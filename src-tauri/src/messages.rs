@@ -196,8 +196,8 @@ pub(crate) async fn starred_messages(state: State<'_, AppState>) -> Result<Vec<S
 
 /// Messages that mention us, in one chat or (without `chat`) all of them.
 #[tauri::command(async)]
-pub(crate) async fn pings(state: State<'_, AppState>, chat: Option<String>) -> Result<Vec<StoredMessage>, String> {
-    state.service()?.pings(chat.as_deref()).await.map_err(|e| e.to_string())
+pub(crate) async fn pings(state: State<'_, AppState>, chat: Option<String>, mute_all_at_all: Option<bool>) -> Result<Vec<StoredMessage>, String> {
+    state.service()?.pings_with(chat.as_deref(), mute_all_at_all.unwrap_or(false)).await.map_err(|e| e.to_string())
 }
 
 /// Up to `limit` (default 50) messages in one chat whose text contains `query`.
@@ -281,9 +281,9 @@ pub(crate) fn backfill_history(state: State<'_, AppState>) -> Result<(), String>
 
 /// Unread messages that mention us, oldest first.
 #[tauri::command(async)]
-pub(crate) async fn unread_mentions(state: State<'_, AppState>, chat: String) -> Result<Vec<String>, String> {
+pub(crate) async fn unread_mentions(state: State<'_, AppState>, chat: String, mute_all_at_all: Option<bool>) -> Result<Vec<String>, String> {
     state
         .service()?
-        .unread_mentions(&chat)
+        .unread_mentions_with(&chat, mute_all_at_all.unwrap_or(false))
         .await.map_err(|e| e.to_string())
 }

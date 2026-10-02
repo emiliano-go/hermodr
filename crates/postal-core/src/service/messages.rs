@@ -502,6 +502,11 @@ impl WhatsAppService {
         self.store.pings(chat, 500).await
     }
 
+    /// Mentions with the global @all mute applied on top of per-chat mutes.
+    pub async fn pings_with(&self, chat: Option<&str>, mute_all_at_all: bool) -> Result<Vec<StoredMessage>> {
+        self.store.pings_with(chat, 500, mute_all_at_all).await
+    }
+
     /// Up to `limit` messages in a chat containing `query`, newest first.
     pub async fn search_messages(&self, chat: &str, query: &str, limit: u32) -> Result<Vec<StoredMessage>> {
         if query.trim().is_empty() {
@@ -545,6 +550,11 @@ impl WhatsAppService {
     /// Unread messages that mention us, oldest first.
     pub async fn unread_mentions(&self, chat: &str) -> Result<Vec<String>> {
         self.store.unread_mentions(chat).await
+    }
+
+    /// Unread mentions with the global @all mute applied on top of per-chat mutes.
+    pub async fn unread_mentions_with(&self, chat: &str, mute_all_at_all: bool) -> Result<Vec<String>> {
+        self.store.unread_mentions_with(chat, mute_all_at_all).await
     }
 
     /// Sends a text message quoting an earlier one.
@@ -719,5 +729,10 @@ impl WhatsAppService {
     /// Chat summaries, most recently active first.
     pub async fn chats(&self) -> Result<Vec<crate::store::ChatSummary>> {
         self.store.chats().await
+    }
+
+    /// Chat summaries with the global @all mute applied on top of per-chat mutes.
+    pub async fn chats_with(&self, mute_all_at_all: bool) -> Result<Vec<crate::store::ChatSummary>> {
+        self.store.chats_with(mute_all_at_all).await
     }
 }

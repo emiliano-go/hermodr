@@ -91,6 +91,7 @@ export const fixture = {
     "media_dir": null,
     "media_quality": "hd",
     "message_window_size": 150,
+    "mute_all_at_all": false,
     "notifications_enabled": true,
     "request_full_history": false,
     "retention": {
