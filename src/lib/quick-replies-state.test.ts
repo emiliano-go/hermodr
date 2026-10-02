@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { compileModule } from "svelte/compiler";
 import ts from "typescript";
+import { broadcastSendReason, isBroadcastList } from "./utils/broadcast.ts";
 import type { QuickRepliesState } from "./state/quick-replies.svelte";
 
 const source = readFileSync(new URL("./state/quick-replies.svelte.ts", import.meta.url), "utf8");
@@ -55,7 +56,10 @@ test("Enter inside a native picker cannot submit the enclosing message composer"
   const fn = tree.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === "submitComposer")!;
   const body = ts.transpileModule(fn.getText(tree), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   let modal = true, sent = 0, prevented = 0;
-  const submit = new Function("document", "onsend", `${body}\nreturn submitComposer;`)({ querySelector: () => modal ? {} : null }, () => ++sent);
+  const createSubmit = (disabled: boolean) => new Function("document", "onsend", "disabled", "selectedChat", "broadcastSendReason", "isBroadcastList", `${body}\nreturn submitComposer;`)(
+    { querySelector: () => modal ? {} : null }, () => ++sent, disabled, "synthetic@g.us", broadcastSendReason, isBroadcastList);
+  const submit = createSubmit(false);
   const event = { preventDefault: () => ++prevented }; submit(event); assert.equal(sent, 0);
   modal = false; submit(event); assert.equal(sent, 1); assert.equal(prevented, 2);
+  createSubmit(true)(event); assert.equal(sent, 1); assert.equal(prevented, 3);
 });

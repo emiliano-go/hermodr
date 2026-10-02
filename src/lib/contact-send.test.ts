@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
+import { broadcastSendReason, isBroadcastList } from "./utils/broadcast.ts";
 
 const source = readFileSync(new URL("../routes/+page.svelte", import.meta.url), "utf8").split('<script lang="ts">')[1].split("</script>")[0];
 const tree = ts.createSourceFile("page.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -15,6 +16,7 @@ function fixture() {
   const warnings: unknown[] = [], failures: unknown[] = [];
   let queued!: (signal: AbortSignal) => Promise<unknown>;
   const context = {
+    broadcastSendReason, isBroadcastList,
     session: { activeAccount: "alpha", connected: true },
     chats: { selectedChat: "chat", refreshChats: async () => {} },
     messages: { accountGeneration: 1, reloadMessages: async (_chat: string) => {} },

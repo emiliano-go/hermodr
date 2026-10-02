@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
+import { guardBroadcastSend } from "./utils/broadcast.ts";
 
 const source = readFileSync(new URL("./state/composer.svelte.ts", import.meta.url), "utf8");
 const tree = ts.createSourceFile("composer.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -26,7 +27,7 @@ function fixture() {
   const chats = { selectedChat: "room@g.us", refreshChats: async () => { refreshes++; } };
   const messages = { accountGeneration: 1, reloadMessages: async (chat: string) => { reloads.push(chat); await hooks.reload(); } };
   const members = { chatGroup: { can_send: true } };
-  const bindings = { session, chats, messages, members, ui: { fail: (error: unknown) => errors.push(String(error)) },
+  const bindings = { session, chats, messages, members, guardBroadcastSend, ui: { fail: (error: unknown) => errors.push(String(error)) },
     sendAttachment: async (file: File, args: Record<string, unknown>, signal: AbortSignal) => {
       uploads.push({ file, args, signal }); await hooks.upload(signal); sent++;
     } };
