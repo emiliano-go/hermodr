@@ -50,7 +50,7 @@
 </details>
 
 <style>
-  .archives { margin-top: 1rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+  .archives { margin-top: 1rem; padding-top: 1rem; }
   summary { display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; list-style: none; user-select: none; }
   summary::-webkit-details-marker { display: none; }
   .chev { display: grid; margin-left: auto; color: var(--muted); transition: transform calc(150ms * var(--motion-scale, 1)) var(--ease); }

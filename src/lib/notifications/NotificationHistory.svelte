@@ -59,7 +59,7 @@
 </section>
 
 <style>
-  .notification-history { min-width: 0; color: var(--text); }
+  .notification-history { min-width: 0; color: var(--text); padding-top: 1rem; }
   header { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
   h2 { margin: 0; font-size: 18px; }
   header p, .metadata, time { color: var(--muted); font-size: 12px; }

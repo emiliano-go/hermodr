@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import Avatar from "$lib/ui/Avatar.svelte";
-  import { inboxCategories, inboxChats } from "$lib/utils/inbox";
+  import { appliableLabels, inboxCategories, inboxChats } from "$lib/utils/inbox";
   import type { InboxAction, InboxFilters, InboxLabel } from "$lib/utils/inbox";
   import type { ChatSummary } from "$lib/utils/wire";
 
@@ -93,7 +93,10 @@
     <input class="search" type="search" aria-label="Search inbox chats" placeholder="Search chats" bind:value={filters.query} />
     <fieldset><legend>Match all selected filters</legend>
       {#each kinds as [kind, label]}
-        <label><input type="checkbox" bind:checked={filters[kind]} disabled={kind === "labelled" && labels === null} /> {label}</label>
+        <label class="pill" class:on={filters[kind]}>
+          <input type="checkbox" bind:checked={filters[kind]} disabled={kind === "labelled" && labels === null} />
+          <span>{label}</span>
+        </label>
       {/each}
     </fieldset>
     <label class="choice">Label <select bind:value={filters.label} disabled={labels === null}>
@@ -144,7 +147,7 @@
             <select aria-label={`Apply label to ${name}`} disabled={disabled || labels === null || !labelsWritable || labelsLoading}
               value="" onchange={(event) => { const label = event.currentTarget.value; event.currentTarget.value = ""; if (label) void act(chat, { kind: "label", label, applied: true }); }}>
               <option value="">Apply label</option>
-              {#each (labels ?? []).filter((label) => !assigned[chat.chat]?.includes(label.id)) as label (label.id)}<option value={label.id}>{label.name}</option>{/each}
+              {#each appliableLabels(labels ?? [], assigned[chat.chat]) as label (label.id)}<option value={label.id}>{label.name}</option>{/each}
             </select>
             {#if busy[chat.chat]}<span role="status">Updating…</span>{/if}
           </div>
@@ -165,10 +168,18 @@
   .filters { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 18px 0 12px; }
   .search { flex: 1 1 100%; min-width: 0; }
   input, select { padding: 7px 9px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); color: inherit; font: inherit; }
-  input[type="checkbox"] { accent-color: var(--accent); }
-  fieldset { display: flex; flex-wrap: wrap; gap: 12px; margin: 0; padding: 0; border: 0; }
+  fieldset { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; border: 0; }
   legend { margin-bottom: 6px; color: var(--muted); font-size: 12px; }
   fieldset label, .choice { display: flex; align-items: center; gap: 5px; font-size: 13px; }
+  .filters > .choice:first-of-type { margin-left: auto; }
+  .choice select { border: 0; border-radius: 999px; background: var(--surface); color: var(--muted); padding: 5px 12px; font-size: 13px; }
+  .choice select:hover { background: var(--raised); }
+  .pill { position: relative; padding: 5px 12px; border-radius: 999px; background: var(--surface); color: var(--muted); cursor: pointer; }
+  .pill:hover { background: var(--raised); }
+  .pill.on { background: var(--accent-soft); color: var(--accent); }
+  .pill input { position: absolute; inset: 0; margin: 0; padding: 0; opacity: 0; cursor: pointer; }
+  .pill:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .pill:has(input:disabled) { opacity: 0.55; cursor: default; }
   button { padding: 6px 9px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
   button:hover:not(:disabled) { background: var(--raised-2); }
   button:disabled, select:disabled { opacity: 0.55; cursor: default; }

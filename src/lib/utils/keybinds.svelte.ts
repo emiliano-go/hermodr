@@ -6,7 +6,7 @@
  * and `Ctrl+ArrowUp` never collide.
  */
 
-export type Action = "undoDraft" | "redoDraft" | "cancelReply" | "historyPrev" | "historyNext" | "editLast" | "jumpUnread";
+export type Action = "undoDraft" | "redoDraft" | "cancelReply" | "historyPrev" | "historyNext" | "editLast" | "jumpUnread" | "searchChat";
 
 export type Binding = {
   key: string;
@@ -24,6 +24,7 @@ export const ACTIONS: { id: Action; label: string; description: string }[] = [
   { id: "historyNext", label: "Next sent message", description: "Walks forward through recalled messages." },
   { id: "editLast", label: "Edit last message", description: "Loads your last sent message into the composer for editing." },
   { id: "jumpUnread", label: "Jump to first unread", description: "Scrolls the open chat to its unread divider." },
+  { id: "searchChat", label: "Search in chat", description: "Opens or closes the message search for the open chat." },
 ];
 
 const DEFAULTS: Record<Action, string> = {
@@ -34,6 +35,7 @@ const DEFAULTS: Record<Action, string> = {
   historyNext: "ArrowDown",
   editLast: "Ctrl+ArrowUp",
   jumpUnread: "Alt+ArrowUp",
+  searchChat: "Ctrl+f",
 };
 
 const KEY = "postal.keybinds";

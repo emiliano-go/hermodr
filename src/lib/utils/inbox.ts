@@ -14,6 +14,13 @@ export function inboxCategories(chat: ChatSummary, labels: readonly string[], no
     labelled: labels.length > 0, muted: isChatMuted(chat.muted_until, nowSec), archived: chat.archived };
 }
 
+/** Labels the inbox offers to apply: skips already-assigned ones and the
+ *  "groups" label, which would collide with the built-in Groups filter. */
+export function appliableLabels(labels: readonly InboxLabel[], assigned: readonly string[] | undefined): InboxLabel[] {
+  const done = new Set(assigned ?? []);
+  return labels.filter((label) => !done.has(label.id) && label.name.trim().toLocaleLowerCase() !== "groups");
+}
+
 export function inboxChats(chats: ChatSummary[], filters: InboxFilters, labelsByChat: Readonly<Record<string, readonly string[]>>,
   labelOf: (chat: ChatSummary) => string, nowSec = Math.floor(Date.now() / 1000)): ChatSummary[] {
   const query = filters.query.trim().toLocaleLowerCase();

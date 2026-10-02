@@ -53,17 +53,26 @@
 
   // Position after paint, then focus. Doing either during the opening click
   // can race the engine's own focus/context-menu handling.
+  function clamp() {
+    const rect = menu?.getBoundingClientRect();
+    if (!rect) return;
+    pos = {
+      left: Math.max(8, Math.min(x, window.innerWidth - rect.width - 8)),
+      top: Math.max(8, Math.min(y, window.innerHeight - rect.height - 8)),
+    };
+  }
+
   onMount(() => {
     requestAnimationFrame(() => {
-      const rect = menu?.getBoundingClientRect();
-      if (rect) {
-        pos = {
-          left: Math.max(8, Math.min(x, window.innerWidth - rect.width - 8)),
-          top: Math.max(8, Math.min(y, window.innerHeight - rect.height - 8)),
-        };
-      }
+      clamp();
       menu?.querySelector("button")?.focus();
     });
+
+    // Items can grow after mount (late reactions metadata, message updates
+    // adding entries), so re-clamp on size changes instead of spilling
+    // off the bottom of the viewport.
+    const sizing = new ResizeObserver(() => clamp());
+    if (menu) sizing.observe(menu);
 
     // Outside dismissal runs in the capture phase so the second right-click is
     // consumed before it reaches the message behind the menu.
@@ -91,6 +100,7 @@
     window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("resize", onResize);
     return () => {
+      sizing.disconnect();
       window.removeEventListener("pointerdown", onPointerDown, true);
       window.removeEventListener("contextmenu", onContextMenu, true);
       window.removeEventListener("keydown", onKeyDown, true);

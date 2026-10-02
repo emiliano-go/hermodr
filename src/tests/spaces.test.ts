@@ -50,13 +50,12 @@ function uiFixture(name: string) {
     openedAccount: "a", openedGeneration: 1, openedSpace: "root", closed: false, request: 0, revision: 0, alive: true,
     snapshot: { spaces: [root, { ...root, id: "child", parent_id: "root" }], items }, items, existing: [], catalog,
     selected: [], query: "", searchQuery: "", searchChat: "", filters: emptyInboxFilters(),
-    draft: null, moving: null, confirmation: null, metadata: null, collapsed: [],
+    draft: null, moving: null, confirmation: null, collapsed: [], navCollapsed: false, iconPopup: null, emojiQuery: "", emojis: [],
     busy: false, loading: false, working: false, failure: "",
     dialog: { close: () => { closes++; } }, onclose: () => { closes++; },
     onaction: async (action: unknown) => { actions.push(action); },
     onopen: async (target: SpaceTarget) => { opened.push(target); },
     onadd: async (value: SpaceTarget[]) => { additions.push(value); },
-    onexport: async () => '{"version":1}', onimport: async (value: string) => { actions.push({ json: value }); },
     structuredClone, targetKey, targetTitle, directItems, movedIds, descendants, emptyInboxFilters,
     crypto: { randomUUID: () => "local-uuid" },
   };
@@ -99,7 +98,7 @@ test("tree and item ordering preserves input, nesting, descendants and full reor
   assert.equal(original[0].id, "item-9");
 });
 
-test("tree callbacks use metadata actions, exclude cyclic parents and retain export text", async () => {
+test("tree callbacks exclude cyclic parents and retain failed drafts", async () => {
   const f = uiFixture("SpacesTree");
   f.c.create("root"); f.c.draft.name = "  Created  "; f.c.draft.icon = "◇"; f.c.draft.useColor = true;
   f.c.save(); await tick();
@@ -115,8 +114,6 @@ test("tree callbacks use metadata actions, exclude cyclic parents and retain exp
   assert.deepEqual(structuredClone(f.actions[3]), { kind: "reorder", parent_id: null, ids: ["peer", "root"] });
   f.c.confirmation = root; f.c.remove(); await tick();
   assert.deepEqual(structuredClone(f.actions[4]), { kind: "delete", id: "root" });
-  f.c.exportMetadata(); await tick();
-  assert.equal(f.c.metadata.json, '{"version":1}');
   assert.ok(f.actions.every((action) => ["create", "rename", "reparent", "reorder", "delete"].includes(action.kind)));
   f.c.cancel(); f.c.create(); f.c.draft.name = "Retained draft";
   f.c.onaction = async () => { throw new Error("Local write failed"); }; f.c.save(); await tick();
@@ -199,9 +196,9 @@ test("real SSR renders nested navigation, ten picker kinds and authoritative una
     const load = async (name: string) => (await server.ssrLoadModule(fileURLToPath(new URL(`../lib/spaces/${name}.svelte`, import.meta.url)))).default;
     const tree = render(await load("SpacesTree"), { props: { account: "a", generation: 1,
       snapshot: { spaces: [root, { ...root, id: "child", parent_id: "root", name: "Child" }], items }, selected: { kind: "unsorted" },
-      onselect: () => {}, onaction: async () => { throw new Error("SSR must not mutate"); }, onexport: async () => "", onimport: async () => {} } }).body;
+      onselect: () => {}, onaction: async () => { throw new Error("SSR must not mutate"); } } }).body;
     assert.ok(tree.includes('aria-label="Spaces"') && tree.includes('aria-expanded="true"') && tree.includes("Child"));
-    assert.ok(/aria-pressed="true"[^>]*>Unsorted/.test(tree) && tree.includes("Export metadata") && tree.includes("Import metadata"));
+    assert.ok(/<button[^>]*aria-selected="true"[^>]*>[\s\S]*?Unsorted/.test(tree) && !tree.includes("Export metadata") && !tree.includes("Import metadata"));
     const body = render(await load("SpaceItems"), { props: { account: "a", generation: 1, space: root, items, catalog: [],
       resolution: { chats: ["actual@lid"], items: items.map((item) => ({ item_id: item.id, chats: [], unavailable: item.id === "item-7" ? "Missing local message" : null })) },
       onopen: () => { throw new Error("SSR must not open"); }, onaction: async () => { throw new Error("SSR must not mutate"); }, onadd: () => {} } }).body;

@@ -1158,6 +1158,19 @@
           return;
         }
       }
+      // Toggle the in-chat search, wherever focus is.
+      if (chats.selectedChat && matches(event, keybinds.searchChat)) {
+        event.preventDefault();
+        const selected = chats.selectedChat;
+        ui.finder = ui.finder?.mode === "search" && ui.finder.chat === selected ? null : {
+          mode: "search",
+          chat: selected,
+          items: [],
+          reach: messages.messages.at(-1)?.timestamp ?? null,
+          more: !messages.olderExhausted,
+        };
+        return;
+      }
       // Jump to the unread divider, wherever focus is.
       if (chats.selectedChat && messages.firstUnreadId && matches(event, keybinds.jumpUnread)) {
         event.preventDefault();
@@ -1394,7 +1407,7 @@
       {#snippet spacesContent()}
         <SpacesTree account={session.activeAccount} generation={messages.accountGeneration} snapshot={spaces.snapshot} selected={spaces.selected}
           loading={spaces.loading} busy={spaces.busy} error={spaces.error} onselect={(selection: SpaceSelection) => void spaces.select(selection)}
-          onaction={(action) => spaces.mutate(action)} onexport={() => spaces.exportMetadata()} onimport={(json) => spaces.importMetadata(json)} />
+          onaction={(action) => spaces.mutate(action)} />
         {#if selectedSpace}<SpaceItems account={session.activeAccount} generation={messages.accountGeneration} space={selectedSpace}
           items={spaces.snapshot.items} resolution={spaces.resolution} catalog={spaceCandidates} loading={spaces.loading} busy={spaces.busy} error={spaces.error}
           onaction={(action) => spaces.mutate(action)} onopen={openSpaceTarget}
@@ -2408,6 +2421,9 @@
     }}
     me={session.me}
     onopencontact={async (jid) => { await openChat(jid); ui.showSettings = false; }}
+    onspaceexport={() => spaces.exportMetadata()}
+    onspaceimport={(json) => spaces.importMetadata(json)}
+    spacesReady={spaces.loaded && spaces.account === session.activeAccount}
     meAvatar={session.me ? (chats.avatars[session.me] ?? null) : null}
     accountAvatars={chats.accountAvatars}
     bind:section={ui.settingsSection}

@@ -206,7 +206,7 @@ fn validate_snapshot(snapshot: &SpaceSnapshot) -> Result<()> {
         identifier(&space.id)?;
         text(&space.name, 256, false)?;
         anyhow::ensure!(space.name == space.name.trim() && (0..=9_007_199_254_740_991).contains(&space.created_at), "Invalid Space name or creation time.");
-        if let Some(icon) = &space.icon { identifier(icon)?; }
+        if let Some(icon) = &space.icon { text(icon, 128, false)?; }
         if let Some(color) = &space.color {
             anyhow::ensure!(matches!(color.len(), 7 | 9) && color.starts_with('#')
                 && color[1..].bytes().all(|b| b.is_ascii_hexdigit()), "Invalid Space color.");

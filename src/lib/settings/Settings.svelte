@@ -13,6 +13,7 @@
     | "whatsapp"
     | "privacy"
     | "chats"
+    | "spaces"
     | "notifications"
     | "device"
     | "media"
@@ -97,6 +98,9 @@
     onunblockcontact,
     onnotificationjump,
     onopencontact,
+    onspaceexport,
+    onspaceimport,
+    spacesReady = false,
   }: {
     settings: UiSettings;
     accounts: Account[];
@@ -120,6 +124,10 @@
     onunblockcontact: (account: string, jid: string) => Promise<void>;
     onnotificationjump?: (account: string, chat: string, id: string) => Promise<void>;
     onopencontact?: (jid: string) => Promise<void>;
+    /** Spaces metadata backup; absent when Spaces are unavailable (e.g. test harnesses). */
+    onspaceexport?: () => Promise<string>;
+    onspaceimport?: (json: string) => Promise<void>;
+    spacesReady?: boolean;
   } = $props();
 
   let picker: HTMLInputElement | undefined = $state();
@@ -131,6 +139,29 @@
   /** The keybind action waiting for the user to press a combination. */
   let capturing: Action | null = $state(null);
   const keyConflicts = $derived(conflicting());
+  /** Spaces metadata backup state. */
+  let spaceJson = $state("");
+  let spaceImport = $state("");
+  let spaceBusy = $state(false);
+  let spaceError = $state("");
+
+  async function exportSpaces() {
+    if (!onspaceexport || spaceBusy) return;
+    spaceBusy = true;
+    spaceError = "";
+    try { spaceJson = await onspaceexport(); }
+    catch (cause) { spaceError = String(cause); }
+    finally { spaceBusy = false; }
+  }
+
+  async function importSpaces() {
+    if (!onspaceimport || spaceBusy || !spaceImport.trim()) return;
+    spaceBusy = true;
+    spaceError = "";
+    try { await onspaceimport(spaceImport); spaceImport = ""; }
+    catch (cause) { spaceError = String(cause); }
+    finally { spaceBusy = false; }
+  }
 
   // While capturing, the next non-modifier key becomes the binding.
   $effect(() => {
@@ -178,6 +209,7 @@
     ...(me ? [{ id: "whatsapp" as Section, label: "WhatsApp privacy", group: "User settings" }] : []),
     { id: "privacy", label: "Storage & history", group: "Data & device" },
     { id: "chats", label: "Chats", group: "Messaging" },
+    { id: "spaces", label: "Spaces", group: "Messaging" },
     { id: "notifications", label: "Notifications", group: "Messaging" },
     { id: "device", label: "Device", group: "Data & device" },
     { id: "media", label: "Media", group: "Messaging" },
@@ -465,6 +497,9 @@
       </p>
     {:else if section === "chats"}
       <h2>Chats</h2>
+    {:else if section === "spaces"}
+      <h2>Spaces</h2>
+      <p class="lede">Local views on this device. Back up their definitions below.</p>
     {:else if section === "notifications"}
       <h2>Notifications</h2>
       <p class="lede">Desktop notifications for new direct messages and group messages.</p>
@@ -828,6 +863,40 @@
             </div>
             <input class="switch" type="checkbox" bind:checked={draft.chat_preview} />
           </label>
+        {:else if section === "spaces"}
+          <div class="setting">
+            <div>
+              <span class="setting-title">Export metadata</span>
+              <span class="setting-desc">
+                Copy this device's local Space definitions and references as JSON.
+                WhatsApp data stays unchanged.
+              </span>
+            </div>
+            <button class="button" disabled={!spacesReady || spaceBusy} onclick={exportSpaces}>
+              {spaceBusy ? "Working…" : "Export"}
+            </button>
+          </div>
+          {#if spaceJson}
+            <label class="setting stack">
+              <div><span class="setting-title">Exported metadata</span></div>
+              <textarea class="field" rows="8" readonly value={spaceJson}></textarea>
+            </label>
+          {/if}
+          <div class="setting stack">
+            <div>
+              <span class="setting-title">Import metadata</span>
+              <span class="setting-desc">
+                Adds local Space definitions and references. WhatsApp data stays unchanged.
+              </span>
+            </div>
+            <textarea class="field" rows="8" placeholder="Paste Space metadata JSON" bind:value={spaceImport} disabled={spaceBusy}></textarea>
+            <div class="actions-row">
+              <button class="button" disabled={!spacesReady || spaceBusy || !spaceImport.trim()} onclick={importSpaces}>
+                {spaceBusy ? "Importing…" : "Import"}
+              </button>
+            </div>
+          </div>
+          {#if spaceError}<p class="error-text" role="alert">{spaceError}</p>{/if}
         {:else if section === "notifications"}
           <label class="setting">
             <div>
@@ -1007,13 +1076,11 @@
             </div>
           {/if}
         {:else if section === "media"}
-          <div class="setting stack">
-            <h3>Stickers</h3>
-            <StickerSync account={active} generation={messages.accountGeneration} connected={session.connected} version={stickerEvents.version} showPacks
-              onload={(owner) => invoke<StickerLibrary>("sticker_library", { accountId: owner.account })}
-              onresync={(owner) => invoke<StickerResyncReport>("resync_stickers", { accountId: owner.account })}
-              onsynced={() => stickerEvents.touch()} />
-          </div>
+          <h2>Stickers</h2>
+          <StickerSync account={active} generation={messages.accountGeneration} connected={session.connected} version={stickerEvents.version} showPacks
+            onload={(owner) => invoke<StickerLibrary>("sticker_library", { accountId: owner.account })}
+            onresync={(owner) => invoke<StickerResyncReport>("resync_stickers", { accountId: owner.account })}
+            onsynced={() => stickerEvents.touch()} />
           <label class="setting">
             <div><span class="setting-title">Default upload quality</span>
               <span class="setting-desc">Standard limits photos to 1600 pixels and videos to 480p. HD keeps the original file. Choose again for each attachment before sending.</span></div>
@@ -1111,6 +1178,20 @@
               </div>
             </div>
           {/each}
+          <div class="setting">
+            <div>
+              <span class="setting-title">Show or hide Postal</span>
+              <span class="setting-desc">
+                System-wide shortcut that works even while Postal is hidden, so the operating system owns it and it cannot be rebound here.
+                {#if desktopStatus && !desktopStatus.shortcut_registered}
+                  Currently unavailable: another app may be using this shortcut.
+                {/if}
+              </span>
+            </div>
+            <div class="keybind">
+              <button class="button" disabled title="System shortcuts cannot be rebound">Ctrl+Alt+P</button>
+            </div>
+          </div>
           <div class="setting">
             <div>
               <span class="setting-title">Reset all keybinds</span>

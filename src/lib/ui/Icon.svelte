@@ -64,6 +64,8 @@
   } as const;
 
   export type IconName = keyof typeof PATHS;
+  /** Every bundled icon, for pickers that let the user choose one. */
+  export const ICON_NAMES = Object.keys(PATHS) as IconName[];
 </script>
 
 <script lang="ts">

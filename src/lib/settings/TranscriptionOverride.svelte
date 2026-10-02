@@ -36,6 +36,6 @@
 
 <style>
   label { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
-  p { color: var(--muted); font-size: .8rem; }
+  p { color: var(--muted); font-size: .8rem; margin: .35rem 0 0; }
   [role="alert"] { color: var(--danger, #b91c1c); }
 </style>

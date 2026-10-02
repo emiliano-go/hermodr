@@ -154,6 +154,9 @@
     ["Mute always", -1],
   ];
 
+  /** Custom labels that repeat a built-in filter chip stay out of the filter row. */
+  const BUILT_IN_FILTER_NAMES = new Set(["all", "favorites", "favourites", "unread", "groups"]);
+
   function isMuted(chat: ChatSummary) {
     return chat.muted_until < 0 || chat.muted_until * 1000 > Date.now();
   }
@@ -166,8 +169,6 @@
   let menuError = $state<string | null>(null);
   let menuRequest = 0;
   let menuOwner: HTMLElement | null = null;
-  /** Whether the right-click menu's "More" section is expanded. */
-  let moreOpen = $state(false);
   /** Whether the menu's chat mutes @all mentions; from the list, then the settings read. */
   let menuMuteAtAll = $state(false);
   let menuMuteBusy = $state(false);
@@ -300,7 +301,6 @@
     chatMenu = { x: "clientX" in event ? event.clientX : box.left, y: "clientY" in event ? event.clientY : box.bottom, chat };
     menuLoaded = false;
     menuError = null;
-    moreOpen = false;
     menuMuteAtAll = chat.mute_at_all;
     menuMuteBusy = false;
     const request = ++menuRequest;
@@ -332,9 +332,27 @@
   function closeChatMenu(restoreFocus = true) {
     menuRequest++;
     chatMenu = null;
-    moreOpen = false;
+    muteMenu = false;
+    clearTimeout(muteTimer);
     if (restoreFocus) menuOwner?.focus();
   }
+
+  let muteRow: HTMLDivElement | null = $state(null);
+  let muteMenu = $state(false);
+  let muteTimer: ReturnType<typeof setTimeout> | undefined;
+  function openMuteMenu() {
+    clearTimeout(muteTimer);
+    muteMenu = true;
+  }
+  function scheduleMuteClose() {
+    clearTimeout(muteTimer);
+    muteTimer = setTimeout(() => (muteMenu = false), 150);
+  }
+  $effect(() => {
+    chatMenu;
+    muteMenu = false;
+    clearTimeout(muteTimer);
+  });
 
   $effect(() => { void activeAccount; closeChatMenu(false); hidePreview(); });
   $effect(() => { if (!chatPreview) hidePreview(); });
@@ -422,15 +440,12 @@
     />
   </label>
   {#if !searchQuery.trim()}
-    <div class="filters">
+    <div class="filters actions-row">
       <Button variant="chip" onclick={oninbox}>Inbox</Button>
       <Button variant="chip" onclick={onlabels}>Manage labels</Button>
-      <select aria-label="Filter by label" bind:value={labelFilter}>
-        <option value="">All labels</option>
-        {#if labels.account === activeAccount}{#each labels.view.labels as label (label.id)}<option value={label.id}>{label.name}</option>{/each}{/if}
-      </select>
     </div>
-    <div class="filters" role="tablist" aria-label="Filter chats">
+    <div class="mini-divider" aria-hidden="true"></div>
+    <div class="filters labels-row" role="tablist" aria-label="Filter chats">
       <Button variant="chip" selected={chatFilter === "all"} onclick={() => onfilter("all")}>All</Button>
       <Button variant="chip" selected={chatFilter === "favorites"} onclick={() => onfilter("favorites")}>Favorites</Button>
       <Button
@@ -440,6 +455,16 @@
         onclick={() => onfilter("unread")}>Unread</Button>
       <Button variant="chip" selected={chatFilter === "groups"} onclick={() => onfilter("groups")}
         >Groups</Button>
+      {#if labels.account === activeAccount}
+        {#each labels.view.labels.filter((label) => !BUILT_IN_FILTER_NAMES.has(label.name.trim().toLowerCase())) as label (label.id)}
+          <Button
+            variant="chip"
+            selected={labelFilter === label.id}
+            onclick={() => (labelFilter = labelFilter === label.id ? "" : label.id)}>
+            {label.name}
+          </Button>
+        {/each}
+      {/if}
     </div>
     {#if archivedChats > 0 || chatFilter === "archived"}
       <button
@@ -687,39 +712,66 @@
     role="menu"
     style="left: {Math.min(chatMenu.x, window.innerWidth - 220)}px; top: {Math.min(chatMenu.y, window.innerHeight - 160)}px">
     {#if menuError}<p role="alert">Could not load chat settings: {menuError}</p>{/if}
+    <div class="quick-row" role="group" aria-label="Quick chat actions">
+      <Button
+        variant="icon"
+        icon="pin"
+        iconSize={18}
+        role="menuitem"
+        active={menuChat.pinned}
+        pressed={menuChat.pinned}
+        aria-label={menuChat.pinned ? "Unpin" : "Pin"}
+        title={menuChat.pinned ? "Unpin" : "Pin"}
+        onclick={() => {
+          releaseFreeze();
+          ontogglepin(menuChat);
+          closeChatMenu();
+        }} />
+      <Button
+        variant="icon"
+        icon="star"
+        iconSize={18}
+        role="menuitem"
+        active={favoriteChats.includes(menuChat.chat)}
+        pressed={favoriteChats.includes(menuChat.chat)}
+        aria-label={favoriteChats.includes(menuChat.chat) ? "Remove from favorites" : "Add to favorites"}
+        title={favoriteChats.includes(menuChat.chat) ? "Remove from favorites" : "Add to favorites"}
+        disabled={favoriteBusy || !ontogglefavorite}
+        onclick={() => {
+          releaseFreeze();
+          if (menuChat) ontogglefavorite?.(menuChat);
+          closeChatMenu();
+        }} />
+      <Button
+        variant="icon"
+        icon="edit"
+        iconSize={18}
+        role="menuitem"
+        aria-label="Labels"
+        title="Labels"
+        onclick={() => {
+          onchatlabels(menuChat.chat);
+          closeChatMenu();
+        }} />
+      <Button
+        variant="icon"
+        icon={menuChat.unread_count > 0 || menuChat.marked_unread ? "check" : "message"}
+        iconSize={18}
+        role="menuitem"
+        active={menuChat.unread_count > 0 || menuChat.marked_unread}
+        pressed={menuChat.unread_count > 0 || menuChat.marked_unread}
+        aria-label={menuChat.unread_count > 0 || menuChat.marked_unread ? "Mark as read" : "Mark as unread"}
+        title={menuChat.unread_count > 0 || menuChat.marked_unread ? "Mark as read" : "Mark as unread"}
+        onclick={() => {
+          if (menuChat.unread_count > 0) onmarkread(menuChat);
+          else onchataction("set_marked_unread", { chat: menuChat.chat, unread: !menuChat.marked_unread });
+          releaseFreeze();
+          closeChatMenu();
+        }} />
+    </div>
     <Button
       variant="menu"
-      icon="pin"
-      iconSize={15}
-      role="menuitem"
-      onclick={() => {
-        releaseFreeze();
-        ontogglepin(menuChat);
-        closeChatMenu();
-      }}>{menuChat.pinned ? "Unpin" : "Pin"}</Button>
-    <Button
-      variant="menu"
-      icon="star"
-      iconSize={15}
-      role="menuitem"
-      disabled={favoriteBusy || !ontogglefavorite}
-      onclick={() => {
-        releaseFreeze();
-        if (menuChat) ontogglefavorite?.(menuChat);
-        closeChatMenu();
-      }}>{favoriteChats.includes(menuChat.chat) ? "Remove from favorites" : "Add to favorites"}</Button>
-    {#if /@(s\.whatsapp\.net|lid)$/.test(menuChat.chat) && !members.isMe(menuChat.chat)}
-      <Button variant="menu" icon="x" iconSize={15} role="menuitem" onclick={() => {
-        void onblockcontact(menuChat.chat);
-        closeChatMenu();
-      }}>Block contact</Button>
-    {/if}
-    <Button variant="menu" icon="edit" iconSize={15} role="menuitem" onclick={() => {
-      onchatlabels(menuChat.chat); closeChatMenu();
-    }}>Labels</Button>
-    <Button
-      variant="menu"
-      icon="download"
+      icon="archive"
       iconSize={15}
       role="menuitem"
       onclick={() => {
@@ -737,31 +789,40 @@
           onchataction("set_muted", { chat: menuChat.chat, until: 0 });
           closeChatMenu();
         }}>Unmute</Button>
-    {:else}
-      {#each MUTES as [label, seconds] (label)}
-        <Button
-          variant="menu"
-          icon="clock"
-          iconSize={15}
-          role="menuitem"
-          onclick={() => {
-            const until = seconds < 0 ? -1 : Math.floor(Date.now() / 1000) + seconds;
-            onchataction("set_muted", { chat: menuChat.chat, until });
+      <Button
+        variant="menu"
+        icon="at"
+        iconSize={15}
+        role="menuitem"
+        disabled={menuMuteBusy}
+        onclick={() => {
+          const target = !menuMuteAtAll;
+          menuMuteBusy = true;
+          menuMuteAtAll = target;
+          try {
+            onchataction("set_chat_mute_at_all", { chat: menuChat.chat, muted: target });
+          } finally {
+            menuMuteBusy = false;
             closeChatMenu();
-          }}>{label}</Button>
-      {/each}
+          }
+        }}>{menuMuteAtAll ? "Unmute @all mentions" : "Mute @all mentions"}</Button>
+    {:else}
+      <div
+        class="mute-parent"
+        role="menuitem"
+        aria-haspopup="true"
+        aria-expanded={muteMenu}
+        tabindex="0"
+        bind:this={muteRow}
+        onmouseenter={openMuteMenu}
+        onmouseleave={scheduleMuteClose}
+        onfocus={openMuteMenu}
+        onblur={scheduleMuteClose}>
+        <Icon name="volume" size={15} />
+        <span>Mute</span>
+        <Icon name="chevronRight" size={15} />
+      </div>
     {/if}
-    <Button
-      variant="menu"
-      icon={menuChat.unread_count > 0 || menuChat.marked_unread ? "check" : "message"}
-      iconSize={15}
-      role="menuitem"
-      onclick={() => {
-        if (menuChat.unread_count > 0) onmarkread(menuChat);
-        else onchataction("set_marked_unread", { chat: menuChat.chat, unread: !menuChat.marked_unread });
-        releaseFreeze();
-        closeChatMenu();
-      }}>{menuChat.unread_count > 0 || menuChat.marked_unread ? "Mark as read" : "Mark as unread"}</Button>
     <Button
       variant="menu"
       icon="download"
@@ -772,40 +833,7 @@
         onchataction("set_chat_auto_download", { chat: menuChat.chat, enabled: !menuDownloadsEnabled });
         closeChatMenu();
       }}>{menuLoaded ? `${menuDownloadsEnabled ? "Disable" : "Enable"} all media auto-download` : menuError ? "Media settings unavailable" : "Loading media settings…"}</Button>
-    <div class="more-wrap">
-      <Button
-        variant="menu"
-        icon="chevronRight"
-        iconSize={15}
-        role="menuitem"
-        aria-expanded={moreOpen}
-        aria-haspopup="true"
-        onclick={() => {
-          moreOpen = !moreOpen;
-          void layoutMenu();
-        }}><span class="more-label">More</span><span class="more-chevron" class:open={moreOpen}><Icon name="chevronRight" size={14} /></span></Button>
-      {#if moreOpen}
-        <div class="more-sub" role="menu" aria-label="More chat options">
-          <Button
-            variant="menu"
-            icon="at"
-            iconSize={15}
-            role="menuitem"
-            disabled={menuMuteBusy}
-            onclick={() => {
-              const target = !menuMuteAtAll;
-              menuMuteBusy = true;
-              menuMuteAtAll = target;
-              try {
-                onchataction("set_chat_mute_at_all", { chat: menuChat.chat, muted: target });
-              } finally {
-                menuMuteBusy = false;
-                closeChatMenu();
-              }
-            }}>{menuMuteAtAll ? "Unmute @all mentions" : "Mute @all mentions"}</Button>
-        </div>
-      {/if}
-    </div>
+    <div class="menu-sep" aria-hidden="true"></div>
     <Button
       variant="menu"
       icon="edit"
@@ -822,18 +850,26 @@
       icon="trash"
       iconSize={15}
       role="menuitem"
+      danger
       onclick={() => {
         const c = menuChat;
         releaseFreeze();
         closeChatMenu();
         ondeletechat(c);
       }}>Delete chat</Button>
+    {#if /@(s\.whatsapp\.net|lid)$/.test(menuChat.chat) && !members.isMe(menuChat.chat)}
+      <Button variant="menu" icon="x" iconSize={15} role="menuitem" danger onclick={() => {
+        void onblockcontact(menuChat.chat);
+        closeChatMenu();
+      }}>Block contact</Button>
+    {/if}
     {#if menuChat.chat.endsWith("@g.us")}
       <Button
         variant="menu"
         icon="x"
         iconSize={15}
         role="menuitem"
+        danger
         onclick={() => {
           const c = menuChat;
           releaseFreeze();
@@ -842,6 +878,53 @@
         }}>Exit group</Button>
     {/if}
   </div>
+  {#if muteMenu && muteRow}
+    {@const muteBox = muteRow.getBoundingClientRect()}
+    {@const muteFlip = muteBox.right + 210 > window.innerWidth}
+    <div
+      class="mute-submenu"
+      role="menu"
+      aria-label="Mute options"
+      tabindex="-1"
+      style="top: {Math.max(8, Math.min(muteBox.top, window.innerHeight - 150))}px; {muteFlip
+        ? `right: ${window.innerWidth - muteBox.left + 8}px`
+        : `left: ${muteBox.right + 8}px`}"
+      onmouseenter={openMuteMenu}
+      onmouseleave={scheduleMuteClose}
+      onfocus={openMuteMenu}
+      onblur={scheduleMuteClose}>
+      {#each MUTES as [label, seconds] (label)}
+        <Button
+          variant="menu"
+          icon="clock"
+          iconSize={15}
+          role="menuitem"
+          onclick={() => {
+            const until = seconds < 0 ? -1 : Math.floor(Date.now() / 1000) + seconds;
+            onchataction("set_muted", { chat: menuChat.chat, until });
+            closeChatMenu();
+          }}>{label}</Button>
+      {/each}
+      <div class="menu-sep" aria-hidden="true"></div>
+      <Button
+        variant="menu"
+        icon="at"
+        iconSize={15}
+        role="menuitem"
+        disabled={menuMuteBusy}
+        onclick={() => {
+          const target = !menuMuteAtAll;
+          menuMuteBusy = true;
+          menuMuteAtAll = target;
+          try {
+            onchataction("set_chat_mute_at_all", { chat: menuChat.chat, muted: target });
+          } finally {
+            menuMuteBusy = false;
+            closeChatMenu();
+          }
+        }}>{menuMuteAtAll ? "Unmute @all mentions" : "Mute @all mentions"}</Button>
+    </div>
+  {/if}
 {/if}
 
 <svelte:window
@@ -915,7 +998,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    margin: 0 12px 8px;
+    margin: 8px 12px 8px;
     padding: 0 12px;
     height: 36px;
     flex: none;
@@ -951,6 +1034,17 @@
     gap: 8px;
     padding: 0 12px 8px;
     flex: none;
+  }
+  /* Mini divider between the Inbox / Manage-labels actions and the label pills. */
+  .mini-divider {
+    flex: none;
+    height: 1px;
+    margin: 0 24px 8px;
+    background: var(--line);
+  }
+  /* Label pills wrap to more lines, so every label stays visible. */
+  .filters.labels-row {
+    flex-wrap: wrap;
   }
   .archived-entry {
     flex: none;
@@ -1307,29 +1401,60 @@
     border-radius: var(--radius);
     box-shadow: var(--shadow);
   }
-  .more-wrap {
+  .quick-row {
     display: flex;
-    flex-direction: column;
+    gap: 2px;
+    padding: 2px 2px 6px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid var(--line-strong);
   }
-  .more-label {
+  .quick-row :global(.btn-icon) {
     flex: 1;
+    min-height: 36px;
   }
-  .more-chevron {
-    display: inline-flex;
-    margin-left: auto;
-    transition: transform 0.15s var(--ease);
-  }
-  .more-chevron.open {
-    transform: rotate(90deg);
-  }
-  .more-sub {
-    display: flex;
-    flex-direction: column;
-    margin-left: 12px;
-    padding-left: 8px;
-    border-left: 2px solid var(--line-strong);
+  .quick-row :global(.btn-icon:disabled) {
+    opacity: 0.5;
+    cursor: default;
   }
   .at-muted {
     opacity: 0.8;
+  }
+  .mute-parent {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    background: transparent;
+    border: 0;
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 14px;
+    cursor: default;
+  }
+  .mute-parent:hover {
+    background: var(--raised);
+  }
+  .mute-parent:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  .mute-parent > span {
+    flex: 1;
+    text-align: left;
+  }
+  .mute-parent > :last-child {
+    color: var(--muted);
+  }
+  .mute-submenu {
+    position: fixed;
+    z-index: 101;
+    min-width: 190px;
+    display: flex;
+    flex-direction: column;
+    padding: 6px;
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
   }
 </style>

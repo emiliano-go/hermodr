@@ -139,6 +139,35 @@
   } = $props();
 
   let attachMenu = $state(false);
+  let attachTimer: ReturnType<typeof setTimeout> | null = null;
+  function openAttach() {
+    if (disabled) return;
+    if (attachTimer) { clearTimeout(attachTimer); attachTimer = null; }
+    attachMenu = true;
+  }
+  function scheduleAttachClose() {
+    if (attachTimer) clearTimeout(attachTimer);
+    attachTimer = setTimeout(() => { attachMenu = false; attachTimer = null; }, 150);
+  }
+  function closeAttach() {
+    if (attachTimer) { clearTimeout(attachTimer); attachTimer = null; }
+    attachMenu = false;
+  }
+  let toolsMenu = $state(false);
+  let toolsTimer: ReturnType<typeof setTimeout> | null = null;
+  function openTools() {
+    if (disabled) return;
+    if (toolsTimer) { clearTimeout(toolsTimer); toolsTimer = null; }
+    toolsMenu = true;
+  }
+  function scheduleToolsClose() {
+    if (toolsTimer) clearTimeout(toolsTimer);
+    toolsTimer = setTimeout(() => { toolsMenu = false; toolsTimer = null; }, 150);
+  }
+  function closeTools() {
+    if (toolsTimer) { clearTimeout(toolsTimer); toolsTimer = null; }
+    toolsMenu = false;
+  }
   let soundboardOpen = $state(false);
   let cameraOpen = $state(false);
   function submitComposer(event: SubmitEvent) {
@@ -160,7 +189,7 @@
     ...(!selectedChat.endsWith("@g.us") ? { "mention-all": "Mention all is available in groups." } : {}) });
   $effect(() => { void account; void selectedChat; void generation; soundboardOpen = false; cameraOpen = false; dismissedSlash = null; });
   $effect(() => { if (disabled || editing) cameraOpen = false; });
-  $effect(() => { if (disabled) { attachMenu = false; pickerTab = null; scheduling = false; } });
+  $effect(() => { if (disabled) { closeAttach(); pickerTab = null; scheduling = false; closeTools(); } });
 
   function updateCaret() {
     if (composerInput && (caret.start !== composerInput.selectionStart || caret.end !== composerInput.selectionEnd)) {
@@ -396,6 +425,22 @@
       oncancel={() => (recording = false)}
       onerror={onvoiceerror} />
   {:else}
+  {#if attachMenu && !disabled}
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- Sibling of the hover wrapper: nested inside, its fullscreen hit area
+      would keep the pointer "inside" the wrapper and mouseleave would never fire. -->
+    <div class="attach-catcher" role="presentation" onclick={() => closeAttach()}></div>
+  {/if}
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <div
+    class="attach-wrap"
+    role="group"
+    aria-label="Attach"
+    onmouseenter={openAttach}
+    onmouseleave={scheduleAttachClose}
+    onfocusin={openAttach}
+    onfocusout={scheduleAttachClose}
+    onkeydown={(event) => { if (event.key === "Escape") closeAttach(); }}>
   <Button
     variant="icon"
     icon="plus"
@@ -404,24 +449,23 @@
     active={attachMenu}
     title="Attach"
     aria-label="Attach"
+    aria-haspopup="menu"
     aria-expanded={attachMenu}
     {disabled}
     onclick={() => { if (!disabled) attachMenu = !attachMenu; }} />
   {#if attachMenu && !disabled}
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <div class="attach-catcher" role="presentation" onclick={() => (attachMenu = false)}></div>
-    <div class="attach-menu" role="menu">
+    <div class="attach-menu" role="menu" aria-label="Attach">
       <button type="button" role="menuitem" disabled={disabled || editing !== null || !account}
-        onclick={() => { attachMenu = false; onsharecontacts(); }}><Icon name="user" size={18} /> Share contacts</button>
+        onclick={() => { closeAttach(); onsharecontacts(); }}><Icon name="user" size={18} /> Share contacts</button>
       <button type="button" role="menuitem" disabled={disabled || editing !== null || !account}
-        onclick={() => { attachMenu = false; cameraOpen = true; }}><Icon name="image" size={18} /> Take a photo</button>
+        onclick={() => { closeAttach(); cameraOpen = true; }}><Icon name="image" size={18} /> Take a photo</button>
       <button
         type="button"
         role="menuitem"
         {disabled}
         onclick={() => {
           if (disabled) return;
-          attachMenu = false;
+          closeAttach();
           filePicker?.click();
         }}><Icon name="paperclip" size={18} /> Upload a file</button>
       <button
@@ -430,7 +474,7 @@
         {disabled}
         onclick={() => {
           if (disabled) return;
-          attachMenu = false;
+          closeAttach();
           oncreatekind("poll");
         }}><Icon name="poll" size={18} /> Create poll</button>
       <button
@@ -439,11 +483,12 @@
         {disabled}
         onclick={() => {
           if (disabled) return;
-          attachMenu = false;
+          closeAttach();
           oncreatekind("event");
         }}><Icon name="calendar" size={18} /> Create event</button>
     </div>
   {/if}
+  </div>
   <input
     class="file-input"
     type="file"
@@ -466,42 +511,70 @@
     placeholder={editing ? "Edit message" : pending.length > 0 ? "Add a caption (optional)" : "Type a message"}
   ></textarea>
   <div class="composer-tools">
-    <QuickRepliesMenu {account} chat={selectedChat} {generation} requestKey={quickReplies.key}
-      dataScope={quickReplies.scope(selectedChat)} replies={quickReplies.replies} loading={quickReplies.loading}
-      syncing={quickReplies.syncing} error={quickReplies.error} {connected}
-      disabled={disabled || !account || !!editing || recording}
-      onselect={(scope, reply) => { if (!disabled) onquickreply(scope, reply); }}
-      onsync={(scope) => { void quickReplies.sync(scope); }} />
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <div
+      class="tools-wrap"
+      role="group"
+      aria-label="More messaging options"
+      onmouseenter={openTools}
+      onmouseleave={scheduleToolsClose}
+      onfocusin={openTools}
+      onfocusout={scheduleToolsClose}
+      onkeydown={(event) => { if (event.key === "Escape") closeTools(); }}>
+      <Button
+        variant="icon"
+        icon="sliders"
+        iconSize={20}
+        active={toolsMenu}
+        title="More messaging options"
+        aria-label="More messaging options"
+        aria-haspopup="menu"
+        aria-expanded={toolsMenu}
+        {disabled}
+        onclick={() => { if (!disabled) toolsMenu = !toolsMenu; }} />
+      {#if toolsMenu && !disabled}
+        <div class="tools-menu" role="menu" aria-label="More messaging options">
+          <QuickRepliesMenu {account} chat={selectedChat} {generation} requestKey={quickReplies.key}
+            dataScope={quickReplies.scope(selectedChat)} replies={quickReplies.replies} loading={quickReplies.loading}
+            syncing={quickReplies.syncing} error={quickReplies.error} {connected} menuItem
+            disabled={disabled || !account || !!editing || recording}
+            onopen={closeTools}
+            onselect={(scope, reply) => { if (!disabled) onquickreply(scope, reply); }}
+            onsync={(scope) => { void quickReplies.sync(scope); }} />
+          <Button
+            variant="menu"
+            icon="clock"
+            iconSize={18}
+            title={canSchedule ? "Schedule this message" : "Scheduled messages"}
+            aria-label={canSchedule ? "Schedule this message" : "Scheduled messages"}
+            onclick={() => {
+              closeTools();
+              if (canSchedule) scheduling = true;
+              else scheduled.open = true;
+            }}>{canSchedule ? "Schedule this message" : "Scheduled messages"}</Button>
+          <Button
+            variant="menu"
+            icon={receiptsHidden ? "eyeOff" : "eye"}
+            iconSize={18}
+            active={receiptsHidden}
+            pressed={receiptsHidden}
+            title={receiptsHidden ? "Read receipts hidden here" : "Hide read receipts here"}
+            aria-label="Hide read receipts here"
+            onclick={() => { closeTools(); onreceipts(); }}>{receiptsHidden ? "Read receipts hidden here" : "Hide read receipts here"}</Button>
+          <Button
+            variant="menu"
+            icon={typingHidden ? "keyboardOff" : "keyboard"}
+            iconSize={18}
+            active={typingHidden}
+            pressed={typingHidden}
+            title={typingHidden ? "Typing not sent here" : "Stop sending typing here"}
+            aria-label="Stop sending typing here"
+            onclick={() => { closeTools(); ontyping(); }}>{typingHidden ? "Typing not sent here" : "Stop sending typing here"}</Button>
+        </div>
+      {/if}
+    </div>
     <Button variant="icon" icon="volume" iconSize={20} active={soundboardOpen} title="Soundboard" aria-label="Soundboard"
       onclick={() => { soundboardOpen = !soundboardOpen; }} />
-    <Button
-      variant="icon"
-      icon="clock"
-      iconSize={20}
-      title={canSchedule ? "Schedule this message" : "Scheduled messages"}
-      aria-label={canSchedule ? "Schedule this message" : "Scheduled messages"}
-      onclick={() => {
-        if (canSchedule) scheduling = true;
-        else scheduled.open = true;
-      }} />
-    <Button
-      variant="icon"
-      icon={receiptsHidden ? "eyeOff" : "eye"}
-      iconSize={20}
-      active={receiptsHidden}
-      pressed={receiptsHidden}
-      title={receiptsHidden ? "Read receipts hidden here" : "Hide read receipts here"}
-      aria-label="Hide read receipts here"
-      onclick={onreceipts} />
-    <Button
-      variant="icon"
-      icon={typingHidden ? "keyboardOff" : "keyboard"}
-      iconSize={20}
-      active={typingHidden}
-      pressed={typingHidden}
-      title={typingHidden ? "Typing not sent here" : "Stop sending typing here"}
-      aria-label="Stop sending typing here"
-      onclick={ontyping} />
     <Button
       variant="icon"
       cls="tool-text"
@@ -822,10 +895,18 @@
     inset: 0;
     z-index: 55;
   }
+  .attach-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+    /* Above the fullscreen catcher so the trigger keeps its hover/clicks;
+       taps anywhere else land on the catcher and close the menu. */
+    z-index: 56;
+  }
   .attach-menu {
     position: absolute;
-    left: 10px;
-    bottom: calc(100% + 6px);
+    left: 0;
+    bottom: calc(100% + 16px);
     z-index: 56;
     display: flex;
     flex-direction: column;
@@ -835,6 +916,15 @@
     border: 1px solid var(--line-strong);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow);
+  }
+  /* Hover bridge: covers the gap so moving into the menu never leaves it. */
+  .attach-menu::after {
+    content: "";
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    height: 20px;
   }
   .attach-menu button {
     display: flex;
@@ -855,6 +945,43 @@
   }
   .attach-menu button:hover {
     background: var(--raised);
+  }
+  .tools-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+  .tools-menu {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: calc(100% + 16px);
+    z-index: 56;
+    display: flex;
+    flex-direction: column;
+    min-width: 230px;
+    padding: 6px;
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow);
+  }
+  /* Hover bridge: covers the gap so moving into the menu never leaves it. */
+  .tools-menu::after {
+    content: "";
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    height: 20px;
+  }
+  .tools-menu :global(.btn-menu) {
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .tools-menu :global(.btn-menu svg) {
+    color: var(--accent);
+    flex: none;
   }
   .composer-tools {
     display: flex;

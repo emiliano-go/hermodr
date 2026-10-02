@@ -3,7 +3,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
-import { inboxCategories, inboxChats } from "../lib/utils/inbox.ts";
+import { appliableLabels, inboxCategories, inboxChats } from "../lib/utils/inbox.ts";
 import type { InboxFilters } from "../lib/utils/inbox.ts";
 import type { ChatSummary } from "../lib/utils/wire";
 
@@ -101,6 +101,13 @@ test("label dialog stale success cannot alter new target snapshots", async () =>
   assert.equal(context.working, false);
   await run(async () => {}, () => completed++);
   assert.equal(completed, 1);
+});
+
+test("inbox never offers the groups label for applying and skips assigned ones", () => {
+  const options = [{ id: "1", name: "work" }, { id: "2", name: "Groups" }, { id: "3", name: "  GROUPS " }];
+  assert.deepEqual(appliableLabels(options, ["1"]).map((label) => label.id), []);
+  assert.deepEqual(appliableLabels(options, []).map((label) => label.id), ["1"]);
+  assert.deepEqual(appliableLabels(options, undefined).map((label) => label.id), ["1"]);
 });
 
 test("label save preserves existing color, creates with empty identity and blocks invalid i32 snapshots", () => {

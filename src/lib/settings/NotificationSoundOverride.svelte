@@ -37,7 +37,7 @@
 </script>
 
 <label><span>Mute notification sound</span>
-  <input type="checkbox" checked={muted} disabled={busy || !loaded}
+  <input class="toggle" type="checkbox" checked={muted} disabled={busy || !loaded}
     onchange={(event) => change(event.currentTarget)} />
 </label>
 <p>Message notifications still appear for this chat.</p>
@@ -48,6 +48,45 @@
 
 <style>
   label { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
-  p { color: var(--muted); font-size: .8rem; }
+  p { color: var(--muted); font-size: .8rem; margin: .35rem 0 0; }
   [role="alert"] { color: var(--danger, #b91c1c); }
+  /* Same switch as the chat settings dialog (scoped CSS cannot be shared). */
+  .toggle {
+    appearance: none;
+    position: relative;
+    flex: none;
+    width: 38px;
+    height: 22px;
+    margin: 0;
+    border-radius: 999px;
+    background: var(--line-strong);
+    cursor: pointer;
+    transition: background calc(0.15s * var(--motion-scale)) var(--ease);
+  }
+  .toggle::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--text);
+    transition: transform calc(0.15s * var(--motion-scale)) var(--ease);
+  }
+  .toggle:checked {
+    background: var(--accent);
+  }
+  .toggle:checked::after {
+    transform: translateX(16px);
+    background: var(--accent-ink);
+  }
+  .toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .toggle:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
 </style>

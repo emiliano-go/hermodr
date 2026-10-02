@@ -203,8 +203,8 @@
         <section>
           <h3><Icon name="download" size={14} /> Media</h3>
           {#if session.activeAccount}
-            <AutoDownloadOverride accountId={session.activeAccount} {chat} />
-            <TranscriptionOverride accountId={session.activeAccount} {chat} />
+            <div class="override"><AutoDownloadOverride accountId={session.activeAccount} {chat} /></div>
+            <div class="override"><TranscriptionOverride accountId={session.activeAccount} {chat} /></div>
           {/if}
         </section>
 
@@ -422,6 +422,10 @@
   .choice:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
+  }
+  /* Space between the stacked per-chat overrides (auto-download, transcription). */
+  .override + .override {
+    margin-top: 12px;
   }
   .danger-row {
     display: flex;

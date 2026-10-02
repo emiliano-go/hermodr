@@ -182,4 +182,8 @@
   .btn-menu:hover {
     background: var(--raised);
   }
+  .btn-menu.is-danger,
+  .btn-menu.is-danger :global(svg) {
+    color: var(--danger);
+  }
 </style>

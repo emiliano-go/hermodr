@@ -5,9 +5,10 @@
   import { filterQuickReplies, quickReplyScopeMatches, type QuickReplyScope } from "$lib/utils/quick-replies";
 
   let { account, chat, generation, requestKey, dataScope, replies, loading = false, syncing = false, error = null,
-    connected, disabled = false, onselect, onsync }: {
+    connected, disabled = false, menuItem = false, onopen, onselect, onsync }: {
     account: string | null; chat: string; generation: number; requestKey: string | number; dataScope: QuickReplyScope | null;
     replies: readonly QuickReply[]; loading?: boolean; syncing?: boolean; error?: string | null; connected: boolean; disabled?: boolean;
+    menuItem?: boolean; onopen?: () => void;
     onselect: (scope: QuickReplyScope, reply: QuickReply) => void;
     onsync: (scope: QuickReplyScope) => void;
   } = $props();
@@ -39,6 +40,7 @@
     query = "";
     selected = 0;
     composing = false;
+    onopen?.();
     (event.currentTarget as HTMLButtonElement).focus();
     dialog.showModal();
     void tick().then(() => { if (current(scope) && dialog.open) input?.focus(); });
@@ -95,9 +97,18 @@
   onDestroy(() => { mounted = false; });
 </script>
 
-<button type="button" class="trigger" title="Quick replies" aria-label="Quick replies" aria-haspopup="dialog"
-  aria-controls={id} aria-expanded={active} disabled={!account || !chat || disabled} onclick={open}>
-  <Icon name="message" size={18} />
+<button
+  type="button"
+  class={menuItem ? "menu-row" : "trigger"}
+  role={menuItem ? "menuitem" : undefined}
+  title="Quick replies"
+  aria-label="Quick replies"
+  aria-haspopup="dialog"
+  aria-controls={id}
+  aria-expanded={active}
+  disabled={!account || !chat || disabled}
+  onclick={open}>
+  <Icon name="message" size={18} />{#if menuItem}<span>Quick replies</span>{/if}
 </button>
 <dialog bind:this={dialog} {id} aria-labelledby="{id}-title" onkeydown={key}
   oncancel={(event) => { event.preventDefault(); if (!composing) close(); }} onclose={() => { if (!dialog.open) openedScope = null; }}>
@@ -141,6 +152,9 @@
   button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .trigger { display: grid; place-items: center; width: 34px; height: 34px; padding: 0; flex-shrink: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted); }
   .trigger:hover:not(:disabled), .close:hover { background: var(--raised); color: var(--text); }
+  .menu-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text); font-size: 14px; text-align: left; }
+  .menu-row:hover:not(:disabled) { background: var(--raised); }
+  .menu-row :global(svg) { color: var(--accent); flex: none; }
   dialog { width: min(440px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); margin: auto; padding: 18px; box-sizing: border-box; overflow: auto; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
   dialog::backdrop { background: var(--scrim); }
   header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
