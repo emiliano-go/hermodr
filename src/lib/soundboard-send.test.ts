@@ -8,7 +8,7 @@ const tree = ts.createSourceFile("composer.ts", source, ts.ScriptTarget.Latest, 
 const state = tree.statements.find((statement) => ts.isClassDeclaration(statement) && statement.name?.text === "ComposerState") as ts.ClassDeclaration;
 const member = (name: string) => state.members.find((entry) => entry.name?.getText(tree) === name)!.getText(tree);
 const code = ts.transpileModule(`class Composer {
-  ${["outbox", "accountSeq", "uploadsAbort", "enqueue", "sendSoundClip", "resetAccount", "resetUndo", "resetHistory"].map(member).join("\n")}
+  ${["outbox", "accountSeq", "uploadsAbort", "stagingTickets", "attachmentChatGenerations", "enqueue", "sendSoundClip", "resetAccount", "resetUndo", "resetHistory"].map(member).join("\n")}
 }`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
 
 function gate() {
@@ -35,7 +35,7 @@ function fixture() {
   const reply = { chat: chats.selectedChat, id: "reply" };
   const composer = new Composer();
   Object.assign(composer, { draft: "draft stays", drafts: { [chats.selectedChat]: "draft stays" }, pending, replyingTo: reply,
-    chosenMentions: [{ name: "Alice", jid: "alice@s.whatsapp.net" }], editing: null, recording: false, outgoing: [], sentHistory: [],
+    chosenMentions: [{ name: "Alice", jid: "alice@s.whatsapp.net" }], editing: null, recording: false, outgoing: [], sentHistory: [], attachmentRecoveries: [],
     draftUndo: { reset() {} }, host: { scrollToBottom() { scrolled++; } } });
   const scope = { account: session.activeAccount, chat: chats.selectedChat, generation: messages.accountGeneration };
   const clip = new File(["synthetic audio"], "chosen.wav", { type: "audio/wav" });
