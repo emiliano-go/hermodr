@@ -139,7 +139,7 @@
   section { padding: 1rem 0; }
   h3 { margin: 0 0 .8rem; }
   label:not(.setting) { display: flex; flex-direction: column; gap: .4rem; margin: .7rem 0; }
-  input, select { color: var(--text); background: var(--raised); border: 1px solid var(--line); border-radius: 4px; padding: .5rem; }
+  input:not([type="checkbox"]), select { color: var(--text); background: var(--raised); border: 1px solid var(--line); border-radius: 4px; padding: .5rem; font: inherit; }
   p { color: var(--muted); font-size: .85rem; overflow-wrap: anywhere; }
   button { margin: .3rem .5rem .3rem 0; }
   [role="alert"] { color: var(--danger, #b91c1c); }

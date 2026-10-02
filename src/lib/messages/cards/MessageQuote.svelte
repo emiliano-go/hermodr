@@ -26,7 +26,7 @@
 </Embed>
 
 <style>
-  .quote-where { flex: none; max-width: 16ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: #71717a; }
+  .quote-where { flex: none; max-width: 16ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--muted); }
   .quote-once { display: flex; flex: none; align-items: center; gap: 4px; margin-left: auto; font-size: 11px;
     color: color-mix(in srgb, var(--text) 60%, transparent); white-space: nowrap; }
   .once-mark { display: grid; place-items: center; width: 26px; height: 26px; flex: none; border: 2px dashed var(--accent);

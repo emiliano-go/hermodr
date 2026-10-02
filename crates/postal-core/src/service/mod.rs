@@ -96,6 +96,7 @@ mod messages;
 mod notices;
 mod structured_notices;
 mod polls;
+mod quiz_polls;
 mod profile;
 mod receipts;
 mod stickers;

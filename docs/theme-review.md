@@ -1,0 +1,212 @@
+# Theme review checklist
+
+Issue [#220](https://github.com/emiliano-go/postal/issues/220) remains open. This is a source-inspected checklist of all 94 production Svelte components, plus the HTML shell and preset/theme layers. No full component/theme visual acceptance has passed.
+
+## Evidence status
+
+- **S** means direct CSS/inline token references and literal exceptions were inventoried from source. It does not mean computed CSS, inheritance, contrast or every interaction state was tested.
+- **Pending** means the component's full exposed state matrix across bundled/custom themes is not verified. Narrow real-component measurements below cover selected states; they do not mark the whole component passed.
+- The focused source check first failed on undefined `--border`/`--subtle` references and fixed Glass accent overrides. Four tests passed before the pause and again on resumption. A fifth regression test failed before the leaf font fixes, then passed after font inheritance and checkbox-selector repairs. Browser measurements exposed BooleanProps alerts inheriting muted text; its danger-token rule was added and all five source tests passed again on 2026-10-02. These source checks do not establish full visual acceptance. A sixth test failed before the typing text mix and passed afterward; the source suite now passes 6/6. The reported TypeScript errors were addressed with explicit UTF-8 readdir encoding and necessary JSDoc types for the optimizer-compatible JS mock. Parent reported Svelte 0 errors/0 warnings plus 52 focused native checks, wire validation and production build green; the worker did not rerun those broader gates.
+- No native app, WhatsApp SDK, credentials, real sessions or real sends were used. Broad builds and suites were not run for this styling pass.
+
+The 15 worker-owned changed leaves repair field/divider tokens, five error colors, two accent foregrounds, quote context text, theme-aware typing sender text, Panel switch thumbs and the Glass send/count-badge accent override. Four leaves also inherit custom fonts; transcription text-field styles now exclude checkbox switches. The route owner separately added shared native-select/accent rules and preserved native-control focus outlines. The parent also applied the same sender-text mix to the shared root sender and scoped ChatPreview sender rules. Quiz files and native command/schema work belong to their existing owners.
+
+## Measured synthetic browser scope
+
+On 2026-10-02 before the pause, the hidden in-app browser ran [theme-controls.html](../tests/browser/theme-controls.html) on an isolated localhost origin. It imports the production theme definitions and extracts the actual root/select/accent/focus CSS rules as text. It does not mount the route, connect a native account or render all production components.
+
+| Measured check | Cases | Result |
+| --- | ---: | --- |
+| Select background and foreground follow raised/text tokens | Dark, Light, Midnight, Glass, Material and Custom Glass, 6 variants | Passed |
+| Checkbox, radio and range accent follows accent token | 3 controls in each of 6 variants, 18 cases | Passed |
+| Keyboard focus retains solid 2px accent outline on checkbox, radio and range | 3 controls in each of 6 variants, 18 cases | Passed |
+| Text-input keyboard focus uses its separate 3px accent-soft ring and accent border, with outline suppressed | 1 control in each of 6 variants, 6 cases | Passed |
+| Edited Glass send gradient and foreground follow custom tokens | Accent #fff0aa, hover #ffe066, ink #142033 | Passed |
+
+The 24 keyboard-focus cases and computed colors were measured in the browser. One Custom Glass screenshot was inspected. The fixture has no Glass wallpaper/lens layer and does not establish production component layout, disabled/loading/error coverage or full-theme contrast. Every all-theme component row remains Pending. The owned browser tab and fixture server were stopped at the pause; these measurements are historical evidence, not a fresh resumed run.
+
+## Measured real-component scope on resumption
+
+[ThemeCoverageHarness](../tests/browser/ThemeCoverageHarness.svelte) mounts production Panel, Button, ConfirmDialog, BooleanProps, ContactEditor, GroupInviteLinks, TranscriptionSettings, TypingIndicator and TypingDots with their compiled component styles. [Its dedicated config](../tests/browser/theme-coverage.vite.config.ts) aliases IPC, session/transcription state and native core/events to synthetic mocks, scans only this fixture and keeps a separate cache. The HTML entry extracts actual root/body/native-control/focus rules without mounting the route.
+
+Seven variants were exercised: the five bundled presets, a full Light-derived custom theme using Courier New with pale accent/dark ink, and a partial custom theme inheriting dark root defaults. The fixture does not reproduce Glass wallpaper/lens layers.
+
+| Measured real-component check | Cases | Result |
+| --- | ---: | --- |
+| Panel unchecked/checked/disabled switches retain 40 by 24 geometry, zero padding/border and theme text/ink thumbs | 3 states across 7 variants, 21 cases | Passed |
+| Primary Button background/foreground use accent/ink; disabled primary stays disabled | 7 variants | Passed |
+| BooleanProps, ContactEditor, GroupInviteLinks and TranscriptionSettings fields inherit parent font | 4 scenes across 7 variants, 28 cases | Passed, including Courier New custom |
+| Transcription switches retain 40 by 24 geometry with zero text-field padding/border | 2 controls across 7 variants, 14 cases | Passed |
+| Error remains visible and consumes danger in the four leaf scenes | 4 scenes across 7 variants, 28 cases | Contact/Invite/Transcription passed initially; BooleanProps failed all 7 colors before repair and passed all 7 after reload |
+| Empty flag table and transcription-provider guidance remain visible | 2 scenes across 7 variants, 14 cases | Passed |
+| Disconnected ContactEditor disables fields/actions | 7 variants, 4 fields/actions each | Passed |
+| ConfirmDialog surface/danger action use tokens, fit viewport and close via Cancel | 7 variants | Passed |
+| TypingIndicator name contrast for hues 0, 50, 160 and 280 against opaque bubbles | 4 hues across 6 opaque variants, 24 samples | Light/full-custom contrast unresolved |
+
+Before the typing text repair, fixed HSL names measured contrast 2.92, 1.54, 1.56 and 3.00 against Light/full-custom white bubbles for hues 0, 50, 160 and 280 respectively. The same samples in Dark, Midnight, Material and partial custom measured at least 4.76. Glass alpha backgrounds were excluded because full compositing was not reproduced. Those measurements preceded the text repair below; stored hue values and avatar fills/foregrounds remain unchanged. ChatPreview sender text still requires its own context measurements. TypingDots uses hue-colored backgrounds, which are outside this text-only repair.
+
+The source inventory found route `:global(.sender)` at +page.svelte:2566, with its color at :2575, consumed by MessageBubble's `button.sender` at :114. ChatPreview's `.sender.themed` at :367 has its own scoped text color. The parent applied the same 25-percent hue/75-percent theme-text mix to both rules; the focused source assertion now checks all three consumers, including TypingIndicator. Avatar HSL foreground/background and TypingDots backgrounds remain excluded. No new token was added.
+
+## Measured typing text hue sweep
+
+The owned TypingIndicator `.typer` rule now uses `color-mix(in srgb, hsl(var(--hue) 65% 68%) 25%, var(--text))`. The original hue and its HSL seed remain intact; only sender text blends toward the existing theme text token. No palette helper or theme-editor token was added.
+
+The real-component fixture mounted one TypingIndicator per integer hue 0 through 359. Enabling "All 360 hues" disables decorative motion for this static color measurement. Browser-computed sender/bubble colors were converted from RGB or CSS `color(srgb ...)`; contrast was calculated from their sRGB luminance. These are CSS-color measurements, not screenshot-pixel, WCAG or all-component compliance claims.
+
+| Variant and measured context | Samples | Minimum ratio | Hue at minimum |
+| --- | ---: | ---: | ---: |
+| Dark, opaque production bubble | 360 | 9.396199 | 240 |
+| Light, opaque production bubble | 360 | 8.867561 | 60 |
+| Midnight, opaque production bubble | 360 | 11.868671 | 240 |
+| Material, opaque production bubble | 360 | 8.809671 | 240 |
+| Full custom, Light-derived opaque bubble | 360 | 8.867561 | 60 |
+| Partial custom, inherited dark bubble | 360 | 9.396199 | 240 |
+| Glass, flat alpha composite over explicit #111b21 fixture backplate | 360 | 8.734869 | 240 |
+| Glass, flat alpha composite over white diagnostic backplate | 360 | 1.138237 | 60 |
+
+The seven normal fixture contexts cover 2,520 hue samples; the white Glass diagnostic adds 360. Glass calculations composite its 0.12-alpha white bubble over the chosen opaque backplate and exclude backdrop filters, wallpaper, lens lighting and specular shadows. White is a diagnostic context, not evidence about the bundled wallpaper. Its low ratio demonstrates why full Glass contrast remains unresolved even after the text repair. All-theme component/state rows remain Pending.
+
+Hover/loading transitions, all media states, startup Light/System/custom behavior, CSS extensions and the remaining component/state matrix are unverified. Narrow measurements do not close issue #220.
+
+Repeat the isolated fixture with:
+
+```sh
+node node_modules/vite/bin/vite.js --config tests/browser/theme-coverage.vite.config.ts
+```
+
+Open `http://127.0.0.1:1439/theme-components.html` and choose theme/state/sidebar scenes. No native account or real send is involved.
+
+## Narrow ChatPreview follow-up limit
+
+The fixture now includes a real ChatPreview scene backed only by synthetic `message_page` data. Its first attempt exposed a fixture instrumentation loop: synchronous reactive `fixture.calls.push` inside the mock was tracked by the component's load effect, producing `effect_update_depth_exceeded`. The mock now snapshots its mode and records calls inside Svelte `untrack`; production loading code was not changed.
+
+That corrected browser case was not verified. The stalled tab's input/navigation/close commands timed out, and a clean runtime reset recovered inventory access but not its lifecycle command. A fresh localhost fixture attempt was then rejected by browser policy with the stated reason that the user declined permission. The attempt stopped without alternate-browser or address workarounds after that denial. ChatPreview remains visually Pending; source parity is verified by the six focused tests.
+
+The owned fixture server was stopped. The old hidden tab's closure could not be confirmed after lifecycle timeouts; this is a cleanup limitation, not a claimed successful close. Previous measured component/hue results above are unaffected, but no ChatPreview render/contrast result is claimed.
+
+## Component checklist
+
+Paths are relative to `src/lib`, except `routes/+page.svelte`. Token cells omit the `--` prefix and list direct references only. Common inherited font/text/scheme values and child `Button`/`Panel` styling are covered by the root and child rows. Literal exceptions are source reasons, not completed visual approvals.
+
+| Component | Source | All-theme visual | Direct registered tokens | Repair, exception or remaining review |
+| --- | --- | --- | --- | --- |
+| [chat/AddMembers.svelte](../src/lib/chat/AddMembers.svelte) | S | Pending | `accent`, `accent-text`, `bg`, `danger`, `line-strong`, `muted`, `radius-lg`, `raised`, `scrim`, `shadow`, `surface`, `text` | Token fallback literals remain; root supplies those tokens. Native elements: input; focus/disabled states need visual review. |
+| [chat/ChatHeader.svelte](../src/lib/chat/ChatHeader.svelte) | S | Pending | `accent`, `accent-soft`, `accent-text`, `line`, `line-strong`, `muted`, `radius`, `raised`, `shadow`, `surface`, `text` | Token inventory inspected; inherited styles and state rendering remain to verify. |
+| [chat/ChatPicker.svelte](../src/lib/chat/ChatPicker.svelte) | S | Pending | `accent`, `accent-text`, `bg`, `danger`, `faint`, `line-strong`, `muted`, `radius-lg`, `raised`, `raised-2`, `scrim`, `shadow`, `surface`, `text` | Native elements: input; focus/disabled states need visual review. |
+| [chat/ChatPreview.svelte](../src/lib/chat/ChatPreview.svelte) | S | Pending | `accent`, `accent-ink`, `bubble`, `bubble-mine`, `chat-bg`, `font-size`, `line-strong`, `muted`, `raised`, `surface`, `text` | Parent sender-text mix source-verified; fixed shadows and full visual context still require review. Narrow browser retry was denied, so no ChatPreview render proof is claimed. Data properties: `--hue`. |
+| [chat/ChatSettings.svelte](../src/lib/chat/ChatSettings.svelte) | S | Pending | `accent`, `accent-ink`, `accent-soft`, `accent-text`, `bg`, `danger`, `ease`, `line`, `line-strong`, `motion-scale`, `muted`, `radius-lg`, `raised`, `raised-2`, `scrim`, `shadow`, `surface`, `text` | Native elements: input, select; focus/disabled states need visual review. |
+| [chat/ChatSidebar.svelte](../src/lib/chat/ChatSidebar.svelte) | S | Pending | `accent`, `accent-ink`, `accent-soft`, `accent-text`, `bg`, `faint`, `line`, `line-strong`, `mention`, `muted`, `radius`, `raised`, `raised-2`, `shadow`, `surface`, `text` | Archived count accent foreground fixed. Native elements: input, select; focus/disabled states need visual review. |
+| [chat/ChatWallpaper.svelte](../src/lib/chat/ChatWallpaper.svelte) | S | Pending | `accent`, `danger`, `muted`, `radius-sm` | Native elements: input; focus/disabled states need visual review. |
+| [chat/CreateDialog.svelte](../src/lib/chat/CreateDialog.svelte) | S | Pending | `accent`, `bg`, `danger`, `line-strong`, `muted`, `radius-lg`, `raised`, `scrim`, `shadow`, `surface`, `text` | Native elements: input, textarea; focus/disabled states need visual review. |
+| [chat/GroupAudit.svelte](../src/lib/chat/GroupAudit.svelte) | S | Pending | `bg`, `danger`, `line`, `line-strong`, `muted`, `radius-sm`, `surface`, `text` | Native elements: input, select; focus/disabled states need visual review. |
+| [chat/GroupInfo.svelte](../src/lib/chat/GroupInfo.svelte) | S | Pending | `accent`, `accent-hover`, `accent-ink`, `accent-soft`, `accent-text`, `bg`, `danger`, `faint`, `line`, `link`, `mention-self-soft`, `motion-scale`, `muted`, `radius`, `raised`, `surface`, `text` | Identity-hue avatar colors; contrast pending. Data properties: `--hue`, `--size`. Native elements: input; focus/disabled states need visual review. |
+| [chat/GroupInviteLinks.svelte](../src/lib/chat/GroupInviteLinks.svelte) | S | Pending | `danger`, `line`, `raised`, `text` | Native elements: input; focus/disabled states need visual review. Input font inheritance fixed; font/error states measured in 7 variants. |
+| [chat/GroupRequests.svelte](../src/lib/chat/GroupRequests.svelte) | S | Pending | `accent`, `danger`, `line` | Native elements: input; focus/disabled states need visual review. |
+| [chat/GroupSettings.svelte](../src/lib/chat/GroupSettings.svelte) | S | Pending | `danger`, `line`, `muted`, `raised`, `text` | Fixed secondary text token; native controls share route rules. Native elements: input, textarea; focus/disabled states need visual review. |
+| [chat/NewGroup.svelte](../src/lib/chat/NewGroup.svelte) | S | Pending | `accent`, `bg`, `danger`, `line-strong`, `muted`, `radius-lg`, `raised`, `scrim`, `shadow`, `surface`, `text` | Native elements: input; focus/disabled states need visual review. |
+| [chat/QuickRepliesMenu.svelte](../src/lib/chat/QuickRepliesMenu.svelte) | S | Pending | `accent`, `bg`, `danger`, `line`, `line-strong`, `muted`, `radius-lg`, `radius-sm`, `raised`, `scrim`, `shadow`, `surface`, `text` | Native elements: input; focus/disabled states need visual review. |
+| [chat/QuickSwitcher.svelte](../src/lib/chat/QuickSwitcher.svelte) | S | Pending | `bg`, `danger`, `line-strong`, `muted`, `radius-lg`, `raised`, `scrim`, `shadow`, `surface`, `text` | Native elements: input; focus/disabled states need visual review. |
+| [chat/UnifiedInbox.svelte](../src/lib/chat/UnifiedInbox.svelte) | S | Pending | `accent`, `accent-text`, `bg`, `danger`, `line`, `line-strong`, `muted`, `radius-sm`, `raised-2`, `surface`, `text` | Identity-hue avatar with white initials; contrast pending. Data properties: `--hue`. Native elements: input, progress, select; focus/disabled states need visual review. |
+| [composer/AttachmentRecoveryPanel.svelte](../src/lib/composer/AttachmentRecoveryPanel.svelte) | S | Pending | `line`, `muted`, `radius-sm`, `raised`, `text` | Token inventory inspected; inherited styles and state rendering remain to verify. |
+| [composer/CameraCapture.svelte](../src/lib/composer/CameraCapture.svelte) | S | Pending | `danger`, `line`, `muted`, `radius-lg`, `radius-sm`, `scrim`, `shadow`, `surface`, `text` | Camera media viewport retains black. |
+| [composer/ComposerBar.svelte](../src/lib/composer/ComposerBar.svelte) | S | Pending | `accent`, `accent-ink`, `accent-text`, `bg`, `faint`, `line`, `line-strong`, `muted`, `radius`, `radius-lg`, `radius-sm`, `raised`, `raised-2`, `scrim`, `shadow`, `surface`, `text` | View-once accent foreground fixed. Native elements: input, select, textarea; focus/disabled states need visual review. |
+| [composer/ExpressionPicker.svelte](../src/lib/composer/ExpressionPicker.svelte) | S | Pending | `accent`, `bg`, `danger`, `ease`, `faint`, `line-strong`, `motion-scale`, `muted`, `radius-lg`, `raised`, `shadow`, `surface`, `text` | Token fallback literals remain; root supplies those tokens. Data properties: `--picker-h`. Native elements: input; focus/disabled states need visual review. |
+| [composer/ImageCropper.svelte](../src/lib/composer/ImageCropper.svelte) | S | Pending | `line-strong`, `muted`, `radius`, `raised`, `scrim`, `text` | White crop handles need contrast against arbitrary images. Data properties: `--crop-max-height`. Native elements: select; focus/disabled states need visual review. |
+| [composer/ScheduleDialog.svelte](../src/lib/composer/ScheduleDialog.svelte) | S | Pending | `bg`, `danger`, `line-strong`, `muted`, `radius-lg`, `scrim`, `shadow`, `surface`, `text` | Native elements: input, textarea; focus/disabled states need visual review. |
+| [composer/ScheduledOutbox.svelte](../src/lib/composer/ScheduledOutbox.svelte) | S | Pending | `danger`, `line-strong`, `muted`, `radius-lg`, `scrim`, `shadow`, `surface`, `text` | Token inventory inspected; inherited styles and state rendering remain to verify. |
+| [composer/SlashCommandMenu.svelte](../src/lib/composer/SlashCommandMenu.svelte) | S | Pending | `line`, `muted`, `radius`, `radius-sm`, `raised`, `surface`, `text` | Token inventory inspected; inherited styles and state rendering remain to verify. |
+| [composer/VoiceRecorder.svelte](../src/lib/composer/VoiceRecorder.svelte) | S | Pending | `accent`, `accent-ink`, `danger`, `faint`, `muted`, `raised`, `text` | Native elements: input; focus/disabled states need visual review. |
+| [contacts/BusinessCard.svelte](../src/lib/contacts/BusinessCard.svelte) | S | Pending | `accent`, `danger`, `line`, `muted`, `radius-sm`, `raised`, `text` | Token inventory inspected; inherited styles and state rendering remain to verify. |
+| [contacts/ContactEditor.svelte](../src/lib/contacts/ContactEditor.svelte) | S | Pending | `danger`, `line-strong`, `muted`, `radius`, `surface`, `text` | Fixed field border token. Native elements: input; focus/disabled states need visual review. Font/error/disconnected states measured in 7 variants; inherited field font fixed. |
+| [contacts/ContactInfo.svelte](../src/lib/contacts/ContactInfo.svelte) | S | Pending | `accent-soft`, `accent-text`, `motion-scale`, `muted`, `radius`, `surface` | Identity-hue avatar colors; contrast pending. Data properties: `--hue`, `--size`. |
+| [contacts/ContactSharing.svelte](../src/lib/contacts/ContactSharing.svelte) | S | Pending | `accent`, `danger`, `line`, `muted`, `radius`, `raised`, `text` | QR white substrate is a scanning constraint. Native elements: input; focus/disabled states need visual review. |
+| [contacts/MemberSheet.svelte](../src/lib/contacts/MemberSheet.svelte) | S | Pending | `bg`, `danger`, `line`, `line-strong`, `muted`, `radius-lg`, `radius-sm`, `raised-2`, `scrim`, `shadow`, `surface`, `text` | Identity-hue avatar with white initials; contrast pending. Data properties: `--hue`. Native elements: input, textarea; focus/disabled states need visual review. |
+| [contacts/NewContact.svelte](../src/lib/contacts/NewContact.svelte) | S | Pending | `line-strong`, `radius-lg`, `scrim`, `shadow`, `surface`, `text` | Token inventory inspected; inherited styles and state rendering remain to verify. |
+| [contacts/ProfileCard.svelte](../src/lib/contacts/ProfileCard.svelte) | S | Pending | `accent`, `accent-hover`, `accent-ink`, `accent-soft`, `accent-text`, `bg`, `danger`, `faint`, `line-strong`, `muted`, `radius`, `radius-lg`, `raised`, `raised-2`, `shadow`, `surface`, `text` | Identity-hue banner/avatar colors; contrast pending. Data properties: `--hue`. Native elements: input; focus/disabled states need visual review. |
+| [labels/LabelDialog.svelte](../src/lib/labels/LabelDialog.svelte) | S | Pending | `accent`, `bg`, `danger`, `line`, `line-strong`, `muted`, `radius-lg`, `radius-sm`, `raised-2`, `scrim`, `shadow`, `surface`, `text` | Native elements: input; focus/disabled states need visual review. |
+| [media/AudioPlayer.svelte](../src/lib/media/AudioPlayer.svelte) | S | Pending | `accent`, `danger`, `link`, `muted`, `raised-2`, `text` | Data properties: `--played`. |
+| [media/Gallery.svelte](../src/lib/media/Gallery.svelte) | S | Pending | `accent`, `bg`, `danger`, `line`, `muted`, `raised`, `surface`, `text` | Over-thumbnail badges retain black/white contrast. Native elements: input, select; focus/disabled states need visual review. |
+| [media/Lightbox.svelte](../src/lib/media/Lightbox.svelte) | S | Pending | `ease`, `motion-scale`, `scrim`, `shadow` | Token inventory inspected; inherited styles and state rendering remain to verify. |
+| [media/MediaViewer.svelte](../src/lib/media/MediaViewer.svelte) | S | Pending | `accent`, `chat-bg`, `ease`, `motion-scale`, `muted`, `radius-lg`, `raised`, `raised-2`, `shadow`, `surface`, `text` | Over-image controls retain black/white alpha colors. |
+| [media/NowPlaying.svelte](../src/lib/media/NowPlaying.svelte) | S | Pending | `accent`, `danger`, `muted`, `raised-2`, `surface`, `text` | Token inventory inspected; inherited styles and state rendering remain to verify. |
+| [media/StickerSync.svelte](../src/lib/media/StickerSync.svelte) | S | Pending | `danger`, `line`, `muted`, `raised`, `text` | Token fallback literals remain; root supplies those tokens. |
+| [media/TypingDots.svelte](../src/lib/media/TypingDots.svelte) | S | Pending | `motion-scale` | Identity hue is intentionally separate from theme accent; contrast pending. Data properties: `--hue`. |
+| [media/TypingIndicator.svelte](../src/lib/media/TypingIndicator.svelte) | S | Pending | `accent`, `bubble`, `muted`, `radius-sm`, `text` | Sender text now blends with theme text; fixed shadow still needs visual review. Data properties: `--hue`, `--pad-l`, `--pad-r`. Historical low contrast was repaired for the measured opaque contexts; 360-hue sweep results are above. Full state/Glass wallpaper coverage remains Pending. |
+| [media/VideoPlayer.svelte](../src/lib/media/VideoPlayer.svelte) | S | Pending | `accent`, `accent-ink`, `ease`, `motion-scale`, `radius`, `raised`, `scrim`, `shadow`, `surface`, `text` | Media viewport and over-video controls retain black/white alpha colors. Data properties: `--fill`. Native elements: input; focus/disabled states need visual review. |
+| [messages/AlbumGrid.svelte](../src/lib/messages/AlbumGrid.svelte) | S | Pending | `muted` | Token inventory inspected; inherited styles and state rendering remain to verify. |
+| [messages/cards/ContactCard.svelte](../src/lib/messages/cards/ContactCard.svelte) | S | Pending | `accent`, `danger`, `line`, `link`, `radius-sm`, `raised`, `text` | Token inventory inspected; inherited styles and state rendering remain to verify. |
+| [messages/cards/Embed.svelte](../src/lib/messages/cards/Embed.svelte) | S | Pending | `accent`, `link`, `muted`, `text` | Preview substrate/thumbnail overlays use black alpha; inspect light/custom. Data properties: `--embed-color`. |
+| [messages/cards/EventCard.svelte](../src/lib/messages/cards/EventCard.svelte) | S | Pending | `accent`, `accent-soft`, `danger`, `link`, `muted`, `text` | Token inventory inspected; inherited styles and state rendering remain to verify. |
+| [messages/cards/InviteCard.svelte](../src/lib/messages/cards/InviteCard.svelte) | S | Pending | `accent`, `accent-hover`, `accent-ink`, `muted`, `radius`, `raised-2`, `text` | Token inventory inspected; inherited styles and state rendering remain to verify. |
+| [messages/cards/LocationCard.svelte](../src/lib/messages/cards/LocationCard.svelte) | S | Pending | `accent-text`, `bg`, `faint`, `muted`, `raised`, `text` | Map/media overlays use black alpha and white text; inspect light/custom. |
+| [messages/cards/MessageCard.svelte](../src/lib/messages/cards/MessageCard.svelte) | S | Pending | Inherited/child styling | Wrapper delegates styling to children. |
+| [messages/cards/MessageQuote.svelte](../src/lib/messages/cards/MessageQuote.svelte) | S | Pending | `accent`, `muted`, `text` | Quote context uses muted token. |
+| [messages/cards/PollCard.svelte](../src/lib/messages/cards/PollCard.svelte) | S | Pending | `accent`, `bubble`, `danger`, `ease`, `link`, `motion-scale`, `muted`, `raised-2`, `text` | Token fallback literals remain; root supplies those tokens. Data properties: `--size`. |
+| [messages/MessageBubble.svelte](../src/lib/messages/MessageBubble.svelte) | S | Pending | `accent`, `accent-soft`, `accent-text`, `bg`, `bubble`, `bubble-mine`, `chat-bg`, `danger`, `danger-soft`, `ease`, `faint`, `jump-soft`, `line`, `link`, `mention`, `mention-soft`, `motion-scale`, `muted`, `radius-sm`, `raised`, `raised-2`, `replying`, `replying-soft`, `row-hover`, `scrim`, `surface`, `text` | Media overlays/shadows retain contrast literals; inspect theme/scrim combinations. Data properties: `--pad-l`, `--pad-r`. |
+| [messages/MessageFinder.svelte](../src/lib/messages/MessageFinder.svelte) | S | Pending | `accent`, `bg`, `ease`, `faint`, `line-strong`, `mention`, `mention-self-soft`, `mention-soft`, `motion-scale`, `muted`, `radius-lg`, `raised`, `scrim`, `shadow`, `surface`, `text` | Native elements: input; focus/disabled states need visual review. |
+| [messages/MessageInfo.svelte](../src/lib/messages/MessageInfo.svelte) | S | Pending | `bg`, `bubble-mine`, `faint`, `line`, `line-strong`, `link`, `muted`, `radius`, `radius-lg`, `raised`, `raised-2`, `scrim`, `shadow`, `text` | Token inventory inspected; inherited styles and state rendering remain to verify. |
+| [messages/MessageList.svelte](../src/lib/messages/MessageList.svelte) | S | Pending | `accent-soft`, `accent-text`, `ease`, `faint`, `line-strong`, `motion-scale`, `muted`, `radius`, `radius-sm`, `surface`, `text` | Fixed black alpha bubble shadows; visual review pending. Data properties: `--pad-l`, `--pad-r`. |
+| [messages/MessageMenu.svelte](../src/lib/messages/MessageMenu.svelte) | S | Pending | Inherited/child styling | Wrapper delegates styling to children. |
+| [messages/MessageMenuPanel.svelte](../src/lib/messages/MessageMenuPanel.svelte) | S | Pending | `accent-soft`, `danger`, `ease`, `line-strong`, `motion-scale`, `muted`, `radius-lg`, `raised`, `shadow`, `surface`, `text` | Token inventory inspected; inherited styles and state rendering remain to verify. |
+| [messages/MessageRow.svelte](../src/lib/messages/MessageRow.svelte) | S | Pending | Inherited/child styling | Wrapper delegates styling to children. |
+| [messages/MessageText.svelte](../src/lib/messages/MessageText.svelte) | S | Pending | `link`, `mention`, `mention-pill`, `mention-pill-soft`, `mention-self-soft`, `muted`, `text` | Token inventory inspected; inherited styles and state rendering remain to verify. |
+| [messages/OutgoingItem.svelte](../src/lib/messages/OutgoingItem.svelte) | S | Pending | `bubble-mine`, `motion-scale`, `radius-sm`, `scrim` | Upload overlay ring/text retain white; inspect custom scrim contrast. Data properties: `--pad-l`, `--pad-r`. |
+| [messages/ReactionList.svelte](../src/lib/messages/ReactionList.svelte) | S | Pending | `bg`, `line-strong`, `motion-scale`, `muted`, `radius`, `radius-lg`, `raised`, `scrim`, `shadow`, `surface`, `text` | Identity-hue avatar colors; contrast pending. Data properties: `--hue`. |
+| [messages/SelectionBar.svelte](../src/lib/messages/SelectionBar.svelte) | S | Pending | `danger`, `danger-soft`, `muted`, `raised`, `raised-2`, `surface`, `text` | Token inventory inspected; inherited styles and state rendering remain to verify. |
+| [messages/StarredList.svelte](../src/lib/messages/StarredList.svelte) | S | Pending | `bg`, `line-strong`, `mention`, `muted`, `radius-lg`, `raised`, `scrim`, `shadow`, `surface`, `text` | Native elements: input; focus/disabled states need visual review. |
+| [messages/StructuredNotice.svelte](../src/lib/messages/StructuredNotice.svelte) | S | Pending | `accent`, `danger`, `line-strong`, `link`, `muted`, `radius-lg`, `radius-sm`, `raised-2`, `scrim`, `shadow`, `surface`, `text` | Fixed black alpha shadow; visual review pending. |
+| [messages/Transcript.svelte](../src/lib/messages/Transcript.svelte) | S | Pending | `danger`, `muted` | Token fallback literals remain; root supplies those tokens. |
+| [notifications/NotificationHistory.svelte](../src/lib/notifications/NotificationHistory.svelte) | S | Pending | `accent`, `danger`, `line`, `muted`, `radius`, `raised`, `surface`, `text` | Token inventory inspected; inherited styles and state rendering remain to verify. |
+| [settings/ArchiveManager.svelte](../src/lib/settings/ArchiveManager.svelte) | S | Pending | `danger`, `ease`, `line`, `line-strong`, `motion-scale`, `muted`, `raised`, `text` | Fixed select/divider tokens and error color. Native elements: select; focus/disabled states need visual review. |
+| [settings/AutoDownloadOverride.svelte](../src/lib/settings/AutoDownloadOverride.svelte) | S | Pending | `danger`, `muted` | Select uses shared route rules; danger fallback is inactive with root tokens. Token fallback literals remain; root supplies those tokens. Native elements: select; focus/disabled states need visual review. |
+| [settings/AutoDownloadSettings.svelte](../src/lib/settings/AutoDownloadSettings.svelte) | S | Pending | `accent`, `line`, `muted` | Native elements: input; focus/disabled states need visual review. |
+| [settings/BlockedContacts.svelte](../src/lib/settings/BlockedContacts.svelte) | S | Pending | `danger`, `line`, `muted` | Fixed divider token and error color. |
+| [settings/Customization.svelte](../src/lib/settings/Customization.svelte) | S | Pending | `accent`, `accent-ink`, `accent-text`, `bg`, `danger`, `ease`, `faint`, `line`, `line-strong`, `motion-scale`, `muted`, `radius`, `radius-lg`, `raised`, `raised-2`, `surface`, `text` | Palette/checkerboard swatches retain literal sample colors; fixed shadow is a visual-review item. Data properties: `--c`. Native elements: input, textarea; focus/disabled states need visual review. |
+| [settings/KeywordSettings.svelte](../src/lib/settings/KeywordSettings.svelte) | S | Pending | `danger`, `line`, `muted`, `radius`, `surface`, `text` | Native elements: textarea; focus/disabled states need visual review. |
+| [settings/LinkedDevices.svelte](../src/lib/settings/LinkedDevices.svelte) | S | Pending | `danger`, `line`, `line-strong`, `muted` | Fixed panel/divider tokens and error color. |
+| [settings/NotificationSoundOverride.svelte](../src/lib/settings/NotificationSoundOverride.svelte) | S | Pending | `danger`, `muted` | Checkbox uses shared native accent/focus rules. Token fallback literals remain; root supplies those tokens. Native elements: input; focus/disabled states need visual review. |
+| [settings/PairingView.svelte](../src/lib/settings/PairingView.svelte) | S | Pending | `accent`, `accent-soft`, `bg`, `chat-bg`, `ease`, `faint`, `line`, `line-strong`, `link`, `motion-scale`, `muted`, `raised`, `raised-2`, `shadow`, `surface`, `text` | Token inventory inspected; inherited styles and state rendering remain to verify. |
+| [settings/PhoneLink.svelte](../src/lib/settings/PhoneLink.svelte) | S | Pending | `accent-text`, `danger`, `muted`, `radius-sm`, `surface`, `text` | Token fallback literals remain; root supplies those tokens. Native elements: input, select; focus/disabled states need visual review. |
+| [settings/PluginManager.svelte](../src/lib/settings/PluginManager.svelte) | S | Pending | `danger`, `line-strong`, `muted` | Fixed panel token and error color. Native elements: input; focus/disabled states need visual review. |
+| [settings/Settings.svelte](../src/lib/settings/Settings.svelte) | S | Pending | `accent`, `accent-text`, `bg`, `chat-bg`, `danger`, `danger-soft`, `ease`, `faint`, `line`, `line-strong`, `motion-scale`, `muted`, `radius`, `raised-2`, `shadow`, `surface`, `text` | Token fallback literals remain; root supplies those tokens. Native elements: input, select, textarea; focus/disabled states need visual review. |
+| [settings/StorageManager.svelte](../src/lib/settings/StorageManager.svelte) | S | Pending | `ease`, `line-strong`, `motion-scale`, `muted`, `raised`, `text` | Native elements: select; focus/disabled states need visual review. |
+| [settings/ThemeLayers.svelte](../src/lib/settings/ThemeLayers.svelte) | S | Pending | `chat-bg` | Token inventory inspected; inherited styles and state rendering remain to verify. |
+| [settings/ThemePreview.svelte](../src/lib/settings/ThemePreview.svelte) | S | Pending | `bg`, `chat-bg`, `font`, `font-size`, `line-strong`, `radius-lg`, `text` | Token inventory inspected; inherited styles and state rendering remain to verify. |
+| [settings/TranscriptionOverride.svelte](../src/lib/settings/TranscriptionOverride.svelte) | S | Pending | `danger`, `muted` | Select uses shared route rules; danger fallback is inactive with root tokens. Token fallback literals remain; root supplies those tokens. Native elements: select; focus/disabled states need visual review. |
+| [settings/TranscriptionSettings.svelte](../src/lib/settings/TranscriptionSettings.svelte) | S | Pending | `danger`, `line`, `muted`, `raised`, `text` | Token fallback literals remain; root supplies those tokens. Native elements: input, select; focus/disabled states need visual review. Field fonts and switch geometry fixed; ready/error/empty measured in 7 variants. |
+| [soundboard/Soundboard.svelte](../src/lib/soundboard/Soundboard.svelte) | S | Pending | `accent`, `danger`, `line`, `muted`, `radius`, `raised`, `shadow`, `surface`, `text` | Native elements: input, select; focus/disabled states need visual review. |
+| [ui/Avatar.svelte](../src/lib/ui/Avatar.svelte) | S | Pending | Inherited/child styling | Identity hue supplied inline; parent classes style avatar. |
+| [ui/BooleanProps.svelte](../src/lib/ui/BooleanProps.svelte) | S | Pending | `danger`, `ease`, `line`, `line-strong`, `motion-scale`, `muted`, `raised`, `text` | Fixed field/divider token names. Native elements: input; focus/disabled states need visual review. Font inheritance measured in 7 variants; danger alert repaired after 7 failures; empty table measured. |
+| [ui/Button.svelte](../src/lib/ui/Button.svelte) | S | Pending | `accent`, `accent-hover`, `accent-ink`, `accent-soft`, `danger`, `faint`, `line-strong`, `muted`, `radius`, `radius-sm`, `raised`, `raised-2`, `surface`, `text` | Token inventory inspected; inherited styles and state rendering remain to verify. Narrow browser evidence: primary accent/ink and disabled semantics in 7 variants. |
+| [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte) | S | Pending | `accent`, `danger`, `faint`, `line-strong`, `radius-lg`, `raised`, `scrim`, `shadow`, `surface` | Token inventory inspected; inherited styles and state rendering remain to verify. Narrow browser evidence: open surface/danger color, viewport fit and Cancel in 7 variants. |
+| [ui/Icon.svelte](../src/lib/ui/Icon.svelte) | S | Pending | Inherited/child styling | Token inventory inspected; inherited styles and state rendering remain to verify. |
+| [ui/Logo.svelte](../src/lib/ui/Logo.svelte) | S | Pending | `accent`, `accent-ink`, `text` | Inline SVG token colors. |
+| [ui/Panel.svelte](../src/lib/ui/Panel.svelte) | S | Pending | `accent`, `accent-hover`, `accent-ink`, `bg`, `danger`, `ease`, `line`, `line-strong`, `motion-scale`, `muted`, `radius`, `radius-lg`, `radius-sm`, `raised`, `raised-2`, `scrim`, `shadow`, `surface`, `text` | Switch thumb uses text/checked accent ink; inherited field/button styles. Native elements: input; focus/disabled states need visual review. Narrow browser evidence: 21 switch cases across 7 variants passed. |
+| [ui/Spinner.svelte](../src/lib/ui/Spinner.svelte) | S | Pending | `accent` | Token inventory inspected; inherited styles and state rendering remain to verify. |
+| [routes/+page.svelte](../src/routes/+page.svelte) | S | Pending | `accent`, `accent-soft`, `accent-text`, `bg`, `chat-bg`, `danger`, `danger-soft`, `ease`, `faint`, `font`, `font-size`, `line-strong`, `motion-scale`, `muted`, `radius`, `radius-sm`, `raised`, `raised-2`, `scheme`, `shadow`, `surface`, `text` | Root token defaults, font/text/scheme inheritance; select and native accent rules; native checkbox/radio/range keep focus outline. Data properties: `--hue`. |
+
+## Other source layers
+
+| Source | Source status | All-theme visual | Remaining review |
+| --- | --- | --- | --- |
+| [src/app.html](../src/app.html) | S | Pending | Pre-hydration shell is fixed dark. Inspect saved Light/System/custom startup before accepting full surface coverage. |
+| [utils/theme.svelte.ts](../src/lib/utils/theme.svelte.ts) | S | Pending | 40 tokens; five preset palettes; Glass/Material CSS overrides. Glass accent repair has a source regression check; preset/extension contrast is unverified. |
+| [utils/theme-preview.ts](../src/lib/utils/theme-preview.ts) | Referenced by ThemePreview | Pending | Existing synthetic data supports the preview; it does not cover every component or state. |
+
+## Theme and state matrix still required
+
+| Theme | Source palette/default behavior | All-component visual acceptance |
+| --- | --- | --- |
+| Dark | Preset plus inherited shape/type/motion defaults | Pending |
+| Light | Preset plus inherited shape/type/motion defaults | Pending |
+| Midnight | Preset plus inherited shape/type/motion defaults | Pending |
+| Material 3 | Preset and Material CSS; inherited motion scale | Pending |
+| Liquid Glass | Preset, wallpaper and Glass CSS; inherited font size/motion scale | Pending |
+| System | Switches between Dark and Light with OS preference | Pending in both preferences |
+| Full custom | Edited palette, including shallow/light accent and chosen ink | Pending |
+| Partial custom | Missing properties fall back to dark root defaults | Pending |
+| Custom CSS extensions | Extension order and selector specificity can override tokens | Pending |
+
+For each component, review its exposed default, hover, selected, keyboard-focus, disabled, loading, empty, error and open-dialog states. Skip states the component does not expose and record why. Include long text, native select/checkbox/radio/range controls, media overlays, identity hues, QR surfaces and transparent Glass surfaces. Preserve the real-component preview rather than replacing it with approximations.
+
+Existing [ThemePreview](../src/lib/settings/ThemePreview.svelte) covers Chat, Sign-in, Menu and Dialog with real components. It is useful for those scenes, but excludes most settings, contact/group tools, pickers and media states. Full issue acceptance requires recorded evidence for the component checklist and theme matrix, with unresolved surfaces repaired before closure.

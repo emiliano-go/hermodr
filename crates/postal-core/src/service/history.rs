@@ -308,6 +308,8 @@ impl Inbound {
         let mut chats = Vec::new();
         let mut added_chats = 0;
         let mut audit_chats = std::collections::HashSet::new();
+        let mut quiz_chats = std::collections::HashSet::new();
+        let mut quiz_notices = Vec::new();
         let mut sticker_changes = false;
         let mut names_learned;
         {
@@ -319,11 +321,13 @@ impl Inbound {
             // the picker shows them without a resync.
             sticker_changes |= self.seed_recent_stickers(store, &history.recent_stickers).await.observed() == Some(true);
             for conversation in &history.conversations {
-                let (chat, learned, audited) = self
+                let (chat, learned, audited, quiz_chat, notices) = self
                     .apply_history_conversation(store, conversation, client.as_ref(), own.as_deref(), requested.as_deref(), request_session, &mut sticker_changes)
                     .await;
                 names_learned += learned;
                 if let Some(chat) = audited { audit_chats.insert(chat); }
+                if let Some(chat) = quiz_chat { quiz_chats.insert(chat); }
+                quiz_notices.extend(notices);
                 if let Some(chat) = chat {
                     added_chats += 1;
                     chats.push(chat);
@@ -350,6 +354,8 @@ impl Inbound {
         }
         if batch_guard.finish().await.observed().is_some() {
             for chat in audit_chats { let _ = self.events.send(ServiceEvent::GroupAuditChanged { chat }); }
+            for chat in quiz_chats { let _ = self.events.send(ServiceEvent::Marks { chat }); }
+            for notice in quiz_notices { let _ = self.events.send(notice); }
             if sticker_changes { let _ = self.events.send(ServiceEvent::StickerLibraryChanged { packs: true, favorites: false, recents: true }); }
         }
     }
@@ -390,14 +396,14 @@ impl Inbound {
         requested: Option<&str>,
         request_session: Option<&str>,
         sticker_changes: &mut bool,
-    ) -> (Option<String>, usize, Option<String>) {
+    ) -> (Option<String>, usize, Option<String>, Option<String>, Vec<ServiceEvent>) {
         if conversation.id == "status@broadcast" {
-            return (None, 0, None);
+            return (None, 0, None, None, Vec::new());
         }
         let mut names_learned = self
             .pair_history_addresses(store, conversation.lid_jid.as_deref(), conversation.pn_jid.as_deref())
             .await;
-        let Some(jid) = conversation.id.parse::<Jid>().observed() else { return (None, 0, None) };
+        let Some(jid) = conversation.id.parse::<Jid>().observed() else { return (None, 0, None, None, Vec::new()) };
         // The sync holds the store's write lease; the conversation's own LID/PN
         // pair was just recorded, so the chat resolves from the store alone.
         let chat = resolve_chat(None, store, &jid).await;
@@ -438,7 +444,35 @@ impl Inbound {
                 }).await.logged();
             }
         }
-        (added.then(|| chat.clone()), names_learned, audited.then_some(chat))
+        let (quiz_changed, notices) = self.remember_history_quizzes(store, &chat, conversation, own).await;
+        (added.then(|| chat.clone()), names_learned, audited.then(|| chat.clone()), quiz_changed.then_some(chat), notices)
+    }
+
+    async fn remember_history_quizzes(&self, store: &StoreWorker, chat: &str, conversation: &wa::Conversation, own: Option<&str>) -> (bool, Vec<ServiceEvent>) {
+        let mut changed = false;
+        let mut notices = Vec::new();
+        for entry in &conversation.messages {
+            let Some(web) = entry.message.as_option() else { continue };
+            let (Some(key), Some(message)) = (web.key.as_option(), web.message.as_option()) else { continue };
+            let Some(id) = key.id.as_deref() else { continue };
+            let from_me = key.from_me.unwrap_or(false);
+            let sender = if from_me { own.unwrap_or(chat) } else { web.participant.as_deref().or(key.participant.as_deref()).unwrap_or(chat) };
+            let decoded = decoded_message(message);
+            if decoded.view_once || decoded.spoiler { continue; }
+            changed |= quiz_polls::remember_quiz_definition(store, chat, id, sender, message).await.observed() == Some(true);
+            if let Some(update) = decoded.message.poll_update_message.as_option() {
+                let Ok(voter) = sender.parse::<Jid>() else { continue };
+                let timestamp = web.message_timestamp.and_then(|at| i64::try_from(at).ok()).unwrap_or(0);
+                if quiz_polls::capture_quiz_vote(store, chat, id, &voter, None, from_me, update, timestamp).await.observed() == Some(true) {
+                    changed = true;
+                    if let Some(header) = store.retire_quiz_source(chat, update.poll_creation_message_key.as_option().and_then(|key| key.id.as_deref()).unwrap_or(""), id).await.observed().flatten() {
+                        let row = StoredMessage { header, local: LocalState { read: true, deleted: true, ..Default::default() }, ..Default::default() };
+                        notices.push(ServiceEvent::hint(&row, false));
+                    }
+                }
+            }
+        }
+        (changed, notices)
     }
 
     /// Names a conversation from its display name (a contact) or subject (a

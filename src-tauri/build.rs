@@ -139,6 +139,7 @@ const COMMANDS: &[&str] = &[
     "download_sticker",
     "resync_stickers",
     "create_poll",
+    "create_quiz",
     "vote_poll",
     "create_event",
     "respond_event",

@@ -152,6 +152,7 @@
     "allow-download-sticker",
     "allow-resync-stickers",
     "allow-create-poll",
+    "allow-create-quiz",
     "allow-vote-poll",
     "allow-create-event",
     "allow-respond-event",

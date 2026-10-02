@@ -691,7 +691,7 @@
   }
   .once-toggle.active {
     background: var(--accent);
-    color: #fff;
+    color: var(--accent-ink);
     box-shadow: 0 0 0 1px var(--accent);
   }
   .pending-name {

@@ -362,12 +362,17 @@ impl MessageStore {
     /// kept, so the chat can still show it greyed out and nothing on WhatsApp
     /// changes.
     pub fn set_message_deleted(&self, chat: &str, id: &str, deleted: bool) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        let chat = &*names::canonical_chat(&conn, chat)?;
-        conn.execute(
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.savepoint()?;
+        let chat = names::canonical_chat(&tx, chat)?.into_owned();
+        tx.execute(
             "UPDATE messages SET deleted = ?3 WHERE chat = ?1 AND id = ?2",
             params![chat, id, deleted as i32],
         )?;
+        if deleted {
+            super::quiz_polls::revoke_source(&tx, &chat, id)?;
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -415,6 +420,7 @@ impl MessageStore {
             "UPDATE messages SET revoked = 1 WHERE chat = ?1 AND id = ?2 AND revoked = 0",
             params![chat, id],
         )?;
+        super::quiz_polls::revoke_source(&tx, &chat, id)?;
         let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM messages WHERE chat = ?1 AND id = ?2)",
             params![chat, id], |row| row.get(0))?;
         if !exists {
@@ -537,3 +543,7 @@ impl StoreWorker {
         self.run(move |store| store.revoke_message(&chat, &id)).await
     }
 }
+
+#[cfg(test)]
+#[path = "message_source_revoke_tests.rs"]
+mod message_source_revoke_tests;

@@ -88,7 +88,7 @@
     font-size: 12.8px;
     font-weight: 500;
     line-height: 22px;
-    color: hsl(var(--hue) 65% 68%);
+    color: color-mix(in srgb, hsl(var(--hue) 65% 68%) 25%, var(--text));
   }
   .typing-more {
     color: var(--muted);

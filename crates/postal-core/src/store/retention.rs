@@ -199,8 +199,22 @@ fn purge_orphan_state(conn: &Connection) -> Result<()> {
              SELECT 1 FROM messages m WHERE m.chat = message_pins.chat AND m.id = message_pins.id);
          DELETE FROM poll_votes WHERE NOT EXISTS (
              SELECT 1 FROM messages m WHERE m.chat = poll_votes.chat AND m.id = poll_votes.poll);
+         DELETE FROM quiz_vote_ciphers WHERE EXISTS (
+             SELECT 1 FROM polls p WHERE p.chat = quiz_vote_ciphers.chat AND p.id = quiz_vote_ciphers.poll)
+             AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.chat = quiz_vote_ciphers.chat AND m.id = quiz_vote_ciphers.poll);
          DELETE FROM polls WHERE NOT EXISTS (
              SELECT 1 FROM messages m WHERE m.chat = polls.chat AND m.id = polls.id);
+         DELETE FROM quiz_vote_ciphers WHERE EXISTS (
+             SELECT 1 FROM quiz_polls p WHERE p.chat = quiz_vote_ciphers.chat AND p.id = quiz_vote_ciphers.poll)
+             AND NOT EXISTS (SELECT 1 FROM polls p WHERE p.chat = quiz_vote_ciphers.chat AND p.id = quiz_vote_ciphers.poll);
+         DELETE FROM quiz_vote_ciphers WHERE EXISTS (
+             SELECT 1 FROM messages m WHERE m.chat = quiz_vote_ciphers.chat AND m.id = quiz_vote_ciphers.poll
+                 AND (m.deleted != 0 OR m.revoked != 0));
+         DELETE FROM quiz_polls WHERE NOT EXISTS (
+             SELECT 1 FROM polls p WHERE p.chat = quiz_polls.chat AND p.id = quiz_polls.id);
+         DELETE FROM quiz_source_retirements WHERE NOT EXISTS (
+             SELECT 1 FROM quiz_vote_ciphers c WHERE c.chat = quiz_source_retirements.chat
+                 AND c.poll = quiz_source_retirements.poll AND c.update_id = quiz_source_retirements.update_id);
          DELETE FROM poll_option_hashes WHERE NOT EXISTS (
              SELECT 1 FROM polls p WHERE p.chat = poll_option_hashes.chat AND p.id = poll_option_hashes.id);
          DELETE FROM secret_edit_revisions WHERE NOT EXISTS (
@@ -318,6 +332,7 @@ impl DiskRetentionManager {
         if !policy_could_match(&conn, policy)? {
             return Ok(0);
         }
+        super::quiz_polls::redact_private_sources(&conn)?;
         let scope = PruneScope::new(&conn, chats, protected)?;
         let mut removed = 0;
         removed += scope.purge_global_age(policy.oldest_allowed())?;
@@ -342,6 +357,8 @@ impl MessageStore {
         conn.execute_batch(
             "DELETE FROM reactions; DELETE FROM stars; DELETE FROM message_pins; DELETE FROM message_pin_sync;
              DELETE FROM polls; DELETE FROM poll_votes; DELETE FROM poll_option_hashes;
+             DELETE FROM quiz_polls; DELETE FROM quiz_vote_ciphers;
+             DELETE FROM quiz_source_retirements;
              DELETE FROM secret_edit_revisions; DELETE FROM events;
              DELETE FROM event_responses; DELETE FROM view_once; DELETE FROM forwarded;
              DELETE FROM edited; DELETE FROM receipts; DELETE FROM hidden_chats;

@@ -71,10 +71,10 @@
 
 <style>
   p { color: var(--muted); font-size: .85rem; overflow-wrap: anywhere; }
-  article, section { border: 1px solid var(--border); padding: 1rem; margin: 1rem 0; border-radius: 6px; }
+  article, section { border: 1px solid var(--line-strong); padding: 1rem; margin: 1rem 0; border-radius: 6px; }
   h3 { margin: 0; font-size: 1rem; }
   small { color: var(--muted); font-weight: normal; }
   label { display: flex; gap: .5rem; align-items: start; }
   .actions { display: flex; gap: .5rem; margin-top: 1rem; }
-  [role="alert"] { color: #f66; }
+  [role="alert"] { color: var(--danger); }
 </style>

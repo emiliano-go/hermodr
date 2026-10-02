@@ -1,0 +1,6 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": { "types": ["node"] },
+  "include": ["../../src/lib/chat/CreateDialog.svelte", "../../src/lib/messages/cards/PollCard.svelte", "../../src/lib/utils/quiz-poll.ts", "../../src/lib/quiz-poll.test.ts", "./QuizPollHarness.svelte"],
+  "exclude": []
+}

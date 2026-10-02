@@ -232,6 +232,7 @@ macro_rules! postal_commands {
             media::download_sticker,
             media::resync_stickers,
             polls::create_poll,
+            polls::create_quiz,
             polls::vote_poll,
             polls::create_event,
             polls::respond_event,

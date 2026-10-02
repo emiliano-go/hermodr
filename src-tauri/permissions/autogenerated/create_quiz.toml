@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-create-quiz"
+description = "Enables the create_quiz command without any pre-configured scope."
+commands.allow = ["create_quiz"]
+
+[[permission]]
+identifier = "deny-create-quiz"
+description = "Denies the create_quiz command without any pre-configured scope."
+commands.deny = ["create_quiz"]

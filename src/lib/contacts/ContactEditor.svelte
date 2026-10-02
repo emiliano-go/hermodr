@@ -83,7 +83,7 @@
   fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: .75rem; }
   label { display: grid; gap: .3rem; font-size: .85rem; }
   label span, p { color: var(--muted); }
-  input:not([type="checkbox"]) { width: 100%; box-sizing: border-box; padding: .65rem .75rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); }
+  input:not([type="checkbox"]) { width: 100%; box-sizing: border-box; padding: .65rem .75rem; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); color: var(--text); font: inherit; }
   .check, .actions { display: flex; align-items: center; gap: .5rem; }
   .actions { flex-wrap: wrap; }
   p { font-size: .85rem; }

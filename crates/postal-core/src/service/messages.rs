@@ -438,11 +438,15 @@ impl WhatsAppService {
     }
 
     pub async fn marks(&self, chat: &str) -> Result<crate::store::ChatMarks> {
-        self.store.marks(chat).await
+        let mut marks = self.store.marks(chat).await?;
+        self.enrich_quiz_marks(chat, &mut marks).await?;
+        Ok(marks)
     }
 
     pub async fn marks_for(&self, chat: &str, ids: &[String]) -> Result<crate::store::ChatMarks> {
-        self.store.marks_for(chat, Some(ids)).await
+        let mut marks = self.store.marks_for(chat, Some(ids)).await?;
+        self.enrich_quiz_marks(chat, &mut marks).await?;
+        Ok(marks)
     }
 
     /// Marks a view-once message opened and deletes its media.

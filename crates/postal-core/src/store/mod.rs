@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 mod chats;
 mod schema;
 mod marks;
+pub(crate) mod quiz_polls;
 mod media;
 mod messages;
 mod quick_switcher;
@@ -58,6 +59,8 @@ pub use limits::RetentionLimit;
 mod tests;
 #[cfg(test)]
 mod history_floor_tests;
+#[cfg(test)]
+mod quiz_lifecycle_tests;
 
 /// A number standing in for a name: bare digits, or a `+`-prefixed phone label
 /// such as WhatsApp's masked `+598∙∙∙∙∙27`. Never a real contact or push name.
@@ -430,6 +433,19 @@ pub struct Poll {
     /// More than one option may be chosen.
     pub multi: bool,
     pub votes: Vec<PollVote>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "wire-types", ts(optional))]
+    pub quiz: Option<QuizFeedback>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
+pub struct QuizFeedback {
+    pub correct_option: Option<String>,
+    pub my_correct: Option<bool>,
+    pub results_complete: bool,
+    pub error: Option<String>,
+    pub can_vote: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

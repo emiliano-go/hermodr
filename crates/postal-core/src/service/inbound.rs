@@ -78,6 +78,7 @@ struct BatchCtx<'a> {
     media_dir: Option<PathBuf>,
     touched: Vec<String>,
     audit_chats: std::collections::HashSet<String>,
+    quiz_chats: Mutex<std::collections::HashSet<String>>,
     sticker_changes: AtomicBool,
     /// The batch arrived live rather than from the offline drain, so an
     /// arrival goes out with its full row instead of a hint.
@@ -452,6 +453,7 @@ impl Inbound {
             media_dir: self.media_dir.clone(),
             touched: Vec::with_capacity(batch.messages.len()),
             audit_chats: std::collections::HashSet::new(),
+            quiz_chats: Mutex::new(std::collections::HashSet::new()),
             sticker_changes: AtomicBool::new(false),
             live: batch.origin == BatchOrigin::Live,
         };
@@ -497,7 +499,7 @@ impl Inbound {
             };
             remember_structures(ctx.store, &incoming.chat, &incoming.id, &author, &inbound.message).await;
             if self.apply_control(&mut ctx, inbound, &incoming).await {
-                self.retire_unavailable(ctx.store, &incoming.chat, &incoming.id).await;
+                self.retire_control_source(&ctx, inbound, &incoming, &mut event_notices).await;
                 continue;
             }
             self.store_incoming(&ctx, inbound, &incoming).await;
@@ -507,15 +509,14 @@ impl Inbound {
             self.tally.note(batch.messages.len(), ingested);
         }
         let sticker_changes = ctx.sticker_changes.load(Ordering::Relaxed);
-        let audit_chats = ctx.audit_chats;
+        let (audit_chats, quiz_chats) = (ctx.audit_chats, ctx.quiz_chats.into_inner().unwrap());
         if batch_guard.finish().await.observed().is_some() {
             self.emit_batch_changes(event_notices, audit_chats, sticker_changes);
+            for chat in quiz_chats { let _ = self.events.send(ServiceEvent::Marks { chat }); }
         }
         log::debug!(
             "{} live message(s) in {:?} (retention {:?}, pruned {removed})",
-            batch.messages.len(),
-            started.elapsed(),
-            pruning.elapsed(),
+            batch.messages.len(), started.elapsed(), pruning.elapsed(),
         );
     }
 
@@ -708,6 +709,18 @@ impl Inbound {
         if stickers { let _ = self.events.send(ServiceEvent::StickerLibraryChanged { packs: true, favorites: false, recents: true }); }
     }
 
+    async fn retire_control_source(&self, ctx: &BatchCtx<'_>, inbound: &InboundMessage, incoming: &Incoming, notices: &mut Vec<ServiceEvent>) {
+        let decoded = decoded_message(&inbound.message);
+        if let Some(update) = decoded.message.poll_update_message.as_option() {
+            if decoded.spoiler || decoded.view_once { return; }
+            let Some(poll) = update.poll_creation_message_key.as_option().and_then(|key| key.id.as_deref()) else { return };
+            if let Some(header) = ctx.store.retire_quiz_source(&incoming.chat, poll, &incoming.id).await.observed().flatten() {
+                let row = StoredMessage { header, local: LocalState { read: true, deleted: true, ..Default::default() }, ..Default::default() };
+                notices.push(ServiceEvent::hint(&row, false));
+            }
+        } else { self.retire_unavailable(ctx.store, &incoming.chat, &incoming.id).await; }
+    }
+
     async fn audit_control(&self, ctx: &mut BatchCtx<'_>, inbound: &InboundMessage, chat: &str, previous: Option<&StoredMessage>) {
         if !chat.ends_with("@g.us") { return; }
         if group_audit::audit_group_message(ctx.store, &inbound.info, &inbound.message, previous,
@@ -721,8 +734,14 @@ impl Inbound {
     /// either side is known by is tried.
     async fn apply_poll_vote(&self, ctx: &BatchCtx<'_>, inbound: &InboundMessage, incoming: &Incoming) {
         use whatsapp_rust::wacore::poll::PollVoteCiphertext;
-        let Some(update) = decoded_message(&inbound.message).message.poll_update_message.as_option() else { return };
+        let decoded = decoded_message(&inbound.message);
+        let Some(update) = decoded.message.poll_update_message.as_option() else { return };
+        if decoded.view_once || decoded.spoiler { return; }
         let chat = &incoming.chat;
+        if quiz_polls::capture_quiz_vote(ctx.store, chat, &incoming.id, &inbound.info.source.sender.to_non_ad(),
+            inbound.info.source.sender_alt.as_ref(), incoming.from_me, update, inbound.info.timestamp.timestamp()).await.observed() == Some(true) {
+            ctx.quiz_chats.lock().unwrap().insert(chat.clone());
+        }
         let poll_id = update.poll_creation_message_key.as_option().and_then(|k| k.id.clone());
         let def = match poll_id.as_deref() { Some(id) => ctx.store.poll_secret(chat, id).await.observed().flatten(), None => None };
         let Some((poll_id, def, vote)) = poll_id.zip(def).zip(update.vote.as_option()).map(|((id, def), vote)| (id, def, vote)).filter(|_| ctx.client.is_some()) else {
@@ -759,7 +778,7 @@ impl Inbound {
                 let Some(chosen) = ctx.store.poll_option_names(chat, &poll_id, &hashes).await.observed() else { return };
                 let who = if incoming.from_me { "@me".to_string() } else { voter.to_string() };
                 ctx.store.set_poll_vote(chat, &poll_id, &who, &chosen).await.logged();
-                let _ = self.events.send(ServiceEvent::Marks { chat: chat.clone() });
+                ctx.quiz_chats.lock().unwrap().insert(chat.clone());
             }
             Err(e) => log::warn!("could not open a vote on poll {poll_id}: {e}"),
         }
@@ -940,6 +959,10 @@ impl Inbound {
         self.recall_quoted(ctx, &incoming.chat, &message).await;
         let live = ctx.live && !inbound.info.is_offline;
         let Some(message) = self.store_and_track(ctx, &incoming.chat, &message, live).await else { return };
+        if quiz_polls::remember_quiz_definition(ctx.store, &incoming.chat, &message.header.id,
+            &message.header.sender, &inbound.message).await.observed() == Some(true) {
+            ctx.quiz_chats.lock().unwrap().insert(incoming.chat.clone());
+        }
         member_profiles::record_member_message_context(ctx.store, &message, &inbound.message).await.logged();
         let auto_download = self.auto_download_for(ctx.store, &incoming.chat, message.media.kind.as_deref().unwrap_or("")).await;
         self.spawn_media_fetch(ctx, &incoming.chat, &message, auto_download, !inbound.info.is_offline);
@@ -1136,7 +1159,7 @@ mod contact_identity_tests {
             downloads: Arc::new(tokio::sync::Semaphore::new(1)), sync_progress: Arc::default(), media_auto_download: Arc::default(),
             keep_archived: Arc::default(), keep_view_once: Arc::default(), one_time_only: false, tally: Arc::default(), secret_edits: Default::default(),
         };
-        let ctx = BatchCtx { store: &store, client: None, own: vec![], media_dir: None, touched: vec![], audit_chats: std::collections::HashSet::new(), sticker_changes: AtomicBool::new(false), live: true };
+        let ctx = BatchCtx { store: &store, client: None, own: vec![], media_dir: None, touched: vec![], audit_chats: std::collections::HashSet::new(), quiz_chats: Mutex::new(std::collections::HashSet::new()), sticker_changes: AtomicBool::new(false), live: true };
         store.set_lid_pn("77", "59891954564").await.unwrap();
         store.set_push_name("59891954564@s.whatsapp.net", "Push").await.unwrap();
         inbound.remember_alt_name(&ctx, "77@lid", "77@lid", false, false, "59891954564@s.whatsapp.net").await;

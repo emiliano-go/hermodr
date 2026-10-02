@@ -314,13 +314,14 @@
     width: 18px;
     height: 18px;
     border-radius: 50%;
-    background: #fff;
+    background: var(--text);
     transition: transform calc(0.15s * var(--motion-scale)) var(--ease);
   }
   .content :global(.switch:checked) {
     background: var(--accent);
   }
   .content :global(.switch:checked::after) {
+    background: var(--accent-ink);
     transform: translateX(16px);
   }
   main :global(.button) {

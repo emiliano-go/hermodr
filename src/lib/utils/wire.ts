@@ -324,7 +324,7 @@ export type Poll = { id: string, name: string, options: Array<string>,
 /**
  * More than one option may be chosen.
  */
-multi: boolean, votes: Array<PollVote>, };
+multi: boolean, votes: Array<PollVote>, quiz?: QuizFeedback, };
 export type PollVote = { voter: string, options: Array<string>, };
 export type Profile = { name: string, about: string | null,
 /**
@@ -343,6 +343,7 @@ export type ProviderConsent = { plugin_id: string, provider: string, };
 export type ProviderKind = "local" | "cloud";
 export type QuickRepliesView = { complete: boolean, replies: Array<QuickReply>, };
 export type QuickReply = { id: string, shortcut: string, message: string, keywords: Array<string>, count: number, associated_label_ids: Array<string>, };
+export type QuizFeedback = { correct_option: string | null, my_correct: boolean | null, results_complete: boolean, error: string | null, can_vote: boolean, };
 export type Reaction = { target: string, sender: string, emoji: string, };
 export type RetentionLimit = { "kind": "inherit" } | { "kind": "unlimited" } | { "kind": "limited", "value": number };
 export type ScheduledMessage = { id: string, chat: string, text: string, mentions: Array<string>, due_at: number, status: string, error: string | null, attempted: boolean, };

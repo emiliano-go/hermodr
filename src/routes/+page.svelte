@@ -792,17 +792,57 @@
   }
 
   async function create(value: unknown) {
-    const chat = chats.selectedChat;
-    if (!chat) return;
-    await composer.enqueue(() =>
-      ui.creating === "poll"
-        ? invoke("create_poll", { chat, ...(value as object) })
-        : invoke("create_event", { chat, event: value }),
-    );
-    await messages.reloadMessages(chat);
-    await messages.loadMarks(chat);
-    await chats.refreshChats();
-    scrollToBottom();
+    const kind = ui.creating, accountId = session.activeAccount, chat = chats.selectedChat;
+    const generation = messages.accountGeneration;
+    const current = () => accountId === session.activeAccount && chat === chats.selectedChat
+      && generation === messages.accountGeneration;
+    if (!kind || !accountId || !chat) throw new Error("Conversation changed before creating.");
+    const payload: Record<string, unknown> = { ...(value as object) };
+    if (Array.isArray(payload.options)) payload.options = Object.freeze([...payload.options]);
+    Object.freeze(payload);
+    const quiz = kind === "poll" && Object.hasOwn(payload, "correctIndex");
+    const correct = payload.correctIndex;
+    if (quiz && (!Array.isArray(payload.options) || typeof correct !== "number" || !Number.isInteger(correct)
+      || correct < 0 || correct >= payload.options.length)) throw new Error("Invalid quiz correct answer.");
+    const command = kind === "event" ? "create_event" : quiz ? "create_quiz" : "create_poll";
+    const args = kind === "poll" ? { ...payload, accountId, chat } : { accountId, chat, event: payload };
+    await composer.enqueue(async (signal) => {
+      signal.throwIfAborted();
+      if (!current()) throw new Error("Conversation changed before creating.");
+      await invoke(command, args);
+    });
+    if (!current()) return;
+    try {
+      await messages.reloadMessages(chat);
+      if (!current()) return;
+      await messages.loadMarks(chat);
+      if (!current()) return;
+      await chats.refreshChats();
+      if (current()) scrollToBottom();
+    } catch (error) {
+      if (current()) ui.fail(error);
+    }
+  }
+
+  async function votePoll(message: StoredMessage, options: string[]) {
+    const accountId = session.activeAccount, chat = message.chat, id = message.id;
+    const generation = messages.accountGeneration, selected = [...options];
+    const current = () => accountId === session.activeAccount && chat === chats.selectedChat
+      && generation === messages.accountGeneration;
+    if (!accountId || !current()) throw new Error("Conversation changed before voting.");
+    await composer.enqueue(async (signal) => {
+      signal.throwIfAborted();
+      if (!current()) throw new Error("Conversation changed before voting.");
+      await invoke("vote_poll", { accountId, chat, id, options: selected });
+    });
+    if (!current()) return;
+    try {
+      await messages.loadMarks(chat);
+      if (!current()) return;
+      await chats.refreshChats();
+    } catch (error) {
+      if (current()) ui.fail(error);
+    }
   }
 
   /** Pinned bar content for the chat header. */
@@ -1317,8 +1357,7 @@
           onopenviewer={openViewer}
           onopenmedia={openMedia}
           onopenquote={(m) => openQuote(m, m.reply_to_path!)}
-          onvote={(m, options) =>
-            act(() => invoke("vote_poll", { chat: m.chat, id: m.id, options }))}
+          onvote={votePoll}
           onrespond={(m, response) =>
             act(() => invoke("respond_event", { chat: m.chat, id: m.id, response }))}
           oneditrequest={(m) => {
@@ -2274,11 +2313,22 @@
   :global(button:not(:disabled):active) {
     transform: translateY(1px);
   }
+  :global(select) {
+    background: var(--raised);
+    color: var(--text);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-sm);
+    padding: 6px 8px;
+    font: inherit;
+  }
+  :global(input[type="checkbox"], input[type="radio"], input[type="range"]) {
+    accent-color: var(--accent);
+  }
   :global(:focus-visible) {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
-  :global(input:focus-visible, textarea:focus-visible) {
+  :global(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus-visible, textarea:focus-visible) {
     outline: none;
     border-color: var(--accent) !important;
     box-shadow: 0 0 0 3px var(--accent-soft);
@@ -2522,7 +2572,7 @@
     font-size: 12.8px;
     font-weight: 500;
     line-height: 22px;
-    color: hsl(var(--hue) 65% 68%);
+    color: color-mix(in srgb, hsl(var(--hue) 65% 68%) 25%, var(--text));
     text-align: left;
   }
   :global(button.sender) {

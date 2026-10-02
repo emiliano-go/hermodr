@@ -65,12 +65,13 @@
   .chev { display: grid; margin-left: auto; color: var(--muted); transition: transform calc(150ms * var(--motion-scale, 1)) var(--ease); }
   details[open] .chev { transform: rotate(180deg); }
   p { color: var(--muted); font-size: .85rem; }
+  [role="alert"] { color: var(--danger); }
   .controls { display: flex; align-items: center; flex-wrap: wrap; gap: .8rem; }
   .filter { display: grid; gap: .4rem; margin-top: .8rem; }
   input[type="search"] { width: 100%; box-sizing: border-box; }
-  button, input[type="search"] { background: var(--raised); color: var(--text); border: 1px solid var(--border); padding: .5rem; border-radius: .3rem; }
+  button, input[type="search"] { background: var(--raised); color: var(--text); border: 1px solid var(--line-strong); padding: .5rem; border-radius: .3rem; font: inherit; }
   .table { overflow: auto; max-height: 22rem; }
   table { width: 100%; border-collapse: collapse; font-size: .8rem; }
-  th, td { text-align: left; padding: .4rem; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+  th, td { text-align: left; padding: .4rem; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
   small { display: block; color: var(--muted); }
 </style>

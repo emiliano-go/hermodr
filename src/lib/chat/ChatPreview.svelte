@@ -364,7 +364,7 @@
   .bubble { min-width: 0; max-width: 88%; padding: 9px 12px 6px; border-radius: 12px; background: var(--bubble); box-shadow: 0 1px 2px #0002; }
   .mine .bubble { background: var(--bubble-mine); }
   .sender { display: block; margin-bottom: 4px; font-size: 0.9em; font-weight: 600; overflow-wrap: anywhere; }
-  .sender.themed { color: hsl(var(--hue) 65% 68%); }
+  .sender.themed { color: color-mix(in srgb, hsl(var(--hue) 65% 68%) 25%, var(--text)); }
   p { margin: 0; }
   .text { white-space: pre-wrap; overflow-wrap: anywhere; }
   .media { margin-bottom: 4px; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 7px; font-weight: 500; }

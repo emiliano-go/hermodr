@@ -385,6 +385,8 @@ pub(super) const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
     super::quick_replies::migrate,
     super::albums::migrate,
     super::sticker_sync::migrate,
+    super::quiz_polls::migrate,
+    super::quiz_polls::migrate_source_retirements,
 ];
 
 pub(super) fn migrate(conn: &Connection) -> Result<()> {
