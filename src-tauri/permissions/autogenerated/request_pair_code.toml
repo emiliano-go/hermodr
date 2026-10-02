@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-request-pair-code"
+description = "Enables the request_pair_code command without any pre-configured scope."
+commands.allow = ["request_pair_code"]
+
+[[permission]]
+identifier = "deny-request-pair-code"
+description = "Denies the request_pair_code command without any pre-configured scope."
+commands.deny = ["request_pair_code"]

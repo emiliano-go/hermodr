@@ -196,6 +196,22 @@ pub enum ServiceEvent {
     /// represent a newtype variant holding a bare `String`, and serialization
     /// failure would silently drop the event.
     QrCode { code: String },
+    /// A phone-number pairing code is ready to type on the phone (~3 minutes).
+    PairingCode { code: String, timeout_secs: u64 },
+    /// The displayed phone-number code is spent or superseded. The flow is
+    /// cleared before this arrives, so requesting another is safe.
+    PairingCodeRefresh { force_manual: bool },
+    /// A phone-number pairing attempt failed, so no linking will come of it.
+    PairingCodeError {
+        message: String,
+        /// The server is throttling this number (400/429): wait before retrying.
+        throttled: bool,
+        /// Phone-number linking is not available for this account (452), so the
+        /// UI should steer back to the QR.
+        unavailable: bool,
+        /// The server's own retry delay, when it named one.
+        backoff_secs: Option<u64>,
+    },
     Connected,
     Disconnected,
     /// WhatsApp revoked this device; the stored session can never sign in again.

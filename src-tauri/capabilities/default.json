@@ -36,6 +36,8 @@
     "allow-keyword-matches",
     "notification:default",
     "allow-connect",
+    "allow-request-pair-code",
+    "allow-cancel-pair-code",
     "allow-accounts",
     "allow-add-account",
     "allow-switch-account",

@@ -363,7 +363,20 @@ has_messages: boolean,
  * group: an alias addresses a person, not a room.
  */
 aliases: Array<string>, };
-export type ServiceEvent = { "kind": "qrCode", code: string, } | { "kind": "connected" } | { "kind": "disconnected" } | { "kind": "loggedOut" } | { "kind": "message", message: StoredMessage, } | { "kind": "messageHint", chat: string, id: string, sender: string, from_me: boolean, fresh: boolean,
+export type ServiceEvent = { "kind": "qrCode", code: string, } | { "kind": "pairingCode", code: string, timeout_secs: number, } | { "kind": "pairingCodeRefresh", force_manual: boolean, } | { "kind": "pairingCodeError", message: string,
+/**
+ * The server is throttling this number (400/429): wait before retrying.
+ */
+throttled: boolean,
+/**
+ * Phone-number linking is not available for this account (452), so the
+ * UI should steer back to the QR.
+ */
+unavailable: boolean,
+/**
+ * The server's own retry delay, when it named one.
+ */
+backoff_secs: number | null, } | { "kind": "connected" } | { "kind": "disconnected" } | { "kind": "loggedOut" } | { "kind": "message", message: StoredMessage, } | { "kind": "messageHint", chat: string, id: string, sender: string, from_me: boolean, fresh: boolean,
 /**
  * What changed, so the UI knows whether a refetch is needed.
  */

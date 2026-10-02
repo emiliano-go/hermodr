@@ -321,6 +321,18 @@ const WATCHED_EVENTS: &[EventKind] = &[
     EventKind::RemoveRecentStickerUpdate,
 ];
 
+/// Classifies a pair-code failure for the UI: whether waiting helps, and
+/// whether the account can use phone-number linking at all.
+pub(super) fn pairing_error_event(error: &whatsapp_rust::types::events::PairingCodeError) -> ServiceEvent {
+    use whatsapp_rust::pair_code::PairCodeRejection;
+    ServiceEvent::PairingCodeError {
+        message: error.error.clone(),
+        throttled: error.rejection.as_ref().is_some_and(|rejection| rejection.is_throttled()),
+        unavailable: matches!(error.rejection.as_ref(), Some(PairCodeRejection::FeatureNotAvailable)),
+        backoff_secs: error.backoff.map(|delay| delay.as_secs()),
+    }
+}
+
 /// The state a session's tasks share, built once at startup.
 struct SessionState {
     qr: Arc<Mutex<Option<String>>>,
@@ -438,6 +450,38 @@ impl SessionState {
                         log::info!("pairing code issued");
                         *qr_state.lock().unwrap() = Some(code.clone());
                         let _ = events.send(ServiceEvent::QrCode { code });
+                    }
+                }
+            })
+            .on_pair_code({
+                let events = events.clone();
+                move |code, timeout| {
+                    let events = events.clone();
+                    async move {
+                        log::info!("phone-number pairing code issued");
+                        let _ = events.send(ServiceEvent::PairingCode {
+                            code,
+                            timeout_secs: timeout.as_secs(),
+                        });
+                    }
+                }
+            })
+            .on_pair_code_refresh({
+                let events = events.clone();
+                move |force_manual, _client| {
+                    let events = events.clone();
+                    async move {
+                        let _ = events.send(ServiceEvent::PairingCodeRefresh { force_manual });
+                    }
+                }
+            })
+            .on_pair_code_error({
+                let events = events.clone();
+                move |error, _client| {
+                    let events = events.clone();
+                    async move {
+                        log::warn!("phone-number pairing failed: {}", error.error);
+                        let _ = events.send(pairing_error_event(&error));
                     }
                 }
             })
@@ -749,6 +793,22 @@ impl WhatsAppService {
     /// during startup, before a UI subscriber may have attached.
     pub fn current_qr(&self) -> Option<String> {
         self.qr.lock().unwrap().clone()
+    }
+
+    /// Mints a phone-number pairing code. The code itself arrives as
+    /// [`ServiceEvent::PairingCode`]; this returns the immediate failures
+    /// (invalid number, not connected, or a code still outstanding).
+    pub async fn request_pair_code(&self, phone_number: &str) -> Result<(), String> {
+        let options = whatsapp_rust::pair_code::PairCodeOptions {
+            phone_number: phone_number.to_string(),
+            ..Default::default()
+        };
+        self.client.pair_with_code(options).await.map(|_| ()).map_err(|error| error.to_string())
+    }
+
+    /// Withdraws an outstanding pairing code so a replacement can be minted.
+    pub async fn cancel_pair_code(&self) {
+        self.client.cancel_pair_code().await;
     }
 
     /// Whether the account is currently connected.
