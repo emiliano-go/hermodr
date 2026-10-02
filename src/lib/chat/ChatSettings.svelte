@@ -55,6 +55,8 @@
   let busy = $state(false);
   let retention = $state<ChatRetention>({ max_age_hours: { kind: "inherit" }, max_messages: { kind: "inherit" }, on_demand: true });
   let unarchive = $state<boolean | null>(null);
+  let muteAtAll = $state(false);
+  let muteBusy = $state(false);
   let initial = "";
 
   const snapshot = $derived(JSON.stringify([retention, unarchive]));
@@ -65,12 +67,26 @@
       const got = await invoke<import("$lib/utils/wire").ChatSettings>("chat_settings", { chat });
       retention = got.retention;
       unarchive = got.unarchive;
+      muteAtAll = got.mute_at_all ?? false;
       initial = JSON.stringify([got.retention, got.unarchive]);
       loaded = true;
     } catch (e) {
       failed = String(e);
     }
   });
+
+  async function toggleMuteAtAll() {
+    const target = !muteAtAll;
+    muteBusy = true;
+    try {
+      await invoke("set_chat_mute_at_all", { chat, muted: target });
+      muteAtAll = target;
+    } catch (e) {
+      failed = String(e);
+    } finally {
+      muteBusy = false;
+    }
+  }
 
   async function save() {
     const accountId = session.activeAccount;
@@ -171,6 +187,13 @@
               <option value="true">On</option>
               <option value="false">Off</option>
             </select>
+          </label>
+          <label class="toggle-row">
+            <span>
+              <span class="name">Mute @all mentions</span>
+              <span class="desc">Stays silent for @all in this chat. Direct mentions still ping.</span>
+            </span>
+            <input class="toggle" type="checkbox" checked={muteAtAll} disabled={muteBusy} onchange={toggleMuteAtAll} />
           </label>
           {#if session.activeAccount}
             <NotificationSoundOverride accountId={session.activeAccount} {chat} />

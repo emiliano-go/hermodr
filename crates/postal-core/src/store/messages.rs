@@ -12,10 +12,11 @@ const INSERT_MESSAGE_SQL: &str = "INSERT INTO messages
       reply_to_kind, reply_to_thumb, media_thumb, media_ref, reply_to_chat,
       preview_site, preview_color, media_duration, system_kind, system_params,
       reply_to_view_once, reply_to_recoverable, reply_to_path, reply_to_locator,
-      media_once_kind, sort_order, live_location, history_shareable, spoiler, deleted)
+      media_once_kind, sort_order, live_location, history_shareable, spoiler, deleted,
+      mentioned_all_only)
  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
          ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?29, ?30,
-         ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40)
+         ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?42)
  ON CONFLICT(chat, id) DO UPDATE SET
      sort_order = CASE WHEN excluded.sort_order > 0 THEN MIN(messages.sort_order, excluded.sort_order) ELSE messages.sort_order END,
      sender = excluded.sender,
@@ -34,6 +35,7 @@ const INSERT_MESSAGE_SQL: &str = "INSERT INTO messages
      read = MAX(read, excluded.read),
      revoked = excluded.revoked,
      mentioned = MAX(mentioned, excluded.mentioned),
+     mentioned_all_only = MAX(mentioned_all_only, excluded.mentioned_all_only),
      status = CASE WHEN ?28 >(CASE status WHEN 'pending' THEN 0 WHEN 'sent' THEN 1
                                WHEN 'delivered' THEN 2 WHEN 'read' THEN 3 ELSE -1 END)
               THEN excluded.status ELSE status END,
@@ -158,6 +160,7 @@ impl MessageStore {
                 message.spoiler,
                 message.local.deleted,
                 message.is_unavailable() || message.is_hidden_tombstone(),
+                message.local.mentioned_all_only as i32,
             ],
         )?;
         if message.is_unavailable() || message.is_hidden_tombstone() {
@@ -190,6 +193,7 @@ impl MessageStore {
     }
 
     /// Messages that mention us, in one chat or all of them, newest first.
+    /// Chats muting @all hide their @all-only mentions; direct mentions still show.
     pub fn pings(&self, chat: Option<&str>, limit: u32) -> Result<Vec<StoredMessage>> {
         let conn = self.conn.lock().unwrap();
         let chat = chat.map(|jid| names::canonical_chat(&conn, jid)).transpose()?;
@@ -198,7 +202,9 @@ impl MessageStore {
             "SELECT {MESSAGE_COLUMNS}
              FROM messages m
              LEFT JOIN names n ON n.jid = m.sender
+             LEFT JOIN chat_settings cset ON cset.jid = m.chat
              WHERE m.mentioned = 1 AND m.from_me = 0 AND m.deleted = 0 AND (?1 IS NULL OR m.chat = ?1)
+               AND NOT (COALESCE(m.mentioned_all_only, 0) = 1 AND COALESCE(cset.mute_at_all, 0) = 1)
              ORDER BY m.timestamp DESC, m.sort_order DESC, m.id DESC LIMIT ?2"
         ))?;
         let rows = stmt.query_map(params![chat, limit], message_row)?;
@@ -370,13 +376,16 @@ impl MessageStore {
     }
 
     /// Unread messages in `chat` that mention us, oldest first.
+    /// @all-only mentions are hidden while the chat mutes them.
     pub fn unread_mentions(&self, chat: &str) -> Result<Vec<String>> {
         let conn = self.conn.lock().unwrap();
         let chat = &*names::canonical_chat(&conn, chat)?;
         let mut stmt = conn.prepare(
-            "SELECT id FROM messages
-             WHERE chat = ?1 AND read = 0 AND from_me = 0 AND mentioned = 1 AND deleted = 0
-             ORDER BY timestamp ASC, sort_order ASC, id ASC",
+            "SELECT m.id FROM messages m
+             LEFT JOIN chat_settings cset ON cset.jid = m.chat
+             WHERE m.chat = ?1 AND m.read = 0 AND m.from_me = 0 AND m.mentioned = 1 AND m.deleted = 0
+               AND NOT (COALESCE(m.mentioned_all_only, 0) = 1 AND COALESCE(cset.mute_at_all, 0) = 1)
+             ORDER BY m.timestamp ASC, m.sort_order ASC, m.id ASC",
         )?;
         let rows = stmt.query_map(params![chat], |r| r.get::<_, String>(0))?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)

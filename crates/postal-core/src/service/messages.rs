@@ -228,6 +228,16 @@ impl WhatsAppService {
         self.store.set_chat_sound_muted(chat, muted).await
     }
 
+    /// Whether @all mentions stay silent in this chat.
+    pub async fn chat_mute_at_all(&self, chat: &str) -> Result<bool> {
+        self.store.chat_mute_at_all(chat).await
+    }
+
+    /// Mutes or unmutes @all mentions in one chat; direct mentions still ping.
+    pub async fn set_chat_mute_at_all(&self, chat: &str, muted: bool) -> Result<()> {
+        self.store.set_chat_mute_at_all(chat, muted).await
+    }
+
     /// Deletes every message stored on this device; the phone keeps its copy.
     pub async fn clear_history(&self) -> Result<usize> {
         self.cancel_older_requests(None).await?;

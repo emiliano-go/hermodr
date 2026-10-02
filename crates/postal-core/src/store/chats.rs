@@ -188,15 +188,19 @@ impl MessageStore {
                                   WHEN m.spoiler = 1 THEN '[Spoiler]' ELSE m.text END, ''), COALESCE(m.from_me, 0), s.name, COALESCE(m.sender, ''),
                     CASE WHEN m.system_kind = 'UNAVAILABLE_MESSAGE' THEN NULL
                          WHEN m.system_kind IS NOT NULL THEN 'missed_call' ELSE m.media_kind END,
-                    COALESCE(cs.archived, 0), COALESCE(cs.muted_until, 0), COALESCE(cs.marked_unread, 0)
+                    COALESCE(cs.archived, 0), COALESCE(cs.muted_until, 0), COALESCE(cs.marked_unread, 0),
+                    COALESCE(cset.mute_at_all, 0)
              FROM chats c
-             LEFT JOIN (SELECT chat,
-                          MAX(timestamp) AS last_message_at,
+             LEFT JOIN (SELECT messages.chat AS chat,
+                          MAX(messages.timestamp) AS last_message_at,
                           COUNT(*) AS message_count,
-                          SUM(read = 0 AND from_me = 0 AND deleted = 0 AND COALESCE(system_kind, '') <> 'UNAVAILABLE_MESSAGE') AS unread_count,
-                          SUM(read = 0 AND from_me = 0 AND mentioned = 1 AND deleted = 0 AND COALESCE(system_kind, '') <> 'UNAVAILABLE_MESSAGE') AS mention_count
-                   FROM messages WHERE NOT (deleted <> 0 AND text = '' AND media_kind IS NULL AND system_kind IS NULL)
-                   GROUP BY chat) g ON g.chat = c.jid
+                          SUM(messages.read = 0 AND messages.from_me = 0 AND messages.deleted = 0 AND COALESCE(messages.system_kind, '') <> 'UNAVAILABLE_MESSAGE') AS unread_count,
+                          SUM(messages.read = 0 AND messages.from_me = 0 AND messages.mentioned = 1 AND messages.deleted = 0 AND COALESCE(messages.system_kind, '') <> 'UNAVAILABLE_MESSAGE'
+                              AND NOT (COALESCE(messages.mentioned_all_only, 0) = 1
+                                       AND COALESCE(cset.mute_at_all, 0) = 1)) AS mention_count
+                   FROM messages LEFT JOIN chat_settings cset ON cset.jid = messages.chat
+                   WHERE NOT (messages.deleted <> 0 AND messages.text = '' AND messages.media_kind IS NULL AND messages.system_kind IS NULL)
+                   GROUP BY messages.chat) g ON g.chat = c.jid
              LEFT JOIN messages m ON m.rowid =
                   (SELECT rowid FROM messages WHERE chat = c.jid
                      AND deleted = 0
@@ -206,6 +210,7 @@ impl MessageStore {
              LEFT JOIN names s ON s.jid = m.sender
              LEFT JOIN pins p ON p.jid = c.jid
              LEFT JOIN chat_state cs ON cs.jid = c.jid
+             LEFT JOIN chat_settings cset ON cset.jid = c.jid
              WHERE c.jid NOT IN (SELECT jid FROM hidden_chats)
              -- The pin key applies only to pinned chats: the account's pin state
              -- also keeps unpinned tombstones with millisecond timestamps, and
@@ -230,6 +235,7 @@ impl MessageStore {
                     archived: row.get::<_, i64>(12)? != 0,
                     muted_until: row.get(13)?,
                     marked_unread: row.get::<_, i64>(14)? != 0,
+                    mute_at_all: row.get::<_, i64>(15)? != 0,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;

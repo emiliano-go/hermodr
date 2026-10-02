@@ -163,6 +163,11 @@
   let menuError = $state<string | null>(null);
   let menuRequest = 0;
   let menuOwner: HTMLElement | null = null;
+  /** Whether the right-click menu's "More" section is expanded. */
+  let moreOpen = $state(false);
+  /** Whether the menu's chat mutes @all mentions; from the list, then the settings read. */
+  let menuMuteAtAll = $state(false);
+  let menuMuteBusy = $state(false);
   let preview = $state<{ chat: ChatSummary; x: number; y: number } | null>(null);
   let previewOwner: HTMLElement | null = null;
   let previewClose: ReturnType<typeof setTimeout> | undefined;
@@ -274,6 +279,7 @@
       pinned: false,
       archived: false,
       muted_until: 0,
+      mute_at_all: false,
       marked_unread: false,
     };
   }
@@ -291,6 +297,9 @@
     chatMenu = { x: "clientX" in event ? event.clientX : box.left, y: "clientY" in event ? event.clientY : box.bottom, chat };
     menuLoaded = false;
     menuError = null;
+    moreOpen = false;
+    menuMuteAtAll = chat.mute_at_all;
+    menuMuteBusy = false;
     const request = ++menuRequest;
     const account = activeAccount;
     void layoutMenu(event.type === "keydown");
@@ -298,6 +307,7 @@
       const settings = await invoke<import("$lib/utils/wire").ChatSettings>("chat_settings", { chat: chat.chat });
       if (request !== menuRequest || account !== activeAccount) return;
       menuAutoDownload = settings.auto_download_types;
+      menuMuteAtAll = settings.mute_at_all ?? chat.mute_at_all;
       menuLoaded = true;
     } catch (e) {
       if (request !== menuRequest || account !== activeAccount) return;
@@ -319,6 +329,7 @@
   function closeChatMenu(restoreFocus = true) {
     menuRequest++;
     chatMenu = null;
+    moreOpen = false;
     if (restoreFocus) menuOwner?.focus();
   }
 
@@ -552,6 +563,9 @@
             {#if isMuted(chat)}
               <span class="muted-mark" title="Muted"><Icon name="volume" size={13} /></span>
             {/if}
+            {#if chat.mute_at_all}
+              <span class="muted-mark at-muted" title="@all mentions muted"><Icon name="at" size={13} /></span>
+            {/if}
             {#if chat.unread_count > 0}
               <span class="badge">{chat.unread_count > 99 ? "99+" : chat.unread_count}</span>
             {:else if chat.marked_unread}
@@ -754,6 +768,40 @@
         onchataction("set_chat_auto_download", { chat: menuChat.chat, enabled: !menuDownloadsEnabled });
         closeChatMenu();
       }}>{menuLoaded ? `${menuDownloadsEnabled ? "Disable" : "Enable"} all media auto-download` : menuError ? "Media settings unavailable" : "Loading media settings…"}</Button>
+    <div class="more-wrap">
+      <Button
+        variant="menu"
+        icon="chevronRight"
+        iconSize={15}
+        role="menuitem"
+        aria-expanded={moreOpen}
+        aria-haspopup="true"
+        onclick={() => {
+          moreOpen = !moreOpen;
+          void layoutMenu();
+        }}><span class="more-label">More</span><span class="more-chevron" class:open={moreOpen}><Icon name="chevronRight" size={14} /></span></Button>
+      {#if moreOpen}
+        <div class="more-sub" role="menu" aria-label="More chat options">
+          <Button
+            variant="menu"
+            icon="at"
+            iconSize={15}
+            role="menuitem"
+            disabled={menuMuteBusy}
+            onclick={() => {
+              const target = !menuMuteAtAll;
+              menuMuteBusy = true;
+              menuMuteAtAll = target;
+              try {
+                onchataction("set_chat_mute_at_all", { chat: menuChat.chat, muted: target });
+              } finally {
+                menuMuteBusy = false;
+                closeChatMenu();
+              }
+            }}>{menuMuteAtAll ? "Unmute @all mentions" : "Mute @all mentions"}</Button>
+        </div>
+      {/if}
+    </div>
     <Button
       variant="menu"
       icon="edit"
@@ -1254,5 +1302,30 @@
     border: 1px solid var(--line-strong);
     border-radius: var(--radius);
     box-shadow: var(--shadow);
+  }
+  .more-wrap {
+    display: flex;
+    flex-direction: column;
+  }
+  .more-label {
+    flex: 1;
+  }
+  .more-chevron {
+    display: inline-flex;
+    margin-left: auto;
+    transition: transform 0.15s var(--ease);
+  }
+  .more-chevron.open {
+    transform: rotate(90deg);
+  }
+  .more-sub {
+    display: flex;
+    flex-direction: column;
+    margin-left: 12px;
+    padding-left: 8px;
+    border-left: 2px solid var(--line-strong);
+  }
+  .at-muted {
+    opacity: 0.8;
   }
 </style>

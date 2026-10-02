@@ -13,7 +13,7 @@
     last_message_at: 1700000000, last_text: "", last_from_me: false,
     last_sender_name: null, last_sender: "", last_media_kind: null,
     message_count: 0, unread_count: 0, mention_count: 0,
-    pinned: true, archived: false, muted_until: 0, marked_unread: false,
+    pinned: true, archived: false, muted_until: 0, mute_at_all: false, marked_unread: false,
   });
   let action = $state("");
   let previewCalls = $state("");

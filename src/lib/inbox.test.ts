@@ -10,7 +10,7 @@ import type { ChatSummary } from "./utils/wire";
 const filters: InboxFilters = { unread: false, mentions: false, labelled: false, muted: false, archived: false, label: "", query: "" };
 const base: ChatSummary = { chat: "base@s", display_name: "Base", last_message_at: 0, last_text: "", last_from_me: false,
   last_sender_name: null, last_sender: "", last_media_kind: null, message_count: 0, unread_count: 0, mention_count: 0,
-  pinned: false, archived: false, muted_until: 0, marked_unread: false };
+  pinned: false, archived: false, muted_until: 0, mute_at_all: false, marked_unread: false };
 const rows = [
   { ...base, chat: "unread@s", display_name: "Alice", unread_count: 2, mention_count: 1 },
   { ...base, chat: "muted@s", display_name: "Bob", muted_until: -1, archived: true },

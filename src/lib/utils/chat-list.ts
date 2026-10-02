@@ -17,6 +17,7 @@ function sameSummary(a: ChatSummary, b: ChatSummary) {
     a.pinned === b.pinned &&
     a.archived === b.archived &&
     a.muted_until === b.muted_until &&
+    a.mute_at_all === b.mute_at_all &&
     a.marked_unread === b.marked_unread
   );
 }

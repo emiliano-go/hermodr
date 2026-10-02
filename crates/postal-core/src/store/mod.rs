@@ -249,6 +249,10 @@ pub struct LocalState {
     pub deleted: bool,
     /// Whether the message mentions us (directly or via @all).
     pub mentioned: bool,
+    /// Whether the mention came only via @all (no direct mention of us).
+    /// Defaults for rows written before the column existed.
+    #[serde(default)]
+    pub mentioned_all_only: bool,
     /// Delivery state of a message we sent: `pending`, `sent`, `delivered` or
     /// `read`. `None` for incoming messages.
     pub status: Option<String>,
@@ -282,6 +286,9 @@ pub struct ChatSummary {
     pub archived: bool,
     /// Muted until this Unix time in seconds; -1 is indefinitely, 0 not muted.
     pub muted_until: i64,
+    /// Whether @all mentions stay silent in this chat (direct mentions still ping).
+    #[serde(default)]
+    pub mute_at_all: bool,
     /// Marked unread by hand, mirrored from the account.
     pub marked_unread: bool,
 }
@@ -294,7 +301,8 @@ const MESSAGE_COLUMNS: &str = "m.chat, m.id, m.sender, m.timestamp, m.from_me, m
     m.reply_to_kind, m.reply_to_thumb, m.media_thumb, m.media_ref, m.reply_to_chat,
     m.preview_site, m.preview_color, m.media_duration, m.system_kind, m.system_params,
     m.reply_to_view_once, m.reply_to_recoverable, m.reply_to_path, m.reply_to_locator,
-  m.media_once_kind, m.sort_order, m.deleted, m.live_location, m.history_shareable, m.spoiler";
+  m.media_once_kind, m.sort_order, m.deleted, m.live_location, m.history_shareable, m.spoiler,
+  m.mentioned_all_only";
 
 fn message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
     Ok(StoredMessage {
@@ -343,6 +351,7 @@ fn message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
             revoked: row.get::<_, i32>(12)? != 0,
             deleted: row.get::<_, i32>(36)? != 0,
             mentioned: row.get::<_, i32>(15)? != 0,
+            mentioned_all_only: row.get::<_, Option<i32>>(40)?.is_some_and(|v| v != 0),
             status: row.get(13)?,
         },
         system: SystemNotice {
@@ -561,6 +570,8 @@ impl MessageStore {
         }
         let started = std::time::Instant::now();
         schema::migrate(&conn)?;
+        // Heals version-stamped files missing the newest columns; no-op otherwise.
+        schema::ensure_optional_columns(&conn)?;
         let schema_elapsed = started.elapsed();
         let started = std::time::Instant::now();
         chats::reconcile_addresses(&conn)?;

@@ -209,6 +209,7 @@ export async function invoke<T>(command: string, args?: Record<string, unknown>)
     unarchive: null,
     send_typing: null,
     send_receipts: null,
+    mute_at_all: false,
     retention: { max_age_hours: { kind: "inherit" }, max_messages: { kind: "limited", value: 200 }, on_demand: true },
     } as T;
   }

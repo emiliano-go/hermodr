@@ -35,12 +35,17 @@ export type NotifyDecision = {
   isOpenChat: boolean;
   /** When the message was sent, Unix seconds. A replay older than the window stays silent. */
   sentAt: number;
+  /** The message mentioned us only via @all. */
+  mentionedAllOnly?: boolean;
+  /** The chat mutes @all mentions; direct mentions still ping. */
+  muteAtAll?: boolean;
 };
 
 /**
  * Single gate for every notification path: muted chats and the global toggle
  * stay silent, and only genuinely recent arrivals ping (a future timestamp,
- * from clock skew, counts as recent).
+ * from clock skew, counts as recent). A chat muting @all stays silent for
+ * @all-only mentions; direct mentions still ping.
  */
 export function shouldNotify(d: NotifyDecision, nowSec = Math.floor(Date.now() / 1000)): boolean {
   if (!d.notificationsEnabled) return false;
@@ -50,6 +55,7 @@ export function shouldNotify(d: NotifyDecision, nowSec = Math.floor(Date.now() /
   if (d.revoked || d.systemKind) return false;
   if (d.isOpenChat) return false;
   if (isChatMuted(d.mutedUntil, nowSec)) return false;
+  if (d.mentionedAllOnly && d.muteAtAll) return false;
   return true;
 }
 

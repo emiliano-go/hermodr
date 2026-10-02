@@ -923,6 +923,7 @@ impl Inbound {
         // Mentions stay `@<number>` as on the wire; the UI resolves them when
         // drawn, so later names apply.
         message.local.mentioned = mentions_me(&inbound.message, &ctx.own);
+        message.local.mentioned_all_only = mentions_all_only(&inbound.message, &ctx.own);
         if decoded_message(&inbound.message).view_once {
             ctx.store.set_view_once(&incoming.chat, &message.header.id, incoming.from_me).await.logged();
         }

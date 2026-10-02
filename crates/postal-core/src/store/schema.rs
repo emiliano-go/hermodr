@@ -383,10 +383,36 @@ pub(super) const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
     super::group_audit::migrate,
     super::member_profiles::migrate,
     super::quick_replies::migrate,
+    migrate_v16_mention_all_only,
+    migrate_v17_mute_at_all,
 ];
 
 pub(super) fn migrate(conn: &Connection) -> Result<()> {
     migrate_to(conn, MIGRATIONS.len())
+}
+
+/// Adds columns a version-stamped database may still miss.
+///
+/// Version-gated migrations cannot heal a file whose `user_version` already
+/// claims the latest schema while the columns were never added (e.g. an
+/// interrupted or partial upgrade). Every query below references these
+/// columns unconditionally, so a missing one fails at prepare time with
+/// "no such column". This runs on every open, outside versioning, and is a
+/// no-op when the columns exist.
+pub(super) fn ensure_optional_columns(conn: &Connection) -> Result<()> {
+    let messages: Vec<String> = table_columns(conn, "messages").unwrap_or_default();
+    if !messages.is_empty() && !messages.iter().any(|c| c == "mentioned_all_only") {
+        conn.execute_batch(
+            "ALTER TABLE messages ADD COLUMN mentioned_all_only INTEGER NOT NULL DEFAULT 0 CHECK(mentioned_all_only IN (0,1));",
+        )?;
+    }
+    let settings: Vec<String> = table_columns(conn, "chat_settings").unwrap_or_default();
+    if !settings.is_empty() && !settings.iter().any(|c| c == "mute_at_all") {
+        conn.execute_batch(
+            "ALTER TABLE chat_settings ADD COLUMN mute_at_all INTEGER NOT NULL DEFAULT 0 CHECK(mute_at_all IN (0,1));",
+        )?;
+    }
+    Ok(())
 }
 
 pub(super) fn migrate_to(conn: &Connection, target: usize) -> Result<()> {
@@ -597,6 +623,7 @@ const ADDED_MESSAGE_COLUMNS: &[(&str, &str)] = &[
     ("system_kind", "TEXT"),
     ("system_params", "TEXT"),
     ("mentioned", "INTEGER NOT NULL DEFAULT 0"),
+    ("mentioned_all_only", "INTEGER NOT NULL DEFAULT 0"),
     ("media_duration", "INTEGER"),
     // The view-once a reply quotes, and the only copy of it a linked device
     // is ever sent. `reply_to_locator` is the quoted message as it arrived
@@ -824,6 +851,37 @@ fn migrate_v11_soft_delete(conn: &Connection) -> Result<()> {
     let columns = table_columns(conn, "messages")?;
     if !columns.iter().any(|column| column == "deleted") {
         conn.execute_batch("ALTER TABLE messages ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0;")?;
+    }
+    Ok(())
+}
+
+/// Whether an @all mention was the only way a message mentioned us.
+/// Lets a chat mute @all while direct mentions still ping.
+fn migrate_v16_mention_all_only(conn: &Connection) -> Result<()> {
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('messages') WHERE name = 'mentioned_all_only')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        conn.execute_batch(
+            "ALTER TABLE messages ADD COLUMN mentioned_all_only INTEGER NOT NULL DEFAULT 0 CHECK(mentioned_all_only IN (0,1));",
+        )?;
+    }
+    Ok(())
+}
+
+/// Per-chat @all mute, alongside the existing notification overrides.
+fn migrate_v17_mute_at_all(conn: &Connection) -> Result<()> {
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('chat_settings') WHERE name = 'mute_at_all')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        conn.execute_batch(
+            "ALTER TABLE chat_settings ADD COLUMN mute_at_all INTEGER NOT NULL DEFAULT 0 CHECK(mute_at_all IN (0,1));",
+        )?;
     }
     Ok(())
 }

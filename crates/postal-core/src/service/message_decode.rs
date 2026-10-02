@@ -693,18 +693,30 @@ fn context_of(base: &wa::Message) -> Option<&wa::ContextInfo> {
     ].into_iter().flatten().next()
 }
 
-/// Whether a message mentions us: directly, or everyone through @all.
-pub(super) fn mentions_me(message: &wa::Message, own: &[String]) -> bool {
+/// Whether a message mentions us directly (a `mentioned_jid` naming one of our addresses).
+pub(super) fn mentions_directly(message: &wa::Message, own: &[String]) -> bool {
     let Some(context) = message_context(message) else {
         return false;
     };
-    if !context.group_mentions.is_empty() {
-        return true;
-    }
     context.mentioned_jid.iter().any(|mention| {
         let bare = mention.split(':').next().unwrap_or(mention);
         own.iter().any(|me| me == mention || me == bare)
     })
+}
+
+/// Whether a message mentions everyone through @all (`group_mentions`).
+pub(super) fn mentions_all(message: &wa::Message) -> bool {
+    message_context(message).is_some_and(|context| !context.group_mentions.is_empty())
+}
+
+/// Whether a message mentions us: directly, or everyone through @all.
+pub(super) fn mentions_me(message: &wa::Message, own: &[String]) -> bool {
+    mentions_all(message) || mentions_directly(message, own)
+}
+
+/// Whether a message mentions us only via @all (no direct mention).
+pub(super) fn mentions_all_only(message: &wa::Message, own: &[String]) -> bool {
+    mentions_all(message) && !mentions_directly(message, own)
 }
 
 #[cfg(test)]

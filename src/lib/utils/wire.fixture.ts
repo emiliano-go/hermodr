@@ -29,6 +29,7 @@ export const fixture = {
     "media_path": null,
     "media_thumb": null,
     "mentioned": false,
+    "mentioned_all_only": false,
     "preview_color": null,
     "preview_desc": null,
     "preview_site": null,

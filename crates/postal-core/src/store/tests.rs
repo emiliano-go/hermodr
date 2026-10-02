@@ -1016,3 +1016,74 @@ fn live_location_updates_and_ends_survive_a_reload() {
     // Already ended: nothing left to change.
     assert!(!s.end_live_location("a", "1").unwrap());
 }
+
+#[test]
+fn muting_at_all_hides_only_at_all_mentions() {
+    let s = store(DiskRetention::unlimited());
+    let mut all_only = msg("g@g.us", "1", 0, "@all hello");
+    all_only.local.mentioned = true;
+    all_only.local.mentioned_all_only = true;
+    s.insert_message(&all_only).unwrap();
+    let mut direct = msg("g@g.us", "2", 0, "@me hello");
+    direct.local.mentioned = true;
+    direct.local.mentioned_all_only = false;
+    s.insert_message(&direct).unwrap();
+
+    // Unmuted: both count.
+    assert_eq!(s.chats().unwrap()[0].mention_count, 2);
+    assert_eq!(s.pings(Some("g@g.us"), 10).unwrap().len(), 2);
+    assert_eq!(s.unread_mentions("g@g.us").unwrap().len(), 2);
+    assert!(!s.chat_mute_at_all("g@g.us").unwrap());
+
+    s.set_chat_mute_at_all("g@g.us", true).unwrap();
+    assert!(s.chat_mute_at_all("g@g.us").unwrap());
+    // Muted: only the direct mention counts.
+    assert_eq!(s.chats().unwrap()[0].mention_count, 1);
+    assert!(s.chats().unwrap()[0].mute_at_all);
+    assert_eq!(s.pings(Some("g@g.us"), 10).unwrap().len(), 1);
+    assert_eq!(s.pings(Some("g@g.us"), 10).unwrap()[0].header.id, "2");
+    assert_eq!(s.unread_mentions("g@g.us").unwrap(), vec!["2".to_string()]);
+
+    s.set_chat_mute_at_all("g@g.us", false).unwrap();
+    assert_eq!(s.chats().unwrap()[0].mention_count, 2);
+}
+
+#[test]
+fn reopen_heals_version_stamped_databases_missing_new_columns() {
+    use rusqlite::Connection;
+    let root = std::env::temp_dir().join(format!("postal-heal-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("heal.db");
+    {
+        // A database migrated to the old tip, then version-bumped without
+        // ever adding the new columns: every new query fails at prepare
+        // time with "no such column".
+        let conn = Connection::open(&path).unwrap();
+        super::schema::migrate_to(&conn, super::schema::MIGRATIONS.len() - 2).unwrap();
+        // `mute_at_all` never existed at the old tip (v17 adds it); drop the
+        // messages column to complete the version-stamped-but-missing state.
+        conn.execute_batch("ALTER TABLE messages DROP COLUMN mentioned_all_only;").unwrap();
+        conn.pragma_update(None, "user_version", super::schema::MIGRATIONS.len() as i64).unwrap();
+        let missing: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('messages') WHERE name = 'mentioned_all_only')",
+            [], |r| r.get(0)).unwrap();
+        assert!(!missing, "fixture must lack the new column");
+    }
+    {
+        // Opening heals the columns, so the chat list, pings and the mute
+        // toggle work on the previously broken file.
+        let s = MessageStore::open(&path).unwrap();
+        let mut all_only = msg("g@g.us", "1", 0, "@all hello");
+        all_only.local.mentioned = true;
+        all_only.local.mentioned_all_only = true;
+        s.insert_message(&all_only).unwrap();
+        assert_eq!(s.chats().unwrap()[0].mention_count, 1);
+        s.set_chat_mute_at_all("g@g.us", true).unwrap();
+        assert!(s.chat_mute_at_all("g@g.us").unwrap());
+        assert_eq!(s.chats().unwrap()[0].mention_count, 0);
+        assert!(s.unread_mentions("g@g.us").unwrap().is_empty());
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}

@@ -22,7 +22,22 @@ pub(super) fn merge(conn: &Connection, from: &str, to: &str) -> Result<()> {
             params![to, from],
         )?;
     }
+    if from != to && has_mute_at_all(conn)? {
+        conn.execute(
+            "UPDATE chat_settings SET mute_at_all=COALESCE(mute_at_all,
+                (SELECT mute_at_all FROM chat_settings WHERE jid=?2)) WHERE jid=?1",
+            params![to, from],
+        )?;
+    }
     Ok(())
+}
+
+fn has_mute_at_all(conn: &Connection) -> Result<bool> {
+    Ok(conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('chat_settings') WHERE name='mute_at_all')",
+        [],
+        |row| row.get(0),
+    )?)
 }
 
 impl MessageStore {
@@ -43,6 +58,43 @@ impl MessageStore {
         )?;
         Ok(())
     }
+
+    /// Whether @all mentions stay silent in this chat. False when unset.
+    pub fn chat_mute_at_all(&self, chat: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let chat = names::canonical_chat(&conn, chat)?;
+        if !has_mute_at_all(&conn)? {
+            return Ok(false);
+        }
+        Ok(conn
+            .query_row(
+                "SELECT mute_at_all FROM chat_settings WHERE jid=?1",
+                [chat.as_ref()],
+                |row| row.get::<_, Option<bool>>(0),
+            )
+            .optional()?
+            .flatten()
+            .unwrap_or(false))
+    }
+
+    /// Mutes or unmutes @all mentions in one chat; direct mentions still ping.
+    pub fn set_chat_mute_at_all(&self, chat: &str, muted: bool) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let chat = names::canonical_chat(&conn, chat)?;
+        // Older stores gain the column through the schema migration; a fresh
+        // in-memory fixture without migrations still works.
+        if !has_mute_at_all(&conn)? {
+            conn.execute_batch(
+                "ALTER TABLE chat_settings ADD COLUMN mute_at_all INTEGER NOT NULL DEFAULT 0 CHECK(mute_at_all IN (0,1));",
+            )?;
+        }
+        conn.execute(
+            "INSERT INTO chat_settings(jid,auto_download,mute_at_all) VALUES (?1,1,?2)
+             ON CONFLICT(jid) DO UPDATE SET mute_at_all=excluded.mute_at_all",
+            params![chat.as_ref(), muted],
+        )?;
+        Ok(())
+    }
 }
 
 impl StoreWorker {
@@ -54,6 +106,16 @@ impl StoreWorker {
     pub(crate) async fn set_chat_sound_muted(&self, chat: &str, muted: Option<bool>) -> Result<()> {
         let chat = chat.to_owned();
         self.run(move |store| store.set_chat_sound_muted(&chat, muted)).await
+    }
+
+    pub(crate) async fn chat_mute_at_all(&self, chat: &str) -> Result<bool> {
+        let chat = chat.to_owned();
+        self.run(move |store| store.chat_mute_at_all(&chat)).await
+    }
+
+    pub(crate) async fn set_chat_mute_at_all(&self, chat: &str, muted: bool) -> Result<()> {
+        let chat = chat.to_owned();
+        self.run(move |store| store.set_chat_mute_at_all(&chat, muted)).await
     }
 }
 

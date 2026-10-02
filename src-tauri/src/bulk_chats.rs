@@ -102,6 +102,7 @@ mod tests {
             pinned: false,
             archived,
             muted_until: 0,
+            mute_at_all: false,
             marked_unread,
         }
     }

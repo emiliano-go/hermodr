@@ -20,6 +20,8 @@ pub(crate) struct ChatSettings {
     /// Typing and read receipt overrides, `None` when following the global ones.
     send_typing: Option<bool>,
     send_receipts: Option<bool>,
+    /// Whether @all mentions stay silent in this chat.
+    mute_at_all: bool,
 }
 
 #[tauri::command(async)]
@@ -34,7 +36,22 @@ pub(crate) async fn chat_settings(state: State<'_, AppState>, chat: String) -> R
         sound_muted: service.chat_sound_muted(&chat).await.map_err(|e| e.to_string())?,
         unarchive: service.chat_unarchive(&chat).await.map_err(|e| e.to_string())?,
         retention: service.chat_retention(&chat).await.map_err(|e| e.to_string())?,
+        mute_at_all: service.chat_mute_at_all(&chat).await.map_err(|e| e.to_string())?,
     })
+}
+
+/// Mutes or unmutes @all mentions in one chat; direct mentions still ping.
+#[tauri::command(async)]
+pub(crate) async fn set_chat_mute_at_all(
+    state: State<'_, AppState>,
+    chat: String,
+    muted: bool,
+) -> Result<(), String> {
+    state
+        .service()?
+        .set_chat_mute_at_all(&chat, muted)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]

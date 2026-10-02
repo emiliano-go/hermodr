@@ -257,6 +257,7 @@ macro_rules! postal_commands {
             chats::set_chat_auto_download,
             chats::chat_media_auto_download,
             chats::set_chat_media_auto_download,
+            chats::set_chat_mute_at_all,
             notifications::chat_sound_muted,
             notifications::set_chat_sound_muted,
             notifications::show_chat_notification,

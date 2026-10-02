@@ -18,6 +18,7 @@ const summary = (chat: string, over: Partial<ChatSummary> = {}): ChatSummary => 
   pinned: false,
   archived: false,
   muted_until: 0,
+  mute_at_all: false,
   marked_unread: false,
   ...over,
 });

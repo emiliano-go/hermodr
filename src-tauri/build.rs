@@ -166,6 +166,7 @@ const COMMANDS: &[&str] = &[
     "set_chat_auto_download",
     "chat_media_auto_download",
     "set_chat_media_auto_download",
+    "set_chat_mute_at_all",
     "chat_sound_muted",
     "set_chat_sound_muted",
     "show_chat_notification",

@@ -179,6 +179,7 @@
     "allow-set-chat-auto-download",
     "allow-chat-media-auto-download",
     "allow-set-chat-media-auto-download",
+    "allow-set-chat-mute-at-all",
     "allow-chat-sound-muted",
     "allow-set-chat-sound-muted",
     "allow-show-chat-notification",

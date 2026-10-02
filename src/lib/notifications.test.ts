@@ -57,6 +57,23 @@ test("catch-up replays stay silent: only recent arrivals ping", () => {
   assert.equal(shouldNotify({ ...base, sentAt: NOW + 30 }, NOW), true);
 });
 
+test("muting @all silences @all-only mentions but keeps direct ones", () => {
+  const base = {
+    fromMe: false,
+    systemKind: null,
+    revoked: false,
+    mutedUntil: 0,
+    notificationsEnabled: true,
+    fresh: true,
+    isOpenChat: false,
+    sentAt: NOW,
+  };
+  assert.equal(shouldNotify({ ...base, mentionedAllOnly: true, muteAtAll: true }, NOW), false);
+  assert.equal(shouldNotify({ ...base, mentionedAllOnly: true, muteAtAll: false }, NOW), true);
+  assert.equal(shouldNotify({ ...base, mentionedAllOnly: false, muteAtAll: true }, NOW), true);
+  assert.equal(shouldNotify({ ...base, muteAtAll: true }, NOW), true);
+});
+
 test("titles name the DM contact and the group", () => {
   assert.equal(notificationTitle({ isGroup: false, chatName: "Ana", senderName: "Ana" }), "Ana");
   assert.equal(

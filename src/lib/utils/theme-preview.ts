@@ -31,6 +31,7 @@ export const chats: ChatSummary[] = rows.map(([name, text, , unread], i) => ({
   pinned: false,
   archived: false,
   muted_until: 0,
+  mute_at_all: false,
   marked_unread: false,
 }));
 
@@ -45,7 +46,7 @@ function message(id: number, author: string, text: string, extra: Partial<Stored
     media_once_kind: null, reply_to_id: null, reply_to_text: null, reply_to_sender: null,
     reply_to_chat: null, reply_to_kind: null, reply_to_thumb: null, reply_to_path: null,
     reply_to_view_once: false, reply_to_recoverable: false,
-    read: true, revoked: false, deleted: false, mentioned: false, preview_url: null, preview_title: null,
+    read: true, revoked: false, deleted: false, mentioned: false, mentioned_all_only: false, preview_url: null, preview_title: null,
     preview_desc: null, preview_thumb: null, preview_site: null, preview_color: null,
     status: author === "You" ? "read" : null, system_kind: null, system_params: [],
     live_location: null, ...extra,

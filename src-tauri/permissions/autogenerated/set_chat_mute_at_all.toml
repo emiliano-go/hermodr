@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-chat-mute-at-all"
+description = "Enables the set_chat_mute_at_all command without any pre-configured scope."
+commands.allow = ["set_chat_mute_at_all"]
+
+[[permission]]
+identifier = "deny-set-chat-mute-at-all"
+description = "Denies the set_chat_mute_at_all command without any pre-configured scope."
+commands.deny = ["set_chat_mute_at_all"]

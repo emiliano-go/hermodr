@@ -143,6 +143,11 @@ function mutedUntilOf(chat: string): number {
   return chats.chats.find((c) => c.chat === chat)?.muted_until ?? 0;
 }
 
+/** Whether the chat mutes @all mentions; unknown chats read as unmuted. */
+function muteAtAllOf(chat: string): boolean {
+  return chats.chats.find((c) => c.chat === chat)?.mute_at_all ?? false;
+}
+
 function notificationsOn(): boolean {
   return session.settings.notifications_enabled ?? true;
 }
@@ -179,6 +184,8 @@ function notifyForMessage(message: StoredMessage, fresh: boolean) {
         fresh,
         isOpenChat: isOpenChat(chat),
         sentAt: message.timestamp,
+        mentionedAllOnly: message.mentioned_all_only,
+        muteAtAll: muteAtAllOf(chat),
       },
     );
   if (!current()) return;
@@ -210,6 +217,9 @@ async function notifyForHint(chat: string, id: string, fresh: boolean) {
   if (!fresh || !notificationsOn()) return;
   if (isOpenChat(chat)) return;
   if (isChatMuted(mutedUntilOf(chat))) return;
+  // A chat muting @all still pings for direct mentions; the fetched row
+  // decides. The pre-fetch gate only skips when the mute state is already
+  // known to silence everything, which an @all mute alone does not.
   const account = session.activeAccount;
   if (!account) return;
   const generation = messages.accountGeneration;

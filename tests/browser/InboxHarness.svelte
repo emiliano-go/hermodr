@@ -5,7 +5,7 @@
 
   const base: ChatSummary = { chat: "", display_name: null, last_message_at: 1000, last_text: "Synthetic preview", last_from_me: false,
     last_sender_name: null, last_sender: "", last_media_kind: null, message_count: 2, unread_count: 0, mention_count: 0,
-    pinned: false, archived: false, muted_until: 0, marked_unread: false };
+    pinned: false, archived: false, muted_until: 0, mute_at_all: false, marked_unread: false };
   let account = $state("alpha");
   let request = $state(0);
   let connected = $state(true);

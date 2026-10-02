@@ -48,7 +48,11 @@ auto_download: boolean | null, auto_download_types: MediaAutoDownloadOverrides, 
 /**
  * Typing and read receipt overrides, `None` when following the global ones.
  */
-send_typing: boolean | null, send_receipts: boolean | null, };
+send_typing: boolean | null, send_receipts: boolean | null,
+/**
+ * Whether @all mentions stay silent in this chat.
+ */
+mute_at_all: boolean, };
 export type ChatStorage = { chat: string, name: string | null, bytes: number, by_kind: { [key in string]: number }, };
 export type ChatSummary = { chat: string,
 /**
@@ -91,6 +95,10 @@ archived: boolean,
  * Muted until this Unix time in seconds; -1 is indefinitely, 0 not muted.
  */
 muted_until: number,
+/**
+ * Whether @all mentions stay silent in this chat (direct mentions still ping).
+ */
+mute_at_all: boolean,
 /**
  * Marked unread by hand, mirrored from the account.
  */
@@ -491,6 +499,11 @@ deleted: boolean,
  * Whether the message mentions us (directly or via @all).
  */
 mentioned: boolean,
+/**
+ * Whether the mention came only via @all (no direct mention of us).
+ * Defaults for rows written before the column existed.
+ */
+mentioned_all_only: boolean,
 /**
  * Delivery state of a message we sent: `pending`, `sent`, `delivered` or
  * `read`. `None` for incoming messages.
