@@ -59,6 +59,7 @@
     "allow-once-state",
     "allow-set-pairing",
     "allow-resolve-names",
+    "allow-lookup-username",
     "allow-broadcast-list",
     "allow-mark-read",
     "allow-mark-read-until",

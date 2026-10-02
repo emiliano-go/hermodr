@@ -20,6 +20,7 @@ use anyhow::Result;
 pub use aliases::AliasStore;
 pub use history::HistoryPolicy;
 pub use service::{
+    UsernameLookupResult,
     GroupHistoryOffer, GroupHistoryResult, GroupMemberAddResult,
     GroupJoinRequest,
     GroupCreateResult, GroupCreateParticipant, GroupCreateParticipantState,

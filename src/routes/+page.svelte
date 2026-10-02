@@ -27,6 +27,7 @@
   import ContactSharing from "$lib/contacts/ContactSharing.svelte";
   import type { SharedContact, ContactShareScope } from "$lib/utils/vcard";
   import QuickSwitcher from "$lib/chat/QuickSwitcher.svelte";
+  import UsernameLookup from "$lib/chat/UsernameLookup.svelte";
   import UnifiedInbox from "$lib/chat/UnifiedInbox.svelte";
   import LabelDialog from "$lib/labels/LabelDialog.svelte";
   import { labels } from "$lib/state/labels.svelte";
@@ -515,6 +516,7 @@
   }
   let newContact = $state(false);
   let quickSwitcher = $state(false);
+  let usernameFor = $state<{ account: string; generation: number } | null>(null);
   $effect(() => { session.activeAccount; newContact = quickSwitcher = false; });
   $effect(() => {
     const account = session.activeAccount;
@@ -2174,7 +2176,28 @@
         quickSwitcher = false;
         if (target.messageId) await jumpTo(target.chat, target.messageId);
         else await openChat(target.chat, false, target.label);
+      }} onusername={() => {
+        if (account !== session.activeAccount || generation !== messages.accountGeneration) return;
+        quickSwitcher = false;
+        usernameFor = { account, generation };
       }} onclose={() => (quickSwitcher = false)} />
+  {/key}
+{/if}
+
+{#if usernameFor && usernameFor.account === session.activeAccount && usernameFor.generation === messages.accountGeneration}
+  {@const scope = usernameFor}
+  {#key scope}
+    <UsernameLookup account={scope.account} generation={scope.generation}
+      onlookup={(username, usernameKey) => {
+        if (usernameFor !== scope || scope.account !== session.activeAccount || scope.generation !== messages.accountGeneration)
+          return Promise.reject(new Error("Account changed before username lookup."));
+        return invoke<import("$lib/utils/wire").UsernameLookupResult>("lookup_username", { accountId: scope.account, username, usernameKey });
+      }}
+      onfound={async (jid, username) => {
+        if (usernameFor !== scope || scope.account !== session.activeAccount || scope.generation !== messages.accountGeneration) return;
+        await openChat(jid, false, username ? `@${username}` : undefined);
+        if (usernameFor === scope && scope.account === session.activeAccount && scope.generation === messages.accountGeneration) usernameFor = null;
+      }} onclose={() => { if (usernameFor === scope) usernameFor = null; }} />
   {/key}
 {/if}
 

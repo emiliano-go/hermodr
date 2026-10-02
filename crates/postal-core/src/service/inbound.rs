@@ -155,6 +155,12 @@ impl Inbound {
             }
             Event::GroupUpdate(update) => self.on_group_changed(update).await,
             Event::MissedCall(call) => self.on_missed_call(call).await,
+            Event::IncomingCall(call) => {
+                if usernames::record_incoming_call(&self.store, self.client_for_events.get().map(|client| client.as_ref()), call)
+                    .await.observed() == Some(true) {
+                    let _ = self.events.send(ServiceEvent::NamesUpdated { count: 1 });
+                }
+            }
             Event::UndecryptableMessage(stub) => self.on_undecryptable(stub).await,
             Event::ArchiveUpdate(update) => self.on_archive_update(update).await,
             Event::MuteUpdate(update) => self.on_mute_update(update).await,

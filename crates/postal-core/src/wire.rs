@@ -24,6 +24,7 @@ pub fn visit_wire_types(visitor: &mut impl TypeVisitor) {
         crate::store::MessageCursor, crate::store::MessagePage, crate::store::MessagePageDirection,
         crate::store::ChatMarks, crate::store::archive::ArchiveReport,
         crate::store::BroadcastList,
+        crate::service::UsernameLookupResult,
     );
     crate::store::archive::visit_wire_types(visitor);
 }

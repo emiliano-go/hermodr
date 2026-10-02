@@ -603,6 +603,7 @@ number: string | null, username: string | null, about: string | null,
  * Verified business name, for business accounts.
  */
 business: string | null, };
+export type UsernameLookupResult = { "kind": "found", jid: string, username: string | null, } | { "kind": "notFound" } | { "kind": "keyRequired", username: string | null, };
 export type ViewOnce = { id: string, opened: boolean,
 /**
  * Whether this view-once can be shown: the file is already on disk, or a

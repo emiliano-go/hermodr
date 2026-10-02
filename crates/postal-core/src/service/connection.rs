@@ -318,6 +318,7 @@ const WATCHED_EVENTS: &[EventKind] = &[
     EventKind::GroupUpdate,
     EventKind::Notification,
     EventKind::MissedCall,
+    EventKind::IncomingCall,
     EventKind::FavoriteStickerUpdate,
     EventKind::RemoveRecentStickerUpdate,
 ];

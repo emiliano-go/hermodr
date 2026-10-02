@@ -37,6 +37,8 @@ use crate::{
 mod audio;
 mod connection;
 mod contacts;
+mod usernames;
+pub use usernames::UsernameLookupResult;
 mod contact_sharing;
 mod broadcast_lists;
 pub use broadcast_lists::writable_target;

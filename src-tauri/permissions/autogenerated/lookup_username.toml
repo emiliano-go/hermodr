@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-lookup-username"
+description = "Enables the lookup_username command without any pre-configured scope."
+commands.allow = ["lookup_username"]
+
+[[permission]]
+identifier = "deny-lookup-username"
+description = "Denies the lookup_username command without any pre-configured scope."
+commands.deny = ["lookup_username"]

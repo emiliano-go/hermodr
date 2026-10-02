@@ -2,7 +2,7 @@
 
 The 40 editable tokens are declared in [theme.svelte.ts](../src/lib/utils/theme.svelte.ts). [Customization](../src/lib/settings/Customization.svelte) uses that registry for its editor; `applyTheme` sets or removes registered properties on the document root. [ThemeLayers](../src/lib/settings/ThemeLayers.svelte) applies the active theme and its CSS extensions. Theme CSS may override component rules with `!important`.
 
-[The component checklist](theme-review.md#component-checklist) records every production Svelte component and its direct token references. Counts below are a source snapshot of those 95 components, including inline `var()` references. Inherited root styles and references in preset CSS are not counted. The checklist provides the reverse consumer mapping for every row, beyond the examples below.
+[The component checklist](theme-review.md#component-checklist) records every production Svelte component and its direct token references. Counts below are a source snapshot of those 96 components, including inline `var()` references. Inherited root styles and references in preset CSS are not counted. The checklist provides the reverse consumer mapping for every row, beyond the examples below.
 
 ## Defaults and custom themes
 
@@ -16,13 +16,13 @@ Native selects share raised/text/line-strong/radius-sm styles. Checkbox, radio a
 
 | Token | Use | Direct consumers | Examples |
 | --- | --- | ---: | --- |
-| `--bg` | Sidebar | 30 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [messages/StarredList.svelte](../src/lib/messages/StarredList.svelte) |
+| `--bg` | Sidebar | 31 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [messages/StarredList.svelte](../src/lib/messages/StarredList.svelte) |
 | `--chat-bg` | Chat background | 8 | [routes/+page.svelte](../src/routes/+page.svelte), [messages/MessageBubble.svelte](../src/lib/messages/MessageBubble.svelte), [chat/ChatPreview.svelte](../src/lib/chat/ChatPreview.svelte) |
-| `--surface` | Headers and bars | 48 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte) |
+| `--surface` | Headers and bars | 49 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte) |
 | `--raised` | Hover and inputs | 47 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte) |
 | `--raised-2` | Selected | 23 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/Button.svelte](../src/lib/ui/Button.svelte) |
-| `--scrim` | Dialog backdrop | 26 | [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte), [messages/StructuredNotice.svelte](../src/lib/messages/StructuredNotice.svelte) |
-| `--shadow` | Popup shadow | 34 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte) |
+| `--scrim` | Dialog backdrop | 27 | [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte), [messages/StructuredNotice.svelte](../src/lib/messages/StructuredNotice.svelte) |
+| `--shadow` | Popup shadow | 35 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte) |
 
 ## bubbles
 
@@ -35,8 +35,8 @@ Native selects share raised/text/line-strong/radius-sm styles. Checkbox, radio a
 
 | Token | Use | Direct consumers | Examples |
 | --- | --- | ---: | --- |
-| `--text` | Text | 71 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/Logo.svelte](../src/lib/ui/Logo.svelte) |
-| `--muted` | Secondary text | 77 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/Button.svelte](../src/lib/ui/Button.svelte) |
+| `--text` | Text | 72 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/Logo.svelte](../src/lib/ui/Logo.svelte) |
+| `--muted` | Secondary text | 78 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/Button.svelte](../src/lib/ui/Button.svelte) |
 | `--faint` | Faint text | 18 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte), [ui/Button.svelte](../src/lib/ui/Button.svelte) |
 | `--link` | Links and read ticks | 11 | [messages/StructuredNotice.svelte](../src/lib/messages/StructuredNotice.svelte), [messages/MessageText.svelte](../src/lib/messages/MessageText.svelte), [messages/MessageInfo.svelte](../src/lib/messages/MessageInfo.svelte) |
 
@@ -58,10 +58,10 @@ Native selects share raised/text/line-strong/radius-sm styles. Checkbox, radio a
 
 | Token | Use | Direct consumers | Examples |
 | --- | --- | ---: | --- |
-| `--accent` | Accent | 47 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Spinner.svelte](../src/lib/ui/Spinner.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte) |
+| `--accent` | Accent | 48 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Spinner.svelte](../src/lib/ui/Spinner.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte) |
 | `--accent-hover` | Accent hover | 5 | [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/Button.svelte](../src/lib/ui/Button.svelte), [messages/cards/InviteCard.svelte](../src/lib/messages/cards/InviteCard.svelte) |
 | `--accent-text` | Accent text | 17 | [routes/+page.svelte](../src/routes/+page.svelte), [composer/ComposerBar.svelte](../src/lib/composer/ComposerBar.svelte), [messages/MessageList.svelte](../src/lib/messages/MessageList.svelte) |
-| `--accent-ink` | Text on accent | 13 | [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/Logo.svelte](../src/lib/ui/Logo.svelte), [ui/Button.svelte](../src/lib/ui/Button.svelte) |
+| `--accent-ink` | Text on accent | 14 | [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/Logo.svelte](../src/lib/ui/Logo.svelte), [ui/Button.svelte](../src/lib/ui/Button.svelte) |
 | `--accent-soft` | Accent tint | 13 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Button.svelte](../src/lib/ui/Button.svelte), [messages/MessageMenuPanel.svelte](../src/lib/messages/MessageMenuPanel.svelte) |
 
 ## lines
@@ -70,13 +70,13 @@ Native selects share raised/text/line-strong/radius-sm styles. Checkbox, radio a
 | --- | --- | ---: | --- |
 | `--line` | Dividers | 37 | [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/BooleanProps.svelte](../src/lib/ui/BooleanProps.svelte), [composer/SlashCommandMenu.svelte](../src/lib/composer/SlashCommandMenu.svelte) |
 | `--line-soft` | Soft dividers | 0 | Registered; no direct Svelte consumer. |
-| `--line-strong` | Borders | 42 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte) |
+| `--line-strong` | Borders | 43 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte) |
 
 ## status
 
 | Token | Use | Direct consumers | Examples |
 | --- | --- | ---: | --- |
-| `--danger` | Error | 57 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte) |
+| `--danger` | Error | 58 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte) |
 | `--danger-soft` | Error background | 4 | [routes/+page.svelte](../src/routes/+page.svelte), [messages/SelectionBar.svelte](../src/lib/messages/SelectionBar.svelte), [messages/MessageBubble.svelte](../src/lib/messages/MessageBubble.svelte) |
 
 ## shape and type
@@ -85,7 +85,7 @@ Native selects share raised/text/line-strong/radius-sm styles. Checkbox, radio a
 | --- | --- | ---: | --- |
 | `--radius-sm` | Bubble radius | 21 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/Button.svelte](../src/lib/ui/Button.svelte) |
 | `--radius` | Input radius | 23 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/Button.svelte](../src/lib/ui/Button.svelte) |
-| `--radius-lg` | Dialog radius | 27 | [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte), [messages/StructuredNotice.svelte](../src/lib/messages/StructuredNotice.svelte) |
+| `--radius-lg` | Dialog radius | 28 | [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte), [messages/StructuredNotice.svelte](../src/lib/messages/StructuredNotice.svelte) |
 | `--font` | Font family | 2 | [routes/+page.svelte](../src/routes/+page.svelte), [settings/ThemePreview.svelte](../src/lib/settings/ThemePreview.svelte) |
 | `--font-size` | Font size | 3 | [routes/+page.svelte](../src/routes/+page.svelte), [chat/ChatPreview.svelte](../src/lib/chat/ChatPreview.svelte), [settings/ThemePreview.svelte](../src/lib/settings/ThemePreview.svelte) |
 | `--scheme` | Native controls (dark/light) | 1 | [routes/+page.svelte](../src/routes/+page.svelte) |

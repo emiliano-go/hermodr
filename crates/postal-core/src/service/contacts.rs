@@ -491,7 +491,6 @@ impl WhatsAppService {
     }
 
     /// Chats, contacts and groups matching a query.
-    /// Chats, contacts and groups matching a query.
     pub async fn search(&self, query: &str) -> Result<Vec<SearchResult>> {
         let needle = query.trim().to_lowercase();
         if needle.is_empty() {
@@ -501,6 +500,7 @@ impl WhatsAppService {
         let mut index = SearchIndex::new(needle, &local, self.all_aliases().await?);
         self.search_local_chats(&local, &mut index).await;
         self.search_stored_names(&mut index).await?;
+        self.search_cached_usernames(&mut index).await?;
         self.search_alias_matches(&mut index).await?;
         self.search_group_overviews(&mut index).await;
         index.results.truncate(50);
@@ -542,6 +542,21 @@ impl WhatsAppService {
                 aliases: index.aliases_of(&jid),
                 jid,
                 name,
+            });
+        }
+        Ok(())
+    }
+
+    async fn search_cached_usernames(&self, index: &mut SearchIndex) -> Result<()> {
+        for (jid, username) in self.store.search_usernames(&index.needle, 50).await? {
+            if !index.seen.insert(jid.clone()) { continue; }
+            let key = jid.clone();
+            let (identity, saved) = self.store.run(move |store| Ok((store.contact_identity(&key)?, store.name_is_saved(&key)?))).await?;
+            let name = username_search_name(&identity, saved, &username);
+            index.results.push(SearchResult {
+                kind: "contact".into(), saved,
+                number: identity.number.unwrap_or_default(), has_messages: index.has_messages(&jid),
+                aliases: index.aliases_of(&jid), jid, name,
             });
         }
         Ok(())
@@ -630,7 +645,13 @@ impl WhatsAppService {
 }
 
 
-/// The running state of the four-pass contact search: the needle, the local
+fn username_search_name(identity: &crate::store::contact_identity::ContactIdentity, saved: bool, username: &str) -> String {
+    let known = |value: &Option<String>| value.as_ref().filter(|name| !crate::store::is_placeholder_name(name)).cloned();
+    identity.saved_name.clone().or_else(|| saved.then(|| identity.legacy_name.clone()).flatten())
+        .or_else(|| known(&identity.push_name)).or_else(|| known(&identity.legacy_name)).unwrap_or_else(|| format!("@{username}"))
+}
+
+/// The running state of the contact search: the needle, the local
 /// alias map and message counts, and what has been found and already seen.
 struct SearchIndex {
     needle: String,
@@ -669,6 +690,20 @@ impl SearchIndex {
 #[cfg(test)]
 mod contact_identity_tests {
     use super::*;
+
+    #[test]
+    fn username_search_preserves_saved_and_legacy_saved_names_before_push_or_numeric_fallback() {
+        let mut identity = crate::store::contact_identity::ContactIdentity {
+            legacy_name: Some("1234".into()), push_name: Some("Push name".into()), ..Default::default()
+        };
+        assert_eq!(username_search_name(&identity, true, "Handle"), "1234");
+        identity.saved_name = Some("Saved name".into());
+        assert_eq!(username_search_name(&identity, false, "Handle"), "Saved name");
+        identity.saved_name = None;
+        assert_eq!(username_search_name(&identity, false, "Handle"), "Push name");
+        identity.push_name = Some("15550000001".into());
+        assert_eq!(username_search_name(&identity, false, "Handle"), "@Handle");
+    }
 
     #[tokio::test]
     async fn contact_identity_action_uses_typed_address_forms_and_username() {
