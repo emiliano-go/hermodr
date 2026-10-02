@@ -134,6 +134,9 @@ fn picture_and_historical_notices_keep_missing_actor_timestamp_and_values_unknow
     assert_eq!(comparison.old_source, Some(OldSource::Cached));
     assert_eq!(comparison.source, Source::Local);
     assert_eq!(comparison.target.as_deref(), Some("456@lid"));
+    let stored = &notice_records(&owner, Source::Stored)[0];
+    assert_eq!(stored.source, Source::Stored);
+    assert_eq!(stored.old_source, Some(OldSource::Cached));
 }
 
 #[tokio::test]

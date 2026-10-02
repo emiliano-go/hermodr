@@ -1,12 +1,9 @@
 use super::*;
 use crate::store::group_audit::{GroupAuditFilter, GroupAuditKind as Kind,
-    GroupAuditOldSource as OldSource, GroupAuditPage, GroupAuditRecord, GroupAuditSource as Source};
+    GroupAuditOldSource as OldSource, GroupAuditPage, GroupAuditRecord, GroupAuditSource as Source,
+    audit_person as person, audit_private as private, notice_records};
 use whatsapp_rust::wacore::{stanza::groups::GroupNotificationAction as Action,
     types::{events::{GroupUpdate, PictureUpdate}, message::MessageInfo}};
-
-fn person(jid: Option<&Jid>) -> Option<String> {
-    jid.filter(|jid| !jid.user.is_empty() && (jid.is_pn() || jid.is_lid())).map(|jid| jid.to_non_ad().to_string())
-}
 
 fn role(member: &Participant) -> &'static str { if member.owner { "owner" } else if member.admin { "admin" } else { "member" } }
 
@@ -111,11 +108,6 @@ fn picture_records(update: &PictureUpdate) -> Vec<GroupAuditRecord> {
 pub(super) async fn audit_group_picture(store: &StoreWorker, update: &PictureUpdate) -> Result<bool> {
     let records = picture_records(update);
     Ok(store.run(move |store| store.record_group_audit(&records)).await? > 0)
-}
-
-fn private(message: &StoredMessage) -> bool {
-    message.spoiler || message.media.once_kind.is_some() || message.is_unavailable()
-        || matches!(message.media.kind.as_deref(), Some("view_once" | "unknown"))
 }
 
 pub(super) fn audit_message_allowed(message: &StoredMessage) -> bool { !private(message) }
@@ -264,61 +256,6 @@ pub(super) async fn audit_group_history_message(store: &StoreWorker, chat: &str,
         }
     }
     Ok(store.run(move |store| store.record_group_audit(&records)).await? > 0)
-}
-
-fn notice_records(row: &StoredMessage, source: Source) -> Vec<GroupAuditRecord> {
-    if !row.header.chat.ends_with("@g.us") || private(row) || row.local.deleted { return Vec::new(); }
-    let kind = match row.system.kind.as_deref() {
-        Some("GROUP_PARTICIPANT_ADD" | "GROUP_PARTICIPANT_INVITE") => Kind::Join,
-        Some("GROUP_PARTICIPANT_LEAVE") => Kind::Leave,
-        Some("GROUP_PARTICIPANT_REMOVE") => Kind::Remove,
-        Some("GROUP_PARTICIPANT_PROMOTE" | "COMMUNITY_PARTICIPANT_PROMOTE") => Kind::Promote,
-        Some("GROUP_PARTICIPANT_DEMOTE" | "COMMUNITY_PARTICIPANT_DEMOTE") => Kind::Demote,
-        Some("GROUP_CHANGE_SUBJECT") => Kind::Subject,
-        Some("GROUP_CHANGE_DESCRIPTION" | "COMMUNITY_CHANGE_DESCRIPTION") => Kind::Description,
-        Some("GROUP_CHANGE_RESTRICT") => Kind::Locked,
-        Some("GROUP_CHANGE_ANNOUNCE") => Kind::Announce,
-        Some("CHANGE_EPHEMERAL_SETTING") => Kind::Ephemeral,
-        Some("GROUP_MEMBERSHIP_JOIN_APPROVAL_MODE") => Kind::JoinApproval,
-        Some("GROUP_MEMBER_ADD_MODE") => Kind::MemberAddMode,
-        Some("GROUP_CHANGE_INVITE_LINK") => Kind::InviteChange,
-        Some("GROUP_CREATE" | "COMMUNITY_CREATE") => Kind::Create,
-        Some("GROUP_DELETE" | "COMMUNITY_PARENT_GROUP_DELETED") => Kind::Delete,
-        Some("GROUP_CHANGE_ICON") => Kind::Picture,
-        Some("GROUP_MEMBER_LINK_MODE") => Kind::MemberLinkMode,
-        Some("GROUP_MEMBER_SHARE_GROUP_HISTORY_MODE") => Kind::MemberShareHistoryMode,
-        Some("GROUP_CHANGE_RECENT_HISTORY_SHARING") => Kind::HistorySharing,
-        Some("COMMUNITY_OWNER_CHANGED") => Kind::OwnerChange,
-        _ => return Vec::new(),
-    };
-    let timestamp = if source == Source::Local { None } else { Some(row.header.timestamp) };
-    let mut entry = base(row.header.chat.clone(), Some(row.header.id.clone()), timestamp, source);
-    entry.kind = kind;
-    entry.actor = row.header.sender.parse::<Jid>().ok().and_then(|jid| person(Some(&jid)));
-    entry.message_id = Some(row.header.id.clone());
-    entry.new_value = match kind {
-        Kind::Join => Some("present".into()), Kind::Leave | Kind::Remove => Some("absent".into()),
-        Kind::Promote => Some("admin".into()), Kind::Demote => Some("member".into()),
-        Kind::Subject | Kind::MemberAddMode | Kind::MemberLinkMode | Kind::MemberShareHistoryMode => row.system.params.first().cloned(),
-        Kind::Ephemeral => row.system.params.first().and_then(|p| p.parse::<u32>().ok()).map(|p| p.to_string()),
-        Kind::Locked | Kind::Announce | Kind::JoinApproval | Kind::HistorySharing => row.system.params.first().and_then(|p|
-            match p.as_str() { "on" | "true" => Some("true".into()), "off" | "false" => Some("false".into()), _ => None }),
-        _ => None,
-    };
-    if kind == Kind::OwnerChange {
-        entry.old_value = row.system.params.first().and_then(|p| p.parse::<Jid>().ok()).and_then(|jid| person(Some(&jid)));
-        entry.new_value = row.system.params.get(1).and_then(|p| p.parse::<Jid>().ok()).and_then(|jid| person(Some(&jid)));
-        entry.old_source = entry.old_value.as_ref().map(|_| OldSource::Cached);
-        entry.target = entry.new_value.clone();
-        entry.actor = None;
-        entry.source = Source::Local;
-        entry.timestamp = None;
-    }
-    if matches!(kind, Kind::Join | Kind::Leave | Kind::Remove | Kind::Promote | Kind::Demote) {
-        let targets: Vec<_> = row.system.params.iter().filter_map(|p| p.parse::<Jid>().ok()).filter_map(|jid| person(Some(&jid))).collect();
-        if !targets.is_empty() { return targets.into_iter().map(|target| { let mut entry = entry.clone(); entry.target = Some(target); entry }).collect(); }
-    }
-    vec![entry]
 }
 
 pub(super) async fn audit_group_notice(store: &StoreWorker, row: &StoredMessage, source: Source) -> Result<bool> {

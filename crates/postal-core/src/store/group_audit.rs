@@ -1,5 +1,6 @@
 use super::*;
 use sha2::{Digest, Sha256};
+use whatsapp_rust::wacore_binary::Jid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -14,7 +15,7 @@ pub enum GroupAuditKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
-pub enum GroupAuditSource { Notification, Message, History, Local }
+pub enum GroupAuditSource { Notification, Message, History, Local, Stored }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -91,6 +92,98 @@ pub(super) fn migrate(conn: &Connection) -> Result<()> {
          CREATE INDEX IF NOT EXISTS idx_group_audit_chat ON group_audit(chat, timestamp DESC, id DESC);
          CREATE INDEX IF NOT EXISTS idx_group_audit_target ON group_audit(target, timestamp DESC, id DESC);",
     )?;
+    Ok(())
+}
+
+pub(crate) fn audit_person(jid: Option<&Jid>) -> Option<String> {
+    jid.filter(|jid| !jid.user.is_empty() && (jid.is_pn() || jid.is_lid())).map(|jid| jid.to_non_ad().to_string())
+}
+
+pub(crate) fn audit_private(message: &StoredMessage) -> bool {
+    message.spoiler || message.media.once_kind.is_some() || message.is_unavailable()
+        || matches!(message.media.kind.as_deref(), Some("view_once" | "unknown"))
+}
+
+pub(crate) fn notice_records(row: &StoredMessage, source: GroupAuditSource) -> Vec<GroupAuditRecord> {
+    use GroupAuditKind as Kind;
+    use GroupAuditSource as Source;
+    if !row.header.chat.ends_with("@g.us") || audit_private(row) || row.local.deleted { return Vec::new(); }
+    let kind = match row.system.kind.as_deref() {
+        Some("GROUP_PARTICIPANT_ADD" | "GROUP_PARTICIPANT_INVITE") => Kind::Join,
+        Some("GROUP_PARTICIPANT_LEAVE") => Kind::Leave,
+        Some("GROUP_PARTICIPANT_REMOVE") => Kind::Remove,
+        Some("GROUP_PARTICIPANT_PROMOTE" | "COMMUNITY_PARTICIPANT_PROMOTE") => Kind::Promote,
+        Some("GROUP_PARTICIPANT_DEMOTE" | "COMMUNITY_PARTICIPANT_DEMOTE") => Kind::Demote,
+        Some("GROUP_CHANGE_SUBJECT") => Kind::Subject,
+        Some("GROUP_CHANGE_DESCRIPTION" | "COMMUNITY_CHANGE_DESCRIPTION") => Kind::Description,
+        Some("GROUP_CHANGE_RESTRICT") => Kind::Locked,
+        Some("GROUP_CHANGE_ANNOUNCE") => Kind::Announce,
+        Some("CHANGE_EPHEMERAL_SETTING") => Kind::Ephemeral,
+        Some("GROUP_MEMBERSHIP_JOIN_APPROVAL_MODE") => Kind::JoinApproval,
+        Some("GROUP_MEMBER_ADD_MODE") => Kind::MemberAddMode,
+        Some("GROUP_CHANGE_INVITE_LINK") => Kind::InviteChange,
+        Some("GROUP_CREATE" | "COMMUNITY_CREATE") => Kind::Create,
+        Some("GROUP_DELETE" | "COMMUNITY_PARENT_GROUP_DELETED") => Kind::Delete,
+        Some("GROUP_CHANGE_ICON") => Kind::Picture,
+        Some("GROUP_MEMBER_LINK_MODE") => Kind::MemberLinkMode,
+        Some("GROUP_MEMBER_SHARE_GROUP_HISTORY_MODE") => Kind::MemberShareHistoryMode,
+        Some("GROUP_CHANGE_RECENT_HISTORY_SHARING") => Kind::HistorySharing,
+        Some("COMMUNITY_OWNER_CHANGED") => Kind::OwnerChange,
+        _ => return Vec::new(),
+    };
+    let timestamp = if source == Source::Local { None } else { Some(row.header.timestamp).filter(|at| *at > 0) };
+    let mut entry = GroupAuditRecord { chat: row.header.chat.clone(), source_id: Some(row.header.id.clone()), kind,
+        actor: row.header.sender.parse::<Jid>().ok().and_then(|jid| audit_person(Some(&jid))), target: None,
+        old_value: None, new_value: None, old_source: None, timestamp, observed_at: unix_now(), source,
+        message_id: Some(row.header.id.clone()) };
+    entry.new_value = match kind {
+        Kind::Join => Some("present".into()), Kind::Leave | Kind::Remove => Some("absent".into()),
+        Kind::Promote => Some("admin".into()), Kind::Demote => Some("member".into()),
+        Kind::Subject | Kind::MemberAddMode | Kind::MemberLinkMode | Kind::MemberShareHistoryMode => row.system.params.first().cloned(),
+        Kind::Ephemeral => row.system.params.first().and_then(|p| p.parse::<u32>().ok()).map(|p| p.to_string()),
+        Kind::Locked | Kind::Announce | Kind::JoinApproval | Kind::HistorySharing => row.system.params.first().and_then(|p|
+            match p.as_str() { "on" | "true" => Some("true".into()), "off" | "false" => Some("false".into()), _ => None }),
+        _ => None,
+    };
+    if kind == Kind::OwnerChange {
+        entry.old_value = row.system.params.first().and_then(|p| p.parse::<Jid>().ok()).and_then(|jid| audit_person(Some(&jid)));
+        entry.new_value = row.system.params.get(1).and_then(|p| p.parse::<Jid>().ok()).and_then(|jid| audit_person(Some(&jid)));
+        entry.old_source = entry.old_value.as_ref().map(|_| GroupAuditOldSource::Cached);
+        entry.target = entry.new_value.clone();
+        entry.actor = None;
+        entry.source = if source == Source::Stored { Source::Stored } else { Source::Local };
+        entry.timestamp = None;
+    }
+    if matches!(kind, Kind::Join | Kind::Leave | Kind::Remove | Kind::Promote | Kind::Demote) {
+        let targets: Vec<_> = row.system.params.iter().filter_map(|p| p.parse::<Jid>().ok()).filter_map(|jid| audit_person(Some(&jid))).collect();
+        if !targets.is_empty() { return targets.into_iter().map(|target| { let mut entry = entry.clone(); entry.target = Some(target); entry }).collect(); }
+    }
+    vec![entry]
+}
+
+fn seed_notices(conn: &mut Connection) -> Result<()> {
+    let complete: bool = conn.query_row("SELECT COALESCE((SELECT value FROM meta WHERE key = 'group_audit_notices_seed_v1'), 0)", [], |row| row.get(0))?;
+    if complete { return Ok(()); }
+    let tx = conn.savepoint()?;
+    let mut cursor = 0;
+    loop {
+        let rows = tx.prepare(&format!("SELECT {MESSAGE_COLUMNS}, m.rowid FROM messages m LEFT JOIN names n ON n.jid = m.sender
+            WHERE m.rowid > ?1 AND m.system_kind IS NOT NULL AND m.chat LIKE '%@g.us'
+              AND m.deleted = 0 AND m.spoiler = 0 AND m.media_once_kind IS NULL
+              AND COALESCE(m.media_kind, '') NOT IN ('view_once', 'unknown')
+              AND NOT EXISTS(SELECT 1 FROM hidden_chats h WHERE h.jid = m.chat)
+            ORDER BY m.rowid LIMIT 256"))?.query_map([cursor], |row|
+                Ok((row.get::<_, i64>(row.as_ref().column_count() - 1)?, message_row(row)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        if rows.is_empty() { break; }
+        for (rowid, row) in rows {
+            for entry in notice_records(&row, GroupAuditSource::Stored) { record(&tx, &entry)?; }
+            cursor = rowid;
+        }
+    }
+    tx.execute("INSERT INTO meta (key, value) VALUES ('group_audit_notices_seed_v1', 1)
+        ON CONFLICT(key) DO UPDATE SET value = 1", [])?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -182,7 +275,8 @@ impl MessageStore {
     pub fn group_audit_page(&self, chat: Option<&str>, filter: &GroupAuditFilter) -> Result<GroupAuditPage> {
         if let Some(chat) = chat { group_chat(chat)?; }
         anyhow::ensure!(filter.since.zip(filter.until).is_none_or(|(since, until)| since <= until), "invalid audit date range");
-        let conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock().unwrap();
+        seed_notices(&mut conn)?;
         let actor = address(&conn, filter.actor.as_deref())?;
         let target = address(&conn, filter.target.as_deref())?;
         let member = address(&conn, filter.member.as_deref())?;

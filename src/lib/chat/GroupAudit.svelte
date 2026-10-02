@@ -85,7 +85,7 @@
           <p>{auditEntryLabel(entry)}{entry.target ? ` · ${entry.target.includes("@") ? namer(entry.target) : entry.target}` : ""}</p>
           <dl><dt>Before</dt><dd>{entry.old_value === null ? "Not recorded" : entry.old_value || "(empty)"}</dd>
             <dt>{auditEntryLabel(entry).endsWith("request sent") ? "Requested" : "After"}</dt><dd>{entry.new_value === null ? "Not recorded" : entry.new_value || "(empty)"}</dd></dl>
-          <small>Source: {entry.source}{entry.old_source ? ` · Previous value from ${entry.old_source === "cached" ? "cached group info" : "the protocol"}` : ""}{entry.timestamp === null ? " · Event time not recorded" : ""}</small>
+          <small>Source: {entry.source === "stored" ? "retained notice" : entry.source}{entry.old_source ? ` · Previous value from ${entry.old_source === "cached" ? "cached group info" : "the protocol"}` : ""}{entry.timestamp === null ? " · Event time not recorded" : ""}</small>
           {#if entry.jump_available && entry.message_id}<button onclick={() => onjump(group, entry.message_id!)}>Open message</button>
           {:else if entry.message_id}<small>Message link unavailable locally.</small>{/if}
         </li>

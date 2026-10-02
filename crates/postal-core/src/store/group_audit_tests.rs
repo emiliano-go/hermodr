@@ -178,3 +178,84 @@ fn one_source_can_carry_same_kind_facts_for_distinct_referenced_messages() {
     assert_eq!(store.record_group_audit(&[first, second]).unwrap(), 0);
     assert_eq!(store.group_audit_page(None, &GroupAuditFilter::default()).unwrap().entries.len(), 2);
 }
+
+fn saved_notice(chat: &str, id: &str) -> StoredMessage {
+    StoredMessage { header: MessageHeader { chat: chat.into(), id: id.into(), timestamp: 100, ..Default::default() },
+        local: LocalState { read: true, ..Default::default() },
+        system: SystemNotice { kind: Some("GROUP_PARTICIPANT_ADD".into()), params: vec!["123@lid".into()] },
+        ..Default::default() }
+}
+
+#[test]
+fn first_audit_read_seeds_all_stored_notices_in_bounded_batches_without_overwriting_live_facts() {
+    let store = store();
+    for index in 0..513 { store.insert_message(&saved_notice("1@g.us", &format!("notice-{index}"))).unwrap(); }
+    let mut known = event("notice-0", GroupAuditKind::Join, Some(100));
+    known.target = Some("123@lid".into());
+    known.actor = Some("9@lid".into());
+    known.message_id = Some("notice-0".into());
+    store.record_group_audit(&[known]).unwrap();
+    let first = store.group_audit_page(Some("1@g.us"), &GroupAuditFilter { limit: Some(200), ..Default::default() }).unwrap();
+    assert_eq!(first.entries.len(), 200);
+    assert!(first.has_more);
+    let conn = store.conn.lock().unwrap();
+    assert_eq!(conn.query_row("SELECT COUNT(*) FROM group_audit", [], |r| r.get::<_, i64>(0)).unwrap(), 513);
+    assert_eq!(conn.query_row("SELECT COUNT(*) FROM group_audit WHERE source = 'stored'", [], |r| r.get::<_, i64>(0)).unwrap(), 512);
+    assert_eq!(conn.query_row("SELECT actor FROM group_audit WHERE source = 'notification'", [], |r| r.get::<_, String>(0)).unwrap(), "9@lid");
+    assert!(conn.query_row("SELECT value FROM meta WHERE key = 'group_audit_notices_seed_v1'", [], |r| r.get::<_, bool>(0)).unwrap());
+    drop(conn);
+    store.clear_chat("1@g.us").unwrap();
+    assert!(store.group_audit_page(Some("1@g.us"), &GroupAuditFilter::default()).unwrap().entries.is_empty());
+    store.insert_message(&saved_notice("1@g.us", "after-completion")).unwrap();
+    assert!(store.group_audit_page(Some("1@g.us"), &GroupAuditFilter::default()).unwrap().entries.is_empty());
+}
+
+#[test]
+fn stored_notice_seeding_preserves_privacy_missing_fields_and_account_boundaries() {
+    let store = store();
+    for field in 0..8 {
+        let mut row = saved_notice("1@g.us", &format!("notice-{field}"));
+        match field {
+            0 => row.local.deleted = true,
+            1 => row.spoiler = true,
+            2 => row.media.once_kind = Some("image".into()),
+            3 => row.media.kind = Some("view_once".into()),
+            4 => row.media.kind = Some("unknown".into()),
+            6 => row.header.chat = "hidden@g.us".into(),
+            7 => row.header.chat = "1@s.whatsapp.net".into(),
+            _ => (),
+        }
+        store.insert_message(&row).unwrap();
+        if field == 5 { store.set_view_once("1@g.us", &row.header.id, false).unwrap(); }
+    }
+    store.conn.lock().unwrap().execute("INSERT INTO hidden_chats VALUES ('hidden@g.us')", []).unwrap();
+    let mut eligible = saved_notice("1@g.us", "eligible");
+    eligible.header.timestamp = 0;
+    eligible.text = "NEVER-COPY-CONTROL-BODY".into();
+    store.insert_message(&eligible).unwrap();
+    let page = store.group_audit_page(None, &GroupAuditFilter::default()).unwrap();
+    assert_eq!(page.entries.len(), 1);
+    assert_eq!(page.entries[0].source, GroupAuditSource::Stored);
+    assert!(page.entries[0].actor.is_none() && page.entries[0].old_value.is_none() && page.entries[0].timestamp.is_none());
+    assert!(!format!("{:?}", page.entries).contains("CONTROL-BODY"));
+    let other = MessageStore::open(Path::new(":memory:")).unwrap();
+    assert!(other.group_audit_page(None, &GroupAuditFilter::default()).unwrap().entries.is_empty());
+}
+
+#[test]
+fn failed_stored_notice_seed_rolls_back_records_and_marker_before_retry() {
+    let store = store();
+    store.insert_message(&saved_notice("1@g.us", "saved")).unwrap();
+    store.conn.lock().unwrap().execute_batch("CREATE TRIGGER fail_notice_seed BEFORE INSERT ON group_audit
+        BEGIN SELECT RAISE(ABORT, 'synthetic seed failure'); END;").unwrap();
+    assert!(store.group_audit_page(None, &GroupAuditFilter::default()).is_err());
+    {
+        let conn = store.conn.lock().unwrap();
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM group_audit", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM meta WHERE key = 'group_audit_notices_seed_v1'", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+        conn.execute_batch("DROP TRIGGER fail_notice_seed").unwrap();
+    }
+    let retry = store.group_audit_page(None, &GroupAuditFilter::default()).unwrap();
+    assert_eq!(retry.entries.len(), 1);
+    assert_eq!(retry.entries[0].source, GroupAuditSource::Stored);
+}
