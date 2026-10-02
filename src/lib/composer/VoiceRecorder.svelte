@@ -10,10 +10,12 @@
     onsend,
     oncancel,
     onerror,
+    disabled = false,
   }: {
     onsend: (recording: Recording) => void;
     oncancel: () => void;
     onerror: (message: string) => void;
+    disabled?: boolean;
   } = $props();
 
   const LIVE_BARS = 36;
@@ -152,13 +154,13 @@
   }
 
   function finish() {
-    if (!recorder || elapsed < 0.5) return;
+    if (disabled || !recorder || elapsed < 0.5) return;
     const active = recorder;
     active.onstop = () => {
       const seconds = Math.max(1, Math.round(elapsed));
       const recording = { blob: new Blob(chunks, { type: "audio/webm" }), seconds, waveform: waveform(), viewOnce: once };
       release();
-      onsend(recording);
+      if (!disabled) onsend(recording);
     };
     active.stop();
   }
@@ -243,7 +245,7 @@
     aria-label="View once"
     aria-pressed={once}
     onclick={() => (once = !once)}>1</button>
-  <button type="button" class="send" title="Send" aria-label="Send voice message" disabled={!ready} onclick={finish}>
+  <button type="button" class="send" title="Send" aria-label="Send voice message" disabled={disabled || !ready} onclick={finish}>
     <Icon name="send" size={18} />
   </button>
 </div>

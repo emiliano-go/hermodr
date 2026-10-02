@@ -8,6 +8,7 @@
   import { motion } from "$lib/utils/theme.svelte";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { invoke } from "$lib/utils/ipc";
+  import { broadcastSendReason, guardBroadcastSend } from "$lib/utils/broadcast";
   import { base64Of as toBase64 } from "$lib/utils/files";
   import { sendAttachment } from "$lib/utils/upload";
   import Icon from "$lib/ui/Icon.svelte";
@@ -29,6 +30,7 @@
 
   let {
     chat,
+    disabled = false,
     tab = $bindable("emoji"),
     enqueue,
     takereply,
@@ -42,6 +44,7 @@
     anchor = null,
   }: {
     chat: string;
+    disabled?: boolean;
     tab?: PickerTab;
     /** The app's ordered outbox, so picks go out in sequence with everything else. */
     enqueue: <T>(task: (signal: AbortSignal) => Promise<T>) => Promise<T>;
@@ -323,9 +326,11 @@
       return;
     }
     const destination = chat;
+    if (!canSendTo(destination)) return;
     const reply = takereply();
     void send(() =>
       invoke("send_from_library", { chat: destination, path: sticker.path!, kind: "sticker", ...reply }),
+      destination,
     );
   }
 
@@ -343,20 +348,35 @@
     }
   }
 
-  async function send(task: (signal: AbortSignal) => Promise<unknown>) {
+  function canSendTo(destination: string) {
+    const reason = broadcastSendReason(destination) ?? (disabled ? "Message sending is disabled here." : null);
+    if (reason) onerror(reason);
+    return !reason;
+  }
+
+  async function send(task: (signal: AbortSignal) => Promise<unknown>, destination = chat) {
+    if (!canSendTo(destination)) return;
+    const owner = pickerScope();
+    if (!owner) return;
     onclose();
     try {
-      await enqueue(task);
-      onsent();
+      await enqueue((signal) => {
+        if (disabled) throw new Error("Message sending is disabled here.");
+        guardBroadcastSend(destination);
+        if (!pickerCurrent(owner)) throw new Error("Sticker destination changed before sending.");
+        return task(signal);
+      });
+      if (pickerCurrent(owner)) onsent();
     } catch (e) {
-      onerror(String(e));
+      if (pickerCurrent(owner)) onerror(String(e));
     }
   }
 
   function sendFromLibrary(path: string, kind: "gif" | "sticker") {
     const destination = chat;
+    if (!canSendTo(destination)) return;
     const reply = takereply();
-    send(() => invoke("send_from_library", { chat: destination, path, kind, ...reply }));
+    void send(() => invoke("send_from_library", { chat: destination, path, kind, ...reply }), destination);
   }
 
   async function uploadFile(file: File) {
@@ -365,21 +385,23 @@
       return;
     }
     const destination = chat;
+    if (!canSendTo(destination)) return;
     const reply = takereply();
-    await send((signal) => sendAttachment(file, { chat: destination, gif: true, ...reply }, signal));
+    await send((signal) => sendAttachment(file, { chat: destination, gif: true, ...reply }, signal), destination);
   }
 
   /** A picture being cropped into a sticker. */
   let making = $state<File | null>(null);
   async function sendMade(file: File) {
-    making = null;
     const destination = chat;
+    if (!canSendTo(destination)) return;
+    making = null;
     const reply = takereply();
     await send(async (signal) => {
       const data = await toBase64(file);
       signal.throwIfAborted();
       return invoke("send_sticker", { chat: destination, data, ...reply });
-    });
+    }, destination);
   }
   async function saveMade(file: File) {
     const owner = pickerScope(), request = packRequest;

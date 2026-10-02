@@ -249,6 +249,7 @@ impl MessageStore {
         conn.execute("DELETE FROM quiz_polls WHERE chat = ?1", params![jid])?;
         conn.execute("DELETE FROM quiz_vote_ciphers WHERE chat = ?1", params![jid])?;
         conn.execute("DELETE FROM quiz_source_retirements WHERE chat = ?1", params![jid])?;
+        conn.execute("DELETE FROM broadcast_lists WHERE chat = ?1", params![jid])?;
         conn.execute("DELETE FROM poll_option_hashes WHERE chat = ?1", params![jid])?;
         conn.execute("DELETE FROM secret_edit_revisions WHERE chat = ?1", params![jid])?;
         conn.execute("DELETE FROM events WHERE chat = ?1", params![jid])?;

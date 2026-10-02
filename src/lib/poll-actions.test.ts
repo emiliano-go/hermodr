@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
+import { broadcastSendReason } from "./utils/broadcast.ts";
 
 const page = readFileSync(new URL("../routes/+page.svelte", import.meta.url), "utf8");
 const source = page.match(/<script[^>]*>([\s\S]*?)<\/script>/)![1];
@@ -19,6 +20,7 @@ function fixture(vote = false) {
   const calls: { command: string; args: any }[] = [], refreshes: string[] = [], errors: unknown[] = [];
   const controller = new AbortController();
   const context = {
+    broadcastSendReason,
     session: { activeAccount: "poll-account" as string | null },
     chats: { selectedChat: "poll-chat" as string | null, refreshChats: async () => { refreshes.push("chats"); } },
     messages: { accountGeneration: 1, reloadMessages: async (chat: string) => { refreshes.push(`messages:${chat}`); },
@@ -34,6 +36,84 @@ function fixture(vote = false) {
 }
 
 const poll = { question: "Synthetic question", options: ["First", "Second"], multi: false };
+
+function metadataFixture() {
+  const declaration = tree.statements.find((node) => ts.isExpressionStatement(node)
+    && ts.isCallExpression(node.expression) && node.expression.expression.getText(tree) === "$effect"
+    && node.expression.arguments[0]?.getText(tree).includes("const scope = broadcastFor;"));
+  assert.ok(declaration && ts.isExpressionStatement(declaration) && ts.isCallExpression(declaration.expression));
+  const compiled = ts.transpileModule(`var run = ${declaration.expression.arguments[0].getText(tree)};`,
+    { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  const requests: { resolve: (value: unknown) => void; reject: (error: Error) => void }[] = [];
+  const context = {
+    broadcastFor: { account: "a", chat: "12345@broadcast", generation: 1 } as any,
+    broadcastInfo: null as any, broadcastLoading: false, broadcastError: null as string | null,
+    session: { activeAccount: "a" }, chats: { selectedChat: "12345@broadcast", chats: [] },
+    messages: { accountGeneration: 1, messages: [], marks: {} },
+    untrack: (run: () => unknown) => run(),
+    invoke: (command: string, args: any) => {
+      assert.equal(command, "broadcast_list"); assert.equal(args.accountId, "a");
+      assert.equal(args.chat, "12345@broadcast");
+      return new Promise((resolve, reject) => { requests.push({ resolve, reject }); });
+    },
+    run: (() => undefined) as () => (() => void) | undefined,
+  };
+  runInNewContext(compiled, context);
+  return { context, requests };
+}
+
+test("broadcast metadata ignores late completion after account, chat, generation or panel changes", async () => {
+  const changes = [
+    (c: ReturnType<typeof metadataFixture>["context"]) => { c.session.activeAccount = "b"; },
+    (c: ReturnType<typeof metadataFixture>["context"]) => { c.chats.selectedChat = "other@g.us"; },
+    (c: ReturnType<typeof metadataFixture>["context"]) => { c.messages.accountGeneration++; },
+    (c: ReturnType<typeof metadataFixture>["context"]) => { c.broadcastFor = null; },
+  ];
+  for (const change of changes) for (const fail of [false, true]) {
+    const { context, requests } = metadataFixture();
+    const cleanup = context.run();
+    assert.equal(context.broadcastLoading, true);
+    cleanup?.(); change(context); context.run();
+    if (fail) requests[0].reject(new Error("obsolete metadata failure"));
+    else requests[0].resolve({ chat: "12345@broadcast", recipients: ["777@lid"], source_timestamp: 1 });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(context.broadcastInfo, null);
+    assert.equal(context.broadcastError, null);
+    assert.equal(context.broadcastLoading, false);
+    assert.equal(requests.length, 1);
+  }
+});
+
+test("broadcast metadata keeps latest request ownership during source refresh", async () => {
+  const { context, requests } = metadataFixture();
+  context.run()?.();
+  context.run();
+  requests[0].resolve({ chat: "12345@broadcast", recipients: ["old@lid"], source_timestamp: 1 });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(context.broadcastInfo, null);
+  assert.equal(context.broadcastLoading, true);
+  const latest = { chat: "12345@broadcast", recipients: ["777@lid"], source_timestamp: 2 };
+  requests[1].resolve(latest);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(context.broadcastInfo, latest);
+  assert.equal(context.broadcastLoading, false);
+  assert.equal(context.broadcastError, null);
+});
+
+test("broadcast creation and voting reject before queue or native dispatch", async () => {
+  for (const vote of [false, true]) {
+    const f = fixture(vote);
+    f.context.chats.selectedChat = "12345@broadcast";
+    let queued = false;
+    f.context.composer.enqueue = () => { queued = true; return Promise.resolve(); };
+    const work = vote ? f.actions.votePoll({ chat: "12345@broadcast", id: "poll-id" }, ["First"])
+      : f.actions.create(poll);
+    await assert.rejects(work, /Sending to broadcast lists is not supported/);
+    assert.equal(queued, false);
+    assert.equal(f.calls.length, 0);
+    assert.equal(f.refreshes.length, 0);
+  }
+});
 const changes = [
   (f: ReturnType<typeof fixture>) => { f.context.session.activeAccount = "other-account"; },
   (f: ReturnType<typeof fixture>) => { f.context.chats.selectedChat = "other-chat"; },

@@ -5,6 +5,7 @@
   import { session } from "$lib/state/session.svelte";
   import { chats } from "$lib/state/chats.svelte";
   import { messages } from "$lib/state/messages.svelte";
+  import { broadcastSendReason } from "$lib/utils/broadcast";
 
   let {
     poll,
@@ -32,7 +33,8 @@
   const liveScope = $derived(scope ?? { account: session.activeAccount, chat: chats.selectedChat, generation: messages.accountGeneration, requestKey: poll?.id });
   const quiz = $derived(poll?.quiz ?? null);
   const multi = $derived(!quiz && !!poll?.multi);
-  const canVote = $derived(!!poll && (!quiz || quiz.can_vote));
+  const sendReason = $derived(broadcastSendReason(scope?.chat));
+  const canVote = $derived(!!poll && !sendReason && (!quiz || quiz.can_vote));
 
   const mine = $derived(poll?.votes.find((v) => v.voter === "@me")?.options ?? []);
   const voters = $derived(poll?.votes.filter((v) => v.options.length > 0) ?? []);
@@ -87,14 +89,14 @@
 <div class="poll">
   <span class="question">{poll?.name ?? question}</span>
   {#if quiz}<span class="hint">Quiz · one correct answer</span>{/if}
-  <span class="hint">{multi ? "Select one or more" : "Select one"}</span>
+  <span class="hint">{sendReason ?? (multi ? "Select one or more" : "Select one")}</span>
   {#if poll}
     {#each tally as { option, who } (option)}
       <button
         class="option"
         class:chosen={mine.includes(option)}
         disabled={busy || !canVote}
-        title={who.map(voterName).join(", ")}
+        title={sendReason ?? who.map(voterName).join(", ")}
         onclick={() => toggle(option)}>
         <span class="check" class:round={!multi}></span>
         <span class="option-body">

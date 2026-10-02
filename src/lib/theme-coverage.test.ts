@@ -78,3 +78,15 @@ test("sender text consumers share theme text mixing without changing the hue", (
     assert.match(rule[1], /color:\s*color-mix\(in srgb, hsl\(var\(--hue\) 65% 68%\) 25%, var\(--text\)\)/, file);
   }
 });
+
+test("startup shell follows inherited theme tokens and preview popup follows shadow token", () => {
+  const shell = readFileSync(new URL("../app.html", import.meta.url), "utf8");
+  const body = shell.match(/html,\s*body\s*\{([^}]+)\}/)![1];
+  for (const [property, value] of [
+    ["background", "var(--bg, #111b21)"], ["color", "var(--text, #e9edef)"],
+    ["font-family", "var(--font, system-ui, sans-serif)"], ["color-scheme", "var(--scheme, dark)"],
+  ]) assert.ok(body.includes(`${property}: ${value};`), `Shell ${property} must follow its token`);
+  const preview = sources.find((s) => s.file.replaceAll("\\", "/") === "lib/chat/ChatPreview.svelte")!.source;
+  const popup = preview.match(/#chat-preview\s*\{([^}]+)\}/)![1];
+  assert.match(popup, /box-shadow:\s*var\(--shadow\)/);
+});

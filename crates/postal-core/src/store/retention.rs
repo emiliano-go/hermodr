@@ -183,6 +183,7 @@ impl PruneScope<'_> {
 
 /// Drops the state rows whose message has just been pruned.
 fn purge_orphan_state(conn: &Connection) -> Result<()> {
+    super::broadcast_lists::purge_unavailable_sources(conn)?;
     conn.execute_batch(
         "DELETE FROM forwarded WHERE NOT EXISTS (
              SELECT 1 FROM messages m WHERE m.chat = forwarded.chat AND m.id = forwarded.id);
@@ -329,6 +330,7 @@ impl DiskRetentionManager {
 
     fn prune(&self, store: &MessageStore, chats: Option<&[String]>, policy: DiskRetention, protected: &[String]) -> Result<usize> {
         let conn = store.conn.lock().unwrap();
+        super::broadcast_lists::purge_unavailable_sources(&conn)?;
         if !policy_could_match(&conn, policy)? {
             return Ok(0);
         }
@@ -359,6 +361,7 @@ impl MessageStore {
              DELETE FROM polls; DELETE FROM poll_votes; DELETE FROM poll_option_hashes;
              DELETE FROM quiz_polls; DELETE FROM quiz_vote_ciphers;
              DELETE FROM quiz_source_retirements;
+             DELETE FROM broadcast_lists;
              DELETE FROM secret_edit_revisions; DELETE FROM events;
              DELETE FROM event_responses; DELETE FROM view_once; DELETE FROM forwarded;
              DELETE FROM edited; DELETE FROM receipts; DELETE FROM hidden_chats;

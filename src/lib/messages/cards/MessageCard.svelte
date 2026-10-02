@@ -73,12 +73,14 @@
 {:else if message.media_kind === "poll"}
   <PollCard
     poll={vm.poll}
+    scope={{ account: session.activeAccount, chat: message.chat, generation: messages.accountGeneration, requestKey: message.id }}
     question={message.text}
     namer={api.namer}
     picture={api.avatarOf}
     onvote={async (options) => { await api.onvote(message, options); }} />
 {:else if message.media_kind === "event"}
   <EventCard
+    chat={message.chat}
     event={vm.chatEvent}
     title={message.text}
     onopenurl={api.onopenurl}

@@ -23,6 +23,7 @@ pub fn visit_wire_types(visitor: &mut impl TypeVisitor) {
         crate::store::MessageReceipt, crate::store::ChatRetention, crate::store::DiskRetention,
         crate::store::MessageCursor, crate::store::MessagePage, crate::store::MessagePageDirection,
         crate::store::ChatMarks, crate::store::archive::ArchiveReport,
+        crate::store::BroadcastList,
     );
     crate::store::archive::visit_wire_types(visitor);
 }

@@ -21,6 +21,7 @@
   import { slashToken, replaceSlashToken, type SlashCommandId, type SlashSelection } from "$lib/utils/slash-commands";
   import { canChooseMediaQuality } from "$lib/utils/media-quality";
   import { isAlbumSelection } from "$lib/utils/upload";
+  import { broadcastSendReason } from "$lib/utils/broadcast";
   import type { MediaQuality } from "$lib/utils/wire";
   import ScheduleDialog from "./ScheduleDialog.svelte";
   import CameraCapture from "./CameraCapture.svelte";
@@ -142,7 +143,14 @@
   let cameraOpen = $state(false);
   function submitComposer(event: SubmitEvent) {
     event.preventDefault();
-    if (!document.querySelector("dialog[open]")) onsend();
+    if (!disabled && !document.querySelector("dialog[open]")) onsend();
+  }
+  function enqueuePicker<T>(task: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    if (disabled) return Promise.reject(new Error(broadcastSendReason(selectedChat) ?? "Message sending is disabled here."));
+    return enqueue((signal) => {
+      if (disabled) throw new Error(broadcastSendReason(selectedChat) ?? "Message sending is disabled here.");
+      return task(signal);
+    });
   }
   let caret = $state({ start: 0, end: 0 });
   let dismissedSlash = $state<string | null>(null);
@@ -152,6 +160,7 @@
     ...(!selectedChat.endsWith("@g.us") ? { "mention-all": "Mention all is available in groups." } : {}) });
   $effect(() => { void account; void selectedChat; void generation; soundboardOpen = false; cameraOpen = false; dismissedSlash = null; });
   $effect(() => { if (disabled || editing) cameraOpen = false; });
+  $effect(() => { if (disabled) { attachMenu = false; pickerTab = null; scheduling = false; } });
 
   function updateCaret() {
     if (composerInput && (caret.start !== composerInput.selectionStart || caret.end !== composerInput.selectionEnd)) {
@@ -181,7 +190,7 @@
 
   /** A plain draft can be scheduled; while one can, the clock schedules it. */
   const canSchedule = $derived(
-    !!draft.trim() && !editing && !replyingTo && pending.length === 0,
+    !disabled && !!draft.trim() && !editing && !replyingTo && pending.length === 0,
   );
   let filePicker: HTMLInputElement | undefined = $state();
 
@@ -189,6 +198,7 @@
     const input = event.currentTarget as HTMLInputElement;
     const files = Array.from(input.files ?? []);
     input.value = "";
+    if (disabled) return;
     for (const file of files) onstage(file);
   }
 
@@ -315,7 +325,7 @@
   </div>
 {/if}
 
-{#if mentionMatches.length > 0}
+{#if !disabled && mentionMatches.length > 0}
   <div class="mentions">
     {#each mentionMatches as person, i (person.jid)}
       <button
@@ -344,8 +354,11 @@
   {/key}
 {/if}
 <Soundboard open={soundboardOpen} {account} chat={selectedChat} {generation} disabled={disabled || !!editing || recording}
-  onsend={onsoundclip} onclose={() => { soundboardOpen = false; }} />
-{#if emojiToken && emojiMatches.length > 0}
+  onsend={async (file, scope) => {
+    if (disabled) throw new Error(broadcastSendReason(scope.chat) ?? "Message sending is disabled here.");
+    await onsoundclip(file, scope);
+  }} onclose={() => { soundboardOpen = false; }} />
+{#if !disabled && emojiToken && emojiMatches.length > 0}
   <div class="suggest" role="listbox" aria-label="Emoji suggestions">
     <span class="suggest-title">Emoji matching :{emojiToken.query}</span>
     {#each emojiMatches as e, i (e.emoji)}
@@ -363,11 +376,12 @@
     {/each}
   </div>
 {/if}
-{#if pickerTab}
+{#if pickerTab && !disabled}
   <ExpressionPicker
+    {disabled}
     chat={selectedChat}
     bind:tab={pickerTab}
-    {enqueue}
+    enqueue={enqueuePicker}
     {takereply}
     onemoji={onpickeremoji}
     onsent={onpickersent}
@@ -377,7 +391,8 @@
 <form class="composer" onsubmit={submitComposer}>
   {#if recording}
     <VoiceRecorder
-      onsend={onsendvoice}
+      {disabled}
+      onsend={(note) => { if (!disabled) onsendvoice(note); }}
       oncancel={() => (recording = false)}
       onerror={onvoiceerror} />
   {:else}
@@ -390,8 +405,9 @@
     title="Attach"
     aria-label="Attach"
     aria-expanded={attachMenu}
-    onclick={() => (attachMenu = !attachMenu)} />
-  {#if attachMenu}
+    {disabled}
+    onclick={() => { if (!disabled) attachMenu = !attachMenu; }} />
+  {#if attachMenu && !disabled}
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div class="attach-catcher" role="presentation" onclick={() => (attachMenu = false)}></div>
     <div class="attach-menu" role="menu">
@@ -402,21 +418,27 @@
       <button
         type="button"
         role="menuitem"
+        {disabled}
         onclick={() => {
+          if (disabled) return;
           attachMenu = false;
           filePicker?.click();
         }}><Icon name="paperclip" size={18} /> Upload a file</button>
       <button
         type="button"
         role="menuitem"
+        {disabled}
         onclick={() => {
+          if (disabled) return;
           attachMenu = false;
           oncreatekind("poll");
         }}><Icon name="poll" size={18} /> Create poll</button>
       <button
         type="button"
         role="menuitem"
+        {disabled}
         onclick={() => {
+          if (disabled) return;
           attachMenu = false;
           oncreatekind("event");
         }}><Icon name="calendar" size={18} /> Create event</button>
@@ -426,18 +448,20 @@
     class="file-input"
     type="file"
     multiple
+    {disabled}
     bind:this={filePicker}
     onchange={attach}
   />
   <textarea
     bind:this={composerInput}
     value={draft}
-    {onbeforeinput}
-    oninput={(event) => { oninput(event); dismissedSlash = null; updateCaret(); }}
+    {disabled}
+    onbeforeinput={(event) => { if (!disabled) onbeforeinput(event); }}
+    oninput={(event) => { if (disabled) return; oninput(event); dismissedSlash = null; updateCaret(); }}
     onkeyup={updateCaret}
     onclick={updateCaret}
     onselect={updateCaret}
-    onkeydown={onkey}
+    onkeydown={(event) => { if (!disabled) onkey(event); }}
     rows="1"
     placeholder={editing ? "Edit message" : pending.length > 0 ? "Add a caption (optional)" : "Type a message"}
   ></textarea>
@@ -445,7 +469,8 @@
     <QuickRepliesMenu {account} chat={selectedChat} {generation} requestKey={quickReplies.key}
       dataScope={quickReplies.scope(selectedChat)} replies={quickReplies.replies} loading={quickReplies.loading}
       syncing={quickReplies.syncing} error={quickReplies.error} {connected}
-      disabled={!account || !!editing || recording} onselect={onquickreply}
+      disabled={disabled || !account || !!editing || recording}
+      onselect={(scope, reply) => { if (!disabled) onquickreply(scope, reply); }}
       onsync={(scope) => { void quickReplies.sync(scope); }} />
     <Button variant="icon" icon="volume" iconSize={20} active={soundboardOpen} title="Soundboard" aria-label="Soundboard"
       onclick={() => { soundboardOpen = !soundboardOpen; }} />
@@ -482,7 +507,8 @@
       cls="tool-text"
       active={pickerTab === "gif"}
       title="GIFs"
-      onclick={() => (pickerTab = pickerTab === "gif" ? null : "gif")}>GIF</Button>
+      {disabled}
+      onclick={() => { if (!disabled) pickerTab = pickerTab === "gif" ? null : "gif"; }}>GIF</Button>
     <Button
       variant="icon"
       icon="sticker"
@@ -490,7 +516,8 @@
       active={pickerTab === "sticker"}
       title="Stickers"
       aria-label="Stickers"
-      onclick={() => (pickerTab = pickerTab === "sticker" ? null : "sticker")} />
+      {disabled}
+      onclick={() => { if (!disabled) pickerTab = pickerTab === "sticker" ? null : "sticker"; }} />
     <Button
       variant="icon"
       icon="smile"
@@ -498,7 +525,8 @@
       active={pickerTab === "emoji"}
       title="Emoji"
       aria-label="Emoji"
-      onclick={() => (pickerTab = pickerTab === "emoji" ? null : "emoji")} />
+      {disabled}
+      onclick={() => { if (!disabled) pickerTab = pickerTab === "emoji" ? null : "emoji"; }} />
   </div>
   {#if !draft.trim() && pending.length === 0}
     <Button
@@ -507,13 +535,14 @@
       iconSize={19}
       title="Record a voice message"
       aria-label="Record a voice message"
-      onclick={() => (recording = true)} />
+      {disabled}
+      onclick={() => { if (!disabled) recording = true; }} />
   {:else}
-    <Button variant="send" icon="send" iconSize={18} type="submit" title="Send" aria-label="Send" />
+    <Button variant="send" icon="send" iconSize={18} type="submit" title="Send" aria-label="Send" {disabled} />
   {/if}
   {/if}
 </form>
-{#if cameraOpen && account}
+{#if cameraOpen && account && !disabled}
   {#key `${account}:${selectedChat}:${generation}`}
     <CameraCapture {account} chat={selectedChat} {generation}
       onstage={(file, scope) => {
@@ -524,8 +553,11 @@
 {/if}
 </div>
 
-{#if scheduling}
-  <ScheduleDialog text={draft} onsave={(_text, dueAt) => onschedule(dueAt)} onclose={() => (scheduling = false)} />
+{#if scheduling && !disabled}
+  <ScheduleDialog text={draft} onsave={(_text, dueAt) => {
+    if (disabled) throw new Error(broadcastSendReason(selectedChat) ?? "Message scheduling is disabled here.");
+    return onschedule(dueAt);
+  }} onclose={() => (scheduling = false)} />
 {/if}
 
 {#if previewItem}

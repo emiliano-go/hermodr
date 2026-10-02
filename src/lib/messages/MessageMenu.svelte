@@ -13,6 +13,7 @@
     y,
     items,
     reactions,
+    reactionReason = null,
     current,
     onreact,
     onmore,
@@ -23,6 +24,7 @@
     items: MenuItem[];
     /** Quick reactions, shown as a row above the items. */
     reactions: string[];
+    reactionReason?: string | null;
     /** Our current reaction, which a second click takes back. */
     current: string | null;
     onreact: (emoji: string) => void;
@@ -98,4 +100,4 @@
 </script>
 
 <MessageMenuPanel bind:element={menu} left={pos.left} top={pos.top} {closing}
-  {items} {reactions} {current} {onreact} {onmore} onclose={close} />
+  {items} {reactions} {reactionReason} {current} {onreact} {onmore} onclose={close} />

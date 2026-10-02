@@ -15,7 +15,7 @@
 
   let {
     element = $bindable(), left, top, closing = false,
-    items, reactions, current, onreact, onmore, onclose,
+    items, reactions, current, onreact, onmore, onclose, reactionReason = null,
   }: {
     element?: HTMLDivElement;
     left: number;
@@ -23,6 +23,7 @@
     closing?: boolean;
     items: MenuItem[];
     reactions: string[];
+    reactionReason?: string | null;
     current: string | null;
     onreact: (emoji: string) => void;
     onmore: () => void;
@@ -38,7 +39,10 @@
         class:mine={current === emoji}
         role="menuitem"
         aria-label="React {emoji}"
+        disabled={!!reactionReason}
+        title={reactionReason ?? undefined}
         onclick={() => {
+          if (reactionReason) return;
           onclose();
           onreact(current === emoji ? "" : emoji);
         }}>{emoji}</button>
@@ -47,12 +51,15 @@
       class="reaction more"
       role="menuitem"
       aria-label="More reactions"
-      title="More reactions"
+      title={reactionReason ?? "More reactions"}
+      disabled={!!reactionReason}
       onclick={() => {
+        if (reactionReason) return;
         onclose();
         onmore();
       }}><Icon name="plus" size={18} /></button>
   </div>
+  {#if reactionReason}<span class="reaction-reason" role="status">{reactionReason}</span>{/if}
   {#each items as item (item.label)}
     {#if item.separated}<div class="sep"></div>{/if}
     <button
@@ -70,6 +77,7 @@
 </div>
 
 <style>
+  .reaction-reason { color: var(--muted); font-size: 12px; max-width: 260px; padding: 4px 6px; }
   .menu {
     position: fixed;
     z-index: 271;

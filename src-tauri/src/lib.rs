@@ -52,6 +52,7 @@ mod tray;
 mod transcription_config;
 mod transcription_credentials;
 mod contacts;
+mod broadcast_lists;
 mod polls;
 mod desktop;
 mod camera;
@@ -133,6 +134,7 @@ macro_rules! postal_commands {
             messages::message_page,
             chats::chats,
             contacts::resolve_names,
+            broadcast_lists::broadcast_list,
             messages::mark_read,
             messages::mark_read_until,
             messages::send_reply,

@@ -8,6 +8,7 @@
   let {
     selectedChat,
     isGroup,
+    isBroadcast = false,
     title,
     avatar,
     typingNow,
@@ -29,6 +30,7 @@
   }: {
     selectedChat: string;
     isGroup: boolean;
+    isBroadcast?: boolean;
     title: string;
     avatar: string | null;
     typingNow: string | null;
@@ -72,6 +74,12 @@
         <span class="chat-sub" class:typing={typingNow}
           >{typingNow ?? ([groupContext, subtitle].filter(Boolean).join(" · ") || null) ??" "}</span
         >
+      </button>
+    {:else if isBroadcast}
+      <button class="heading-avatar" title="Broadcast recipients" aria-label="Broadcast recipients" onclick={ongroupinfo}
+        ><Avatar src={avatar} label={title} seed={selectedChat} /></button>
+      <button class="chat-title" title="Broadcast recipients" onclick={ongroupinfo}>
+        {title}<span class="chat-sub">Broadcast list</span>
       </button>
     {:else}
       <button class="heading-avatar" title="Contact info" aria-label="Contact info" onclick={ongroupinfo}

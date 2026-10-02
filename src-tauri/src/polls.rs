@@ -102,10 +102,10 @@ pub(crate) async fn respond_event(
     chat: String,
     id: String,
     response: String,
+    account_id: Option<String>,
 ) -> Result<(), String> {
-    state
-        .service()?
-        .respond_event(&chat, &id, &response)
-        .await
-        .map_err(|e| e.to_string())
+    let (account, service) = operation_service(&state, account_id.as_deref())?;
+    let result = service.respond_event(&chat, &id, &response).await;
+    operation_current(&state, &account, &service)?;
+    result.map_err(|e| e.to_string())
 }

@@ -409,8 +409,8 @@ pub(super) async fn vote(
     definition: &crate::store::Secretive,
     options: &[String],
 ) -> Result<()> {
+    let to = super::broadcast_lists::writable_target(chat)?;
     let hashes = store.poll_option_hashes(chat, id, options).await?;
-    let to: Jid = chat.parse()?;
     let creator: Jid = definition.creator.parse()?;
     let own = client.pn().ok_or_else(|| anyhow::anyhow!("not logged in"))?.to_non_ad();
     let voter = if creator.is_lid() {

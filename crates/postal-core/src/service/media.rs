@@ -159,7 +159,7 @@ impl WhatsAppService {
         reply: Option<(String, String, String)>, options: SendOptions,
     ) -> Result<Option<String>> {
         let SendOptions { gif, view_once, voice, forwarded, mentions, progress, quality } = options;
-        let to: Jid = chat.parse()?;
+        let to = super::broadcast_lists::writable_target(chat)?;
         let original_extension = file_extension(file_name);
         let (_, original_kind) = media_kind_for(&original_extension);
         let prepared = super::media_quality::prepare(input, file_name.to_string(), original_kind, quality, gif).await?;
@@ -404,7 +404,7 @@ impl WhatsAppService {
         forwarded: bool,
         reply: Option<(String, String, String)>,
     ) -> Result<()> {
-        let to: Jid = chat.parse()?;
+        let to = super::broadcast_lists::writable_target(chat)?;
         self.unarchive_on_send(chat).await;
         let context = self.reply_context(&to, reply.as_ref()).await?;
         let context = if forwarded { Some(forwarded_context(context)) } else { context };
@@ -527,6 +527,7 @@ impl WhatsAppService {
         kind: &str,
         reply: Option<(String, String, String)>,
     ) -> Result<()> {
+        super::broadcast_lists::writable_target(chat)?;
         let dir = self.media_dir().ok_or_else(|| anyhow::anyhow!("no media folder is configured"))?;
         let file = std::fs::canonicalize(path)?;
         if !file.starts_with(std::fs::canonicalize(&dir)?) {

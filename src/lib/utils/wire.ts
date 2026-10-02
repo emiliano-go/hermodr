@@ -23,6 +23,7 @@ export type ArchiveManifest = { format: string, version: number, messages: numbe
 export type ArchiveReport = { directory: string, messages: number, attachments: number, missing_attachments: number, };
 export type BlockedContact = { jid: string, jids: Array<string>, identity: ContactIdentity, };
 export type BooleanProp = { name: string, code: number, default: boolean, value: boolean | null, };
+export type BroadcastList = { chat: string, recipients: Array<string>, source_timestamp: number, };
 export type CachedMemberGroup = { chat: string, subject: string | null, observed_at: number, present: boolean | null, admin: boolean | null, owner: boolean | null, label: string | null, own_admin: boolean | null, member_observed_at: number | null, complete_snapshot: boolean, };
 export type ChatLabelAssociation = { label_id: string, chat: string, };
 export type ChatMarks = { reactions: Array<Reaction>, starred: Array<string>, pinned: string | null, polls: Array<Poll>, events: Array<Event>,

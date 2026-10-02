@@ -67,7 +67,7 @@ impl WhatsAppService {
         contacts: &[(String, String)],
         current: impl Fn() -> Result<()> + Send,
     ) -> Result<ContactSendResult> {
-        let target: Jid = chat.parse()?;
+        let target = super::broadcast_lists::writable_target(chat)?;
         anyhow::ensure!(
             (target.is_group() || target.is_pn() || target.is_lid())
                 && !target.user.is_empty()

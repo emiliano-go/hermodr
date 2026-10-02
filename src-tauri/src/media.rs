@@ -53,6 +53,7 @@ pub(crate) async fn send_media(
     progress: Option<String>,
     quality: Option<postal_core::MediaQuality>,
 ) -> Result<Option<String>, String> {
+    postal_core::service::writable_target(&chat).map_err(|error| error.to_string())?;
     let reply = match (reply_to_id, reply_to_sender, reply_to_text) {
         (Some(id), Some(sender), Some(text)) => Some((id, sender, text)),
         _ => None,
@@ -94,6 +95,7 @@ pub(crate) async fn send_voice(
     reply_to_text: Option<String>,
     view_once: Option<bool>,
 ) -> Result<(), String> {
+    postal_core::service::writable_target(&chat).map_err(|error| error.to_string())?;
     let webm = BASE64.decode(data.as_bytes()).map_err(|e| e.to_string())?;
     let ogg = postal_core::ogg::webm_to_ogg(&webm).map_err(|e| e.to_string())?;
     let reply = match (reply_to_id, reply_to_sender, reply_to_text) {
@@ -123,6 +125,7 @@ pub(crate) async fn send_sticker(
     reply_to_sender: Option<String>,
     reply_to_text: Option<String>,
 ) -> Result<(), String> {
+    postal_core::service::writable_target(&chat).map_err(|error| error.to_string())?;
     let bytes = BASE64.decode(data.as_bytes()).map_err(|e| e.to_string())?;
     let reply = reply_of(reply_to_id, reply_to_sender, reply_to_text);
     let service = state.service()?;
@@ -164,6 +167,7 @@ pub(crate) async fn send_from_library(
     reply_to_sender: Option<String>,
     reply_to_text: Option<String>,
 ) -> Result<(), String> {
+    postal_core::service::writable_target(&chat).map_err(|error| error.to_string())?;
     let service = state.service()?;
     service
         .send_from_library(&chat, &path, &kind, reply_of(reply_to_id, reply_to_sender, reply_to_text))

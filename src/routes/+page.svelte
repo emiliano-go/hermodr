@@ -19,6 +19,10 @@
   import { memberSheet } from "$lib/state/member-sheet.svelte";
   import { quickReplies } from "$lib/state/quick-replies.svelte";
   import ContactInfo from "$lib/contacts/ContactInfo.svelte";
+  import BroadcastInfo from "$lib/chat/BroadcastInfo.svelte";
+  import Panel from "$lib/ui/Panel.svelte";
+  import { isBroadcastList, broadcastSendReason } from "$lib/utils/broadcast";
+  import type { BroadcastList } from "$lib/utils/wire";
   import NewContact from "$lib/contacts/NewContact.svelte";
   import ContactSharing from "$lib/contacts/ContactSharing.svelte";
   import type { SharedContact, ContactShareScope } from "$lib/utils/vcard";
@@ -120,9 +124,11 @@
   }
 
   async function sendContacts(contacts: SharedContact[], scope: ContactShareScope): Promise<string> {
+    const reason = broadcastSendReason(scope.chat);
+    if (reason) throw new Error(reason);
     const current = () => scope.account === session.activeAccount && scope.chat === chats.selectedChat
       && scope.generation === messages.accountGeneration && session.connected;
-    const allowed = () => current() && !composer.editing && !composer.recording && (!members.chatGroup || members.chatGroup.can_send);
+    const allowed = () => current() && !isBroadcastList(scope.chat) && !composer.editing && !composer.recording && (!members.chatGroup || members.chatGroup.can_send);
     if (!allowed()) throw new Error("Contact sharing target changed or is unavailable.");
     const result = await composer.enqueue((signal) => {
       if (signal.aborted || !allowed()) throw new Error("Contact sharing target changed before send.");
@@ -255,7 +261,7 @@
     chats.selectedChat = chat;
     composer.restoreKnownUnsent(chat);
     // One-to-one typing only arrives for contacts we are subscribed to.
-    if (!chat.endsWith("@g.us")) invoke("watch_presence", { jid: chat }).catch(() => {});
+    if (!chat.endsWith("@g.us") && !isBroadcastList(chat)) invoke("watch_presence", { jid: chat }).catch(() => {});
     chats.titleOverride = label;
     ui.scrolledUp = false;
     messages.prepareChat(chat, session.settings.message_window_size);
@@ -275,6 +281,7 @@
     chats.showGroupInfo = false;
     chats.groupInfo = null;
     contactInfoFor = null;
+    broadcastFor = null;
     try {
       // Invalidate any in-flight reload from the previous chat.
       const seq = messages.nextSeq();
@@ -479,6 +486,33 @@
 
   /** The direct chat whose contact panel is open. */
   let contactInfoFor = $state<string | null>(null);
+  let broadcastFor = $state<{ account: string; chat: string; generation: number } | null>(null);
+  let broadcastInfo = $state<BroadcastList | null>(null);
+  let broadcastLoading = $state(false), broadcastError = $state<string | null>(null);
+  $effect(() => {
+    const scope = broadcastFor;
+    const account = session.activeAccount, chat = chats.selectedChat, generation = messages.accountGeneration;
+    void messages.messages; void messages.marks; void chats.chats;
+    if (!scope || scope.account !== account || scope.chat !== chat || scope.generation !== generation) {
+      untrack(() => { broadcastInfo = null; broadcastLoading = false; broadcastError = null; });
+      return;
+    }
+    let current = true;
+    untrack(() => {
+      broadcastInfo = null; broadcastError = null; broadcastLoading = true;
+      void invoke<BroadcastList | null>("broadcast_list", { accountId: scope.account, chat: scope.chat })
+        .then((info) => { if (current) broadcastInfo = info; })
+        .catch((error) => { if (current) broadcastError = String(error); })
+        .finally(() => { if (current) broadcastLoading = false; });
+    });
+    return () => { current = false; };
+  });
+  function openChatInfo(chat: string) {
+    if (chat.endsWith("@g.us")) { void chats.openGroupInfo(); return; }
+    if (isBroadcastList(chat) && session.activeAccount) {
+      broadcastFor = { account: session.activeAccount, chat, generation: messages.accountGeneration };
+    } else contactInfoFor = chat;
+  }
   let newContact = $state(false);
   let quickSwitcher = $state(false);
   $effect(() => { session.activeAccount; newContact = quickSwitcher = false; });
@@ -797,6 +831,8 @@
     const current = () => accountId === session.activeAccount && chat === chats.selectedChat
       && generation === messages.accountGeneration;
     if (!kind || !accountId || !chat) throw new Error("Conversation changed before creating.");
+    const reason = broadcastSendReason(chat);
+    if (reason) throw new Error(reason);
     const payload: Record<string, unknown> = { ...(value as object) };
     if (Array.isArray(payload.options)) payload.options = Object.freeze([...payload.options]);
     Object.freeze(payload);
@@ -830,6 +866,8 @@
     const current = () => accountId === session.activeAccount && chat === chats.selectedChat
       && generation === messages.accountGeneration;
     if (!accountId || !current()) throw new Error("Conversation changed before voting.");
+    const reason = broadcastSendReason(chat);
+    if (reason) throw new Error(reason);
     await composer.enqueue(async (signal) => {
       signal.throwIfAborted();
       if (!current()) throw new Error("Conversation changed before voting.");
@@ -843,6 +881,21 @@
     } catch (error) {
       if (current()) ui.fail(error);
     }
+  }
+
+  async function respondEvent(message: StoredMessage, response: string) {
+    const accountId = session.activeAccount, chat = message.chat, id = message.id;
+    const generation = messages.accountGeneration;
+    const reason = broadcastSendReason(chat);
+    if (reason) throw new Error(reason);
+    const current = () => !!accountId && accountId === session.activeAccount && chat === chats.selectedChat
+      && generation === messages.accountGeneration;
+    if (!current()) throw new Error("Conversation changed before responding.");
+    await composer.enqueue(async (signal) => {
+      signal.throwIfAborted();
+      if (!current()) throw new Error("Conversation changed before responding.");
+      await invoke("respond_event", { accountId, chat, id, response });
+    });
   }
 
   /** Pinned bar content for the chat header. */
@@ -1100,7 +1153,7 @@
 
 <!-- Window-level so a paste/drop anywhere cannot navigate the webview. -->
 <svelte:window
-  onpaste={onPaste}
+  onpaste={(event) => { if (!isBroadcastList(chats.selectedChat)) onPaste(event); }}
   onclick={(e) => {
     if (ui.accountMenu && !(e.target as Element).closest?.(".user-panel")) ui.accountMenu = false;
   }}
@@ -1114,7 +1167,10 @@
   onfocus={() => session.setOnline(true)}
   onblur={() => session.setOnline(false)}
   ondragover={(e) => e.preventDefault()}
-  ondrop={onDrop}
+  ondrop={(event) => {
+    if (isBroadcastList(chats.selectedChat)) { event.preventDefault(); return; }
+    onDrop(event);
+  }}
 />
 
 {#if ui.error}
@@ -1241,23 +1297,23 @@
           onaction={inboxAction} onretry={() => { void chats.refreshChats(); void labels.refresh(); }} />
       {:else if chats.selectedChat}
         {@const selectedChat = chats.selectedChat}
-        {@const title =
-          members.displayName(chats.chats.find((c) => c.chat === selectedChat)?.display_name ?? chats.titleOverride, selectedChat)}
-        {@const typingNow = members.typingLabel(selectedChat)}
+        {@const storedTitle = chats.chats.find((c) => c.chat === selectedChat)?.display_name ?? chats.titleOverride}
+        {@const title = isBroadcastList(selectedChat) ? storedTitle || "Broadcast list" : members.displayName(storedTitle, selectedChat)}
+        {@const typingNow = isBroadcastList(selectedChat) ? null : members.typingLabel(selectedChat)}
         <ChatHeader
           {selectedChat}
           isGroup={selectedChat.endsWith("@g.us")}
+          isBroadcast={isBroadcastList(selectedChat)}
           {title}
           avatar={chats.avatars[selectedChat] ?? null}
           {typingNow}
           {subtitle}
           groupContext={members.groupContext}
-          presenceText={members.presenceLabel(selectedChat)}
+          presenceText={isBroadcastList(selectedChat) ? null : members.presenceLabel(selectedChat)}
           mentionTotal={messages.mentionQueue.length}
           mentionCursor={messages.mentionCursor}
           pinned={pinnedView}
-          ongroupinfo={() =>
-            selectedChat.endsWith("@g.us") ? chats.openGroupInfo() : (contactInfoFor = selectedChat)}
+          ongroupinfo={() => openChatInfo(selectedChat)}
           onsearch={() =>
             (ui.finder = {
               mode: "search",
@@ -1359,7 +1415,7 @@
           onopenquote={(m) => openQuote(m, m.reply_to_path!)}
           onvote={votePoll}
           onrespond={(m, response) =>
-            act(() => invoke("respond_event", { chat: m.chat, id: m.id, response }))}
+            act(() => respondEvent(m, response))}
           oneditrequest={(m) => {
             const event = messages.marks.events.find((e) => e.id === m.id);
             if (event) ui.editingEvent = { chat: m.chat, event };
@@ -1417,6 +1473,7 @@
         {#if ui.picking}
           <SelectionBar
             count={Object.keys(ui.picking).length}
+            reactionReason={broadcastSendReason(selectedChat)}
             allStarred={Object.keys(ui.picking).length > 0 && Object.keys(ui.picking).every((id) => messages.starred.has(id))}
             onforward={() => {
               const batch = pickedInOrder(ui.picking, messages.ordered);
@@ -1457,7 +1514,7 @@
             account={session.activeAccount}
             generation={messages.accountGeneration}
             connected={session.connected}
-            disabled={!session.connected || !!(members.chatGroup && !members.chatGroup.can_send)}
+            disabled={!session.connected || isBroadcastList(selectedChat) || !!(members.chatGroup && !members.chatGroup.can_send)}
             defaultQuality={session.settings.media_quality}
             onsoundclip={(file, scope) => composer.sendSoundClip(file, scope)}
             onquickreply={(scope, reply) => {
@@ -1525,7 +1582,9 @@
             typingHidden={composer.typingHidden} />
         {/if}
 
-        {#if members.chatGroup && !members.chatGroup.can_send}
+        {#if isBroadcastList(selectedChat)}
+          <div class="read-only" role="status"><Icon name="volume" size={16} />{broadcastSendReason(selectedChat)}</div>
+        {:else if members.chatGroup && !members.chatGroup.can_send}
           <div class="read-only" role="status">
             <Icon name={members.chatGroup.community ? "users" : "volume"} size={16} />
             {#if members.chatGroup.community}
@@ -1559,6 +1618,7 @@
     y={ui.menu.y}
     items={menuItems(m)}
     reactions={QUICK_REACTIONS}
+    reactionReason={broadcastSendReason(m.chat)}
     current={messages.reactionsFor.get(m.id)?.find((r) => r.mine)?.emoji ?? null}
     onreact={(emoji) => reactMessages([m], emoji)}
     onmore={openEmojiFor}
@@ -1899,6 +1959,15 @@
       quoteView = null;
       scrollToMessage(id);
     }} />
+{/if}
+
+{#if broadcastFor && broadcastFor.account === session.activeAccount && broadcastFor.chat === chats.selectedChat && broadcastFor.generation === messages.accountGeneration}
+  <Panel label="Broadcast recipients" nav={[{ id: "recipients", label: "Recipients", group: "Broadcast list" }]} section="recipients"
+    onclose={() => (broadcastFor = null)}>
+    {#snippet header()}<h2>Broadcast list</h2>{/snippet}
+    {#snippet children()}<BroadcastInfo info={broadcastInfo} loading={broadcastLoading} error={broadcastError}
+      nameOf={(jid) => members.displayName(null, jid)} />{/snippet}
+  </Panel>
 {/if}
 
 {#if contactInfoFor}

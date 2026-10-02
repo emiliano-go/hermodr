@@ -323,7 +323,7 @@
     background: color-mix(in srgb, var(--surface) 85%, transparent);
     color: var(--text);
     backdrop-filter: blur(20px);
-    box-shadow: 0 12px 36px #0005;
+    box-shadow: var(--shadow);
     font-size: max(15px, var(--font-size, 15px));
     line-height: 1.45;
     cursor: pointer;

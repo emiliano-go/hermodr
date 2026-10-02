@@ -368,7 +368,7 @@ fn continuation_key(parent: &StoredMessage, chat: &str) -> Result<wa::MessageKey
 
 fn album_target(chat: &str, reply: Option<&(String, String, String)>, mentions: &[String]) -> Result<Jid> {
     anyhow::ensure!(chat.len() <= 256, "Album destination is too long.");
-    let target: Jid = chat.parse()?;
+    let target = super::broadcast_lists::writable_target(chat)?;
     anyhow::ensure!(!target.user.is_empty() && (target.is_pn() || target.is_lid() || target.is_group())
         && target.device == 0 && target.agent == 0 && target.integrator == 0, "Choose a contact or group album destination.");
     anyhow::ensure!(mentions.len() <= 256, "Album exceeds the application mention bound.");

@@ -38,6 +38,8 @@ mod audio;
 mod connection;
 mod contacts;
 mod contact_sharing;
+mod broadcast_lists;
+pub use broadcast_lists::writable_target;
 pub use contact_sharing::ContactSendResult;
 mod quick_switcher;
 mod keywords;

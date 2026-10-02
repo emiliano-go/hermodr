@@ -5,6 +5,7 @@
 // host callbacks the route registers, so flows move verbatim.
 import { tick } from "svelte";
 import { invoke } from "$lib/utils/ipc";
+import { broadcastSendReason, guardBroadcastSend } from "$lib/utils/broadcast";
 import { loadEmojis, rememberEmoji, searchEmojis, type Emoji } from "$lib/utils/emoji";
 import type { PickerTab } from "$lib/composer/ExpressionPicker.svelte";
 import { base64Of, imagePreview, rasterizeSvg } from "$lib/utils/files";
@@ -246,7 +247,7 @@ export class ComposerState {
 
   reportTyping() {
     const chat = chats.selectedChat;
-    if (!chat || !this.chatSendsTyping) return;
+    if (!chat || !this.chatSendsTyping || broadcastSendReason(chat)) return;
     if (Date.now() - this.typingSentAt > 5000) {
       this.typingSentAt = Date.now();
       invoke("send_typing", { chat, typing: true }).catch(() => {});
@@ -259,6 +260,7 @@ export class ComposerState {
     clearTimeout(this.typingIdle);
     if (!chat || !this.typingSentAt) return;
     this.typingSentAt = 0;
+    if (broadcastSendReason(chat)) return;
     invoke("send_typing", { chat, typing: false }).catch(() => {});
   }
 
@@ -367,6 +369,8 @@ export class ComposerState {
         (m) => m.from_me && !m.media_kind && !m.deleted && m.text.trim() && !m.revoked && !isUnavailable(m),
       );
     if (!candidate || isUnavailable(candidate)) return;
+    const reason = broadcastSendReason(chat) ?? broadcastSendReason(candidate.chat);
+    if (reason) { ui.fail(reason); return; }
     this.editing = { chat, id: candidate.id, original: candidate.text };
     this.replyingTo = null;
     this.draft = candidate.text;
@@ -532,6 +536,7 @@ export class ComposerState {
     const sequence = this.accountSeq;
     const { text, jids } = this.mentionPayload();
     try {
+      guardBroadcastSend(chat);
       await invoke("schedule_message", { account, chat, text, mentions: jids, dueAt });
       if (sequence !== this.accountSeq) return true;
       if (chat === chats.selectedChat && typed === this.draft) {
@@ -554,6 +559,8 @@ export class ComposerState {
   async send() {
     const selectedChat = chats.selectedChat;
     if (!selectedChat) return;
+    const reason = broadcastSendReason(this.editing?.chat ?? selectedChat);
+    if (reason) { ui.fail(reason); return; }
     // Editing replaces an existing message rather than sending a new one.
     if (this.editing) {
       const current = this.editing;
@@ -567,7 +574,10 @@ export class ComposerState {
       this.resetHistory();
       this.host.focusComposer();
       try {
-        await this.enqueue(() => invoke("edit_message", { chat: current.chat, id: current.id, text }));
+        await this.enqueue(() => {
+          guardBroadcastSend(current.chat);
+          return invoke("edit_message", { chat: current.chat, id: current.id, text });
+        });
         await messages.reloadMessages(chats.selectedChat);
         await chats.refreshChats();
       } catch (e) {
@@ -609,8 +619,9 @@ export class ComposerState {
     this.resetHistory();
     this.host.focusComposer();
     try {
-      await this.enqueue(() =>
-        reply
+      await this.enqueue(() => {
+        guardBroadcastSend(chat);
+        return reply
           ? invoke("send_reply", {
               chat,
               text,
@@ -621,8 +632,8 @@ export class ComposerState {
               // A group message answered privately quotes across chats.
               replyToChat: reply.chat,
             })
-          : invoke("send_text", { chat, text, mentions: jids }),
-      );
+          : invoke("send_text", { chat, text, mentions: jids });
+      });
       await messages.reloadMessages(chats.selectedChat);
       await chats.refreshChats();
       this.host.scrollToBottom();
@@ -636,6 +647,8 @@ export class ComposerState {
     const account = this.accountSeq, owner = session.activeAccount;
     const chat = chats.selectedChat, generation = messages.accountGeneration;
     if (!owner || !chat) return;
+    const reason = broadcastSendReason(chat);
+    if (reason) { ui.fail(reason); return; }
     const id = this.pendingSeq++, ticket = {};
     this.stagingTickets.set(id, ticket);
     const current = () => account === this.accountSeq && owner === session.activeAccount
@@ -678,6 +691,7 @@ export class ComposerState {
   async sendPending(text = "", mentions: string[] = []) {
     const account = this.accountSeq, owner = session.activeAccount, chat = chats.selectedChat;
     if (!chat || this.pending.length === 0) return;
+    guardBroadcastSend(chat);
     const retry = this.pending[0].retry;
     if (retry && (!this.attachmentScopeCurrent(retry) || retry.chat !== chat)) {
       ui.fail("These attachments belong to another conversation or account.");
@@ -730,6 +744,7 @@ export class ComposerState {
       for (const [i, item] of items.entries()) {
         const { token } = batch[i];
         try {
+          guardBroadcastSend(chat);
           const warning = await sendAttachment(item.file, {
             chat,
             caption: item.caption.trim() || null,
@@ -832,10 +847,12 @@ export class ComposerState {
     let dispatched = false;
     try {
       for (const item of items) {
+        guardBroadcastSend(context.chat);
         if (!this.attachmentScopeCurrent(context) || chats.selectedChat !== context.chat) throw new Error("Conversation changed before album dispatch.");
         uploads.push(await stageAttachment(item.file, signal, context.accountId));
       }
       signal.throwIfAborted();
+      guardBroadcastSend(context.chat);
       if (!this.attachmentScopeCurrent(context) || chats.selectedChat !== context.chat) throw new Error("Conversation changed before album dispatch.");
       dispatched = true;
       const result = await invoke<AlbumSendResult>("send_album", {
@@ -896,6 +913,7 @@ export class ComposerState {
   }
 
   async sendSoundClip(file: File, scope: { account: string; chat: string; generation: number }) {
+    guardBroadcastSend(scope.chat);
     const account = this.accountSeq;
     const current = () => account === this.accountSeq && scope.account === session.activeAccount
       && scope.chat === chats.selectedChat && scope.generation === messages.accountGeneration;
@@ -903,6 +921,7 @@ export class ComposerState {
       && (!members.chatGroup || members.chatGroup.can_send);
     if (!allowed()) throw new Error("Conversation changed or cannot send audio clips.");
     await this.enqueue(async (signal) => {
+      guardBroadcastSend(scope.chat);
       if (!allowed()) throw new Error("Conversation changed before sending the audio clip.");
       await sendAttachment(file, { chat: scope.chat }, signal);
     }, account);
@@ -915,14 +934,16 @@ export class ComposerState {
 
   async sendVoice(note: Recording) {
     const account = this.accountSeq;
-    this.recording = false;
     const selectedChat = chats.selectedChat;
     if (!selectedChat) return;
+    guardBroadcastSend(selectedChat);
+    this.recording = false;
     const chat = selectedChat;
     const reply = this.replyingTo;
     this.replyingTo = null;
     try {
       await this.enqueue(async (signal) => {
+        guardBroadcastSend(chat);
         const data = await base64Of(note.blob);
         signal.throwIfAborted();
         return invoke("send_voice", {

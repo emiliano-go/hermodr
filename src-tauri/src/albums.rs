@@ -36,6 +36,7 @@ async fn send_album_inner(
     state: &AppState, account_id: &str, chat: &str, items: Vec<AlbumUploadItem>, parent_id: Option<&str>,
     reply_to_id: Option<String>, reply_to_sender: Option<String>, reply_to_text: Option<String>, mentions: Option<Vec<String>>,
 ) -> Result<AlbumSendResult, String> {
+    postal_core::service::writable_target(chat).map_err(|error| error.to_string())?;
     validate_uploads(&items, parent_id)?;
     let reply = match (reply_to_id, reply_to_sender, reply_to_text) {
         (None, None, None) => None,

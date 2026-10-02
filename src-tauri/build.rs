@@ -44,6 +44,7 @@ const COMMANDS: &[&str] = &[
     "message_page",
     "chats",
     "resolve_names",
+    "broadcast_list",
     "mark_read",
     "mark_read_until",
     "send_reply",

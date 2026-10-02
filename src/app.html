@@ -12,11 +12,11 @@
       body {
         margin: 0;
         height: 100%;
-        background: #111b21;
-        color: #e9edef;
-        font-family: system-ui, sans-serif;
+        background: var(--bg, #111b21);
+        color: var(--text, #e9edef);
+        font-family: var(--font, system-ui, sans-serif);
         /* Native scrollbars, checkboxes and inputs follow this on WebView2. */
-        color-scheme: dark;
+        color-scheme: var(--scheme, dark);
       }
     </style>
     %sveltekit.head%

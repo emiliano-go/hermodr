@@ -146,8 +146,8 @@ impl WhatsAppService {
         options: Vec<String>,
         correct_index: usize,
     ) -> Result<()> {
+        let target = broadcast_lists::writable_target(chat)?;
         validate_create(question, &options, correct_index)?;
-        let target: Jid = chat.parse()?;
         anyhow::ensure!(
             self.is_connected() && (target.is_pn() || target.is_lid() || target.is_group()),
             "Quiz account or destination is unavailable."
@@ -185,6 +185,7 @@ impl WhatsAppService {
     }
 
     pub(super) async fn vote_quiz(&self, chat: &str, id: &str, choices: Vec<String>) -> Result<()> {
+        let target = broadcast_lists::writable_target(chat)?;
         anyhow::ensure!(
             choices.len() <= 1,
             "Quizzes accept one answer; no answer withdraws the vote."
@@ -205,7 +206,6 @@ impl WhatsAppService {
             .await?
             .ok_or_else(|| anyhow::anyhow!("Quiz is unavailable."))?;
         validate_quiz_choices(&def, &current.options, &choices)?;
-        let target: Jid = chat.parse()?;
         let creator: Jid = def.creator.parse()?;
         let own = self
             .client

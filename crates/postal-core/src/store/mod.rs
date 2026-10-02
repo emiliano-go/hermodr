@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 mod chats;
 mod schema;
 mod marks;
+pub(crate) mod broadcast_lists;
+pub use broadcast_lists::BroadcastList;
 pub(crate) mod quiz_polls;
 mod media;
 mod messages;

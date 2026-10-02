@@ -79,6 +79,7 @@ struct BatchCtx<'a> {
     touched: Vec<String>,
     audit_chats: std::collections::HashSet<String>,
     quiz_chats: Mutex<std::collections::HashSet<String>>,
+    broadcast_chats: Mutex<std::collections::HashSet<String>>,
     sticker_changes: AtomicBool,
     /// The batch arrived live rather than from the offline drain, so an
     /// arrival goes out with its full row instead of a hint.
@@ -454,6 +455,7 @@ impl Inbound {
             touched: Vec::with_capacity(batch.messages.len()),
             audit_chats: std::collections::HashSet::new(),
             quiz_chats: Mutex::new(std::collections::HashSet::new()),
+            broadcast_chats: Mutex::new(std::collections::HashSet::new()),
             sticker_changes: AtomicBool::new(false),
             live: batch.origin == BatchOrigin::Live,
         };
@@ -509,10 +511,9 @@ impl Inbound {
             self.tally.note(batch.messages.len(), ingested);
         }
         let sticker_changes = ctx.sticker_changes.load(Ordering::Relaxed);
-        let (audit_chats, quiz_chats) = (ctx.audit_chats, ctx.quiz_chats.into_inner().unwrap());
+        let (audit_chats, quiz_chats, broadcast_chats) = (ctx.audit_chats, ctx.quiz_chats.into_inner().unwrap(), ctx.broadcast_chats.into_inner().unwrap());
         if batch_guard.finish().await.observed().is_some() {
-            self.emit_batch_changes(event_notices, audit_chats, sticker_changes);
-            for chat in quiz_chats { let _ = self.events.send(ServiceEvent::Marks { chat }); }
+            self.emit_batch_changes(event_notices, audit_chats, quiz_chats, broadcast_chats, sticker_changes);
         }
         log::debug!(
             "{} live message(s) in {:?} (retention {:?}, pruned {removed})",
@@ -542,7 +543,7 @@ impl Inbound {
         if chat.ends_with("@lid") {
             spawn_lid_lookup(ctx.client.clone(), ctx.store, &chat);
         }
-        let is_group = inbound.info.source.is_group || chat.ends_with("@g.us");
+        let is_group = inbound.info.source.is_group || chat.ends_with("@g.us") || inbound.info.source.chat.is_broadcast_list();
         let from_me = inbound.info.source.is_from_me;
         // Address-book names are keyed by phone number, but an LID-addressed
         // chat names its sender with a LID, so the two never match on their
@@ -703,9 +704,11 @@ impl Inbound {
         false
     }
 
-    fn emit_batch_changes(&self, notices: Vec<ServiceEvent>, audit_chats: std::collections::HashSet<String>, stickers: bool) {
+    fn emit_batch_changes(&self, notices: Vec<ServiceEvent>, audit_chats: std::collections::HashSet<String>, quiz_chats: std::collections::HashSet<String>, broadcast_chats: std::collections::HashSet<String>, stickers: bool) {
         for notice in notices { let _ = self.events.send(notice); }
         for chat in audit_chats { let _ = self.events.send(ServiceEvent::GroupAuditChanged { chat }); }
+        for chat in quiz_chats { let _ = self.events.send(ServiceEvent::Marks { chat }); }
+        for chat in broadcast_chats { let _ = self.events.send(ServiceEvent::ChatStateChanged { chat }); }
         if stickers { let _ = self.events.send(ServiceEvent::StickerLibraryChanged { packs: true, favorites: false, recents: true }); }
     }
 
@@ -959,6 +962,10 @@ impl Inbound {
         self.recall_quoted(ctx, &incoming.chat, &message).await;
         let live = ctx.live && !inbound.info.is_offline;
         let Some(message) = self.store_and_track(ctx, &incoming.chat, &message, live).await else { return };
+        if super::broadcast_lists::remember_broadcast_list(ctx.store, &incoming.chat, &message.header.id,
+            &inbound.info.bcl_participants).await.observed() == Some(true) {
+            ctx.broadcast_chats.lock().unwrap().insert(incoming.chat.clone());
+        }
         if quiz_polls::remember_quiz_definition(ctx.store, &incoming.chat, &message.header.id,
             &message.header.sender, &inbound.message).await.observed() == Some(true) {
             ctx.quiz_chats.lock().unwrap().insert(incoming.chat.clone());
@@ -1159,7 +1166,7 @@ mod contact_identity_tests {
             downloads: Arc::new(tokio::sync::Semaphore::new(1)), sync_progress: Arc::default(), media_auto_download: Arc::default(),
             keep_archived: Arc::default(), keep_view_once: Arc::default(), one_time_only: false, tally: Arc::default(), secret_edits: Default::default(),
         };
-        let ctx = BatchCtx { store: &store, client: None, own: vec![], media_dir: None, touched: vec![], audit_chats: std::collections::HashSet::new(), quiz_chats: Mutex::new(std::collections::HashSet::new()), sticker_changes: AtomicBool::new(false), live: true };
+        let ctx = BatchCtx { store: &store, client: None, own: vec![], media_dir: None, touched: vec![], audit_chats: std::collections::HashSet::new(), quiz_chats: Mutex::new(std::collections::HashSet::new()), broadcast_chats: Mutex::new(std::collections::HashSet::new()), sticker_changes: AtomicBool::new(false), live: true };
         store.set_lid_pn("77", "59891954564").await.unwrap();
         store.set_push_name("59891954564@s.whatsapp.net", "Push").await.unwrap();
         inbound.remember_alt_name(&ctx, "77@lid", "77@lid", false, false, "59891954564@s.whatsapp.net").await;
