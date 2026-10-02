@@ -19,15 +19,19 @@ Postal takes the other path. Because it implements the protocol itself:
 - **History sync is a decision this program makes.** Pairing brings the recent
   window only unless *Settings → Storage & history → Request full history when
   pairing* is on (off by default). This requests up to 10,000 days; the phone
-  may supply less. Older messages can also be fetched on demand.
+  may supply less. Older messages load on demand as you scroll.
   Sync requests never change disk retention. Legacy full-history settings
   migrate to explicit unlimited global disk retention, preserving their effect.
 - **Disk history and RAM have separate limits.** SQLite is a durable archive,
   unlimited on new installations unless explicit disk retention is configured.
   Existing disk policies survive upgrades. The open conversation keeps a bounded
-  `MessageWindow` (500 messages by default, adjustable from 50 to 2,000).
-  Older/newer pages come from SQLite; only exhausted local history asks the phone.
-  Eviction from RAM never deletes disk rows. Back to latest returns to live messages.
+  `MessageWindow` (150 messages by default, adjustable from 50 to 2,000), drawn
+  through a virtualized rail: only the rows in and around the viewport are
+  mounted, so DOM and decoded media stay bounded by the screen rather than by
+  the conversation. Scrolling up pulls older pages from SQLite and asks the
+  phone only once local history runs out; scrolling down pulls newer pages back
+  in. Eviction from RAM never deletes disk rows, and the floating Latest button
+  returns to live messages.
   History can also be cleared, or kept in memory only.
   The archive lives in the app data folder by default; *Settings → Storage &
   history → History folder* points it at another drive (cold storage) and moves
@@ -39,9 +43,10 @@ Postal takes the other path. Because it implements the protocol itself:
   an empty chat has no retained message preview. Delete chat removes it from the
   list; clearing history keeps chat metadata.
 
-- **No browser engine for WhatsApp.** No WebKit, no per-tab network processes,
-  no compositing workarounds. The only webview is the one rendering this app's
-  own UI.
+- **No browser engine for WhatsApp.** The app speaks the protocol itself: no
+  WhatsApp Web page to keep alive, no per-tab network processes, no account
+  history synced into a browser store. The only webview is the one rendering
+  this app's own UI.
 
 Retention limits use explicit `limited`, `unlimited` and per-chat `inherit`
 states. Existing numeric settings and per-chat overrides migrate without changing
@@ -50,20 +55,26 @@ is a separate state. Global settings cannot inherit.
 
 ## Measured impact
 
-Historical measurements with bounded disk retention, comparing the old webview
-approach with this one. These are not measurements of unlimited archive mode:
+Measurements comparing the old webview approach with this one. The Altus figures
+are from the original comparison; the Postal ones reflect current `master`.
+These are not measurements of unlimited archive mode:
 
 | Metric | Altus (WhatsApp Web in a webview) | Postal |
 | --- | --- | --- |
 | CPU, idle | ~200% of one core, sustained | **~0.3%** |
-| Memory, whole app | ~2.2 GB, climbing to ~23 GB | **~600 MB** |
+| Memory, whole app | ~2.2 GB, climbing to ~23 GB | **~0.5–0.9 GB**, depending on cached media |
+| GPU memory, open chat | grows with the whole synced page | **~0.2–0.3 GB**, viewport-bounded |
 | History downloaded at pairing | entire account (~20 GB) | none |
 | Message history stored | 604k+ rows, 774 MB | bounded by retention |
 
 Memory is the whole app. The protocol core is around 35 MB; the rest is the one
-WebKit webview that renders the UI, the only place a browser engine is used. The
-message window is now bounded separately. An unlimited SQLite archive can grow
-on disk; these measurements do not establish its maximum size or query latency.
+WebKit webview that renders the UI, the only place a browser engine is used.
+The open conversation is virtualized (`virtua`): only the visible window is
+mounted, and decoded images leave the renderer as rows scroll away. Before the
+virtualized rail, a media-heavy chat pushed the client's GPU memory past 3 GB
+because every photo in the message window was decoded at once; the same chat now
+settles around 0.2 GB. An unlimited SQLite archive can grow on disk; these
+measurements do not establish its maximum size or query latency.
 
 CPU was sampled with `pidstat` in 30-second windows. Altus held 130-220% of one
 core the entire time and its RSS kept climbing toward the full 23 GB history, so
@@ -96,7 +107,8 @@ crates/postal-core/    protocol client, storage, retention
 crates/postal-plugins/   sidecar lifecycle, consent, bounded event delivery
 src-tauri/              Tauri shell: commands and event forwarding
 src/lib/state/          Svelte 5 state and IPC coordination
-src/lib/                chat, composer, messages, media, settings, UI and utilities
+src/lib/messages/       virtualized message rail (virtua) and bubbles
+src/lib/                chat, composer, media, settings, UI and utilities
 src/routes/+page.svelte application layout and component wiring
 ```
 
@@ -189,8 +201,8 @@ distros, and leaves the files to upload (AppImage, icon, `SHA256SUMS`) in
 
 Dependencies are declared in `Cargo.toml`: Tauri comes from crates.io, and
 `whatsapp-rust` is pinned to a git revision because per-chunk history control
-(`HistorySyncAdmission`) is newer than its last release. Cargo fetches both, so
-there is nothing to clone by hand. `.cargo/config.toml` has Cargo use the system
+(`HistorySyncAdmission`) and phone-number pairing are newer than its last
+release. Cargo fetches both, so there is nothing to clone by hand. `.cargo/config.toml` has Cargo use the system
 `git`, so a global HTTPS-to-SSH rewrite still works.
 
 Requirements: Rust 1.94+ (stable), Node with pnpm, and the usual Tauri Linux
@@ -206,8 +218,11 @@ and installs from HEAD build at `opt-level = 3` without LTO unless
 automatically and shares compiled dependencies across builds; `mold` can
 replace `lld` for linking (`RUSTFLAGS="-C link-arg=-fuse-ld=mold"`).
 
-On Wayland, WebKitGTK's DMA-BUF renderer fails with `Gdk Error 71`. The app sets
-`WEBKIT_DISABLE_DMABUF_RENDERER=1` itself, so no manual configuration is needed.
+On Wayland, WebKitGTK's DMA-BUF renderer can fail with `Gdk Error 71`. Under
+NVIDIA the failure comes from explicit sync, so Postal keeps the accelerated
+renderer and sets `__NV_DISABLE_EXPLICIT_SYNC=1` instead; other Wayland drivers
+fall back to `WEBKIT_DISABLE_DMABUF_RENDERER=1`. X11 needs neither. Environment
+variables set by hand always win.
 
 ## Diagnostics
 
@@ -217,13 +232,20 @@ local cache; Watch checks it every five seconds while the panel is open.
 "Not received" is distinct from false. Postal currently exposes these flags for
 diagnostics without using them to gate product features.
 
-New links pair as an ordinary External companion. Settings → Device can add an
-Android companion: a second link that pairs as an `ANDROID_TABLET` running
-WhatsApp Android `2.26.32.84`, published on the [official download page](https://www.whatsapp.com/download)
-when checked on 2026-09-27, to receive the one-time photos, videos and voice
-notes the External link never gets. Pairing is its own short step, and the
-companion can only be enabled once linked. It shares the message store, wakes
-when a one-time message arrives, fetches it, and goes dormant again.
+New links pair as an ordinary External companion, by QR or by phone-number code.
+For the code flow, enter the number with its country and Postal asks WhatsApp
+for an eight-character code; confirm it on the phone under *Linked devices →
+Link with phone number*. The code refreshes until it is used or expires, with a
+manual refresh beside it.
+
+Settings → Device can add an Android companion: a second link that pairs as an
+`ANDROID_TABLET` running WhatsApp Android `2.26.32.84`, published on the
+[official download page](https://www.whatsapp.com/download) when checked on
+2026-09-27, to receive the one-time photos, videos and voice notes the External
+link never gets. It pairs the same two ways — QR or phone-number code — in its
+own short step, and can only be enabled once linked. It shares the message
+store, wakes when a one-time message arrives, fetches it, and goes dormant
+again.
 
 The companion's handshake sets Android metadata (`ANDROID`, device `Tablet`,
 Android `13`) and omits browser `WebInfo`. This is the library's supported
@@ -276,7 +298,9 @@ Small attachments use one base64 IPC call. Files larger than 1 MiB use bounded
 256 KiB chunks, account-owned staging files and file-backed uploads. Downloads
 stream to verified temporary files before publication. This bounds transfer
 buffers; browser preview decoding, sticker conversion and playback fallbacks
-can still buffer media.
+can still buffer media. Inline media in the open chat is mounted only for the
+visible window of the virtualized rail, so decoded images leave the renderer as
+they scroll away.
 
 ## Security
 
@@ -297,6 +321,9 @@ can still buffer media.
   anything. Sanitization only prevents closing the surrounding `</style>` tag;
   it does not make CSS safe or prevent resource loads. The CSP blocks remote
   loads, while resources allowed by that policy remain accessible to CSS.
+- Voice-note transcription is opt-in. The local Whisper plugin keeps audio on
+  the machine; choosing a cloud provider sends it the notes you transcribe,
+  automatically if auto-transcribe is on.
 
 ## Testing
 
@@ -308,6 +335,7 @@ node --experimental-strip-types src/lib/utils/format.ts
 node --experimental-strip-types src/lib/utils/phone.ts
 pnpm check:tauri-acl
 pnpm check:fn-length
+pnpm check:wire
 pnpm build
 cargo test --locked --manifest-path src-tauri/Cargo.toml
 ```
@@ -327,8 +355,8 @@ the latest download can lack changes listed here.
 
 Working:
 
-- Pairing by QR or re-signing in with the stored session; several accounts,
-  switchable from the account menu
+- Pairing by QR or phone-number code, and re-signing in with the stored
+  session; several accounts, switchable from the account menu
 - Text with WhatsApp formatting, mentions, replies and quotes, edits, deletes,
   forwards, reactions, stars and pinned messages and chats
 - Images, video, GIFs, stickers, documents and voice notes: received inline,
@@ -344,9 +372,23 @@ Working:
   settings
 - Stored system notices for group membership, permissions, disappearing messages,
   security changes and missed calls
-- A mentions inbox, starred messages and search within a chat
+- A mentions inbox, starred messages and search within a chat; a quick switcher
+  across chats, contacts and messages; and a notification history that jumps
+  back to its message
+- Slash commands in the composer: polls, events, stickers, GIFs, locations,
+  @all mentions and keep-in-chat
+- Labels with colors for chats and messages, created and managed from the chat
+  list
+- Voice-note transcription through plugins (a local Whisper binary, or the
+  OpenAI/Deepgram APIs), automatic for downloaded notes, with per-chat overrides
+- A Standard or HD (original) quality choice for outgoing media, and a local
+  soundboard of per-chat clips with keyboard shortcuts
+- Scheduled messages, with an outbox to review, retry or cancel a send before
+  it goes
+- A chat preview on hover that shows recent messages and can page through and
+  play their media, toggleable in Settings
 - Retention with per-chat overrides, clearing history, in-memory-only history,
-  on-demand download of older messages
+  and a virtualized, scroll-driven window that pages history in from disk
 - Themes (System, Dark, Light, Midnight, Liquid Glass, Material 3), a theme editor with
   live previews, CSS extensions, background pictures per app or per chat,
   density, text size and animation settings
