@@ -5,7 +5,7 @@ use super::*;
 impl WhatsAppService {
     /// Tells the chat we are typing, or that we stopped.
     pub async fn send_typing(&self, chat: &str, typing: bool) -> Result<()> {
-        let jid: Jid = chat.parse()?;
+        let jid = broadcast_lists::writable_target(chat)?;
         let chatstate = self.client.chatstate();
         let sent = if typing {
             chatstate.send_composing(&jid).await

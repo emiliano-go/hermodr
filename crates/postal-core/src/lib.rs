@@ -20,6 +20,7 @@ use anyhow::Result;
 pub use aliases::AliasStore;
 pub use history::HistoryPolicy;
 pub use service::{
+    UsernameLookupResult,
     GroupHistoryOffer, GroupHistoryResult, GroupMemberAddResult,
     GroupJoinRequest,
     GroupCreateResult, GroupCreateParticipant, GroupCreateParticipantState,
@@ -28,6 +29,7 @@ pub use service::{
     HintChange, ServiceEvent, VoiceNote, StickerLibrary, StickerResyncReport,
 };
 pub use store::{
+    BroadcastList,
     ChatMarks, ChatRetention, ChatSummary, MessageReceipt, MessageStore, NewEvent, DiskRetention, RetentionLimit, StoredMessage,
     ViewOnce, Sticker, StickerPack,
 };

@@ -1,6 +1,6 @@
 {
   "extends": "../../tsconfig.json",
   "compilerOptions": { "types": ["node"] },
-  "include": ["../../src/lib/contacts/BusinessCard.svelte", "../../src/lib/chat/QuickRepliesMenu.svelte", "../../src/lib/utils/quick-replies.ts", "../../src/lib/quick-replies.test.ts", "./QuickRepliesHarness.svelte"],
+  "include": ["../../src/lib/contacts/BusinessCard.svelte", "../../src/lib/chat/QuickRepliesMenu.svelte", "../../src/lib/utils/quick-replies.ts", "../../src/tests/quick-replies.test.ts", "./QuickRepliesHarness.svelte"],
   "exclude": []
 }

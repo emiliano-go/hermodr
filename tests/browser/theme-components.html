@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8" />
+<title>Theme component fixture</title>
+<div id="app"></div>
+<script type="module">
+  import { mount } from "svelte";
+  import Harness from "./ThemeCoverageHarness.svelte";
+  import source from "../../src/routes/+page.svelte?raw";
+  const selectors = [":global(:root)", ":global(html, body)", ":global(select)", ":global(:focus-visible)",
+    ':global(input[type="checkbox"], input[type="radio"], input[type="range"])',
+    ':global(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus-visible, textarea:focus-visible)'];
+  const style = document.createElement("style");
+  style.textContent = selectors.map((selector) => {
+    const start = source.indexOf(selector);
+    if (start < 0) throw new Error(`Missing source selector ${selector}`);
+    const open = source.indexOf("{", start), close = source.indexOf("}", open);
+    return `${selector.slice(8, -1)} ${source.slice(open, close + 1)}`;
+  }).join("\n");
+  document.head.append(style);
+  mount(Harness, { target: document.querySelector("#app") });
+</script>
+</html>

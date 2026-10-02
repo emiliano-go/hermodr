@@ -132,7 +132,7 @@ partials remain a later protocol addition.
 ```powershell
 cargo test -p postal-plugins
 cargo test --manifest-path plugins/speech-to-text/Cargo.toml --locked
-node --experimental-strip-types --test src/lib/transcription.test.ts
+node --experimental-strip-types --test src/tests/transcription.test.ts
 ```
 
 Tests use generated audio markers and an executable that writes a synthetic WAV

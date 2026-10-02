@@ -1,6 +1,11 @@
 <script lang="ts">
   import type { Poll } from "$lib/utils/models";
   import { convertFileSrc } from "@tauri-apps/api/core";
+  import { quizFeedback, quizScopeMatches, type QuizScope } from "$lib/utils/quiz-poll";
+  import { session } from "$lib/state/session.svelte";
+  import { chats } from "$lib/state/chats.svelte";
+  import { messages } from "$lib/state/messages.svelte";
+  import { broadcastSendReason } from "$lib/utils/broadcast";
 
   let {
     poll,
@@ -8,6 +13,7 @@
     namer,
     picture,
     onvote,
+    scope = null,
   }: {
     poll: Poll | undefined;
     /** Shown while the poll's definition is unknown here. */
@@ -17,10 +23,18 @@
     /** A voter's cached picture path, fetched on first use. */
     picture: (jid: string) => string | null;
     onvote: (options: string[]) => Promise<void>;
+    scope?: QuizScope | null;
   } = $props();
 
   let busy = $state(false);
   let details = $state(false);
+  let failed = $state("");
+  let generation = 0;
+  const liveScope = $derived(scope ?? { account: session.activeAccount, chat: chats.selectedChat, generation: messages.accountGeneration, requestKey: poll?.id });
+  const quiz = $derived(poll?.quiz ?? null);
+  const multi = $derived(!quiz && !!poll?.multi);
+  const sendReason = $derived(broadcastSendReason(scope?.chat));
+  const canVote = $derived(!!poll && !sendReason && (!quiz || quiz.can_vote));
 
   const mine = $derived(poll?.votes.find((v) => v.voter === "@me")?.options ?? []);
   const voters = $derived(poll?.votes.filter((v) => v.options.length > 0) ?? []);
@@ -31,10 +45,20 @@
     })),
   );
   const total = $derived(Math.max(1, voters.length));
+  function voterName(jid: string): string { return jid === "@me" ? "You" : namer(jid); }
+  $effect(() => {
+    void poll?.id; void liveScope.account; void liveScope.chat; void liveScope.generation; void liveScope.requestKey;
+    ++generation;
+    busy = details = false;
+    failed = "";
+    return () => { ++generation; };
+  });
 
   async function toggle(option: string) {
-    if (!poll || busy) return;
-    const next = poll.multi
+    if (!poll || busy || !canVote) return;
+    const owner = { ...liveScope }, id = poll.id, revision = generation;
+    const current = () => revision === generation && poll?.id === id && quizScopeMatches(owner, liveScope);
+    const next = multi
       ? mine.includes(option)
         ? mine.filter((o) => o !== option)
         : [...mine, option]
@@ -42,10 +66,13 @@
         ? []
         : [option];
     busy = true;
+    failed = "";
     try {
       await onvote(next);
+    } catch (cause) {
+      if (current()) failed = String(cause);
     } finally {
-      busy = false;
+      if (current()) busy = false;
     }
   }
 </script>
@@ -55,22 +82,23 @@
   {#if path}
     <img class="face" style="--size: {size}px" src={convertFileSrc(path)} alt="" />
   {:else}
-    <span class="face blank" style="--size: {size}px">{namer(jid).replace(/[^\p{L}]/gu, "").slice(0, 1).toUpperCase()}</span>
+    <span class="face blank" style="--size: {size}px">{voterName(jid).replace(/[^\p{L}]/gu, "").slice(0, 1).toUpperCase()}</span>
   {/if}
 {/snippet}
 
 <div class="poll">
   <span class="question">{poll?.name ?? question}</span>
-  <span class="hint">{poll?.multi ? "Select one or more" : "Select one"}</span>
+  {#if quiz}<span class="hint">Quiz · one correct answer</span>{/if}
+  <span class="hint">{sendReason ?? (multi ? "Select one or more" : "Select one")}</span>
   {#if poll}
     {#each tally as { option, who } (option)}
       <button
         class="option"
         class:chosen={mine.includes(option)}
-        disabled={busy}
-        title={who.map(namer).join(", ")}
+        disabled={busy || !canVote}
+        title={sendReason ?? who.map(voterName).join(", ")}
         onclick={() => toggle(option)}>
-        <span class="check" class:round={!poll.multi}></span>
+        <span class="check" class:round={!multi}></span>
         <span class="option-body">
           <span class="option-row">
             <span class="option-name">{option}</span>
@@ -83,13 +111,22 @@
         </span>
       </button>
     {/each}
+    {#if busy}<p class="hint" role="status">Sending answer…</p>{/if}
+    {#if failed}<p class="error" role="alert">{failed}</p>{/if}
+    {#if quiz}
+      <p class="feedback" role="status">{quizFeedback(quiz.my_correct)}</p>
+      <p class="hint">{quiz.correct_option === null ? "Correct answer is undisclosed." : `Correct answer: ${quiz.correct_option}`}</p>
+      {#if !quiz.can_vote}<p class="hint" role="status">Voting unavailable on this device.</p>{/if}
+      {#if !quiz.results_complete}<p class="hint" role="status">Results are incomplete on this device.</p>{/if}
+      {#if quiz.error}<p class="error" role="alert">{quiz.error}</p>{/if}
+    {/if}
     {#if details}
       <div class="details">
         {#each tally.filter((t) => t.who.length > 0) as { option, who } (option)}
           <div class="detail">
             <span class="detail-head">{option} <span class="count">{who.length}</span></span>
             {#each who as voter (voter)}
-              <span class="voter">{@render face(voter, 24)}{namer(voter)}</span>
+              <span class="voter">{@render face(voter, 24)}{voterName(voter)}</span>
             {/each}
           </div>
         {/each}
@@ -112,18 +149,24 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
-    min-width: 260px;
+    min-width: min(260px, 100%);
+    max-width: 100%;
     padding: 4px 2px;
   }
   .question {
     font-weight: 600;
     font-size: 15px;
+    overflow-wrap: anywhere;
   }
+  .feedback, .error { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+  .error { color: var(--danger, #ef7777); }
   .hint,
   .footer {
     font-size: 12.5px;
     color: var(--muted);
+    overflow-wrap: anywhere;
   }
+  p.hint { margin: 0; }
   .footer {
     text-align: center;
     padding-top: 4px;
@@ -163,6 +206,7 @@
   }
   .option-body {
     flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 5px;
@@ -178,6 +222,8 @@
   }
   .option-name {
     flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
   .faces {
     display: flex;

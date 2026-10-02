@@ -152,7 +152,7 @@
   p { margin: 0; }
   input:not([type="checkbox"]), textarea { box-sizing: border-box; width: 100%; padding: 8px; background: var(--raised); color: var(--text); border: 1px solid var(--line); border-radius: 6px; font: inherit; }
   .setting, .actions { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 10px; }
-  .actions span { color: var(--subtle); font-size: 12px; }
+  .actions span { color: var(--muted); font-size: 12px; }
   button { padding: 7px 10px; background: var(--raised); color: var(--text); border: 1px solid var(--line); border-radius: 6px; font: inherit; cursor: pointer; }
   button:disabled, input:disabled, textarea:disabled { opacity: .5; cursor: default; }
   .error { color: var(--danger); }

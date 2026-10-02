@@ -4,23 +4,34 @@
   import Button from "$lib/ui/Button.svelte";
   import Icon from "$lib/ui/Icon.svelte";
   import type { ChatEvent } from "$lib/utils/models";
+  import { prepareQuiz, quizScopeMatches, type QuizOptionRow, type QuizScope } from "$lib/utils/quiz-poll";
+  import { session } from "$lib/state/session.svelte";
+  import { chats } from "$lib/state/chats.svelte";
+  import { messages } from "$lib/state/messages.svelte";
 
   let {
     kind,
     initial = null,
+    scope = null,
     oncreate,
     onclose,
   }: {
     kind: "poll" | "event";
     /** An event being edited instead of created. */
     initial?: ChatEvent | null;
+    scope?: QuizScope | null;
     /** Resolves once sent; a rejection keeps the dialog open with the error. */
     oncreate: (value: unknown) => Promise<void>;
     onclose: () => void;
   } = $props();
 
   let question = $state("");
-  let options = $state(["", ""]);
+  let options = $state<QuizOptionRow[]>([{ id: 0, text: "" }, { id: 1, text: "" }]);
+  let nextOption = 2;
+  let quiz = $state(false), correctRow = $state<number | null>(null);
+  let generation = 0;
+  const liveScope = $derived(scope ?? { account: session.activeAccount, chat: chats.selectedChat, generation: messages.accountGeneration,
+    requestKey: JSON.stringify([kind, initial?.id ?? null]) });
   let multi = $state(false);
 
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -48,22 +59,35 @@
   let location = $state(initial?.location ?? "");
   // svelte-ignore state_referenced_locally
   let link = $state(initial?.link ?? "");
-  const heading = $derived(kind === "poll" ? "Create poll" : initial ? "Edit event" : "Create event");
+  const heading = $derived(kind === "poll" ? quiz ? "Create quiz" : "Create poll" : initial ? "Edit event" : "Create event");
 
   let busy = $state(false);
   let failed = $state<string | null>(null);
 
-  const filled = $derived(options.map((o) => o.trim()).filter(Boolean));
+  const filled = $derived(options.map((o) => o.text.trim()).filter(Boolean));
+  const quizDraft = $derived(prepareQuiz(question, options, correctRow));
   const valid = $derived(
     kind === "poll"
-      ? question.trim() !== "" && filled.length >= 2 && new Set(filled).size === filled.length
+      ? question.trim() !== "" && filled.length >= 2 && new Set(filled).size === filled.length && (!quiz || quizDraft.error === null)
       : name.trim() !== "",
   );
 
   // A trailing empty option is always offered, as WhatsApp does, up to twelve.
   $effect(() => {
-    if (options.length < 12 && options[options.length - 1].trim()) options.push("");
+    if (options.length < 12 && options[options.length - 1].text.trim()) options.push({ id: nextOption++, text: "" });
   });
+  $effect(() => {
+    void liveScope.account; void liveScope.chat; void liveScope.generation; void liveScope.requestKey; void kind; void initial?.id;
+    ++generation;
+    busy = false;
+    failed = null;
+    return () => { ++generation; };
+  });
+
+  function removeOption(id: number) {
+    options = options.filter((row) => row.id !== id);
+    if (correctRow === id) correctRow = null;
+  }
 
   /** Unix seconds for a date and a time of day, or null. */
   function seconds(day: string, time: string) {
@@ -73,12 +97,15 @@
 
   async function submit() {
     if (!valid || busy) return;
+    const owner = { ...liveScope }, revision = generation;
+    const current = () => revision === generation && quizScopeMatches(owner, liveScope);
     busy = true;
     failed = null;
     try {
       await oncreate(
         kind === "poll"
-          ? { question: question.trim(), options: filled, multi }
+          ? quiz ? { question: quizDraft.question, options: quizDraft.options, correctIndex: quizDraft.correctIndex! }
+            : { question: question.trim(), options: filled, multi }
           : {
               name: name.trim(),
               description: description.trim() || null,
@@ -88,11 +115,11 @@
               link: link.trim() || null,
             },
       );
-      onclose();
+      if (current()) onclose();
     } catch (e) {
-      failed = String(e);
+      if (current()) failed = String(e);
     } finally {
-      busy = false;
+      if (current()) busy = false;
     }
   }
 </script>
@@ -121,22 +148,28 @@
         <!-- svelte-ignore a11y_autofocus -->
         <input class="field" maxlength="255" bind:value={question} placeholder="Ask a question" autofocus />
       </label>
+      <label class="check-row"><input type="checkbox" bind:checked={quiz} disabled={busy} /> Quiz (one correct answer)</label>
       <span class="field-label">Options</span>
-      {#each options as _, i (i)}
+      {#if quiz}<span class="field-label">Mark one correct answer.</span>{/if}
+      {#each options as row, i (row.id)}
         <div class="option-row">
-          <input class="field" maxlength="100" bind:value={options[i]} placeholder="Option {i + 1}" />
-          {#if options.length > 2 && options[i].trim()}
-            <button type="button" class="remove" aria-label="Remove option" onclick={() => options.splice(i, 1)}>
+          {#if quiz}<input type="radio" name="quiz-correct" bind:group={correctRow} value={row.id} disabled={busy || !row.text.trim()} aria-label="Correct answer: option {i + 1}" />{/if}
+          <input class="field" maxlength="100" bind:value={row.text} placeholder="Option {i + 1}" disabled={busy} />
+          {#if options.length > 2 && row.text.trim()}
+            <button type="button" class="remove" aria-label="Remove option {i + 1}" disabled={busy} onclick={() => removeOption(row.id)}>
               <Icon name="x" size={14} />
             </button>
           {/if}
         </div>
       {/each}
       {#if filled.length !== new Set(filled).size}<p class="error">Options must be different.</p>{/if}
+      {#if quiz && quizDraft.correctIndex === null}<p class="error" role="status">Choose one correct answer.</p>{/if}
+      {#if !quiz}
       <label class="check-row">
         <input type="checkbox" bind:checked={multi} />
         Allow multiple answers
       </label>
+      {/if}
     {:else}
       <label class="field-label">
         Name
@@ -162,7 +195,7 @@
       </label>
     {/if}
 
-    {#if failed}<p class="error">{failed}</p>{/if}
+    {#if failed}<p class="error" role="alert">{failed}</p>{/if}
     <div class="actions">
       <Button variant="ghost" type="button" onclick={onclose}>Cancel</Button>
       <Button variant="primary" type="submit" disabled={!valid || busy}

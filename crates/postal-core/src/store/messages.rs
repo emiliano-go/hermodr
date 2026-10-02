@@ -13,10 +13,10 @@ const INSERT_MESSAGE_SQL: &str = "INSERT INTO messages
       preview_site, preview_color, media_duration, system_kind, system_params,
       reply_to_view_once, reply_to_recoverable, reply_to_path, reply_to_locator,
       media_once_kind, sort_order, live_location, history_shareable, spoiler, deleted,
-      mentioned_all_only)
+      mentioned_all_only, album)
  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
          ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?29, ?30,
-         ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?42)
+         ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?42, ?43)
  ON CONFLICT(chat, id) DO UPDATE SET
      sort_order = CASE WHEN excluded.sort_order > 0 THEN MIN(messages.sort_order, excluded.sort_order) ELSE messages.sort_order END,
      sender = excluded.sender,
@@ -60,6 +60,7 @@ const INSERT_MESSAGE_SQL: &str = "INSERT INTO messages
       reply_to_locator = COALESCE(excluded.reply_to_locator, reply_to_locator),
       media_once_kind = COALESCE(excluded.media_once_kind, media_once_kind),
       live_location = COALESCE(excluded.live_location, live_location),
+      album = COALESCE(album, excluded.album),
       history_shareable = MIN(history_shareable, excluded.history_shareable),
       spoiler = MAX(spoiler, excluded.spoiler),
       deleted = MAX(deleted, excluded.deleted)
@@ -161,6 +162,7 @@ impl MessageStore {
                 message.local.deleted,
                 message.is_unavailable() || message.is_hidden_tombstone(),
                 message.local.mentioned_all_only as i32,
+                message.album.as_ref().map(serde_json::to_string).transpose()?,
             ],
         )?;
         if message.is_unavailable() || message.is_hidden_tombstone() {
@@ -372,12 +374,17 @@ impl MessageStore {
     /// kept, so the chat can still show it greyed out and nothing on WhatsApp
     /// changes.
     pub fn set_message_deleted(&self, chat: &str, id: &str, deleted: bool) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        let chat = &*names::canonical_chat(&conn, chat)?;
-        conn.execute(
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.savepoint()?;
+        let chat = names::canonical_chat(&tx, chat)?.into_owned();
+        tx.execute(
             "UPDATE messages SET deleted = ?3 WHERE chat = ?1 AND id = ?2",
             params![chat, id, deleted as i32],
         )?;
+        if deleted {
+            super::quiz_polls::revoke_source(&tx, &chat, id)?;
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -434,6 +441,7 @@ impl MessageStore {
             "UPDATE messages SET revoked = 1 WHERE chat = ?1 AND id = ?2 AND revoked = 0",
             params![chat, id],
         )?;
+        super::quiz_polls::revoke_source(&tx, &chat, id)?;
         let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM messages WHERE chat = ?1 AND id = ?2)",
             params![chat, id], |row| row.get(0))?;
         if !exists {
@@ -566,3 +574,7 @@ impl StoreWorker {
         self.run(move |store| store.revoke_message(&chat, &id)).await
     }
 }
+
+#[cfg(test)]
+#[path = "message_source_revoke_tests.rs"]
+mod message_source_revoke_tests;

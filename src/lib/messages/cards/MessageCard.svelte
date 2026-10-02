@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import Embed from "$lib/messages/cards/Embed.svelte";
+  import MessageQuote from "$lib/messages/cards/MessageQuote.svelte";
   import PollCard from "$lib/messages/cards/PollCard.svelte";
   import EventCard from "$lib/messages/cards/EventCard.svelte";
   import LocationCard from "$lib/messages/cards/LocationCard.svelte";
@@ -10,7 +11,7 @@
   import { session } from "$lib/state/session.svelte";
   import { messages } from "$lib/state/messages.svelte";
   import { mediaSrc } from "$lib/media/MediaViewer.svelte";
-  import { CARD_LABELS, replyIcon } from "$lib/utils/message";
+  import { CARD_LABELS } from "$lib/utils/message";
   import type { BubbleApi, BubbleVm, Poll, StoredMessage } from "$lib/utils/models";
 
   let props: {
@@ -43,35 +44,7 @@
 {:else}
 {@const { message, vm, api, variant = "message", meta, spoilerRevealed = false } = props}
 {#if variant === "quote"}
-  {@const sentHere = message.from_me && message.reply_to_view_once && !message.reply_to_recoverable && !message.reply_to_path}
-  {@const onceCopy = message.reply_to_view_once && message.reply_to_recoverable && !sentHere}
-  <Embed
-    compact
-    tooltip={message.reply_to_path
-      ? "Open the copy"
-      : onceCopy
-        ? "Save the copy"
-        : sentHere
-          ? "Only a reply sent from your phone, or by someone else, carries a copy of a view-once"
-          : "Go to message"}
-    label={vm.quoteAuthor}
-    text={vm.quoteText}
-    image={message.reply_to_thumb && ["image", "sticker", "gif"].includes(message.reply_to_kind ?? "")
-      ? mediaSrc(message.reply_to_thumb)
-      : null}
-    icon={message.reply_to_kind ? replyIcon(message.reply_to_kind) : null}
-    onclick={message.reply_to_path
-      ? () => api.onopenquote(message)
-      : onceCopy
-        ? () => api.onrecoverquote(message)
-        : () => api.onjumpquoted(message)}>
-    {#if vm.quoteChatName}<span class="quote-where">in {vm.quoteChatName}</span>{/if}
-    {#if onceCopy && !message.reply_to_path}
-      <span class="quote-once"><span class="once-mark">1</span>{api.recovering[message.id] ? "Saving the copy…" : "Tap to save"}</span>
-    {:else if sentHere}
-      <span class="quote-once"><span class="once-mark">1</span>No copy from this app</span>
-    {/if}
-  </Embed>
+  <MessageQuote {message} {api} author={vm.quoteAuthor} text={vm.quoteText} chatName={vm.quoteChatName} />
 {:else if variant === "link"}
   {@const invite = inviteLink(message.text)}
   {#if invite || message.media_kind === "group_invite"}
@@ -100,12 +73,14 @@
 {:else if message.media_kind === "poll"}
   <PollCard
     poll={vm.poll}
+    scope={{ account: session.activeAccount, chat: message.chat, generation: messages.accountGeneration, requestKey: message.id }}
     question={message.text}
     namer={api.namer}
     picture={api.avatarOf}
     onvote={async (options) => { await api.onvote(message, options); }} />
 {:else if message.media_kind === "event"}
   <EventCard
+    chat={message.chat}
     event={vm.chatEvent}
     title={message.text}
     onopenurl={api.onopenurl}
@@ -133,37 +108,3 @@
   </Embed>
 {/if}
 {/if}
-
-<style>
-  .quote-where {
-    flex: none;
-    max-width: 16ch;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 11px;
-    color: #71717a;
-  }
-  .quote-once {
-    display: flex;
-    flex: none;
-    align-items: center;
-    gap: 4px;
-    margin-left: auto;
-    font-size: 11px;
-    color: color-mix(in srgb, var(--text) 60%, transparent);
-    white-space: nowrap;
-  }
-  .once-mark {
-    display: grid;
-    place-items: center;
-    width: 26px;
-    height: 26px;
-    flex: none;
-    border: 2px dashed var(--accent);
-    border-radius: 50%;
-    color: var(--accent);
-    font-size: 12px;
-    font-weight: 700;
-  }
-</style>

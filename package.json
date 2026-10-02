@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "prepare": "svelte-kit sync || echo ''",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-    "test": "node --experimental-strip-types --test \"src/lib/**/*.test.ts\"",
+    "test": "node --experimental-strip-types --test \"src/tests/**/*.test.ts\"",
     "check:fn-length": "node scripts/check-rust-function-length.mjs",
     "check:tauri-acl": "node scripts/check-tauri-acl.mjs",
     "generate:wire": "cargo run --manifest-path src-tauri/Cargo.toml --features wire-types --bin postal-wire-types -- --write",

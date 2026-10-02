@@ -1,0 +1,6 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": { "types": ["node"] },
+  "include": ["../../src/lib/messages/MessageList.svelte", "../../src/lib/utils/album-timeline.ts", "./AlbumListHarness.svelte", "./album-list.vite.config.ts", "./album-rows-ipc.ts"],
+  "exclude": []
+}

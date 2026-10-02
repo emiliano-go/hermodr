@@ -196,9 +196,9 @@ const GLASS_CSS = `
 .bubble.first::before { display: none !important; }
 .bubble { border-radius: var(--radius-sm) !important; }
 .send.ready, .badge:not(.mention-badge) {
-  background: linear-gradient(180deg, #409cff, #0a84ff) !important;
-  color: #fff !important;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 4px 14px rgba(10, 132, 255, 0.45);
+  background: linear-gradient(180deg, var(--accent-hover), var(--accent)) !important;
+  color: var(--accent-ink) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 4px 14px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 .composer > textarea { border-radius: 999px !important; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12); }
 

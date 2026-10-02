@@ -19,10 +19,15 @@
   import { memberSheet } from "$lib/state/member-sheet.svelte";
   import { quickReplies } from "$lib/state/quick-replies.svelte";
   import ContactInfo from "$lib/contacts/ContactInfo.svelte";
+  import BroadcastInfo from "$lib/chat/BroadcastInfo.svelte";
+  import Panel from "$lib/ui/Panel.svelte";
+  import { isBroadcastList, broadcastSendReason } from "$lib/utils/broadcast";
+  import type { BroadcastList } from "$lib/utils/wire";
   import NewContact from "$lib/contacts/NewContact.svelte";
   import ContactSharing from "$lib/contacts/ContactSharing.svelte";
   import type { SharedContact, ContactShareScope } from "$lib/utils/vcard";
   import QuickSwitcher from "$lib/chat/QuickSwitcher.svelte";
+  import UsernameLookup from "$lib/chat/UsernameLookup.svelte";
   import UnifiedInbox from "$lib/chat/UnifiedInbox.svelte";
   import LabelDialog from "$lib/labels/LabelDialog.svelte";
   import { labels } from "$lib/state/labels.svelte";
@@ -44,6 +49,9 @@
   import ChatHeader from "$lib/chat/ChatHeader.svelte";
   import MessageList from "$lib/messages/MessageList.svelte";
   import ComposerBar from "$lib/composer/ComposerBar.svelte";
+  import AttachmentRecoveryPanel from "$lib/composer/AttachmentRecoveryPanel.svelte";
+  import { findRecovery, saveAttachmentCopy } from "$lib/utils/attachment-recovery";
+  import { visibleReadFrontier } from "$lib/utils/album-timeline";
   import ScheduledOutbox from "$lib/composer/ScheduledOutbox.svelte";
   import SelectionBar from "$lib/messages/SelectionBar.svelte";
   import { hue } from "$lib/utils/avatar";
@@ -117,9 +125,11 @@
   }
 
   async function sendContacts(contacts: SharedContact[], scope: ContactShareScope): Promise<string> {
+    const reason = broadcastSendReason(scope.chat);
+    if (reason) throw new Error(reason);
     const current = () => scope.account === session.activeAccount && scope.chat === chats.selectedChat
       && scope.generation === messages.accountGeneration && session.connected;
-    const allowed = () => current() && !composer.editing && !composer.recording && (!members.chatGroup || members.chatGroup.can_send);
+    const allowed = () => current() && !isBroadcastList(scope.chat) && !composer.editing && !composer.recording && (!members.chatGroup || members.chatGroup.can_send);
     if (!allowed()) throw new Error("Contact sharing target changed or is unavailable.");
     const result = await composer.enqueue((signal) => {
       if (signal.aborted || !allowed()) throw new Error("Contact sharing target changed before send.");
@@ -250,8 +260,9 @@
       ui.bulkDelete = null;
     }
     chats.selectedChat = chat;
+    composer.restoreKnownUnsent(chat);
     // One-to-one typing only arrives for contacts we are subscribed to.
-    if (!chat.endsWith("@g.us")) invoke("watch_presence", { jid: chat }).catch(() => {});
+    if (!chat.endsWith("@g.us") && !isBroadcastList(chat)) invoke("watch_presence", { jid: chat }).catch(() => {});
     chats.titleOverride = label;
     ui.scrolledUp = false;
     messages.prepareChat(chat, session.settings.message_window_size);
@@ -271,6 +282,7 @@
     chats.showGroupInfo = false;
     chats.groupInfo = null;
     contactInfoFor = null;
+    broadcastFor = null;
     try {
       // Invalidate any in-flight reload from the previous chat.
       const seq = messages.nextSeq();
@@ -384,6 +396,7 @@
     ui.chatSettingsOpen = false;
     const ok = await chats.clearChat(chat);
     if (!ok) return;
+    composer.forgetRecovery(chat);
     // Drop per-chat transient state that belonged to the removed messages.
     if (chat === chats.selectedChat) {
       composer.replyingTo = null;
@@ -404,6 +417,7 @@
     const wasOpen = chat === chats.selectedChat;
     const ok = await chats.deleteChat(chat);
     if (!ok) return;
+    composer.forgetRecovery(chat);
     if (wasOpen) {
       messages.acceptMessages([]);
       messages.marks = structuredClone({ reactions: [], starred: [], pinned: null, polls: [], events: [], view_once: [], forwarded: [], edited: [] });
@@ -473,8 +487,36 @@
 
   /** The direct chat whose contact panel is open. */
   let contactInfoFor = $state<string | null>(null);
+  let broadcastFor = $state<{ account: string; chat: string; generation: number } | null>(null);
+  let broadcastInfo = $state<BroadcastList | null>(null);
+  let broadcastLoading = $state(false), broadcastError = $state<string | null>(null);
+  $effect(() => {
+    const scope = broadcastFor;
+    const account = session.activeAccount, chat = chats.selectedChat, generation = messages.accountGeneration;
+    void messages.messages; void messages.marks; void chats.chats;
+    if (!scope || scope.account !== account || scope.chat !== chat || scope.generation !== generation) {
+      untrack(() => { broadcastInfo = null; broadcastLoading = false; broadcastError = null; });
+      return;
+    }
+    let current = true;
+    untrack(() => {
+      broadcastInfo = null; broadcastError = null; broadcastLoading = true;
+      void invoke<BroadcastList | null>("broadcast_list", { accountId: scope.account, chat: scope.chat })
+        .then((info) => { if (current) broadcastInfo = info; })
+        .catch((error) => { if (current) broadcastError = String(error); })
+        .finally(() => { if (current) broadcastLoading = false; });
+    });
+    return () => { current = false; };
+  });
+  function openChatInfo(chat: string) {
+    if (chat.endsWith("@g.us")) { void chats.openGroupInfo(); return; }
+    if (isBroadcastList(chat) && session.activeAccount) {
+      broadcastFor = { account: session.activeAccount, chat, generation: messages.accountGeneration };
+    } else contactInfoFor = chat;
+  }
   let newContact = $state(false);
   let quickSwitcher = $state(false);
+  let usernameFor = $state<{ account: string; generation: number } | null>(null);
   $effect(() => { session.activeAccount; newContact = quickSwitcher = false; });
   $effect(() => {
     const account = session.activeAccount;
@@ -610,18 +652,11 @@
     messages.readMarkTimer = setTimeout(() => {
       if (!scroller || !chats.selectedChat || !document.hasFocus()) return;
       const chat = chats.selectedChat;
-      const bottom = scroller.getBoundingClientRect().bottom;
-      // One pass over the rendered bubbles in draw order; the old form ran a
-      // querySelector per message, which is quadratic on a long chat.
-      let candidate: string | null = null;
-      const rows = scroller.querySelectorAll<HTMLElement>(".bubble[data-id]");
-      for (const row of rows) {
-        if (row.getBoundingClientRect().top >= bottom) break;
-        candidate = row.dataset.id ?? null;
-      }
+      const ids = messages.ordered;
+      const visible = messageList?.visibleReadIds() ?? [];
+      const candidate = visibleReadFrontier(ids, visible);
       if (!candidate || candidate === messages.lastMarkedId) return;
       messages.lastMarkedId = candidate;
-      const ids = messages.ordered;
       const firstIdx = messages.firstUnreadId
         ? ids.findIndex((m) => m.id === messages.firstUnreadId)
         : -1;
@@ -793,17 +828,76 @@
   }
 
   async function create(value: unknown) {
-    const chat = chats.selectedChat;
-    if (!chat) return;
-    await composer.enqueue(() =>
-      ui.creating === "poll"
-        ? invoke("create_poll", { chat, ...(value as object) })
-        : invoke("create_event", { chat, event: value }),
-    );
-    await messages.reloadMessages(chat);
-    await messages.loadMarks(chat);
-    await chats.refreshChats();
-    scrollToBottom();
+    const kind = ui.creating, accountId = session.activeAccount, chat = chats.selectedChat;
+    const generation = messages.accountGeneration;
+    const current = () => accountId === session.activeAccount && chat === chats.selectedChat
+      && generation === messages.accountGeneration;
+    if (!kind || !accountId || !chat) throw new Error("Conversation changed before creating.");
+    const reason = broadcastSendReason(chat);
+    if (reason) throw new Error(reason);
+    const payload: Record<string, unknown> = { ...(value as object) };
+    if (Array.isArray(payload.options)) payload.options = Object.freeze([...payload.options]);
+    Object.freeze(payload);
+    const quiz = kind === "poll" && Object.hasOwn(payload, "correctIndex");
+    const correct = payload.correctIndex;
+    if (quiz && (!Array.isArray(payload.options) || typeof correct !== "number" || !Number.isInteger(correct)
+      || correct < 0 || correct >= payload.options.length)) throw new Error("Invalid quiz correct answer.");
+    const command = kind === "event" ? "create_event" : quiz ? "create_quiz" : "create_poll";
+    const args = kind === "poll" ? { ...payload, accountId, chat } : { accountId, chat, event: payload };
+    await composer.enqueue(async (signal) => {
+      signal.throwIfAborted();
+      if (!current()) throw new Error("Conversation changed before creating.");
+      await invoke(command, args);
+    });
+    if (!current()) return;
+    try {
+      await messages.reloadMessages(chat);
+      if (!current()) return;
+      await messages.loadMarks(chat);
+      if (!current()) return;
+      await chats.refreshChats();
+      if (current()) scrollToBottom();
+    } catch (error) {
+      if (current()) ui.fail(error);
+    }
+  }
+
+  async function votePoll(message: StoredMessage, options: string[]) {
+    const accountId = session.activeAccount, chat = message.chat, id = message.id;
+    const generation = messages.accountGeneration, selected = [...options];
+    const current = () => accountId === session.activeAccount && chat === chats.selectedChat
+      && generation === messages.accountGeneration;
+    if (!accountId || !current()) throw new Error("Conversation changed before voting.");
+    const reason = broadcastSendReason(chat);
+    if (reason) throw new Error(reason);
+    await composer.enqueue(async (signal) => {
+      signal.throwIfAborted();
+      if (!current()) throw new Error("Conversation changed before voting.");
+      await invoke("vote_poll", { accountId, chat, id, options: selected });
+    });
+    if (!current()) return;
+    try {
+      await messages.loadMarks(chat);
+      if (!current()) return;
+      await chats.refreshChats();
+    } catch (error) {
+      if (current()) ui.fail(error);
+    }
+  }
+
+  async function respondEvent(message: StoredMessage, response: string) {
+    const accountId = session.activeAccount, chat = message.chat, id = message.id;
+    const generation = messages.accountGeneration;
+    const reason = broadcastSendReason(chat);
+    if (reason) throw new Error(reason);
+    const current = () => !!accountId && accountId === session.activeAccount && chat === chats.selectedChat
+      && generation === messages.accountGeneration;
+    if (!current()) throw new Error("Conversation changed before responding.");
+    await composer.enqueue(async (signal) => {
+      signal.throwIfAborted();
+      if (!current()) throw new Error("Conversation changed before responding.");
+      await invoke("respond_event", { accountId, chat, id, response });
+    });
   }
 
   /** Pinned bar content for the chat header. */
@@ -1061,7 +1155,7 @@
 
 <!-- Window-level so a paste/drop anywhere cannot navigate the webview. -->
 <svelte:window
-  onpaste={onPaste}
+  onpaste={(event) => { if (!isBroadcastList(chats.selectedChat)) onPaste(event); }}
   onclick={(e) => {
     if (ui.accountMenu && !(e.target as Element).closest?.(".user-panel")) ui.accountMenu = false;
   }}
@@ -1075,7 +1169,10 @@
   onfocus={() => session.setOnline(true)}
   onblur={() => session.setOnline(false)}
   ondragover={(e) => e.preventDefault()}
-  ondrop={onDrop}
+  ondrop={(event) => {
+    if (isBroadcastList(chats.selectedChat)) { event.preventDefault(); return; }
+    onDrop(event);
+  }}
 />
 
 {#if ui.error}
@@ -1202,23 +1299,23 @@
           onaction={inboxAction} onretry={() => { void chats.refreshChats(); void labels.refresh(); }} />
       {:else if chats.selectedChat}
         {@const selectedChat = chats.selectedChat}
-        {@const title =
-          members.displayName(chats.chats.find((c) => c.chat === selectedChat)?.display_name ?? chats.titleOverride, selectedChat)}
-        {@const typingNow = members.typingLabel(selectedChat)}
+        {@const storedTitle = chats.chats.find((c) => c.chat === selectedChat)?.display_name ?? chats.titleOverride}
+        {@const title = isBroadcastList(selectedChat) ? storedTitle || "Broadcast list" : members.displayName(storedTitle, selectedChat)}
+        {@const typingNow = isBroadcastList(selectedChat) ? null : members.typingLabel(selectedChat)}
         <ChatHeader
           {selectedChat}
           isGroup={selectedChat.endsWith("@g.us")}
+          isBroadcast={isBroadcastList(selectedChat)}
           {title}
           avatar={chats.avatars[selectedChat] ?? null}
           {typingNow}
           {subtitle}
           groupContext={members.groupContext}
-          presenceText={members.presenceLabel(selectedChat)}
+          presenceText={isBroadcastList(selectedChat) ? null : members.presenceLabel(selectedChat)}
           mentionTotal={messages.mentionQueue.length}
           mentionCursor={messages.mentionCursor}
           pinned={pinnedView}
-          ongroupinfo={() =>
-            selectedChat.endsWith("@g.us") ? chats.openGroupInfo() : (contactInfoFor = selectedChat)}
+          ongroupinfo={() => openChatInfo(selectedChat)}
           onsearch={() =>
             (ui.finder = {
               mode: "search",
@@ -1318,10 +1415,9 @@
           onopenviewer={openViewer}
           onopenmedia={openMedia}
           onopenquote={(m) => openQuote(m, m.reply_to_path!)}
-          onvote={(m, options) =>
-            act(() => invoke("vote_poll", { chat: m.chat, id: m.id, options }))}
+          onvote={votePoll}
           onrespond={(m, response) =>
-            act(() => invoke("respond_event", { chat: m.chat, id: m.id, response }))}
+            act(() => respondEvent(m, response))}
           oneditrequest={(m) => {
             const event = messages.marks.events.find((e) => e.id === m.id);
             if (event) ui.editingEvent = { chat: m.chat, event };
@@ -1379,6 +1475,7 @@
         {#if ui.picking}
           <SelectionBar
             count={Object.keys(ui.picking).length}
+            reactionReason={broadcastSendReason(selectedChat)}
             allStarred={Object.keys(ui.picking).length > 0 && Object.keys(ui.picking).every((id) => messages.starred.has(id))}
             onforward={() => {
               const batch = pickedInOrder(ui.picking, messages.ordered);
@@ -1407,11 +1504,19 @@
               ui.emojiFor = null;
             }} />
         {:else}
+          <AttachmentRecoveryPanel records={composer.currentAttachmentRecoveries}
+            onrestore={(key) => { const record = findRecovery(composer.currentAttachmentRecoveries, key); if (record) composer.restoreKnownUnsent(record.context.chat); }}
+            ondismiss={(key) => { const record = findRecovery(composer.currentAttachmentRecoveries, key); if (record) composer.discardAttachmentRecovery(record); }}
+            onsave={(key, id) => {
+              const record = findRecovery(composer.currentAttachmentRecoveries, key);
+              const item = record && [...record.retryable, ...record.uncertain].find((item) => item.id === id);
+              if (item) saveAttachmentCopy(item.file);
+            }} />
           <ComposerBar
             account={session.activeAccount}
             generation={messages.accountGeneration}
             connected={session.connected}
-            disabled={!session.connected || !!(members.chatGroup && !members.chatGroup.can_send)}
+            disabled={!session.connected || isBroadcastList(selectedChat) || !!(members.chatGroup && !members.chatGroup.can_send)}
             defaultQuality={session.settings.media_quality}
             onsoundclip={(file, scope) => composer.sendSoundClip(file, scope)}
             onquickreply={(scope, reply) => {
@@ -1479,7 +1584,9 @@
             typingHidden={composer.typingHidden} />
         {/if}
 
-        {#if members.chatGroup && !members.chatGroup.can_send}
+        {#if isBroadcastList(selectedChat)}
+          <div class="read-only" role="status"><Icon name="volume" size={16} />{broadcastSendReason(selectedChat)}</div>
+        {:else if members.chatGroup && !members.chatGroup.can_send}
           <div class="read-only" role="status">
             <Icon name={members.chatGroup.community ? "users" : "volume"} size={16} />
             {#if members.chatGroup.community}
@@ -1513,6 +1620,7 @@
     y={ui.menu.y}
     items={menuItems(m)}
     reactions={QUICK_REACTIONS}
+    reactionReason={broadcastSendReason(m.chat)}
     current={messages.reactionsFor.get(m.id)?.find((r) => r.mine)?.emoji ?? null}
     onreact={(emoji) => reactMessages([m], emoji)}
     onmore={openEmojiFor}
@@ -1855,6 +1963,15 @@
     }} />
 {/if}
 
+{#if broadcastFor && broadcastFor.account === session.activeAccount && broadcastFor.chat === chats.selectedChat && broadcastFor.generation === messages.accountGeneration}
+  <Panel label="Broadcast recipients" nav={[{ id: "recipients", label: "Recipients", group: "Broadcast list" }]} section="recipients"
+    onclose={() => (broadcastFor = null)}>
+    {#snippet header()}<h2>Broadcast list</h2>{/snippet}
+    {#snippet children()}<BroadcastInfo info={broadcastInfo} loading={broadcastLoading} error={broadcastError}
+      nameOf={(jid) => members.displayName(null, jid)} />{/snippet}
+  </Panel>
+{/if}
+
 {#if contactInfoFor}
   {@const jid = contactInfoFor}
   <ContactInfo
@@ -2059,7 +2176,28 @@
         quickSwitcher = false;
         if (target.messageId) await jumpTo(target.chat, target.messageId);
         else await openChat(target.chat, false, target.label);
+      }} onusername={() => {
+        if (account !== session.activeAccount || generation !== messages.accountGeneration) return;
+        quickSwitcher = false;
+        usernameFor = { account, generation };
       }} onclose={() => (quickSwitcher = false)} />
+  {/key}
+{/if}
+
+{#if usernameFor && usernameFor.account === session.activeAccount && usernameFor.generation === messages.accountGeneration}
+  {@const scope = usernameFor}
+  {#key scope}
+    <UsernameLookup account={scope.account} generation={scope.generation}
+      onlookup={(username, usernameKey) => {
+        if (usernameFor !== scope || scope.account !== session.activeAccount || scope.generation !== messages.accountGeneration)
+          return Promise.reject(new Error("Account changed before username lookup."));
+        return invoke<import("$lib/utils/wire").UsernameLookupResult>("lookup_username", { accountId: scope.account, username, usernameKey });
+      }}
+      onfound={async (jid, username) => {
+        if (usernameFor !== scope || scope.account !== session.activeAccount || scope.generation !== messages.accountGeneration) return;
+        await openChat(jid, false, username ? `@${username}` : undefined);
+        if (usernameFor === scope && scope.account === session.activeAccount && scope.generation === messages.accountGeneration) usernameFor = null;
+      }} onclose={() => { if (usernameFor === scope) usernameFor = null; }} />
   {/key}
 {/if}
 
@@ -2269,11 +2407,22 @@
   :global(button:not(:disabled):active) {
     transform: translateY(1px);
   }
+  :global(select) {
+    background: var(--raised);
+    color: var(--text);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-sm);
+    padding: 6px 8px;
+    font: inherit;
+  }
+  :global(input[type="checkbox"], input[type="radio"], input[type="range"]) {
+    accent-color: var(--accent);
+  }
   :global(:focus-visible) {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
-  :global(input:focus-visible, textarea:focus-visible) {
+  :global(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus-visible, textarea:focus-visible) {
     outline: none;
     border-color: var(--accent) !important;
     box-shadow: 0 0 0 3px var(--accent-soft);
@@ -2517,7 +2666,7 @@
     font-size: 12.8px;
     font-weight: 500;
     line-height: 22px;
-    color: hsl(var(--hue) 65% 68%);
+    color: color-mix(in srgb, hsl(var(--hue) 65% 68%) 25%, var(--text));
     text-align: left;
   }
   :global(button.sender) {

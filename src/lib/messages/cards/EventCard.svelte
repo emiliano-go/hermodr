@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { ChatEvent } from "$lib/utils/models";
   import Icon from "$lib/ui/Icon.svelte";
+  import { broadcastSendReason } from "$lib/utils/broadcast";
 
   let {
     event,
@@ -9,6 +10,7 @@
     onopenurl,
     onedit,
     oncancel,
+    chat = null,
   }: {
     event: ChatEvent | undefined;
     title: string;
@@ -17,9 +19,11 @@
     /** Present only on our own events. */
     onedit?: () => void;
     oncancel?: () => Promise<void>;
+    chat?: string | null;
   } = $props();
 
   let busy = $state(false);
+  const sendReason = $derived(broadcastSendReason(chat));
   const mine = $derived(event?.responses.find((r) => r.responder === "@me")?.response ?? null);
   const going = $derived(event?.responses.filter((r) => r.response === "going").length ?? 0);
   const maybe = $derived(event?.responses.filter((r) => r.response === "maybe").length ?? 0);
@@ -32,6 +36,7 @@
   }
 
   async function respond(answer: string) {
+    if (busy || sendReason) return;
     busy = true;
     try {
       await onrespond(answer);
@@ -59,20 +64,24 @@
   {#if event?.description}<p class="description">{event.description}</p>{/if}
   {#if event && !event.canceled}
     <span class="muted">{going} going{maybe ? ` · ${maybe} maybe` : ""}</span>
+    {#if sendReason}<span class="muted" role="status">{sendReason}</span>{/if}
     <div class="answers">
       {#each [["going", "Going"], ["maybe", "Maybe"], ["not_going", "Can't go"]] as [value, label] (value)}
-        <button class="answer" class:chosen={mine === value} disabled={busy} onclick={() => respond(value)}>
+        <button class="answer" class:chosen={mine === value} disabled={busy || !!sendReason} title={sendReason ?? undefined} onclick={() => respond(value)}>
           {label}
         </button>
       {/each}
     </div>
     {#if onedit && oncancel}
       <div class="owner">
-        <button class="link" onclick={onedit}>Edit</button>
+        <button class="link" disabled={busy || !!sendReason} title={sendReason ?? undefined}
+          onclick={() => { if (!busy && !sendReason) onedit?.(); }}>Edit</button>
         <button
           class="link danger"
-          disabled={busy}
+          disabled={busy || !!sendReason}
+          title={sendReason ?? undefined}
           onclick={async () => {
+            if (busy || sendReason) return;
             busy = true;
             try {
               await oncancel();

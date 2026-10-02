@@ -327,6 +327,7 @@ impl MarksScope<'_> {
                     options: json_list(r.get(2)?),
                     multi: r.get::<_, i32>(3)? != 0,
                     votes: Vec::new(),
+                    quiz: None,
                 })
             })?
             .collect::<rusqlite::Result<_>>()?;

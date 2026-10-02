@@ -1,4 +1,5 @@
 import { invoke } from "$lib/utils/ipc";
+import { broadcastSendReason, guardBroadcastSend } from "$lib/utils/broadcast";
 import { session } from "./session.svelte";
 import { chats } from "./chats.svelte";
 import { messages } from "./messages.svelte";
@@ -61,13 +62,17 @@ export class ScheduledState {
     const version = this.version;
     const current = () => version === this.version && account === session.activeAccount && session.connected;
     let sent = false;
+    let blocked: string | null = null;
     try {
       if (!await this.refresh(account) || !current()) return;
       for (const item of this.items) {
         if (item.status !== "pending" || item.due_at > now()) continue;
         if (!current()) break;
+        const reason = broadcastSendReason(item.chat);
+        if (reason) { blocked = reason; continue; }
         try {
           sent = await enqueue(async (signal) => {
+            guardBroadcastSend(item.chat);
             if (signal.aborted || !current()) throw new Error("Account changed before scheduled send");
             return await invoke<boolean>("send_scheduled_message", { account, id: item.id });
           }) || sent;
@@ -77,6 +82,7 @@ export class ScheduledState {
       }
       if (!current()) return;
       await this.refresh(account);
+      if (current() && blocked) this.error = blocked;
       if (sent && current()) {
         await messages.reloadMessages(chats.selectedChat);
         await chats.refreshChats();

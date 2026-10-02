@@ -3,7 +3,7 @@ use anyhow::Context;
 use crate::store::scheduled::{ScheduledMessage, ScheduledOutbox};
 
 fn validate_schedule(chat: &str, text: &str, due_at: i64, now: i64) -> Result<()> {
-    let _: Jid = chat.parse()?;
+    broadcast_lists::writable_target(chat)?;
     anyhow::ensure!(!text.trim().is_empty(), "scheduled message cannot be empty");
     anyhow::ensure!(due_at > now, "choose a future time");
     Ok(())
@@ -68,7 +68,7 @@ impl WhatsAppService {
     }
 
     async fn dispatch_scheduled_message(&self, scheduled: &ScheduledMessage) -> Result<()> {
-        let to: Jid = scheduled.chat.parse()?;
+        let to = broadcast_lists::writable_target(&scheduled.chat)?;
         let subject = self.store.name_for(&scheduled.chat).await.observed().flatten();
         let message = scheduled_wire(scheduled, subject);
         super::group_history::guard_ordinary_message(&message)?;

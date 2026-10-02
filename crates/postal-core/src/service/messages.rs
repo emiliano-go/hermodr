@@ -16,7 +16,7 @@ impl WhatsAppService {
         text: impl Into<String>,
         mentions: Vec<String>,
     ) -> Result<()> {
-        let to: Jid = chat.parse()?;
+        let to = broadcast_lists::writable_target(chat)?;
         self.unarchive_on_send(chat).await;
         let to_self = self.is_self_jid(&to);
         let text = text.into();
@@ -89,7 +89,7 @@ impl WhatsAppService {
 
     /// Replaces the text of one of our own messages.
     pub async fn edit_message(&self, chat: &str, id: &str, text: impl Into<String>) -> Result<()> {
-        let to: Jid = chat.parse()?;
+        let to = broadcast_lists::writable_target(chat)?;
         let text = text.into();
         if text.trim().is_empty() {
             anyhow::bail!("an edit cannot be empty");
@@ -287,7 +287,7 @@ impl WhatsAppService {
 
     /// Reacts to a message; an empty emoji takes our reaction back.
     pub async fn react(&self, chat: &str, id: &str, sender: &str, from_me: bool, emoji: &str) -> Result<()> {
-        let jid: Jid = chat.parse()?;
+        let jid = broadcast_lists::writable_target(chat)?;
         self.client
             .send_reaction(jid, Self::message_key(chat, id, sender, from_me), emoji)
             .await
@@ -315,7 +315,7 @@ impl WhatsAppService {
     /// Pins a message for everyone in the chat for a week, or unpins it.
     pub async fn pin_message(&self, chat: &str, id: &str, sender: &str, from_me: bool, pinned: bool) -> Result<()> {
         use whatsapp_rust::send::PinDuration;
-        let jid: Jid = chat.parse()?;
+        let jid = broadcast_lists::writable_target(chat)?;
         let key = Self::message_key(chat, id, sender, from_me);
         let previous = if jid.is_group() { self.store.message(chat, id).await.observed() } else { None };
         let sent = if pinned {
@@ -350,7 +350,7 @@ impl WhatsAppService {
     /// Sends and records one revoke; the caller hints.
     async fn revoke_for_everyone(&self, chat: &str, id: &str, sender: &str, from_me: bool) -> Result<()> {
         use whatsapp_rust::send::RevokeType;
-        let jid: Jid = chat.parse()?;
+        let jid = broadcast_lists::writable_target(chat)?;
         let previous = if jid.is_group() { self.store.message(chat, id).await.observed() } else { None };
         let kind = if from_me {
             RevokeType::Sender
@@ -399,6 +399,7 @@ impl WhatsAppService {
 
     /// Sends a copy of a stored message to another chat.
     pub async fn forward(&self, from_chat: &str, id: &str, to_chat: &str) -> Result<()> {
+        let to = broadcast_lists::writable_target(to_chat)?;
         let message = self.store.message(from_chat, id).await?;
         anyhow::ensure!(!message.is_unavailable(), "this message is unavailable on this device");
         anyhow::ensure!(!message.spoiler, "spoiler forwarding is unavailable until every media path preserves its wrapper");
@@ -426,7 +427,6 @@ impl WhatsAppService {
                 anyhow::bail!("download the media before forwarding it")
             }
             None => {
-                let to: Jid = to_chat.parse()?;
                 let to_self = self.is_self_jid(&to);
                 let content = wa::Message {
                     extended_text_message: MessageField::some(wa::message::ExtendedTextMessage {
@@ -448,11 +448,15 @@ impl WhatsAppService {
     }
 
     pub async fn marks(&self, chat: &str) -> Result<crate::store::ChatMarks> {
-        self.store.marks(chat).await
+        let mut marks = self.store.marks(chat).await?;
+        self.enrich_quiz_marks(chat, &mut marks).await?;
+        Ok(marks)
     }
 
     pub async fn marks_for(&self, chat: &str, ids: &[String]) -> Result<crate::store::ChatMarks> {
-        self.store.marks_for(chat, Some(ids)).await
+        let mut marks = self.store.marks_for(chat, Some(ids)).await?;
+        self.enrich_quiz_marks(chat, &mut marks).await?;
+        Ok(marks)
     }
 
     /// Marks a view-once message opened and deletes its media.
@@ -573,7 +577,7 @@ impl WhatsAppService {
         // message answered privately).
         quote_chat: Option<&str>,
     ) -> Result<()> {
-        let to: Jid = chat.parse()?;
+        let to = broadcast_lists::writable_target(chat)?;
         self.unarchive_on_send(chat).await;
         let to_self = self.is_self_jid(&to);
         let quoted_chat: Jid = match quote_chat {

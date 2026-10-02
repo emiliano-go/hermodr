@@ -1,4 +1,5 @@
 import { invoke } from "$lib/utils/ipc";
+import { broadcastSendReason, guardBroadcastSend } from "$lib/utils/broadcast";
 import { bare, captionOf, isUnavailable } from "$lib/utils/message";
 import { compareMessages } from "$lib/utils/message-window";
 import type { ChatEvent, StoredMessage } from "$lib/utils/models";
@@ -73,7 +74,7 @@ const MENU_BUILDERS: Record<MenuId, MenuBuilder> = {
     },
   }),
   edit: ({ m }) =>
-    m.from_me && !m.revoked && !m.deleted && !m.media_kind && m.text.trim()
+    m.from_me && !m.revoked && !m.deleted && !m.media_kind && m.text.trim() && !broadcastSendReason(m.chat)
       ? { label: "Edit", icon: "edit", action: () => composer.startEditing(m) }
       : null,
   info: ({ m }) =>
@@ -148,14 +149,15 @@ const MENU_BUILDERS: Record<MenuId, MenuBuilder> = {
       ? { label: "Forward", icon: "forward", action: () => (ui.forwarding = [m]) }
       : null,
   pin: ({ m }) =>
-    !m.revoked
+    !m.revoked && !broadcastSendReason(m.chat)
       ? {
           label: messages.marks.pinned === m.id ? "Unpin" : "Pin",
           icon: "pin",
           action: () =>
-            act(() =>
-              invoke("pin_message", { target: target(m), pinned: messages.marks.pinned !== m.id }),
-            ),
+            act(() => composer.enqueue(() => {
+              guardBroadcastSend(m.chat);
+              return invoke("pin_message", { target: target(m), pinned: messages.marks.pinned !== m.id });
+            })),
         }
       : null,
   star: ({ m }) =>
@@ -273,13 +275,17 @@ export function canDeletePickedForEveryone() {
 /** Deletes the picked messages, for everyone or on this device only. */
 export async function deleteSelected(everyone: boolean) {
   const ids = ui.bulkDelete ?? Object.keys(ui.picking ?? {});
-  ui.bulkDelete = null;
   const chat = chats.selectedChat;
   if (!chat || ids.length === 0) return;
   const selection = ui.picking;
   const account = session.activeAccount;
   await act(async () => {
-    await invoke("delete_messages", { chat, ids, everyone });
+    if (everyone) guardBroadcastSend(chat);
+    ui.bulkDelete = null;
+    await composer.enqueue(() => {
+      if (everyone) guardBroadcastSend(chat);
+      return invoke("delete_messages", { chat, ids, everyone });
+    });
     if (session.activeAccount !== account) return;
     if (ui.picking === selection) ui.picking = null;
     if (chats.selectedChat === chat) await messages.reloadMessages(chat);
@@ -331,21 +337,28 @@ export async function starMessages(batch: StoredMessage[], starred: boolean) {
 }
 
 export async function reactMessages(batch: StoredMessage[], emoji: string) {
-  await act(() => composer.enqueue(async (signal) => {
-    for (const message of batch) {
-      signal.throwIfAborted();
-      if (!message.revoked && !isUnavailable(message)) await invoke("react", { target: target(message), emoji });
-    }
-  }));
+  const eligible = batch.filter((message) => !message.revoked && !isUnavailable(message));
+  await act(async () => {
+    for (const message of eligible) guardBroadcastSend(message.chat);
+    await composer.enqueue(async (signal) => {
+      for (const message of eligible) {
+        signal.throwIfAborted();
+        guardBroadcastSend(message.chat);
+        await invoke("react", { target: target(message), emoji });
+      }
+    });
+  });
 }
 
 /** Forwards one chat's messages to every chosen chat, in the batch's order. */
 export async function forwardMessages(batch: StoredMessage[], targets: string[]) {
   batch = batch.filter((message) => !isUnavailable(message));
   if (batch.length === 0) return;
+  for (const to of targets) guardBroadcastSend(to);
   const selection = ui.picking;
   await composer.enqueue(async (signal) => {
     for (const to of targets) {
+      guardBroadcastSend(to);
       for (const m of batch) {
         signal.throwIfAborted();
         await invoke("forward_message", { chat: m.chat, id: m.id, to });
@@ -358,17 +371,21 @@ export async function forwardMessages(batch: StoredMessage[], targets: string[])
 
 /** Whether we may delete this message for everyone: ours, or ours to moderate. */
 export function canDeleteForEveryone(m: StoredMessage) {
-  if (m.revoked || isUnavailable(m)) return false;
+  if (m.revoked || isUnavailable(m) || broadcastSendReason(m.chat)) return false;
   if (m.from_me) return true;
   return members.isAdmin();
 }
 
 export async function deleteMessage(everyone: boolean) {
   const m = ui.deleting;
-  ui.deleting = null;
   if (!m) return;
   await act(async () => {
-    await invoke("delete_message", { target: target(m), everyone });
+    if (everyone) guardBroadcastSend(m.chat);
+    ui.deleting = null;
+    await composer.enqueue(() => {
+      if (everyone) guardBroadcastSend(m.chat);
+      return invoke("delete_message", { target: target(m), everyone });
+    });
     await messages.reloadMessages(chats.selectedChat);
     await chats.refreshChats();
   });
@@ -380,7 +397,11 @@ export function eventFields(event: ChatEvent) {
 }
 
 export async function saveEvent(chat: string, id: string, fields: object) {
-  await composer.enqueue(() => invoke("edit_event", { chat, id, event: fields }));
+  guardBroadcastSend(chat);
+  await composer.enqueue(() => {
+    guardBroadcastSend(chat);
+    return invoke("edit_event", { chat, id, event: fields });
+  });
   await messages.reloadMessages(chats.selectedChat);
   await messages.loadMarks(chats.selectedChat);
 }

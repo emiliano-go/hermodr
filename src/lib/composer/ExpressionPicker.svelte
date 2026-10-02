@@ -8,12 +8,17 @@
   import { motion } from "$lib/utils/theme.svelte";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { invoke } from "$lib/utils/ipc";
+  import { broadcastSendReason, guardBroadcastSend } from "$lib/utils/broadcast";
   import { base64Of as toBase64 } from "$lib/utils/files";
   import { sendAttachment } from "$lib/utils/upload";
   import Icon from "$lib/ui/Icon.svelte";
   import ImageCropper from "$lib/composer/ImageCropper.svelte";
+  import StickerSync from "$lib/media/StickerSync.svelte";
   import { stickers as stickerEvents } from "$lib/state/stickers.svelte";
-  import type { Sticker, StickerLibrary, StickerPack } from "$lib/utils/models";
+  import { session } from "$lib/state/session.svelte";
+  import { messages } from "$lib/state/messages.svelte";
+  import { stickerScopeMatches, type StickerScope } from "$lib/utils/sticker-sync";
+  import type { Sticker, StickerLibrary, StickerPack, StickerResyncReport } from "$lib/utils/wire";
   import {
     GROUPS,
     loadEmojis,
@@ -25,6 +30,7 @@
 
   let {
     chat,
+    disabled = false,
     tab = $bindable("emoji"),
     enqueue,
     takereply,
@@ -38,6 +44,7 @@
     anchor = null,
   }: {
     chat: string;
+    disabled?: boolean;
     tab?: PickerTab;
     /** The app's ordered outbox, so picks go out in sequence with everything else. */
     enqueue: <T>(task: (signal: AbortSignal) => Promise<T>) => Promise<T>;
@@ -60,8 +67,10 @@
   /** Sticker files the renderer cannot draw (Lottie). */
   let broken = $state<Record<string, true>>({});
   /** The synced sticker library: packs, favourites and recents. */
-  let lib = $state<StickerLibrary>({ packs: [], favorites: [], recent: [] });
+  let lib = $state<StickerLibrary>({ packs: [], favorites: [], recent: [], catalog_complete: false });
   let openPack = $state<{ pack: StickerPack; stickers: Sticker[] } | null>(null);
+  let packLoading = $state(false), packError = $state(""), libraryError = $state("");
+  let packRequest = 0;
 
   const FAV_KEY = "postal.favStickers";
   let favourites = $state<string[]>(
@@ -134,18 +143,33 @@
   }
 
   $effect(() => {
+    void session.activeAccount;
+    void messages.accountGeneration;
+    void chat;
+    lib = { packs: [], favorites: [], recent: [], catalog_complete: false };
+    library = { gif: [], sticker: [] };
+    openPack = null;
+    packLoading = false;
+    fetching = {};
+    fetchingAll = {};
+    packError = libraryError = "";
+    ++packRequest;
+    return () => { ++packRequest; };
+  });
+  $effect(() => { void session.connected; ++packRequest; packLoading = false; fetching = {}; fetchingAll = {}; });
+
+  $effect(() => {
     const changed = stickerEvents.version;
     if (emojiOnly || tab === "emoji") return;
     void changed;
-    const kind = tab;
+    const kind = tab, owner = pickerScope();
+    if (!owner) return;
+    let active = true;
+    libraryError = "";
     invoke<string[]>("media_library", { kind, prefer: kind === "sticker" ? untrack(() => favourites) : [] })
-      .then((paths) => (library[kind] = paths))
-      .catch(() => {});
-    if (kind === "sticker") {
-      invoke<StickerLibrary>("sticker_library")
-        .then((value) => (lib = value))
-        .catch(() => {});
-    }
+      .then((paths) => { if (active && pickerCurrent(owner) && tab === kind) library[kind] = paths; })
+      .catch((failure) => { if (active && pickerCurrent(owner) && tab === kind) libraryError = `Could not load cached media: ${failure}`; });
+    return () => { active = false; };
   });
 
   const results = $derived(query.trim() ? searchEmojis(emojis, query, 120) : []);
@@ -156,7 +180,10 @@
     onemoji(emoji);
   }
 
-  function toggleFavourite(path: string) {
+  async function toggleFavourite(path: string) {
+    const owner = pickerScope(), request = packRequest;
+    if (!owner) return;
+    packError = "";
     const on = favourites.includes(path);
     favourites = on ? favourites.filter((p) => p !== path) : [path, ...favourites];
     try {
@@ -164,17 +191,45 @@
     } catch {
       // Favourites only last this session then.
     }
-    // Keep the phone's own favourites in step; a failure only loses the sync.
-    invoke("favorite_sticker_path", { path, favorite: !on }).catch(() => {});
+    if (!session.connected) { packError = "Favorite saved locally. Connect this account to request phone sync."; return; }
+    try {
+      await invoke("favorite_sticker_path", { accountId: owner.account, path, favorite: !on });
+    } catch (failure) {
+      if (request === packRequest && pickerCurrent(owner)) packError = `Favorite sync failed; local favorite kept: ${failure}`;
+    } finally {
+      if (request === packRequest && pickerCurrent(owner)) stickerEvents.touch();
+    }
+  }
+
+  function pickerScope(): StickerScope | null {
+    return session.activeAccount ? { account: session.activeAccount, chat, generation: messages.accountGeneration } : null;
+  }
+  function pickerCurrent(owner: StickerScope): boolean {
+    return stickerScopeMatches(owner, session.activeAccount, chat, messages.accountGeneration);
   }
 
   async function openPackView(pack: StickerPack) {
+    const owner = pickerScope();
+    if (!owner) return;
+    const request = ++packRequest;
+    const current = () => request === packRequest && pickerCurrent(owner) && tab === "sticker";
+    openPack = { pack, stickers: openPack?.pack.pack_id === pack.pack_id ? openPack.stickers : [] };
+    packLoading = true;
+    packError = "";
     try {
-      await invoke("fetch_sticker_pack", { pack: pack.pack_id });
-      const list = await invoke<Sticker[]>("sticker_pack", { pack: pack.pack_id });
+      const cached = await invoke<Sticker[]>("sticker_pack", { accountId: owner.account, pack: pack.pack_id });
+      if (!current()) return;
+      openPack = { pack, stickers: cached };
+      if (!session.connected) return;
+      await invoke("fetch_sticker_pack", { accountId: owner.account, pack: pack.pack_id });
+      if (!current()) return;
+      const list = await invoke<Sticker[]>("sticker_pack", { accountId: owner.account, pack: pack.pack_id });
+      if (!current()) return;
       openPack = { pack, stickers: list };
     } catch (e) {
-      onerror(String(e));
+      if (current()) packError = `Could not refresh pack. Cached stickers remain available: ${e}`;
+    } finally {
+      if (current()) packLoading = false;
     }
   }
 
@@ -202,93 +257,126 @@
 
   /** Downloads a sticker without sending it; an already-downloaded file is reused. */
   async function fetchSticker(sticker: Sticker): Promise<string | null> {
+    const owner = pickerScope(), request = packRequest;
+    if (!owner) return null;
+    const current = () => request === packRequest && pickerCurrent(owner);
     if (sticker.path) return sticker.path;
+    if (!session.connected) { packError = "Connect this account to download stickers."; return null; }
     if (fetching[sticker.filehash]) return null;
-    fetching[sticker.filehash] = true;
+    const pending = fetching;
+    pending[sticker.filehash] = true;
+    packError = "";
     try {
-      const path = await invoke<string>("download_sticker", { filehash: sticker.filehash });
+      const path = await invoke<string>("download_sticker", { accountId: owner.account, filehash: sticker.filehash });
+      if (!current()) return null;
       sticker.path = path;
       return path;
     } catch (e) {
+      if (!current()) return null;
       if (isRateLimit(e)) throw new RateLimited(String(e));
-      onerror(String(e));
+      packError = `Sticker download failed: ${e}`;
       return null;
     } finally {
-      delete fetching[sticker.filehash];
+      delete pending[sticker.filehash];
     }
   }
 
   /** Fetches a whole set in order, pacing the downloads and cooling off on 429. */
   async function fetchAll(key: string, stickers: Sticker[]) {
+    const owner = pickerScope(), request = packRequest;
+    if (!owner) return;
+    const current = () => request === packRequest && pickerCurrent(owner);
     if (fetchingAll[key]) return;
-    fetchingAll[key] = true;
+    const pending = fetchingAll;
+    pending[key] = true;
     try {
       for (const sticker of stickers) {
+        if (!current()) return;
         if (sticker.path) continue;
         let fetched = false;
         for (let attempt = 0; attempt < 3 && !fetched; attempt++) {
           try {
-            await fetchSticker(sticker);
+            const path = await fetchSticker(sticker);
+            if (!current() || !path) return;
             fetched = true;
           } catch (e) {
+            if (!current()) return;
             if (!(e instanceof RateLimited)) throw e;
             await sleep(4000 * (attempt + 1));
+            if (!current()) return;
           }
         }
         if (!fetched) {
-          onerror("WhatsApp is rate-limiting sticker downloads. Try again in a few minutes.");
+          packError = "WhatsApp is rate-limiting sticker downloads. Try again in a few minutes.";
           return;
         }
         await sleep(FETCH_GAP_MS);
       }
     } finally {
-      delete fetchingAll[key];
+      delete pending[key];
     }
   }
 
   /** A tile fetches a missing file; only a ready one is sent. */
   function clickSticker(sticker: Sticker) {
+    const owner = pickerScope(), request = packRequest;
+    if (!owner) return;
     if (!sticker.path) {
-      void fetchSticker(sticker).catch((e) => onerror(rateText(e)));
+      void fetchSticker(sticker).catch((e) => { if (request === packRequest && pickerCurrent(owner)) packError = rateText(e); });
       return;
     }
     const destination = chat;
+    if (!canSendTo(destination)) return;
     const reply = takereply();
     void send(() =>
       invoke("send_from_library", { chat: destination, path: sticker.path!, kind: "sticker", ...reply }),
+      destination,
     );
   }
 
-  function toggleSyncedFavorite(sticker: Sticker) {
-    stickerEvents.touch();
-    invoke("favorite_sticker", { filehash: sticker.filehash, favorite: !sticker.favorite }).catch((e) =>
-      onerror(String(e)),
-    );
-  }
-
-  async function resyncLibrary() {
+  async function toggleSyncedFavorite(sticker: Sticker) {
+    const owner = pickerScope(), request = packRequest;
+    if (!owner) return;
+    if (!session.connected) { packError = "Connect this account to update synced favorites."; return; }
+    packError = "";
     try {
-      await invoke("resync_stickers");
-      stickerEvents.touch();
-    } catch (e) {
-      onerror(String(e));
+      await invoke("favorite_sticker", { accountId: owner.account, filehash: sticker.filehash, favorite: !sticker.favorite });
+    } catch (failure) {
+      if (request === packRequest && pickerCurrent(owner)) packError = `Favorite request failed: ${failure}`;
+    } finally {
+      if (request === packRequest && pickerCurrent(owner)) stickerEvents.touch();
     }
   }
 
-  async function send(task: (signal: AbortSignal) => Promise<unknown>) {
+  function canSendTo(destination: string) {
+    const reason = broadcastSendReason(destination) ?? (disabled ? "Message sending is disabled here." : null);
+    if (reason) onerror(reason);
+    return !reason;
+  }
+
+  async function send(task: (signal: AbortSignal) => Promise<unknown>, destination = chat) {
+    if (!canSendTo(destination)) return;
+    const owner = pickerScope();
+    if (!owner) return;
     onclose();
     try {
-      await enqueue(task);
-      onsent();
+      await enqueue((signal) => {
+        if (disabled) throw new Error("Message sending is disabled here.");
+        guardBroadcastSend(destination);
+        if (!pickerCurrent(owner)) throw new Error("Sticker destination changed before sending.");
+        return task(signal);
+      });
+      if (pickerCurrent(owner)) onsent();
     } catch (e) {
-      onerror(String(e));
+      if (pickerCurrent(owner)) onerror(String(e));
     }
   }
 
   function sendFromLibrary(path: string, kind: "gif" | "sticker") {
     const destination = chat;
+    if (!canSendTo(destination)) return;
     const reply = takereply();
-    send(() => invoke("send_from_library", { chat: destination, path, kind, ...reply }));
+    void send(() => invoke("send_from_library", { chat: destination, path, kind, ...reply }), destination);
   }
 
   async function uploadFile(file: File) {
@@ -297,30 +385,40 @@
       return;
     }
     const destination = chat;
+    if (!canSendTo(destination)) return;
     const reply = takereply();
-    await send((signal) => sendAttachment(file, { chat: destination, gif: true, ...reply }, signal));
+    await send((signal) => sendAttachment(file, { chat: destination, gif: true, ...reply }, signal), destination);
   }
 
   /** A picture being cropped into a sticker. */
   let making = $state<File | null>(null);
   async function sendMade(file: File) {
-    making = null;
     const destination = chat;
+    if (!canSendTo(destination)) return;
+    making = null;
     const reply = takereply();
     await send(async (signal) => {
       const data = await toBase64(file);
       signal.throwIfAborted();
       return invoke("send_sticker", { chat: destination, data, ...reply });
-    });
+    }, destination);
   }
   async function saveMade(file: File) {
+    const owner = pickerScope(), request = packRequest;
+    if (!owner) return;
+    const current = () => request === packRequest && pickerCurrent(owner);
     making = null;
     try {
-      const path = await invoke<string>("save_sticker", { data: await toBase64(file) });
-      toggleFavourite(path);
-      library.sticker = await invoke<string[]>("media_library", { kind: "sticker", prefer: favourites });
+      const data = await toBase64(file);
+      if (!current()) return;
+      const path = await invoke<string>("save_sticker", { data });
+      if (!current()) return;
+      await toggleFavourite(path);
+      if (!current()) return;
+      const paths = await invoke<string[]>("media_library", { kind: "sticker", prefer: favourites });
+      if (current()) library.sticker = paths;
     } catch (e) {
-      onerror(String(e));
+      if (current()) packError = `Could not save sticker: ${e}`;
     }
   }
 
@@ -447,6 +545,7 @@
     </div>
   {:else}
     <div class="library">
+      {#if libraryError}<p class="sticker-error" role="alert">{libraryError}</p>{/if}
       <button class="upload" onclick={() => fileInput?.click()}>
         <Icon name="plus" size={16} />
         {tab === "sticker" ? "Send an image as a sticker" : "Send a video as a GIF"}
@@ -462,10 +561,16 @@
           e.currentTarget.value = "";
         }} />
       {#if tab === "sticker"}
+        <StickerSync account={session.activeAccount} {chat} generation={messages.accountGeneration} connected={session.connected} version={stickerEvents.version}
+          onload={(owner) => invoke<StickerLibrary>("sticker_library", { accountId: owner.account })}
+          onresync={(owner) => invoke<StickerResyncReport>("resync_stickers", { accountId: owner.account })}
+          onlibrary={(owner, value) => { if (pickerCurrent(owner)) lib = value; }}
+          onsynced={(owner) => { if (pickerCurrent(owner)) stickerEvents.touch(); }} />
+        {#if packError}<p class="sticker-error" role="alert">{packError}</p>{/if}
         {#if openPack}
           {@const pack = openPack}
           <div class="pack-head">
-            <button class="pack-back" title="All packs" onclick={() => (openPack = null)}><Icon name="chevronLeft" size={15} /></button>
+            <button class="pack-back" title="All packs" onclick={() => { ++packRequest; packLoading = false; packError = ""; openPack = null; }}><Icon name="chevronLeft" size={15} /></button>
             <span class="pack-name">{pack.pack.name ?? pack.pack.publisher ?? "Sticker pack"}</span>
             {#if pack.stickers.length > 0}
               <button
@@ -476,6 +581,7 @@
               </button>
             {/if}
           </div>
+          {#if packLoading}<p class="empty" role="status">Refreshing pack; cached stickers remain available.</p>{/if}
           <div class="tiles stickers">
             {#each pack.stickers as sticker (sticker.filehash)}
               <button
@@ -496,9 +602,8 @@
               </button>
             {/each}
           </div>
-          {#if pack.stickers.length === 0}<p class="empty">This pack has no stickers to show.</p>{/if}
+          {#if pack.stickers.length === 0 && !packLoading}<p class="empty">No cached stickers in this pack.</p>{/if}
         {:else}
-          <button class="resync" onclick={resyncLibrary}><Icon name="repeat" size={14} /> Sync with phone</button>
           {#if lib.favorites.length > 0}
             <div class="section-head">
               <h4>Favorites</h4>
@@ -853,25 +958,7 @@
     opacity: 0.7;
     cursor: default;
   }
-  .resync {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    width: 100%;
-    margin-bottom: 8px;
-    padding: 7px;
-    border: 0;
-    border-radius: 8px;
-    background: var(--raised);
-    color: var(--muted);
-    font: inherit;
-    font-size: 12.5px;
-    cursor: pointer;
-  }
-  .resync:hover {
-    color: var(--text);
-  }
+  .sticker-error { color: var(--danger, #ef7777); font-size: 12px; white-space: pre-wrap; }
   .stickers {
     grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
   }

@@ -5,13 +5,14 @@
   import { quickChats, quickSwitcherKey, messageSnippet, type QuickChat, type QuickSwitchTarget } from "$lib/utils/quick-switcher";
   import type { ChatSummary, SearchResult, StoredMessage } from "$lib/utils/wire";
 
-  let { account, chats, onload, onmessages, onchoose, onclose }: {
+  let { account, chats, onload, onmessages, onchoose, onclose, onusername }: {
     account: string;
     chats: ChatSummary[];
     onload: () => Promise<SearchResult[]>;
     onmessages: (query: string) => Promise<StoredMessage[]>;
     onchoose: (target: QuickSwitchTarget) => void | Promise<void>;
     onclose: () => void;
+    onusername?: () => void;
   } = $props();
 
   let dialog: HTMLDialogElement;
@@ -144,7 +145,9 @@
   {#if !rows.length && !loading && !searching}<p class="status">{query.trim() ? "No matches found." : "No recent chats yet."}</p>{/if}
   {#if catalogError}<p class="error" role="alert">Could not load contacts: {catalogError}</p>{/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
-  <footer><span>↑ ↓ Move</span><span>Enter Open</span><span>Esc Close</span></footer>
+  <footer><span>↑ ↓ Move</span><span>Enter Open</span><span>Esc Close</span>
+    {#if onusername}<button type="button" class="username" disabled={busy} onclick={onusername}>Find username</button>{/if}
+  </footer>
 </dialog>
 
 <style>
@@ -166,4 +169,5 @@
   .status, .error { margin: 10px 4px; }
   .error { color: var(--danger); font-size: 12px; }
   footer { display: flex; gap: 18px; margin-top: 12px; }
+  .username { margin-left: auto; border: 0; padding: 0; color: var(--text); background: transparent; font: inherit; cursor: pointer; }
 </style>

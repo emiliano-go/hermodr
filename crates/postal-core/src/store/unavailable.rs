@@ -93,6 +93,25 @@ impl MessageStore {
         Ok(header)
     }
 
+    pub(crate) fn retire_quiz_source(&self, chat: &str, poll: &str, id: &str) -> Result<Option<MessageHeader>> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.savepoint()?;
+        let chat = names::canonical_chat(&tx, chat)?.into_owned();
+        let header = tx.query_row("SELECT sender,timestamp,from_me FROM messages s
+            WHERE chat=?1 AND id=?2 AND system_kind=?3 AND deleted=0 AND revoked=0 AND spoiler=0
+                AND media_once_kind IS NULL AND COALESCE(media_kind,'')<>'view_once'
+                AND EXISTS(SELECT 1 FROM quiz_source_retirements r WHERE r.chat=s.chat AND r.update_id=s.id AND r.poll=?4)",
+            params![chat,id,UNAVAILABLE_MESSAGE,poll], |row| Ok(MessageHeader {
+                chat: chat.clone(), id: id.into(), sender: row.get(0)?, timestamp: row.get(1)?, from_me: row.get(2)?,
+            })).optional()?;
+        if header.is_some() {
+            tx.execute("UPDATE messages SET system_kind=NULL,system_params=NULL,deleted=1,read=1 WHERE chat=?1 AND id=?2",
+                params![chat,id])?;
+        }
+        tx.commit()?;
+        Ok(header)
+    }
+
     pub(crate) fn insert_view_once_stub(&self, message: &StoredMessage) -> Result<Option<StoredMessage>> {
         let mut message = message.clone();
         {
@@ -113,6 +132,10 @@ impl MessageStore {
 }
 
 impl StoreWorker {
+    pub(crate) async fn retire_quiz_source(&self, chat: &str, poll: &str, id: &str) -> Result<Option<MessageHeader>> {
+        let (chat,poll,id) = (chat.to_owned(),poll.to_owned(),id.to_owned());
+        self.run(move |store| store.retire_quiz_source(&chat,&poll,&id)).await
+    }
     pub(crate) async fn retire_unavailable(&self, chat: &str, id: &str) -> Result<Option<MessageHeader>> {
         let chat = chat.to_owned(); let id = id.to_owned();
         self.run(move |store| store.retire_unavailable(&chat, &id)).await

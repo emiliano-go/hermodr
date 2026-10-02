@@ -2,6 +2,16 @@
 
 use super::*;
 
+pub(super) fn validate_vote_target(row: &StoredMessage) -> Result<()> {
+    anyhow::ensure!(
+        row.media.kind.as_deref() == Some("poll") && row.media.once_kind.is_none()
+            && !row.local.deleted && !row.local.revoked && !row.spoiler
+            && !row.is_unavailable() && row.system.kind.is_none(),
+        "Poll is unavailable or private."
+    );
+    Ok(())
+}
+
 /// A poll's question, its options, and whether more than one may be chosen.
 pub(super) fn poll_of(message: &wa::Message) -> Option<(String, Vec<String>, bool)> {
     let base = message.get_base_message();
@@ -35,7 +45,7 @@ pub(super) fn event_of(message: &wa::Message) -> Option<crate::store::NewEvent> 
 }
 
 /// The per-message secret polls and events key their votes and RSVPs with.
-fn message_secret(message: &wa::Message) -> Option<Vec<u8>> {
+pub(super) fn message_secret(message: &wa::Message) -> Option<Vec<u8>> {
     let secret = |m: &wa::Message| {
         m.message_context_info
             .as_option()
@@ -68,7 +78,7 @@ pub(super) fn response_name(response: Option<wa::message::event_response_message
 
 impl WhatsAppService {
     pub async fn create_poll(&self, chat: &str, question: &str, options: Vec<String>, multi: bool) -> Result<()> {
-        let to: Jid = chat.parse()?;
+        let to = broadcast_lists::writable_target(chat)?;
         let to_self = self.is_self_jid(&to);
         let selectable = if multi { options.len() as u32 } else { 1 };
         let (result, secret) = self
@@ -88,6 +98,9 @@ impl WhatsAppService {
 
     /// Casts or changes our vote; no options withdraws it.
     pub async fn vote_poll(&self, chat: &str, id: &str, options: Vec<String>) -> Result<()> {
+        broadcast_lists::writable_target(chat)?;
+        validate_vote_target(&self.store.message(chat, id).await?)?;
+        if self.store.is_quiz(chat,id).await? { return self.vote_quiz(chat,id,options).await; }
         let def = self
             .store
             .poll_secret(chat, id).await?
@@ -100,7 +113,7 @@ impl WhatsAppService {
 
     pub async fn create_event(&self, chat: &str, event: crate::store::NewEvent) -> Result<()> {
         use whatsapp_rust::EventCreationParams;
-        let to: Jid = chat.parse()?;
+        let to = broadcast_lists::writable_target(chat)?;
         let to_self = self.is_self_jid(&to);
         let params = EventCreationParams {
             name: event.name.clone(),
@@ -131,6 +144,7 @@ impl WhatsAppService {
     /// Edits or cancels one of our events. The edit is encrypted with the
     /// event's secret, which is how WhatsApp sends event edits.
     pub async fn edit_event(&self, chat: &str, id: &str, event: crate::store::NewEvent) -> Result<()> {
+        let to = broadcast_lists::writable_target(chat)?;
         let def = self
             .store
             .event_secret(chat, id).await?
@@ -160,7 +174,6 @@ impl WhatsAppService {
             }),
             ..Default::default()
         };
-        let to: Jid = chat.parse()?;
         let timestamp_ms = unix_now() * 1000;
         let result = self.client
             .edit_message_encrypted(to, id, &def.secret, content)
@@ -179,6 +192,7 @@ impl WhatsAppService {
     /// Answers an event: `going`, `not_going` or `maybe`.
     pub async fn respond_event(&self, chat: &str, id: &str, response: &str) -> Result<()> {
         use wa::message::event_response_message::EventResponseType;
+        let jid = broadcast_lists::writable_target(chat)?;
         let answer = match response {
             "going" => EventResponseType::GOING,
             "not_going" => EventResponseType::NOT_GOING,
@@ -189,7 +203,6 @@ impl WhatsAppService {
             .store
             .event_secret(chat, id).await?
             .ok_or_else(|| anyhow::anyhow!("this event arrived without its key, so it cannot be answered here"))?;
-        let jid: Jid = chat.parse()?;
         let creator: Jid = def.creator.parse()?;
         self.client
             .events()

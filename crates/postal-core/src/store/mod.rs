@@ -11,8 +11,12 @@ use serde::{Deserialize, Serialize};
 mod chats;
 mod schema;
 mod marks;
+pub(crate) mod broadcast_lists;
+pub use broadcast_lists::BroadcastList;
+pub(crate) mod quiz_polls;
 mod media;
 mod messages;
+mod usernames;
 mod quick_switcher;
 mod keywords;
 pub mod labels;
@@ -46,7 +50,10 @@ pub use retention::{DiskRetention, DiskRetentionManager};
 mod limits;
 mod storage;
 pub mod archive;
+pub mod albums;
+pub use albums::Album;
 mod stickers;
+mod sticker_sync;
 pub use stickers::{Sticker, StickerPack};
 mod worker;
 pub(crate) use worker::{StoreWorker, AliasWorker};
@@ -55,6 +62,8 @@ pub use limits::RetentionLimit;
 mod tests;
 #[cfg(test)]
 mod history_floor_tests;
+#[cfg(test)]
+mod quiz_lifecycle_tests;
 
 /// A number standing in for a name: bare digits, or a `+`-prefixed phone label
 /// such as WhatsApp's masked `+598∙∙∙∙∙27`. Never a real contact or push name.
@@ -92,6 +101,9 @@ pub struct StoredMessage {
     pub system: SystemNotice,
     /// The last position of a live location, updated in place as edits arrive.
     pub live_location: Option<LiveLocation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "wire-types", ts(optional))]
+    pub album: Option<Album>,
 }
 
 /// A live location share as last seen: the position, its accuracy and the
@@ -302,7 +314,7 @@ const MESSAGE_COLUMNS: &str = "m.chat, m.id, m.sender, m.timestamp, m.from_me, m
     m.preview_site, m.preview_color, m.media_duration, m.system_kind, m.system_params,
     m.reply_to_view_once, m.reply_to_recoverable, m.reply_to_path, m.reply_to_locator,
   m.media_once_kind, m.sort_order, m.deleted, m.live_location, m.history_shareable, m.spoiler,
-  m.mentioned_all_only";
+  m.mentioned_all_only, m.album";
 
 fn message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
     Ok(StoredMessage {
@@ -364,6 +376,7 @@ fn message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
         live_location: row
             .get::<_, Option<String>>(37)?
             .and_then(|json| serde_json::from_str(&json).ok()),
+        album: row.get::<_, Option<String>>(41)?.and_then(|json| serde_json::from_str(&json).ok()),
     })
 }
 
@@ -432,6 +445,19 @@ pub struct Poll {
     /// More than one option may be chosen.
     pub multi: bool,
     pub votes: Vec<PollVote>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "wire-types", ts(optional))]
+    pub quiz: Option<QuizFeedback>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
+pub struct QuizFeedback {
+    pub correct_option: Option<String>,
+    pub my_correct: Option<bool>,
+    pub results_complete: bool,
+    pub error: Option<String>,
+    pub can_vote: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

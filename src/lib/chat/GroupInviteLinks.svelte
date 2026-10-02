@@ -82,7 +82,7 @@
 <style>
   .group-invite-links { display: flex; flex-direction: column; gap: 10px; }
   h3, p { margin: 0; }
-  input { width: 100%; box-sizing: border-box; padding: 8px; background: var(--raised); color: var(--text); border: 1px solid var(--line); border-radius: 6px; }
+  input { width: 100%; box-sizing: border-box; padding: 8px; background: var(--raised); color: var(--text); border: 1px solid var(--line); border-radius: 6px; font: inherit; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; }
   button { padding: 7px 10px; background: var(--raised); color: var(--text); border: 1px solid var(--line); border-radius: 6px; font: inherit; cursor: pointer; }
   button:disabled { opacity: .5; cursor: default; }

@@ -259,6 +259,10 @@ impl MessageStore {
         conn.execute("DELETE FROM message_pins WHERE chat = ?1", params![jid])?;
         conn.execute("DELETE FROM polls WHERE chat = ?1", params![jid])?;
         conn.execute("DELETE FROM poll_votes WHERE chat = ?1", params![jid])?;
+        conn.execute("DELETE FROM quiz_polls WHERE chat = ?1", params![jid])?;
+        conn.execute("DELETE FROM quiz_vote_ciphers WHERE chat = ?1", params![jid])?;
+        conn.execute("DELETE FROM quiz_source_retirements WHERE chat = ?1", params![jid])?;
+        conn.execute("DELETE FROM broadcast_lists WHERE chat = ?1", params![jid])?;
         conn.execute("DELETE FROM poll_option_hashes WHERE chat = ?1", params![jid])?;
         conn.execute("DELETE FROM secret_edit_revisions WHERE chat = ?1", params![jid])?;
         conn.execute("DELETE FROM events WHERE chat = ?1", params![jid])?;
@@ -329,6 +333,7 @@ pub(crate) fn fold_chat(conn: &Connection, from: &str, to: &str) -> Result<()> {
         return Ok(());
     }
     copy_shadowed_messages(conn, from, to)?;
+    super::albums::merge_written(conn, from, to)?;
     merge_chat_row(conn, from, to)?;
     super::secret_edits::merge(conn, from, to)?;
     move_chat_keyed_tables(conn, from, to, MESSAGE_STATE_TABLES, "chat")?;
@@ -363,6 +368,9 @@ const MESSAGE_STATE_TABLES: &[&str] = &[
     "message_pins",
     "polls",
     "poll_votes",
+    "quiz_polls",
+    "quiz_vote_ciphers",
+    "quiz_source_retirements",
     "transcripts",
     "events",
     "event_responses",

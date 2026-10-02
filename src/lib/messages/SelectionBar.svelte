@@ -10,6 +10,7 @@
     onstar,
     onlabel = () => {},
     onreact,
+    reactionReason = null,
     allStarred = false,
     oncancel,
   }: {
@@ -20,6 +21,7 @@
     onstar: () => unknown;
     onlabel?: () => unknown;
     onreact: (event: MouseEvent) => void;
+    reactionReason?: string | null;
     allStarred?: boolean;
     oncancel: () => void;
   } = $props();
@@ -49,7 +51,8 @@
   <button class="action" disabled={count === 0 || busy} onclick={() => run(onstar)}>
     <Icon name="star" size={16} /> {allStarred ? "Unstar" : "Star"}
   </button>
-  <button class="action" disabled={count === 0 || busy} onclick={onreact}>
+  <button class="action" disabled={count === 0 || busy || !!reactionReason} title={reactionReason ?? undefined}
+    onclick={(event) => { if (!busy && !reactionReason) onreact(event); }}>
     <Icon name="smile" size={16} /> React
   </button>
   <button class="delete" disabled={count === 0 || busy} onclick={ondelete}>

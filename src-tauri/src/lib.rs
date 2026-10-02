@@ -40,6 +40,7 @@ mod labels;
 mod group_audit;
 mod member_profiles;
 mod quick_replies;
+mod albums;
 mod contact_sharing;
 mod bulk_chats;
 mod group_invites;
@@ -51,6 +52,8 @@ mod tray;
 mod transcription_config;
 mod transcription_credentials;
 mod contacts;
+mod usernames;
+mod broadcast_lists;
 mod polls;
 mod desktop;
 mod camera;
@@ -132,10 +135,13 @@ macro_rules! postal_commands {
             messages::message_page,
             chats::chats,
             contacts::resolve_names,
+            usernames::lookup_username,
+            broadcast_lists::broadcast_list,
             messages::mark_read,
             messages::mark_read_until,
             messages::send_reply,
             media::send_media,
+            albums::send_album,
             messages::send_text,
             messages::edit_message,
             desktop::open_path,
@@ -230,6 +236,7 @@ macro_rules! postal_commands {
             media::download_sticker,
             media::resync_stickers,
             polls::create_poll,
+            polls::create_quiz,
             polls::vote_poll,
             polls::create_event,
             polls::respond_event,

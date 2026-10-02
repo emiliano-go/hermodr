@@ -107,8 +107,8 @@
 <style>
   p, small { color: var(--muted); font-size: .85rem; }
   ul { list-style: none; padding: 0; }
-  li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem; padding: .8rem 0; border-bottom: 1px solid var(--border); }
+  li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem; padding: .8rem 0; border-bottom: 1px solid var(--line); }
   li > span { overflow-wrap: anywhere; }
   small { display: block; margin-top: .25rem; }
-  [role="alert"] { color: #f66; overflow-wrap: anywhere; }
+  [role="alert"] { color: var(--danger); overflow-wrap: anywhere; }
 </style>

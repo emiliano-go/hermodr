@@ -405,7 +405,11 @@ pub(super) async fn stored_message(
 
     // Polls and events render as cards; the row carries their title.
     if media_kind.is_none() {
-        if let Some((question, _, _)) = poll_of(message) {
+        if message.album_message.is_set() {
+            text = if decoded.view_once { "View once message" } else { "[Album]" }.into();
+            media_kind = Some(if decoded.view_once { "view_once" } else { "album" }.into());
+            media_once_kind = decoded.view_once.then(|| "album".into());
+        } else if let Some((question, _, _)) = poll_of(message) {
             text = question;
             media_kind = Some("poll".to_string());
         } else if let Some(event) = event_of(message) {
@@ -468,6 +472,7 @@ pub(super) async fn stored_message(
 
     // Names are resolved separately and joined by the store on read; a new
     // message stays unread until its chat is opened.
+    let album = super::album_decode::metadata(outer, &header);
     Some(StoredMessage {
         spoiler: decoded.spoiler,
         history_shareable: header.chat.ends_with("@g.us") && group_history::is_shareable_text(outer),
@@ -484,6 +489,7 @@ pub(super) async fn stored_message(
         quote,
         link: link_preview(message),
         live_location,
+        album,
         ..Default::default()
     })
 }
@@ -661,6 +667,9 @@ pub(super) fn decoded_message(mut message: &wa::Message) -> DecodedMessage<'_> {
         view_once |= message.is_view_once();
         let base = message.get_base_message();
         if !std::ptr::eq(base, message) { message = base; continue; }
+        if let Some(inner) = message.associated_child_message.as_option().and_then(|child| child.message.as_option()) {
+            message = inner; continue;
+        }
         if let Some(wrapper) = message.spoiler_message.as_option() {
             spoiler = true;
             if let Some(inner) = wrapper.message.as_option() { message = inner; continue; }
@@ -689,6 +698,7 @@ fn context_of(base: &wa::Message) -> Option<&wa::ContextInfo> {
         base.poll_creation_message_v2.as_option().and_then(|m| m.context_info.as_option()),
         base.poll_creation_message_v3.as_option().and_then(|m| m.context_info.as_option()),
         base.event_message.as_option().and_then(|m| m.context_info.as_option()),
+        base.album_message.as_option().and_then(|m| m.context_info.as_option()),
         base.group_invite_message.as_option().and_then(|m| m.context_info.as_option()),
     ].into_iter().flatten().next()
 }

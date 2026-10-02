@@ -308,6 +308,9 @@ impl Inbound {
         let mut chats = Vec::new();
         let mut added_chats = 0;
         let mut audit_chats = std::collections::HashSet::new();
+        let mut quiz_chats = std::collections::HashSet::new();
+        let mut quiz_notices = Vec::new();
+        let mut sticker_changes = false;
         let mut names_learned;
         {
             let store = &batch_guard;
@@ -316,13 +319,15 @@ impl Inbound {
             names_learned = self.learn_history_names(store, history).await;
             // The phone's recent stickers ride the initial sync; seed them so
             // the picker shows them without a resync.
-            self.seed_recent_stickers(&history.recent_stickers).await;
+            sticker_changes |= self.seed_recent_stickers(store, &history.recent_stickers).await.observed() == Some(true);
             for conversation in &history.conversations {
-                let (chat, learned, audited) = self
-                    .apply_history_conversation(store, conversation, client.as_ref(), own.as_deref(), requested.as_deref(), request_session)
+                let (chat, learned, audited, quiz_chat, notices) = self
+                    .apply_history_conversation(store, conversation, client.as_ref(), own.as_deref(), requested.as_deref(), request_session, &mut sticker_changes)
                     .await;
                 names_learned += learned;
                 if let Some(chat) = audited { audit_chats.insert(chat); }
+                if let Some(chat) = quiz_chat { quiz_chats.insert(chat); }
+                quiz_notices.extend(notices);
                 if let Some(chat) = chat {
                     added_chats += 1;
                     chats.push(chat);
@@ -349,6 +354,9 @@ impl Inbound {
         }
         if batch_guard.finish().await.observed().is_some() {
             for chat in audit_chats { let _ = self.events.send(ServiceEvent::GroupAuditChanged { chat }); }
+            for chat in quiz_chats { let _ = self.events.send(ServiceEvent::Marks { chat }); }
+            for notice in quiz_notices { let _ = self.events.send(notice); }
+            if sticker_changes { let _ = self.events.send(ServiceEvent::StickerLibraryChanged { packs: true, favorites: false, recents: true }); }
         }
     }
 
@@ -387,14 +395,15 @@ impl Inbound {
         own: Option<&str>,
         requested: Option<&str>,
         request_session: Option<&str>,
-    ) -> (Option<String>, usize, Option<String>) {
+        sticker_changes: &mut bool,
+    ) -> (Option<String>, usize, Option<String>, Option<String>, Vec<ServiceEvent>) {
         if conversation.id == "status@broadcast" {
-            return (None, 0, None);
+            return (None, 0, None, None, Vec::new());
         }
         let mut names_learned = self
             .pair_history_addresses(store, conversation.lid_jid.as_deref(), conversation.pn_jid.as_deref())
             .await;
-        let Some(jid) = conversation.id.parse::<Jid>().observed() else { return (None, 0, None) };
+        let Some(jid) = conversation.id.parse::<Jid>().observed() else { return (None, 0, None, None, Vec::new()) };
         // The sync holds the store's write lease; the conversation's own LID/PN
         // pair was just recorded, so the chat resolves from the store alone.
         let chat = resolve_chat(None, store, &jid).await;
@@ -410,7 +419,7 @@ impl Inbound {
         let mut floor = None::<i64>;
         for entry in &conversation.messages {
             let (row_added, learned) =
-                self.apply_history_message(store, &chat, entry, client.map(|c| c.as_ref()), own, &mut audited).await;
+                self.apply_history_message(store, &chat, entry, client.map(|c| c.as_ref()), own, &mut audited, sticker_changes).await;
             added |= row_added;
             names_learned += learned;
             let timestamp = if row_added {
@@ -435,7 +444,35 @@ impl Inbound {
                 }).await.logged();
             }
         }
-        (added.then(|| chat.clone()), names_learned, audited.then_some(chat))
+        let (quiz_changed, notices) = self.remember_history_quizzes(store, &chat, conversation, own).await;
+        (added.then(|| chat.clone()), names_learned, audited.then(|| chat.clone()), quiz_changed.then_some(chat), notices)
+    }
+
+    async fn remember_history_quizzes(&self, store: &StoreWorker, chat: &str, conversation: &wa::Conversation, own: Option<&str>) -> (bool, Vec<ServiceEvent>) {
+        let mut changed = false;
+        let mut notices = Vec::new();
+        for entry in &conversation.messages {
+            let Some(web) = entry.message.as_option() else { continue };
+            let (Some(key), Some(message)) = (web.key.as_option(), web.message.as_option()) else { continue };
+            let Some(id) = key.id.as_deref() else { continue };
+            let from_me = key.from_me.unwrap_or(false);
+            let sender = if from_me { own.unwrap_or(chat) } else { web.participant.as_deref().or(key.participant.as_deref()).unwrap_or(chat) };
+            let decoded = decoded_message(message);
+            if decoded.view_once || decoded.spoiler { continue; }
+            changed |= quiz_polls::remember_quiz_definition(store, chat, id, sender, message).await.observed() == Some(true);
+            if let Some(update) = decoded.message.poll_update_message.as_option() {
+                let Ok(voter) = sender.parse::<Jid>() else { continue };
+                let timestamp = web.message_timestamp.and_then(|at| i64::try_from(at).ok()).unwrap_or(0);
+                if quiz_polls::capture_quiz_vote(store, chat, id, &voter, None, from_me, update, timestamp).await.observed() == Some(true) {
+                    changed = true;
+                    if let Some(header) = store.retire_quiz_source(chat, update.poll_creation_message_key.as_option().and_then(|key| key.id.as_deref()).unwrap_or(""), id).await.observed().flatten() {
+                        let row = StoredMessage { header, local: LocalState { read: true, deleted: true, ..Default::default() }, ..Default::default() };
+                        notices.push(ServiceEvent::hint(&row, false));
+                    }
+                }
+            }
+        }
+        (changed, notices)
     }
 
     /// Names a conversation from its display name (a contact) or subject (a
@@ -471,6 +508,7 @@ impl Inbound {
         client: Option<&Client>,
         own: Option<&str>,
         audited: &mut bool,
+        sticker_changes: &mut bool,
     ) -> (bool, usize) {
         let Some(web) = entry.message.as_option() else { return (false, 0) };
         let pin = history_pins::history_message_pin(web).ok().flatten();
@@ -538,7 +576,11 @@ impl Inbound {
         }
         // A stored row is already complete; rebuilding it would only rewrite
         // its thumbnails.
-        if store.message(chat, &id).await.observed().is_some_and(|row| !row.is_unavailable() || row.local.revoked || row.local.deleted) {
+        if let Some(row) = store.message(chat, &id).await.observed().filter(|row| !row.is_unavailable() || row.local.revoked || row.local.deleted) {
+            if !row.local.revoked && !row.local.deleted && !row.spoiler && row.media.once_kind.is_none() && row.system.kind.is_none() {
+                *sticker_changes |= self.on_sticker_pack(store, message).await.observed() == Some(true);
+                if row.media.kind.as_deref() == Some("sticker") && record_sticker(store, &row).await.observed() == Some(true) { *sticker_changes = true; }
+            }
             return (false, learned);
         }
         if let Some(target) = revoke_target(message) {
@@ -576,6 +618,10 @@ impl Inbound {
         stored.local.read = true;
         match store.insert_history_row(&stored).await {
             Ok(Some(accepted)) => {
+                if !accepted.local.revoked && !accepted.local.deleted && !accepted.spoiler && accepted.media.once_kind.is_none() && accepted.system.kind.is_none() {
+                    *sticker_changes |= self.on_sticker_pack(store, message).await.observed() == Some(true);
+                    if accepted.media.kind.as_deref() == Some("sticker") && record_sticker(store, &accepted).await.observed() == Some(true) { *sticker_changes = true; }
+                }
                 member_profiles::record_member_history_context(store, &accepted, web).await.logged();
                 if accepted.system.kind.is_some() {
                     *audited |= group_audit::audit_group_notice(store, &accepted, crate::store::group_audit::GroupAuditSource::History).await.observed() == Some(true);

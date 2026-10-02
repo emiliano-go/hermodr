@@ -50,14 +50,14 @@
 </details>
 
 <style>
-  .archives { margin-top: 1rem; border-top: 1px solid var(--border); padding-top: 1rem; }
+  .archives { margin-top: 1rem; border-top: 1px solid var(--line); padding-top: 1rem; }
   summary { display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; list-style: none; user-select: none; }
   summary::-webkit-details-marker { display: none; }
   .chev { display: grid; margin-left: auto; color: var(--muted); transition: transform calc(150ms * var(--motion-scale, 1)) var(--ease); }
   details[open] .chev { transform: rotate(180deg); }
   p { font-size: .85rem; color: var(--muted); overflow-wrap: anywhere; }
   label { display: grid; gap: .4rem; }
-  select { padding: .5rem; background: var(--raised); color: var(--text); border: 1px solid var(--border); }
+  select { padding: .5rem; background: var(--raised); color: var(--text); border: 1px solid var(--line-strong); }
   .actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .75rem; }
-  [role="alert"] { color: #f66; }
+  [role="alert"] { color: var(--danger); }
 </style>

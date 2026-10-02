@@ -30,7 +30,7 @@ Single source of truth for where application state lives. The rule:
 - **Views live in domain folders mirroring state.**
   `chat/`, `messages/` (+ `messages/cards/`), `composer/`, `media/`,
   `contacts/`, `settings/`; dumb primitives in `ui/` (must not import
-  siblings); pure helpers in `utils/`. Tests stay flat at `src/lib/*.test.ts`.
+  siblings); pure helpers in `utils/`. Tests live in `src/tests/`, mirroring `src/lib/`.
 - **Never pass a domain method bare** (e.g. `onclick={chats.togglePin}`):
   `this` is lost. Wrap in an arrow, or export a plain function.
   Element access a domain cannot own (textarea, scroller) arrives via an

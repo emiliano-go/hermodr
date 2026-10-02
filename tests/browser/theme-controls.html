@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8" />
+<title>Theme control fixture</title>
+<style>
+  body { padding: 24px; background: var(--bg); color: var(--text); font-family: var(--font); }
+  main { display: grid; gap: 18px; max-width: 520px; }
+  label { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .send { padding: 10px 16px; border: 0; border-radius: var(--radius); font: inherit; }
+</style>
+<main>
+  <h1>Theme control fixture</h1>
+  <label>Theme<select id="theme"></select></label>
+  <label>Select<select id="sample"><option>Native select</option></select></label>
+  <label>Checkbox<input id="checkbox" type="checkbox" checked /></label>
+  <label>Radio<input id="radio" type="radio" checked /></label>
+  <label>Range<input id="range" type="range" value="50" /></label>
+  <label>Text<input id="text" type="text" value="Synthetic text" /></label>
+  <button class="send ready" id="glass-send">Synthetic button</button>
+</main>
+<script type="module">
+  import { BUILT_IN, applyTheme } from "../../src/lib/utils/theme.svelte.ts";
+  import source from "../../src/routes/+page.svelte?raw";
+
+  const selectors = [
+    ":global(:root)", ":global(select)", ":global(:focus-visible)",
+    ':global(input[type="checkbox"], input[type="radio"], input[type="range"])',
+    ':global(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus-visible, textarea:focus-visible)',
+  ];
+  const base = document.createElement("style");
+  base.textContent = selectors.map((selector) => {
+    const start = source.indexOf(selector);
+    if (start < 0) throw new Error(`Missing source selector ${selector}`);
+    const open = source.indexOf("{", start);
+    const close = source.indexOf("}", open);
+    return `${selector.slice(8, -1)} ${source.slice(open, close + 1)}`;
+  }).join("\n");
+  document.head.append(base);
+  const preset = document.createElement("style");
+  document.head.append(preset);
+  const glass = BUILT_IN.find((theme) => theme.id === "glass");
+  const themes = [...BUILT_IN, { ...glass, id: "custom-glass", name: "Custom Glass", tokens: {
+    ...glass.tokens, accent: "#fff0aa", "accent-hover": "#ffe066", "accent-ink": "#142033",
+  }}];
+  const picker = document.querySelector("#theme");
+  for (const theme of themes) picker.add(new Option(theme.name, theme.id));
+  function choose() {
+    const theme = themes.find((theme) => theme.id === picker.value);
+    applyTheme(theme);
+    preset.textContent = theme.css ?? "";
+    document.body.dataset.theme = theme.id;
+    document.body.dataset.ready = "true";
+  }
+  picker.addEventListener("change", choose);
+  choose();
+</script>
+</html>

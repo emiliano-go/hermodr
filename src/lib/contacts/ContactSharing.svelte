@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { invoke } from "$lib/utils/ipc";
+  import { broadcastSendReason, guardBroadcastSend } from "$lib/utils/broadcast";
   import { displayName, phoneLabel } from "$lib/utils/phone";
   import { contactPhone, contactLinkJid, isContactJid, shareContacts, MAX_SHARED_CONTACTS, type SharedContact, type ContactShareScope } from "$lib/utils/vcard";
   import type { ContactIdentity } from "$lib/utils/wire";
@@ -107,12 +108,16 @@
 
   async function send() {
     if (!account || !chat || !connected || !canSend || busy || !onshare) return;
+    const reason = broadcastSendReason(chat);
+    if (reason) { error = reason; return; }
     const epoch = revision, scope = { account, chat, generation };
     const batch = contacts.filter((contact) => selected.includes(contact.phone)).map((contact) => [contact.name, contact.phone] as SharedContact);
     busy = true;
     error = result = "";
     try {
-      const ack = await shareContacts(onshare, () => connected && canSend && account && chat ? { account, chat, generation } : null, scope, batch);
+      guardBroadcastSend(scope.chat);
+      const ack = await shareContacts(onshare, () => connected && canSend && account && chat && !broadcastSendReason(chat)
+        ? { account, chat, generation } : null, scope, batch);
       if (!ack || epoch !== revision) return;
       selected = [];
       result = batch.length === 1 ? "Contact sent." : `${batch.length} contacts sent.`;
@@ -149,7 +154,8 @@
           <span><strong>{contact.name}</strong><small>{phoneLabel(contact.phone) ?? `+${contact.phone}`}</small></span></label>
       {/each}
     </fieldset>
-    <button type="button" disabled={busy || !connected || !canSend || !account || !chat || !onshare || !selected.length} onclick={send}>
+    {#if broadcastSendReason(chat)}<p role="status">{broadcastSendReason(chat)}</p>{/if}
+    <button type="button" disabled={busy || !connected || !canSend || !!broadcastSendReason(chat) || !account || !chat || !onshare || !selected.length} onclick={send}>
       {busy ? "Sending…" : `Send ${selected.length || "selected"} ${selected.length === 1 ? "contact" : "contacts"}`}
     </button>
   {/if}

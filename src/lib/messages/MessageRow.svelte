@@ -11,11 +11,13 @@
     prev,
     ctx,
     api,
+    albumCell = false,
   }: {
     message: StoredMessage;
     prev: StoredMessage | undefined;
     ctx: BubbleCtx;
     api: BubbleApi;
+    albumCell?: boolean;
   } = $props();
 
   const vm = $derived(buildVm(message, prev, ctx));
@@ -91,4 +93,4 @@
   }
 </script>
 
-<MessageBubble {message} {vm} {api} />
+<MessageBubble {message} {vm} {api} {albumCell} />

@@ -3,8 +3,12 @@
   viewport are mounted (virtua); everything else lives in SQLite behind the
   cursor pager. Moved out of +page.svelte. -->
 <script lang="ts">
+  import { tick } from "svelte";
   import { VList, type VListHandle } from "virtua/svelte";
   import MessageRow from "$lib/messages/MessageRow.svelte";
+  import AlbumGrid from "$lib/messages/AlbumGrid.svelte";
+  import MessageQuote from "$lib/messages/cards/MessageQuote.svelte";
+  import { albumTimeline } from "$lib/utils/album-timeline";
   import StructuredNotice from "$lib/messages/StructuredNotice.svelte";
   import { keywords } from "$lib/state/keywords.svelte";
   import type { BubbleApi, BubbleCtx } from "$lib/utils/models";
@@ -250,13 +254,14 @@
     typers.map((t) => ({ ...t, label: typerLabelOf(t.sender), hue: hue(t.sender) })),
   );
   const visibleMessages = $derived(messages.filter((message) => !keywords.hidden(message)));
+  const timeline = $derived(albumTimeline(messages, firstUnreadId, (message) => keywords.hidden(message), dayKey));
 
   type Vrow =
     | { kind: "e2e"; key: string }
     | { kind: "hidden"; key: string }
     | { kind: "day"; key: string; timestamp: number }
     | { kind: "unread"; key: string; id: string }
-    | { kind: "message"; key: string; message: StoredMessage; prev: StoredMessage | undefined }
+    | { kind: "group"; key: string; group: ReturnType<typeof albumTimeline>[number] }
     | { kind: "upload"; key: string; upload: Outgoing }
     | { kind: "typing"; key: string };
 
@@ -267,16 +272,15 @@
       out.push({ kind: "e2e", key: "e2e" });
       if (visibleMessages.length === 0) out.push({ kind: "hidden", key: "hidden" });
     }
-    for (let i = 0; i < visibleMessages.length; i++) {
-      const message = visibleMessages[i];
-      const prev = visibleMessages[i - 1];
+    for (const group of timeline) {
+      const message = group.messages[0], prev = group.prev;
       if (!prev || dayKey(prev.timestamp) !== dayKey(message.timestamp)) {
         out.push({ kind: "day", key: `day-${message.id}`, timestamp: message.timestamp });
       }
-      if (firstUnreadId === message.id && !isUnavailable(message)) {
-        out.push({ kind: "unread", key: `unread-${message.id}`, id: message.id });
+      if (group.unreadId && !isUnavailable(message)) {
+        out.push({ kind: "unread", key: `unread-${group.unreadId}`, id: group.unreadId });
       }
-      out.push({ kind: "message", key: message.id, message, prev });
+      out.push({ kind: "group", key: JSON.stringify([message.chat, message.id]), group });
     }
     for (const upload of uploads) out.push({ kind: "upload", key: `upload-${upload.token}`, upload });
     if (typers.length > 0) out.push({ kind: "typing", key: "typing" });
@@ -284,6 +288,27 @@
   });
 
   let list = $state<VListHandle>();
+  let revealRequest = 0;
+  const rowIndices = $derived.by(() => {
+    const indices = new Map<string, number>();
+    rows.forEach((row, index) => {
+      if (row.kind !== "group") return;
+      for (const message of row.group.messages) indices.set(message.id, index);
+      for (const id of [...row.group.beforeIds, ...row.group.afterIds]) indices.set(id, index);
+    });
+    return indices;
+  });
+  function viewport() { return scroller?.querySelector<HTMLElement>(".message-viewport") ?? null; }
+
+  export function visibleReadIds(): Set<string> {
+    const element = viewport(), visible = new Set<string>();
+    if (!element) return visible;
+    const bottom = element.getBoundingClientRect().bottom;
+    for (const marker of element.querySelectorAll<HTMLElement>(".bubble[data-id], .album-anchor[data-id]")) {
+      if (marker.dataset.id && marker.getBoundingClientRect().top < bottom) visible.add(marker.dataset.id);
+    }
+    return visible;
+  }
 
   function handleScroll(offset: number) {
     const size = list?.getScrollSize() ?? 0;
@@ -306,20 +331,34 @@
   }
 
   export function hasMessage(id: string): boolean {
-    return rows.some((row) => row.kind === "message" && row.message.id === id);
+    return rowIndices.has(id);
   }
 
   /** Brings a loaded message into view; false when the window does not hold it. */
   export function revealMessage(id: string): boolean {
-    const index = rows.findIndex((row) => row.kind === "message" && row.message.id === id);
-    if (index < 0) return false;
+    const index = rowIndices.get(id);
+    if (index === undefined) return false;
+    const source = messages, request = ++revealRequest;
     list?.scrollToIndex(index, { align: "center" });
+    void tick().then(() => requestAnimationFrame(() => {
+      if (source !== messages || request !== revealRequest || !scroller?.isConnected) return;
+      const target = [...(viewport()?.querySelectorAll<HTMLElement>("[data-id]") ?? [])].find((marker) => marker.dataset.id === id);
+      target?.scrollIntoView({ block: "center" });
+    }));
     return true;
   }
 
   /** The first row on screen, for restoring the reader's place across a reload. */
   export function anchorId(): string | null {
-    return scroller?.querySelector<HTMLElement>(".bubble[data-id]")?.dataset.id ?? null;
+    const element = viewport();
+    if (!element) return null;
+    const bounds = element.getBoundingClientRect();
+    let anchor: string | null = null, top = Infinity;
+    for (const marker of element.querySelectorAll<HTMLElement>("[data-id]")) {
+      const id = marker.dataset.id, rect = marker.getBoundingClientRect();
+      if (id && rowIndices.has(id) && rect.bottom > bounds.top && rect.top < bounds.bottom && rect.top < top) { anchor = id; top = rect.top; }
+    }
+    return anchor;
   }
 
   // One capture listener for the list instead of one per row: picking and
@@ -352,6 +391,7 @@
   {/if}
   <VList
     bind:this={list}
+    class="message-viewport"
     data={rows}
     getKey={(row) => row.key}
     shift={prepending}
@@ -373,26 +413,43 @@
           <button class="unread-divider" data-unread-divider onclick={() => onjumpunread(row.id)}>
             <span>Unread messages</span>
           </button>
-        {:else if row.kind === "message"}
-          {#if isUnavailable(row.message)}
-            <article class="unavailable-message" class:mine={row.message.from_me} data-id={row.message.id} data-chat={row.message.chat}>
+        {:else if row.kind === "group"}
+          {@const group = row.group}
+          {@const message = group.messages[0]}
+          {@const prev = group.prev}
+          {#each group.beforeIds as id (id)}<span class="album-anchor" data-id={id} aria-hidden="true"></span>{/each}
+          {#if group.parentId}
+            <AlbumGrid items={group.messages} {prev} timestamp={group.timestamp} {formatTime}>
+              {#snippet header()}
+                {#if group.parent?.reply_to_text}
+                  <MessageQuote message={group.parent} author={ctx.quoteAuthorOf(group.parent.reply_to_sender)}
+                    text={ctx.quoteTextOf(group.parent)} chatName={ctx.quoteChatNameOf(group.parent)} {api} />
+                {/if}
+              {/snippet}
+              {#snippet children(child, previous)}
+                <MessageRow message={child} prev={previous?.system_kind || (previous && isPollNotice(previous)) ? undefined : previous} {ctx} {api} albumCell />
+              {/snippet}
+            </AlbumGrid>
+          {:else if isUnavailable(message)}
+            <article class="unavailable-message" class:mine={message.from_me} data-id={message.id} data-chat={message.chat}>
               <header>
-                <b>{row.message.from_me ? "You" : senderLabel(row.message)}</b>
-                <time datetime={new Date(row.message.timestamp * 1000).toISOString()}>{formatTime(row.message.timestamp)}</time>
+                <b>{message.from_me ? "You" : senderLabel(message)}</b>
+                <time datetime={new Date(message.timestamp * 1000).toISOString()}>{formatTime(message.timestamp)}</time>
               </header>
               <strong>{UNAVAILABLE_LABEL}</strong>
               <p>{UNAVAILABLE_EXPLANATION}</p>
             </article>
-          {:else if row.message.system_kind || isPollNotice(row.message)}
-            <StructuredNotice message={row.message} poll={polls.find((poll) => poll.id === row.message.id)} {namer}
-              picture={avatarOf} onvote={async (options) => { await onvote(row.message, options); }} highlighted={highlightedId === row.message.id || keywords.highlighted(row.message)} />
+          {:else if message.system_kind || isPollNotice(message)}
+            <StructuredNotice {message} poll={polls.find((poll) => poll.id === message.id)} {namer}
+              picture={avatarOf} onvote={async (options) => { await onvote(message, options); }} highlighted={highlightedId === message.id || keywords.highlighted(message)} />
           {:else}
             <MessageRow
-              message={row.message}
-              prev={row.prev?.system_kind || (row.prev && isPollNotice(row.prev)) ? undefined : row.prev}
+              {message}
+              prev={prev?.system_kind || (prev && isPollNotice(prev)) ? undefined : prev}
               {ctx}
               {api} />
           {/if}
+          {#each group.afterIds as id (id)}<span class="album-anchor" data-id={id} aria-hidden="true"></span>{/each}
         {:else if row.kind === "upload"}
           <OutgoingItem upload={row.upload} />
         {:else if row.kind === "typing"}
@@ -404,6 +461,7 @@
 </div>
 
 <style>
+  .album-anchor { display: block; height: 0; }
   .messages {
     flex: 1;
     min-width: 0;

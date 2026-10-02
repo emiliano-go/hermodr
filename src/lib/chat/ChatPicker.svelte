@@ -7,6 +7,7 @@
   import { motion } from "$lib/utils/theme.svelte";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import Icon from "$lib/ui/Icon.svelte";
+  import { broadcastSendReason, guardBroadcastSend } from "$lib/utils/broadcast";
 
   let {
     title,
@@ -31,6 +32,7 @@
   const picked = $derived(Object.keys(chosen));
 
   function toggle(jid: string) {
+    if (busy || broadcastSendReason(jid)) return;
     const next = { ...chosen };
     if (next[jid]) delete next[jid];
     else next[jid] = true;
@@ -39,10 +41,14 @@
 
   async function forward() {
     if (busy || picked.length === 0) return;
+    const destinations = [...picked];
+    const reason = destinations.map(broadcastSendReason).find(Boolean);
+    if (reason) { failed = reason; return; }
     busy = true;
     failed = null;
     try {
-      await onforward(picked);
+      for (const jid of destinations) guardBroadcastSend(jid);
+      await onforward(destinations);
       onclose();
     } catch (e) {
       failed = String(e);
@@ -73,18 +79,20 @@
     {#if failed}<p class="error">{failed}</p>{/if}
     <ul>
       {#each shown as chat (chat.jid)}
+        {@const reason = broadcastSendReason(chat.jid)}
         <li>
           <button
             class="row"
             class:chosen={chosen[chat.jid]}
-            disabled={busy}
+            disabled={busy || !!reason}
+            title={reason ?? undefined}
             onclick={() => toggle(chat.jid)}>
             {#if chat.avatar}
               <img class="avatar" src={convertFileSrc(chat.avatar)} alt="" />
             {:else}
               <span class="avatar placeholder">{chat.label.slice(0, 1).toUpperCase()}</span>
             {/if}
-            <span class="label">{chat.label}</span>
+            <span class="label">{chat.label}{#if reason}<span class="reason">{reason}</span>{/if}</span>
             <span class="check" class:on={chosen[chat.jid]} aria-hidden="true">
               {#if chosen[chat.jid]}<Icon name="check" size={14} />{/if}
             </span>
@@ -101,6 +109,7 @@
 </div>
 
 <style>
+  .reason { display: block; color: var(--muted); font-size: 11px; white-space: normal; }
   .backdrop {
     position: fixed;
     inset: 0;
