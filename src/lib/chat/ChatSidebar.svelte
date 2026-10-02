@@ -167,6 +167,8 @@
   const menuDownloadsEnabled = $derived(MEDIA_TYPES.some(([kind]) => menuAutoDownload[kind] ?? globalAutoDownload[kind]));
   let menuLoaded = $state(false);
   let menuError = $state<string | null>(null);
+  let floatError = $state<string | null>(null);
+  let floatBusy = $state(false);
   let menuRequest = 0;
   let menuOwner: HTMLElement | null = null;
   /** Whether the menu's chat mutes @all mentions; from the list, then the settings read. */
@@ -301,6 +303,8 @@
     chatMenu = { x: "clientX" in event ? event.clientX : box.left, y: "clientY" in event ? event.clientY : box.bottom, chat };
     menuLoaded = false;
     menuError = null;
+    floatError = null;
+    floatBusy = false;
     menuMuteAtAll = chat.mute_at_all;
     menuMuteBusy = false;
     const request = ++menuRequest;
@@ -327,6 +331,22 @@
     menu.style.left = `${Math.max(8, Math.min(chatMenu.x, window.innerWidth - box.width - 8))}px`;
     menu.style.top = `${Math.max(8, Math.min(chatMenu.y, window.innerHeight - box.height - 8))}px`;
     if (focus) menu.querySelector<HTMLElement>("[role=menuitem]")?.focus();
+  }
+
+  async function floatChat(chat: string) {
+    const accountId = activeAccount;
+    const request = menuRequest;
+    if (!accountId || floatBusy) return;
+    floatBusy = true;
+    floatError = null;
+    try {
+      await invoke("open_float_chat", { accountId, chat });
+      if (request === menuRequest && accountId === activeAccount) closeChatMenu();
+    } catch (error) {
+      if (request === menuRequest && accountId === activeAccount) floatError = String(error);
+    } finally {
+      if (request === menuRequest && accountId === activeAccount) floatBusy = false;
+    }
   }
 
   function closeChatMenu(restoreFocus = true) {
@@ -712,6 +732,11 @@
     role="menu"
     style="left: {Math.min(chatMenu.x, window.innerWidth - 220)}px; top: {Math.min(chatMenu.y, window.innerHeight - 160)}px">
     {#if menuError}<p role="alert">Could not load chat settings: {menuError}</p>{/if}
+    {#if floatError}<p role="alert">Could not float chat: {floatError}</p>{/if}
+    <Button variant="menu" icon="message" iconSize={15} role="menuitem"
+      disabled={!activeAccount || floatBusy} onclick={() => floatChat(menuChat.chat)}>
+      {floatBusy ? "Opening…" : "Float chat"}
+    </Button>
     <div class="quick-row" role="group" aria-label="Quick chat actions">
       <Button
         variant="icon"

@@ -16,6 +16,17 @@ impl WhatsAppService {
         text: impl Into<String>,
         mentions: Vec<String>,
     ) -> Result<()> {
+        self.send_text_checked(chat, text, mentions, || Ok(())).await
+    }
+
+    pub async fn send_text_checked(
+        &self,
+        chat: &str,
+        text: impl Into<String>,
+        mentions: Vec<String>,
+        check: impl Fn() -> Result<()> + Send,
+    ) -> Result<()> {
+        check()?;
         let to = broadcast_lists::writable_target(chat)?;
         self.unarchive_on_send(chat).await;
         let to_self = self.is_self_jid(&to);
@@ -37,6 +48,7 @@ impl WhatsAppService {
             None
         };
 
+        check()?;
         let result = if mentioned.is_empty() && !mention_all && preview.is_none() {
             self.client.send_text(to, text.clone()).await?
         } else {
@@ -64,6 +76,7 @@ impl WhatsAppService {
                 ..Default::default()
             };
             group_history::guard_ordinary_message(&message)?;
+            check()?;
             self.client.send_message(to, message).await?
         };
 
@@ -410,17 +423,16 @@ impl WhatsAppService {
             .then(|| message.text.clone());
         match message.media.path.as_deref().filter(|p| Path::new(p).is_file()) {
             Some(path) => {
-                let bytes = std::fs::read(path)?;
                 let name = Path::new(path)
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_else(|| "file".into());
                 let gif = message.media.kind.as_deref() == Some("gif");
                 if message.media.kind.as_deref() == Some("sticker") {
-                    self.send_sticker_as(to_chat, bytes, true, None).await?;
+                    self.send_sticker_as(to_chat, super::media_sticker_file::read_sticker_file(Path::new(path))?, true, None).await?;
                 } else {
                     let options = SendOptions { gif, forwarded: true, ..Default::default() };
-                    self.send_media(to_chat, &name, bytes, caption, None, options).await?;
+                    self.send_media_file(to_chat, &name, PathBuf::from(path), caption, None, options).await?;
                 }
             }
             None if message.media.kind.is_some() => {

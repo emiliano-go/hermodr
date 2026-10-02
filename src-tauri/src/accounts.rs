@@ -78,6 +78,7 @@ pub(crate) fn rename_account(
 /// Removes an account and its data, switching to another if it was active.
 #[tauri::command]
 pub(crate) async fn remove_account(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
+    crate::floating::invalidate_all(&app);
     log::info!("removing account {id}");
     let was_active = active_account(&state).as_deref() == Some(id.as_str());
     {

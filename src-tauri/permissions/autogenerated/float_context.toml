@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-float-context"
+description = "Enables the float_context command without any pre-configured scope."
+commands.allow = ["float_context"]
+
+[[permission]]
+identifier = "deny-float-context"
+description = "Denies the float_context command without any pre-configured scope."
+commands.deny = ["float_context"]

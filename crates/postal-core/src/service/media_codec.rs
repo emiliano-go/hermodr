@@ -1,10 +1,11 @@
 /// Any picture as a WhatsApp sticker: fitted into 512×512 on transparency, as
 /// WebP. A WebP is sent unchanged, so an animated sticker stays animated.
 pub(super) fn sticker_webp(bytes: &[u8]) -> Option<Vec<u8>> {
+    if bytes.len() as u64 > super::media_sticker_file::MAX_STICKER_BYTES { return None; }
     if image::guess_format(bytes).ok()? == image::ImageFormat::WebP {
         return Some(bytes.to_vec());
     }
-    let fitted = image::load_from_memory(bytes).ok()?.thumbnail(512, 512).to_rgba8();
+    let fitted = super::media_sticker_file::decode_image(bytes).ok()?.thumbnail(512, 512).to_rgba8();
     let mut canvas = image::RgbaImage::new(512, 512);
     let (x, y) = ((512 - fitted.width()) / 2, (512 - fitted.height()) / 2);
     image::imageops::overlay(&mut canvas, &fitted, x.into(), y.into());
@@ -59,7 +60,7 @@ pub(super) fn webp_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
 /// A PNG preview for a sticker, or `None` when the first frame cannot be decoded
 /// (as with an animated WebP the `image` crate does not read).
 pub(super) fn sticker_png_thumbnail(bytes: &[u8]) -> Option<Vec<u8>> {
-    let image = image::load_from_memory(bytes).ok()?.thumbnail(256, 256);
+    let image = super::media_sticker_file::decode_image(bytes).ok()?.thumbnail(256, 256);
     let mut out = Vec::new();
     image.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).ok()?;
     Some(out)

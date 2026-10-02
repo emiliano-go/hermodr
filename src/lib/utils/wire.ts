@@ -123,6 +123,7 @@ export type EventResponse = { responder: string,
  * `going`, `not_going` or `maybe`.
  */
 response: string, extra_guest_count: number | null, timestamp_ms: number | null, };
+export type FloatContext = { account_id: string, chat: string, title: string, connected: boolean, };
 export type GalleryCursor = { timestamp: number, sort_order: number, chat: string, id: string, };
 export type GalleryFilter = { chat: string | null, kind: GalleryKind | null, from_me: boolean | null, since: number | null, until: number | null, };
 export type GalleryItem = { message: StoredMessage, urls: Array<string>, };

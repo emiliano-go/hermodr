@@ -6,6 +6,7 @@
     "main"
   ],
   "permissions": [
+    "allow-open-float-chat",
     "allow-group-audit-page",
     "allow-set-member-note",
     "allow-quick-replies-view",

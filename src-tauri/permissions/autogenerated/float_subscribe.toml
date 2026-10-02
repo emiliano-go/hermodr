@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-float-subscribe"
+description = "Enables the float_subscribe command without any pre-configured scope."
+commands.allow = ["float_subscribe"]
+
+[[permission]]
+identifier = "deny-float-subscribe"
+description = "Denies the float_subscribe command without any pre-configured scope."
+commands.deny = ["float_subscribe"]

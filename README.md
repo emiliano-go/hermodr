@@ -45,8 +45,7 @@ Postal takes the other path. Because it implements the protocol itself:
 
 - **No browser engine for WhatsApp.** The app speaks the protocol itself: no
   WhatsApp Web page to keep alive, no per-tab network processes, no account
-  history synced into a browser store. The only webview is the one rendering
-  this app's own UI.
+  history synced into a browser store. Webviews render this app's own UI.
 
 Retention limits use explicit `limited`, `unlimited` and per-chat `inherit`
 states. Existing numeric settings and per-chat overrides migrate without changing
@@ -67,8 +66,8 @@ These are not measurements of unlimited archive mode:
 | History downloaded at pairing | entire account (~20 GB) | none |
 | Message history stored | 604k+ rows, 774 MB | bounded by retention |
 
-Memory is the whole app. The protocol core is around 35 MB; the rest is the one
-WebKit webview that renders the UI, the only place a browser engine is used.
+Memory is the whole app. The protocol core is around 35 MB; the rest includes
+the WebKit UI in the measured main window. Browser engines render only the UI.
 The open conversation is virtualized (`virtua`): only the visible window is
 mounted, and decoded images leave the renderer as rows scroll away. Before the
 virtualized rail, a media-heavy chat pushed the client's GPU memory past 3 GB
@@ -110,6 +109,7 @@ src/lib/state/          Svelte 5 state and IPC coordination
 src/lib/messages/       virtualized message rail (virtua) and bubbles
 src/lib/                chat, composer, media, settings, UI and utilities
 src/routes/+page.svelte application layout and component wiring
+src/routes/float/       account-bound floating chat windows
 ```
 
 `postal-core` is built on [`whatsapp-rust`](https://github.com/oxidezap/whatsapp-rust),
@@ -152,15 +152,27 @@ the app cache. Upload tokens belong to an account, expire after an idle hour,
 and are removed after success, failure or cancellation. At most eight uploads
 can wait in staging. Ciphertext is generated into a second temporary file and
 streamed through the pinned library's Ureq transport, including resumed uploads.
-Small attachments retain their single-call path. Staging and encryption can
-temporarily require roughly twice the attachment's size on disk.
+Small attachments retain their single-call path. GIF library sends and ordinary
+media forwarding use cached files directly. Prepared stickers are staged before
+encryption; conversion accepts at most 64 MiB compressed input and bounds decoded
+images to 8192 pixels per side and 128 MiB. Staging and encryption can temporarily
+require roughly twice the attachment's size on disk.
 
-Downloads, including quoted copies, stream to temporary files and publish a cache
-path only after verification succeeds. Retry attempts truncate partial output.
+Downloads, including automatic live downloads and quoted copies, stream to
+temporary files and publish a cache path only after verification succeeds. Failed
+automatic downloads retain their locator for a later attempt. Retry attempts truncate partial output.
 Video previews read files directly; image previews cap decoding at 8192 pixels
 per side and 128 MiB. These bounds cover transfer buffers, not total application
 memory: voice/sticker conversion and Linux's playback fallback can still buffer
 media. Switching accounts cancels queued sends and unfinished attachment staging.
+
+Right-click a chat or group and choose **Float chat** to open a separate window.
+Up to eight chats can float at once; reopening the same chat focuses its window.
+Floats show local history and accept text replies, with a background transparency
+slider that keeps text opaque. Drafts are saved on this device separately from the
+main composer. Account switching or logout closes floats; they never follow another
+account. Media and unsupported message types use readable summaries. Native macOS
+transparency uses Tauri's private API feature, which prevents App Store acceptance.
 
 ## Installing
 

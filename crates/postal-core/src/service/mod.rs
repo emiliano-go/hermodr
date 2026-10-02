@@ -91,6 +91,8 @@ pub use media_quality::MediaQuality;
 mod media_files;
 mod media_codec;
 mod media_download;
+mod media_receive;
+mod media_sticker_file;
 mod media_wire;
 mod message_decode;
 mod album_decode;

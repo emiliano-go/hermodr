@@ -69,6 +69,7 @@ pub(crate) async fn boolean_props(state: State<'_, AppState>) -> Result<Vec<post
 /// as [`SERVICE_EVENT`] messages so the UI can render them as they happen.
 /// Starts the service for an account, replacing any running one.
 pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &str) -> Result<(), String> {
+    crate::floating::invalidate_all(app);
     log::info!("starting account {account}");
     app.state::<crate::transcription::TranscriptionState>().cancel_all();
     // The previous account's instance (and its session) goes first: only the
@@ -461,7 +462,7 @@ fn spawn_instance_events(
                             *state.once_qr.lock().unwrap() = None;
                             set_once_paired(&emitter, &account_id, false);
                             forget_once_session(&emitter, &account_id, &service);
-                            let _ = emitter.emit(ONCE_EVENT, &event);
+                            let _ = emitter.emit_to("main", ONCE_EVENT, &event);
                             break;
                         }
                         // The shared store changed under the main session; let
@@ -482,7 +483,7 @@ fn spawn_instance_events(
                     // catch-up would make it poll once_state thousands of
                     // times per wake.
                     if instance_sheet_event(&event) {
-                        let _ = emitter.emit(ONCE_EVENT, &event);
+                        let _ = emitter.emit_to("main", ONCE_EVENT, &event);
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(dropped)) => {
@@ -506,9 +507,10 @@ fn spawn_instance_events(
 
 fn emit_service_event(app: &AppHandle, event: &ServiceEvent) {
     crate::plugins::publish(&app.state::<AppState>().plugins, event);
+    crate::floating::notify(app, event);
     let mut rendered = event.clone();
     if let ServiceEvent::Message { message, .. } = &mut rendered { crate::media_access::prepare_message(app, message); }
-    if let Err(error) = app.emit(SERVICE_EVENT, &rendered) {
+    if let Err(error) = app.emit_to("main", SERVICE_EVENT, &rendered) {
         log::error!("could not emit service event to UI: {error}");
     }
 }
@@ -569,7 +571,7 @@ pub(crate) async fn stop_once(app: &AppHandle, state: &AppState) -> Result<(), S
     *state.once_qr.lock().unwrap() = None;
     state.once_connected.store(false, Ordering::SeqCst);
     state.once_pairing.store(false, Ordering::SeqCst);
-    let _ = app.emit(ONCE_EVENT, &ServiceEvent::Disconnected);
+    let _ = app.emit_to("main", ONCE_EVENT, &ServiceEvent::Disconnected);
     Ok(())
 }
 
@@ -615,6 +617,7 @@ pub(crate) fn set_pairing(app: AppHandle, state: State<'_, AppState>, pairing: b
 /// Neither file can be deleted yet: Windows keeps them locked until the library
 /// releases its connection pools.
 pub(crate) fn forget_session(app: &AppHandle, account: &str, service: &Arc<WhatsAppService>) {
+    crate::floating::invalidate_all(app);
     let state = app.state::<AppState>();
     {
         let mut slot = state.service.lock().unwrap();

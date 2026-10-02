@@ -276,19 +276,19 @@ pub(super) async fn fetch_quote_media(
 }
 
 /// Fetches and decrypts a media submessage.
-async fn download_file(client: &Client, media: &MediaInfo, writer: std::fs::File) -> Result<std::fs::File> {
+pub(super) async fn download_file(client: &Client, media: &MediaInfo, writer: std::fs::File) -> Result<std::fs::File> {
     tokio::time::timeout(Duration::from_secs(120), client.download_to_writer(media.downloadable.as_ref(), writer))
         .await
         .map_err(|_| anyhow::anyhow!("download timed out"))?
 }
 
-async fn download_target(dir: &Path) -> Result<(TemporaryFile, std::fs::File)> {
+pub(super) async fn download_target(dir: &Path) -> Result<(TemporaryFile, std::fs::File)> {
     tokio::fs::create_dir_all(dir).await?;
     let dir = dir.to_path_buf();
     tokio::task::spawn_blocking(move || TemporaryFile::download(&dir)).await?
 }
 
-fn media_path(dir: &Path, id: &str, extension: &str) -> Result<PathBuf> {
+pub(super) fn media_path(dir: &Path, id: &str, extension: &str) -> Result<PathBuf> {
     anyhow::ensure!(!id.contains(['/', '\\', ':', '\0']), "invalid media identifier");
     let name = format!("{id}.{extension}");
     let mut parts = Path::new(&name).components();

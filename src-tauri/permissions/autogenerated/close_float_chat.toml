@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-close-float-chat"
+description = "Enables the close_float_chat command without any pre-configured scope."
+commands.allow = ["close_float_chat"]
+
+[[permission]]
+identifier = "deny-close-float-chat"
+description = "Denies the close_float_chat command without any pre-configured scope."
+commands.deny = ["close_float_chat"]

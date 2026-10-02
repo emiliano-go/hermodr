@@ -362,7 +362,8 @@ fn notify(
     transcript: Option<StoredTranscript>,
     error: Option<String>,
 ) {
-    let _ = app.emit(
+    let _ = app.emit_to(
+        "main",
         "transcription-event",
         TranscriptionEvent {
             account_id: key.0.clone(),

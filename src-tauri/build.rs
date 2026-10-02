@@ -1,4 +1,10 @@
 const COMMANDS: &[&str] = &[
+    "open_float_chat",
+    "float_context",
+    "float_subscribe",
+    "float_message_page",
+    "float_send_text",
+    "close_float_chat",
     "group_audit_page",
     "set_member_note",
     "quick_replies_view",

@@ -2,7 +2,7 @@
 
 The 40 editable tokens are declared in [theme.svelte.ts](../src/lib/utils/theme.svelte.ts). [Customization](../src/lib/settings/Customization.svelte) uses that registry for its editor; `applyTheme` sets or removes registered properties on the document root. [ThemeLayers](../src/lib/settings/ThemeLayers.svelte) applies the active theme and its CSS extensions. Theme CSS may override component rules with `!important`.
 
-[The component checklist](theme-review.md#component-checklist) records every production Svelte component and its direct token references. Counts below are a source snapshot of those 100 components, including inline `var()` references. Inherited root styles and references in preset CSS are not counted. The checklist provides the reverse consumer mapping for every row, beyond the examples below.
+[The component checklist](theme-review.md#component-checklist) records every production Svelte component and its direct token references. Counts below are a source snapshot of those 102 components, including inline `var()` references. Inherited root styles and references in preset CSS are not counted. The checklist provides the reverse consumer mapping for every row, beyond the examples below.
 
 ## Defaults and custom themes
 
@@ -16,9 +16,9 @@ Native selects share raised/text/line-strong/radius-sm styles. Checkbox, radio a
 
 | Token | Use | Direct consumers | Examples |
 | --- | --- | ---: | --- |
-| `--bg` | Sidebar | 33 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [messages/StarredList.svelte](../src/lib/messages/StarredList.svelte) |
+| `--bg` | Sidebar | 34 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [messages/StarredList.svelte](../src/lib/messages/StarredList.svelte) |
 | `--chat-bg` | Chat background | 8 | [routes/+page.svelte](../src/routes/+page.svelte), [messages/MessageBubble.svelte](../src/lib/messages/MessageBubble.svelte), [chat/ChatPreview.svelte](../src/lib/chat/ChatPreview.svelte) |
-| `--surface` | Headers and bars | 54 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte) |
+| `--surface` | Headers and bars | 55 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte) |
 | `--raised` | Hover and inputs | 50 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte) |
 | `--raised-2` | Selected | 24 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/Button.svelte](../src/lib/ui/Button.svelte) |
 | `--scrim` | Dialog backdrop | 29 | [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte), [messages/StructuredNotice.svelte](../src/lib/messages/StructuredNotice.svelte) |
@@ -29,22 +29,22 @@ Native selects share raised/text/line-strong/radius-sm styles. Checkbox, radio a
 | Token | Use | Direct consumers | Examples |
 | --- | --- | ---: | --- |
 | `--bubble` | Incoming bubble | 4 | [messages/MessageBubble.svelte](../src/lib/messages/MessageBubble.svelte), [messages/cards/PollCard.svelte](../src/lib/messages/cards/PollCard.svelte), [chat/ChatPreview.svelte](../src/lib/chat/ChatPreview.svelte) |
-| `--bubble-mine` | Outgoing bubble | 4 | [messages/OutgoingItem.svelte](../src/lib/messages/OutgoingItem.svelte), [messages/MessageInfo.svelte](../src/lib/messages/MessageInfo.svelte), [messages/MessageBubble.svelte](../src/lib/messages/MessageBubble.svelte) |
+| `--bubble-mine` | Outgoing bubble | 5 | [messages/OutgoingItem.svelte](../src/lib/messages/OutgoingItem.svelte), [messages/MessageInfo.svelte](../src/lib/messages/MessageInfo.svelte), [messages/MessageBubble.svelte](../src/lib/messages/MessageBubble.svelte) |
 
 ## text
 
 | Token | Use | Direct consumers | Examples |
 | --- | --- | ---: | --- |
-| `--text` | Text | 76 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/Logo.svelte](../src/lib/ui/Logo.svelte) |
-| `--muted` | Secondary text | 82 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/Button.svelte](../src/lib/ui/Button.svelte) |
+| `--text` | Text | 77 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/Logo.svelte](../src/lib/ui/Logo.svelte) |
+| `--muted` | Secondary text | 83 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/Button.svelte](../src/lib/ui/Button.svelte) |
 | `--faint` | Faint text | 18 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte), [ui/Button.svelte](../src/lib/ui/Button.svelte) |
-| `--link` | Links and read ticks | 11 | [messages/StructuredNotice.svelte](../src/lib/messages/StructuredNotice.svelte), [messages/MessageText.svelte](../src/lib/messages/MessageText.svelte), [messages/MessageInfo.svelte](../src/lib/messages/MessageInfo.svelte) |
+| `--link` | Links and read ticks | 12 | [messages/StructuredNotice.svelte](../src/lib/messages/StructuredNotice.svelte), [messages/MessageText.svelte](../src/lib/messages/MessageText.svelte), [messages/MessageInfo.svelte](../src/lib/messages/MessageInfo.svelte) |
 
 ## highlights
 
 | Token | Use | Direct consumers | Examples |
 | --- | --- | ---: | --- |
-| `--mention` | Mentions of you: bar and text | 5 | [messages/StarredList.svelte](../src/lib/messages/StarredList.svelte), [messages/MessageText.svelte](../src/lib/messages/MessageText.svelte), [messages/MessageFinder.svelte](../src/lib/messages/MessageFinder.svelte) |
+| `--mention` | Mentions of you: bar and text | 6 | [messages/StarredList.svelte](../src/lib/messages/StarredList.svelte), [messages/MessageText.svelte](../src/lib/messages/MessageText.svelte), [messages/MessageFinder.svelte](../src/lib/messages/MessageFinder.svelte), [chat/FloatChat.svelte](../src/lib/chat/FloatChat.svelte) |
 | `--mention-soft` | Mentions of you: row | 2 | [messages/MessageFinder.svelte](../src/lib/messages/MessageFinder.svelte), [messages/MessageBubble.svelte](../src/lib/messages/MessageBubble.svelte) |
 | `--mention-self-soft` | Mentions of you: tag | 3 | [messages/MessageText.svelte](../src/lib/messages/MessageText.svelte), [messages/MessageFinder.svelte](../src/lib/messages/MessageFinder.svelte), [chat/GroupInfo.svelte](../src/lib/chat/GroupInfo.svelte) |
 | `--mention-pill` | Mention tag text | 1 | [messages/MessageText.svelte](../src/lib/messages/MessageText.svelte) |
@@ -70,13 +70,13 @@ Native selects share raised/text/line-strong/radius-sm styles. Checkbox, radio a
 | --- | --- | ---: | --- |
 | `--line` | Dividers | 38 | [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/BooleanProps.svelte](../src/lib/ui/BooleanProps.svelte), [composer/SlashCommandMenu.svelte](../src/lib/composer/SlashCommandMenu.svelte) |
 | `--line-soft` | Soft dividers | 0 | Registered; no direct Svelte consumer. |
-| `--line-strong` | Borders | 48 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte) |
+| `--line-strong` | Borders | 49 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte) |
 
 ## status
 
 | Token | Use | Direct consumers | Examples |
 | --- | --- | ---: | --- |
-| `--danger` | Error | 61 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte) |
+| `--danger` | Error | 62 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte) |
 | `--danger-soft` | Error background | 4 | [routes/+page.svelte](../src/routes/+page.svelte), [messages/SelectionBar.svelte](../src/lib/messages/SelectionBar.svelte), [messages/MessageBubble.svelte](../src/lib/messages/MessageBubble.svelte) |
 
 ## shape and type
@@ -99,7 +99,7 @@ Native selects share raised/text/line-strong/radius-sm styles. Checkbox, radio a
 
 ## Other CSS properties and color literals
 
-Geometry and identity properties such as `--hue`, `--size`, `--fill`, `--pad-l`, `--pad-r`, `--embed-color`, `--played`, `--picker-h`, `--crop-max-height` and the customization swatch's `--c` are component data, not theme-editor tokens. `--line-soft` remains registered for compatibility but currently has no direct Svelte consumer. Space-specific optional colors are stored item data rather than theme tokens; SpacesTree's #00a884 is the opt-in color-picker seed.
+Geometry and identity properties such as `--hue`, `--size`, `--fill`, `--pad-l`, `--pad-r`, `--embed-color`, `--played`, `--picker-h`, `--crop-max-height` and the customization swatch's `--c` are component data, not theme-editor tokens. `--line-soft` remains registered for compatibility but currently has no direct Svelte consumer. Space-specific optional colors are stored item data rather than theme tokens; SpacesTree's #00a884 is the opt-in color-picker seed. FloatChat's `--float-alpha` is a local background-control property rather than an editable theme token; it multiplies bg/surface/bubble backgrounds with transparency without setting text/element opacity. Its separate route has no direct token references, so these counts do not imply cross-window theme synchronization. FloatChat keyword-highlight outlines also consume the existing `--mention` token with #f0b232 fallback; saved account keyword filtering is render-only and fail-closed on rule-read errors.
 
 Identity hues, QR white substrates and black/white media overlays serve different purposes from app surface colors. Their source exceptions are listed in the checklist, with visual contrast still pending. A literal inside a token fallback is inactive when the root supplies that token. Preset palettes and Glass wallpaper colors are theme definitions. Fixed shadow colors and identity luminance still need visual review in Light and custom themes.
 

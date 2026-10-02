@@ -34,6 +34,7 @@ pub fn wire_types() -> String {
     roots!(
         crate::settings::UiSettings, crate::account_store::AccountsView,
         crate::connection::ConnectionState, crate::connection::OnceState,
+        crate::floating::FloatContext,
         crate::chats::ChatSettings, crate::groups::Joined, crate::plugins::PluginsView,
         crate::messages::Target, crate::media_actions::MediaAction, crate::polls::EventForm,
         crate::transcription::TranscriptionView, crate::transcription::ProviderConsent,

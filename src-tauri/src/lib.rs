@@ -32,6 +32,7 @@ mod groups;
 mod gallery;
 mod devices;
 mod favorites;
+mod floating;
 mod group_requests;
 mod scheduled;
 mod transcription;
@@ -111,6 +112,12 @@ impl AppState {
 macro_rules! postal_commands {
     () => {
         tauri::generate_handler![
+            floating::open_float_chat,
+            floating::float_context,
+            floating::float_subscribe,
+            floating::float_message_page,
+            floating::float_send_text,
+            floating::close_float_chat,
             transcription::transcription_settings,
             transcription::set_transcription_settings,
             transcription::grant_transcription_cloud_consent,
@@ -412,6 +419,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let accounts = load_accounts(app.handle());
     migrate_media(app.handle(), &accounts);
     app.manage(transcription::TranscriptionState::load(app.handle())?);
+    app.manage(floating::FloatingChats::default());
 
     app.manage(AppState {
         account_service: Mutex::new(None),

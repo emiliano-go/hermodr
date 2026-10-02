@@ -15,12 +15,27 @@ fn ipc_commands_match_build_and_capabilities() {
         .map(|name| name.rsplit("::").next().unwrap()).collect();
     assert!(!commands.is_empty());
     assert_eq!(commands, handlers);
-    let capabilities: serde_json::Value = serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
-    let permissions = capabilities["permissions"].as_array().unwrap();
+    let main: serde_json::Value = serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
+    let floating: serde_json::Value = serde_json::from_str(include_str!("../capabilities/floating.json")).unwrap();
+    let permissions: Vec<_> = [&main, &floating].into_iter()
+        .flat_map(|capability| capability["permissions"].as_array().unwrap()).collect();
     for command in commands {
         let permission = format!("allow-{}", command.replace('_', "-"));
         assert!(permissions.iter().any(|value| value.as_str() == Some(&permission)), "{permission}");
     }
+}
+
+#[test]
+fn float_capability_only_exposes_bound_chat_commands() {
+    let main: serde_json::Value = serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
+    let floating: serde_json::Value = serde_json::from_str(include_str!("../capabilities/floating.json")).unwrap();
+    assert_eq!(main["windows"], serde_json::json!(["main"]));
+    assert_eq!(floating["windows"], serde_json::json!(["postal-float-*"]));
+    let actual: std::collections::BTreeSet<_> = floating["permissions"].as_array().unwrap()
+        .iter().map(|value| value.as_str().unwrap()).collect();
+    assert_eq!(actual, ["allow-float-context", "allow-float-subscribe", "allow-float-message-page",
+        "allow-float-send-text", "allow-close-float-chat"].into_iter().collect());
+    assert!(main["permissions"].as_array().unwrap().iter().any(|value| value == "allow-open-float-chat"));
 }
 
 #[test]

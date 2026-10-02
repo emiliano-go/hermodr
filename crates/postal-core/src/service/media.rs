@@ -409,15 +409,12 @@ impl WhatsAppService {
         let context = self.reply_context(&to, reply.as_ref()).await?;
         let context = if forwarded { Some(forwarded_context(context)) } else { context };
         let to_self = self.is_self_jid(&to);
-        let webp = sticker_webp(&bytes)
-            .ok_or_else(|| anyhow::anyhow!("that file is not an image we can turn into a sticker"))?;
-        let (width, height) = webp_dimensions(&webp).unwrap_or((512, 512));
-        let animated = webp_is_animated(&webp);
-        let png_thumbnail = sticker_png_thumbnail(&webp);
-        let upload = self
-            .client
-            .upload(webp.clone(), MediaType::Sticker, Default::default())
-            .await?;
+        let prepared = tokio::task::spawn_blocking(move || super::media_sticker_file::prepare(bytes)).await??;
+        let (width, height) = prepared.dimensions;
+        let animated = prepared.animated;
+        let png_thumbnail = prepared.thumbnail;
+        let input = MediaInput::File(prepared.file.path.clone());
+        let upload = self.upload_media(&input, MediaType::Sticker, None).await?;
         let message = wa::Message {
             sticker_message: buffa::MessageField::some(wa::message::StickerMessage {
                 url: Some(upload.url),
@@ -448,7 +445,7 @@ impl WhatsAppService {
         let media_path = self.media_dir().and_then(|dir| {
             std::fs::create_dir_all(&dir).observed()?;
             let dest = dir.join(format!("{}.webp", result.message_id));
-            std::fs::write(&dest, &webp).observed()?;
+            std::fs::copy(&prepared.file.path, &dest).observed()?;
             Some(dest.to_string_lossy().into_owned())
         });
         let mut stored = self.own_message(chat, &result.message_id, "[sticker]".into(), "sticker", to_self);
@@ -533,12 +530,11 @@ impl WhatsAppService {
         if !file.starts_with(std::fs::canonicalize(&dir)?) {
             anyhow::bail!("refusing to send a file from outside the media folder");
         }
-        let bytes = std::fs::read(&file)?;
         match kind {
-            "sticker" => self.send_sticker(chat, bytes, reply).await,
+            "sticker" => self.send_sticker(chat, super::media_sticker_file::read_sticker_file(&file)?, reply).await,
             "gif" => {
                 let options = SendOptions { gif: true, ..Default::default() };
-                self.send_media(chat, "gif.mp4", bytes, None, reply, options).await.map(|_| ())
+                self.send_media_file(chat, "gif.mp4", file, None, reply, options).await.map(|_| ())
             }
             _ => anyhow::bail!("only stickers and GIFs are sent from the library"),
         }

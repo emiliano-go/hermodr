@@ -362,6 +362,7 @@ pub(super) async fn stored_message(
         // The thumbnail rides in the message, so it is kept even when the file
         // itself is not downloaded. A view-once thumbnail would show it unopened.
         media_thumb = media.thumb.as_deref().filter(|_| !decoded.view_once).map(thumb_uri);
+        media_ref = Some(media_locator(message));
 
         // A view-once has no CDN address, so fetching it here could only fail;
         // the locator is kept instead, so opening the message can ask the
@@ -371,21 +372,14 @@ pub(super) async fn stored_message(
             // still records the message, so the text and metadata are not lost.
             if let (Some(client), Some(dir)) = (client, media_dir) {
                 let started = std::time::Instant::now();
-                match client.download(media.downloadable.as_ref()).await {
-                    Ok(bytes) => {
-                        log::debug!("downloaded {id} {} ({} KB) in {:?}", media.kind, bytes.len() / 1024, started.elapsed());
-                        if std::fs::create_dir_all(dir).observed().is_some() {
-                            let path = dir.join(format!("{}.{}", id, media.extension()));
-                            if std::fs::write(&path, &bytes).observed().is_some() {
-                                media_path = Some(path.to_string_lossy().to_string());
-                            }
-                        }
+                match super::media_receive::receive_media(client, &media, dir, id).await {
+                    Ok(path) => {
+                        log::debug!("downloaded {id} {} in {:?}", media.kind, started.elapsed());
+                        media_path = Some(path.to_string_lossy().to_string());
                     }
                     Err(e) => log::warn!("failed to download {id} media: {e}"),
                 }
             }
-        } else {
-            media_ref = Some(media_locator(message));
         }
 
         if text.is_empty() {

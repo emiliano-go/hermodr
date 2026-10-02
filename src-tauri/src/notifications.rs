@@ -106,7 +106,7 @@ pub(crate) async fn show_chat_notification(
             let Some(service) = service_ref.upgrade() else { return; };
             if current(&app.state::<AppState>(), &target.account_id, &service).is_err() { return; }
             crate::tray::show_main(&app);
-            if let Err(error) = app.emit("desktop-open-chat", &target) {
+            if let Err(error) = app.emit_to("main", "desktop-open-chat", &target) {
                 log::warn!("could not open notification chat: {error}");
             }
         }) {
