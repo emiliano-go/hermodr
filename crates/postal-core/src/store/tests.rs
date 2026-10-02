@@ -1085,19 +1085,28 @@ fn reopen_heals_version_stamped_databases_missing_new_columns() {
     std::fs::create_dir(&root).unwrap();
     let path = root.join("heal.db");
     {
-        // A database migrated to the old tip, then version-bumped without
-        // ever adding the new columns: every new query fails at prepare
-        // time with "no such column".
+        // Our lineage at version 31: the pre-feature tip plus the two @all
+        // columns, but the merged numbering's steps 29-30 (albums,
+        // sticker-sync) never ran, so opening would fail at prepare time
+        // with "no such column: m.album".
         let conn = Connection::open(&path).unwrap();
-        super::schema::migrate_to(&conn, super::schema::MIGRATIONS.len() - 2).unwrap();
-        // `mute_at_all` never existed at the old tip (v17 adds it); drop the
-        // messages column to complete the version-stamped-but-missing state.
-        conn.execute_batch("ALTER TABLE messages DROP COLUMN mentioned_all_only;").unwrap();
-        conn.pragma_update(None, "user_version", super::schema::MIGRATIONS.len() as i64).unwrap();
-        let missing: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('messages') WHERE name = 'mentioned_all_only')",
-            [], |r| r.get(0)).unwrap();
-        assert!(!missing, "fixture must lack the new column");
+        super::schema::migrate_to(&conn, super::schema::MIGRATIONS.len() - 7).unwrap();
+        // `mute_at_all` never existed at the old tip (v17 adds it); the @all
+        // column arrives through the adoption list, so drop it to complete
+        // the version-stamped-but-missing state.
+        conn.execute_batch(
+            "ALTER TABLE messages DROP COLUMN mentioned_all_only;
+             ALTER TABLE messages ADD COLUMN mentioned_all_only INTEGER NOT NULL DEFAULT 0 CHECK(mentioned_all_only IN (0,1));
+             ALTER TABLE chat_settings ADD COLUMN mute_at_all INTEGER NOT NULL DEFAULT 0 CHECK(mute_at_all IN (0,1));",
+        ).unwrap();
+        conn.pragma_update(None, "user_version", 31i64).unwrap();
+        for missing in ["messages.album", "stickers.recent_sent_ms"] {
+            let (table, column) = missing.split_once('.').unwrap();
+            let exists: bool = conn.query_row(
+                &format!("SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name = '{column}')"),
+                [], |r| r.get(0)).unwrap();
+            assert!(!exists, "fixture must lack {missing}");
+        }
     }
     {
         // Opening heals the columns, so the chat list, pings and the mute
@@ -1107,11 +1116,22 @@ fn reopen_heals_version_stamped_databases_missing_new_columns() {
         all_only.local.mentioned = true;
         all_only.local.mentioned_all_only = true;
         s.insert_message(&all_only).unwrap();
+        assert_eq!(s.messages_for("g@g.us", 10).unwrap().len(), 1);
         assert_eq!(s.chats().unwrap()[0].mention_count, 1);
         s.set_chat_mute_at_all("g@g.us", true).unwrap();
         assert!(s.chat_mute_at_all("g@g.us").unwrap());
         assert_eq!(s.chats().unwrap()[0].mention_count, 0);
         assert!(s.unread_mentions("g@g.us").unwrap().is_empty());
+    }
+    {
+        let conn = Connection::open(&path).unwrap();
+        for healed in ["messages.album", "messages.album_request_written", "stickers.recent_sent_ms"] {
+            let (table, column) = healed.split_once('.').unwrap();
+            let exists: bool = conn.query_row(
+                &format!("SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name = '{column}')"),
+                [], |r| r.get(0)).unwrap();
+            assert!(exists, "{healed} must exist after reopen");
+        }
     }
     std::fs::remove_dir_all(root).unwrap();
 }

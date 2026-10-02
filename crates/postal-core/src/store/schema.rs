@@ -400,22 +400,51 @@ pub(super) fn migrate(conn: &Connection) -> Result<()> {
 ///
 /// Version-gated migrations cannot heal a file whose `user_version` already
 /// claims the latest schema while the columns were never added (e.g. an
-/// interrupted or partial upgrade). Every query below references these
-/// columns unconditionally, so a missing one fails at prepare time with
+/// interrupted or partial upgrade, or two features merged in an order that
+/// skips steps for one lineage). Every query below references these columns
+/// unconditionally, so a missing one fails at prepare time with
 /// "no such column". This runs on every open, outside versioning, and is a
 /// no-op when the columns exist.
 pub(super) fn ensure_optional_columns(conn: &Connection) -> Result<()> {
     let messages: Vec<String> = table_columns(conn, "messages").unwrap_or_default();
-    if !messages.is_empty() && !messages.iter().any(|c| c == "mentioned_all_only") {
-        conn.execute_batch(
-            "ALTER TABLE messages ADD COLUMN mentioned_all_only INTEGER NOT NULL DEFAULT 0 CHECK(mentioned_all_only IN (0,1));",
-        )?;
+    if !messages.is_empty() {
+        for (name, declaration) in [
+            ("mentioned_all_only", "INTEGER NOT NULL DEFAULT 0 CHECK(mentioned_all_only IN (0,1))"),
+            ("album", "TEXT"),
+            ("album_request_written", "INTEGER NOT NULL DEFAULT 0 CHECK(album_request_written IN (0,1))"),
+        ] {
+            if !messages.iter().any(|c| c == name) {
+                conn.execute_batch(&format!("ALTER TABLE messages ADD COLUMN {name} {declaration};"))?;
+            }
+        }
     }
     let settings: Vec<String> = table_columns(conn, "chat_settings").unwrap_or_default();
     if !settings.is_empty() && !settings.iter().any(|c| c == "mute_at_all") {
         conn.execute_batch(
             "ALTER TABLE chat_settings ADD COLUMN mute_at_all INTEGER NOT NULL DEFAULT 0 CHECK(mute_at_all IN (0,1));",
         )?;
+    }
+    let stickers: Vec<String> = table_columns(conn, "stickers").unwrap_or_default();
+    if !stickers.is_empty() {
+        let mut added = false;
+        for name in [
+            "favorite_updated_ms",
+            "recent_updated_ms",
+            "recent_sent_ms",
+            "recent_removed_ms",
+        ] {
+            if !stickers.iter().any(|c| c == name) {
+                conn.execute_batch(&format!(
+                    "ALTER TABLE stickers ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0;"
+                ))?;
+                added = true;
+            }
+        }
+        // Same backfill the sticker-sync migration applies to upgraded rows.
+        if added {
+            conn.execute("UPDATE stickers SET recent_sent_ms=recent_at*1000,recent_updated_ms=recent_at*1000
+                WHERE recent_at IS NOT NULL AND recent_sent_ms=0 AND recent_updated_ms=0 AND recent_removed_ms=0", [])?;
+        }
     }
     Ok(())
 }
