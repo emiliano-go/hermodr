@@ -32,7 +32,9 @@ import { notificationHistory } from "$lib/notifications/history-store";
 
 export type EventHost = {
   scrollToBottom(): void;
-  getScroller(): HTMLDivElement | null;
+  /** The first row on screen, so a full reload can keep the reader's place. */
+  anchor(): string | null;
+  reveal(id: string): void;
   reconnect(): Promise<void>;
 };
 
@@ -116,7 +118,9 @@ function queueReloadMessages(
     // Anchor the view across the reload: appended messages must not shift what
     // a scrolled-up reader is looking at. The follow below re-pins to the
     // bottom afterwards when the reader is there.
-    await messages.reloadMessages(queued.chat, true, host.getScroller());
+    const anchor = host.anchor();
+    await messages.reloadMessages(queued.chat);
+    if (anchor) host.reveal(anchor);
     // Decide the follow at fire time: the reader may have scrolled up while
     // the reload was in flight, and must not be yanked back down.
     if (queued.follow && messages.atLatest && !ui.scrolledUp) host.scrollToBottom();
@@ -450,8 +454,12 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
         // The full reload covers any hints that landed while loading.
         messagesDirty = false;
         dirtyMarkRead = false;
-        if (requestedOlder) await messages.finishOlder(chats.selectedChat, host.getScroller());
-        else await messages.reloadMessages(chats.selectedChat, true, host.getScroller());
+        if (requestedOlder) await messages.finishOlder(chats.selectedChat);
+        else {
+          const anchor = host.anchor();
+          await messages.reloadMessages(chats.selectedChat);
+          if (anchor) host.reveal(anchor);
+        }
       } else if (messagesDirty && chats.selectedChat) {
         // Burst hints that landed while older history was loading.
         messagesDirty = false;

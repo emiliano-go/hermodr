@@ -80,7 +80,7 @@ export class SessionState {
   privacy = $state<Record<string, string>>({});
 
   settings = $state<UiSettings>({
-    message_window_size: 500,
+    message_window_size: 150,
     retention: { max_age_hours: { kind: "unlimited" }, max_messages_per_chat: { kind: "unlimited" } },
     request_full_history: false,
     auto_download_media: true,

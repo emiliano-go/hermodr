@@ -10,6 +10,7 @@
     gif = false,
     autoplay = true,
     round = false,
+    poster = null,
     onerror,
   }: {
     src: string;
@@ -19,6 +20,8 @@
     gif?: boolean;
     autoplay?: boolean;
     round?: boolean;
+    /** Stored thumbnail shown until playback starts. */
+    poster?: string | null;
     onerror?: () => void;
   } = $props();
 
@@ -36,6 +39,8 @@
   let preparing = $state(false);
   const source = $derived(prepared ?? fallback ?? src);
   let stallTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Nothing is fetched until playback is asked for (`preload="none"`). */
+  let started = $state(false);
 
   // A source that neither loads nor errors (an asset scheme that just hangs)
   // would leave the player black forever, so a source that has no metadata
@@ -43,8 +48,9 @@
   $effect(() => {
     const generation = attempt;
     const current = source;
+    void started;
     clearTimeout(stallTimer);
-    if (generation >= 3 || !current) return;
+    if (!started || generation >= 3 || !current) return;
     stallTimer = setTimeout(() => {
       if (generation === attempt && video?.readyState === 0) void onVideoError();
     }, 5000);
@@ -250,6 +256,8 @@
   <video
     bind:this={video}
     src={source}
+    poster={poster ?? undefined}
+    preload="none"
     {autoplay}
     loop={looping}
     bind:paused
@@ -259,6 +267,7 @@
     bind:volume
     bind:muted
     bind:playbackRate={rate}
+    onplay={() => (started = true)}
     onclick={toggle}
     ondblclick={toggleFullscreen}
     onerror={onVideoError}></video>

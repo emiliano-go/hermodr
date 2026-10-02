@@ -20,16 +20,16 @@
 <details>
   <summary>Bounded message window</summary>
   <button onclick={() => open()}>Open synthetic archive</button>
-  <button onclick={() => act(() => pager.loadOlder("window@s", false, scroller))}>Older page</button>
-  <button onclick={() => act(() => pager.loadNewer("window@s", scroller))}>Newer page</button>
+  <button onclick={() => act(() => pager.loadOlder("window@s", false))}>Older page</button>
+  <button onclick={() => act(() => pager.loadNewer("window@s"))}>Newer page</button>
   <button onclick={() => act(() => pager.showLatest("window@s"))}>Latest page</button>
   <button onclick={() => act(() => pager.showStoredMessage("window@s", "0005"))}>Jump to stored 0005</button>
   <button onclick={() => act(async () => {
     const n = windowFixture.archive.length;
     windowFixture.archive.push({ chat: "window@s", id: String(n).padStart(4, "0"), timestamp: 100, text: `Incoming ${n}` } as StoredMessage);
-    await pager.reloadMessages("window@s", true, scroller);
+    await pager.reloadMessages("window@s");
   })}>Synthetic incoming message</button>
-  <button onclick={() => act(() => pager.finishOlder("window@s", scroller))}>Phone has no older rows</button>
+  <button onclick={() => act(() => pager.finishOlder("window@s"))}>Phone has no older rows</button>
   <button onclick={() => { windowFixture.failure = !windowFixture.failure; }}>Toggle page failure</button>
   <button onclick={() => { windowFixture.deferNext = true; }}>Delay next page</button>
   <button onclick={() => open("other@s")}>Switch to empty chat</button>

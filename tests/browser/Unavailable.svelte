@@ -17,7 +17,7 @@
     downloadErrors: {}, downloadTries: {}, replyingToId: null, highlightedId: null,
     firstUnreadId: null, onjumpunread: noop, menuId: null, polls: [], events: [], avatars: {},
     voiceAvatarOf: () => null, quoteAuthorOf: () => "", quoteTextOf: () => null, quoteChatNameOf: () => null,
-    autoplayId: null, onceAudioOpenId: null, loadingOlder: false, onloadolder: noop, uploads: [], typers: [],
+    autoplayId: null, onceAudioOpenId: null, loadingOlder: false, uploads: [], typers: [],
     typerLabelOf: () => "", onscroll: noop, revealedOnce: {},
     onreplydraft: () => unavailableActions.push("reply"),
     onmenu: (event) => { event.preventDefault(); unavailableActions.push("menu"); },

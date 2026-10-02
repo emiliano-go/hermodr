@@ -224,6 +224,7 @@
   });
 
   let scroller: HTMLDivElement | undefined = $state();
+  let messageList = $state<ReturnType<typeof MessageList> | undefined>();
 
   /** Member names under a group's title, as far as they are known. */
   const subtitle = $derived(
@@ -287,7 +288,7 @@
       messages.mentionQueue = [...new Set([...mentions, ...keywordMatches.slice().reverse().map((message) => message.id)])];
       messages.mentionCursor = 0;
       if (seq === messages.messagesSeq) messages.acceptMessages(page.messages);
-      else await messages.reloadMessages(chat, true);
+      else await messages.reloadMessages(chat);
       if (!current()) return;
       await messages.loadMarks(chat);
       if (!current()) return;
@@ -436,64 +437,25 @@
 
   /** Scrolls a message into view by its id, and highlights it briefly. */
   function scrollToMessage(id: string) {
-    const element = scroller?.querySelector(`[data-id="${id}"]`);
-    if (!element) return;
-    element.scrollIntoView({ block: "center" });
+    if (!messageList?.revealMessage(id)) {
+      const element = scroller?.querySelector(`[data-id="${id}"]`);
+      if (!element) return;
+      element.scrollIntoView({ block: "center" });
+    }
     ui.highlightedId = id;
     window.setTimeout(() => {
       if (ui.highlightedId === id) ui.highlightedId = null;
     }, 1600);
   }
 
-  /**
-   * Pins the unread divider to the top while the rows above it settle their
-   * height. Images have no size until they load, and WebKitGTK has no scroll
-   * anchoring, so a single scroll lands above the divider and drifts as media
-   * loads. Runs only until the height holds still, or the user scrolls.
-   */
+  /** Brings the unread divider to the top once, once the rows exist. */
   function pinUnreadDivider(chat: string) {
-    // Polling replaces a per-frame measure loop: a chat open used to force
-    // layout on every frame for up to five seconds while media above the
-    // divider settled. Checking close together while the height still moves,
-    // then backing off, costs the same result for a fraction of the work.
-    const deadline = Date.now() + 5000;
-    let settled = 0;
-    let lastHeight = -1;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const cancel = () => (cancelled = true);
-    const el = scroller;
-    el?.addEventListener("wheel", cancel, { passive: true });
-    el?.addEventListener("touchstart", cancel, { passive: true });
-    const finish = () => {
-      cancelled = true;
-      clearTimeout(timer);
-      el?.removeEventListener("wheel", cancel);
-      el?.removeEventListener("touchstart", cancel);
-    };
-    const pin = () => {
-      if (cancelled || chats.selectedChat !== chat || !scroller) return finish();
-      const divider = scroller.querySelector("[data-unread-divider]") as HTMLElement | null;
-      if (!divider) return finish();
-      const offset = divider.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
-      const height = scroller.scrollHeight;
-      const furthest = height - scroller.clientHeight;
-      const next = Math.min(Math.max(0, scroller.scrollTop + offset), furthest);
-      const moved = Math.abs(next - scroller.scrollTop) > 0.5;
-      if (moved) scroller.scrollTop = next;
-      // Any height change above the divider invalidates the position.
-      const grew = height !== lastHeight;
-      settled = !moved && !grew ? settled + 1 : 0;
-      lastHeight = height;
-      // Five quiet checks: about the three quarters of a second the
-      // per-frame loop waited, without the per-frame cost.
-      if (settled >= 5 || Date.now() > deadline) return finish();
-      timer = setTimeout(pin, moved || grew ? 50 : 200);
-    };
-    timer = setTimeout(pin, 0);
+    void tick().then(() => {
+      if (chats.selectedChat === chat) messageList?.scrollToUnread();
+    });
   }
 
-  /** Jumps to the next unread mention, oldest to newest, wrapping around. */
+/** Jumps to the next unread mention, oldest to newest, wrapping around. */
   function jumpNextMention() {
     if (messages.mentionQueue.length === 0) return;
     const id = messages.mentionQueue[messages.mentionCursor % messages.mentionQueue.length];
@@ -592,13 +554,10 @@
       void messages.showLatest(chats.selectedChat).then((loaded) => { if (loaded) scrollToBottom(); });
       return;
     }
-    // Wait for the new messages to render before measuring, so the pin lands
-    // on the laid-out bottom rather than the previous one.
+    // Wait for the new rows to land before scrolling to the last one.
     void tick().then(() => {
-      requestAnimationFrame(() => {
-        if (scroller) scroller.scrollTop = scroller.scrollHeight;
-        ui.scrolledUp = false;
-      });
+      messageList?.scrollToBottom();
+      ui.scrolledUp = false;
     });
   }
 
@@ -615,29 +574,29 @@
     if (messages.atLatest && !untrack(() => ui.scrolledUp)) scrollToBottom();
   });
 
-  // Scroll events can outpace frames; the handler measures layout, so one
-  // run per frame is all that is useful.
-  let scrollQueued = false;
-  function onScroll() {
-    if (scrollQueued) return;
-    scrollQueued = true;
-    requestAnimationFrame(() => {
-      scrollQueued = false;
-      if (!scroller) return;
-      const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-      const scrolledUp = !messages.atLatest || distance > 120;
-      if (ui.scrolledUp !== scrolledUp) ui.scrolledUp = scrolledUp;
-      if (
-        scroller.scrollTop < 80 &&
-        messages.loadOnScroll &&
-        !messages.olderExhausted &&
-        !messages.loadingOlder &&
-        messages.messages.length > 0
-      ) {
-        void messages.loadOlder(chats.selectedChat, true, scroller);
-      }
-      scheduleReadMarking();
-    });
+  /** The virtual list's scroll metrics: follow, page older, and mark read. */
+  function onScroll({ offset, distance }: { offset: number; distance: number; viewport: number }) {
+    const scrolledUp = !messages.atLatest || distance > 120;
+    if (ui.scrolledUp !== scrolledUp) ui.scrolledUp = scrolledUp;
+    if (
+      offset < 80 &&
+      messages.loadOnScroll &&
+      !messages.olderExhausted &&
+      !messages.loadingOlder &&
+      !messages.loadingNewer &&
+      messages.messages.length > 0
+    ) {
+      void messages.loadOlder(chats.selectedChat, true);
+    } else if (
+      distance < 80 &&
+      !messages.atLatest &&
+      !messages.loadingOlder &&
+      !messages.loadingNewer &&
+      messages.messages.length > 0
+    ) {
+      void messages.loadNewer(chats.selectedChat);
+    }
+    scheduleReadMarking();
   }
 
   /**
@@ -741,7 +700,7 @@
     if (!current() || chats.selectedChat !== chat) return;
     await tick();
     if (!current() || chats.selectedChat !== chat) return;
-    if (scroller?.querySelector(`[data-id="${id}"]`)) scrollToMessage(id);
+    if (messageList?.hasMessage(id)) scrollToMessage(id);
     else {
       ui.pendingJump = { chat, id };
       await loadAndJump();
@@ -771,7 +730,7 @@
       }
       for (let round = 0; round < 10 && current(); round++) {
         const before = messages.messages.at(-1)?.id;
-        await messages.recallDay(chat, scroller ?? null);
+        await messages.recallDay(chat);
         if (!current()) return;
         await messages.showStoredMessage(chat, id);
         if (!current()) return;
@@ -779,7 +738,7 @@
         if (!current()) return;
         const row = messages.messages.find((message) => message.id === id);
         if (row && keywords.hidden(row)) { ui.fail("This message is hidden by your keyword rules."); return; }
-        if (scroller?.querySelector(`[data-id="${id}"]`)) {
+        if (messageList?.hasMessage(id)) {
           scrollToMessage(id);
           return;
         }
@@ -949,6 +908,10 @@
     // Surface anything that escapes a handler, so a failure shows a message
     // rather than leaving the interface silently unresponsive.
     const onError = (event: ErrorEvent) => {
+      // virtua measures rows with ResizeObserver, and the browser reports the
+      // harmless loop warning as a window error. Ignore it, or every render
+      // paints an error banner over the interface.
+      if (event.message?.startsWith("ResizeObserver loop")) return;
       ui.fail(event.message || "Unexpected error");
     };
     const onRejection = (event: PromiseRejectionEvent) => {
@@ -1030,7 +993,8 @@
     // View callbacks the event dispatcher cannot own (scrolling, reconnecting).
     const host = {
       scrollToBottom,
-      getScroller: () => scroller ?? null,
+      anchor: () => messageList?.anchorId() ?? null,
+      reveal: (id: string) => { messageList?.revealMessage(id); },
       reconnect,
     };
 
@@ -1277,6 +1241,8 @@
           isGroup={selectedChat.endsWith("@g.us")}
           switching={ui.switching}
           bind:scroller
+          bind:this={messageList}
+          prepending={messages.prepending}
           {dayKey}
           {dayLabel}
           senderLabel={(m) => members.senderLabel(m)}
@@ -1319,10 +1285,6 @@
           autoplayId={messages.autoplayId}
           onceAudioOpenId={ui.onceOpen?.id ?? null}
           loadingOlder={messages.loadingOlder}
-          atLatest={messages.atLatest}
-          onloadolder={() => messages.loadOlder(chats.selectedChat, false, scroller ?? null)}
-          onloadnewer={() => messages.loadNewer(chats.selectedChat, scroller ?? null)}
-          onlatest={async () => { if (await messages.showLatest(chats.selectedChat)) scrollToBottom(); }}
           uploads={composer.outgoing.filter((o) => o.chat === selectedChat)}
           typers={members.typing[selectedChat] ?? []}
           typerLabelOf={(sender) => {

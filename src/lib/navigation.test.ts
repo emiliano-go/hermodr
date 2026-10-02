@@ -31,7 +31,7 @@ function fixture() {
   const bindings = { session, chats, messages, ui, keywords: { hidden: (row: { id: string }) => hidden.has(row.id) },
     openChat: async (chat: string) => { calls.push(`open:${chat}`); chats.selectedChat = chat; await hooks.open(); },
     tick: async () => { calls.push("tick"); await hooks.tick(); },
-    scroller: { querySelector: (selector: string) => visible.has(selector.match(/data-id="([^"]+)"/)![1]) ? {} : null },
+    messageList: { hasMessage: (id: string) => visible.has(id), revealMessage: () => true, anchorId: () => null },
     scrollToMessage: (id: string) => { calls.push(`scroll:${id}`); } };
   const controller = new Function(...Object.keys(bindings), compile(["jumpSeq", "jumpTo", "loadAndJump"].map(declaration).join("\n"))
     + "\nreturn {jumpTo, loadAndJump};")(...Object.values(bindings)) as { jumpTo: (chat: string, id: string) => Promise<void>; loadAndJump: () => Promise<void> };

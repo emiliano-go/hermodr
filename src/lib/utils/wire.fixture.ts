@@ -89,7 +89,7 @@ export const fixture = {
     "keep_history": true,
     "media_dir": null,
     "media_quality": "hd",
-    "message_window_size": 500,
+    "message_window_size": 150,
     "notifications_enabled": true,
     "request_full_history": false,
     "retention": {
