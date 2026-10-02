@@ -121,6 +121,8 @@ macro_rules! postal_commands {
             connection::connection_state,
             connection::boolean_props,
             connection::connect,
+            connection::request_pair_code,
+            connection::cancel_pair_code,
             accounts::accounts,
             accounts::add_account,
             accounts::switch_account,

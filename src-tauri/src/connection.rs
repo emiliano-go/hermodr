@@ -417,6 +417,9 @@ pub(crate) fn instance_sheet_event(event: &ServiceEvent) -> bool {
         || matches!(
             event,
             ServiceEvent::QrCode { .. }
+                | ServiceEvent::PairingCode { .. }
+                | ServiceEvent::PairingCodeRefresh { .. }
+                | ServiceEvent::PairingCodeError { .. }
                 | ServiceEvent::Connected
                 | ServiceEvent::Disconnected
                 | ServiceEvent::LoggedOut
@@ -655,6 +658,33 @@ fn forget_once_session(app: &AppHandle, account: &str, service: &Arc<WhatsAppSer
         account_base(app, account).join(SESSION_POINTER_ANDROID),
         format!("session-{}.db", now_millis()),
     );
+}
+
+/// Mints a phone-number pairing code for the main account or the Android
+/// companion. The code arrives as a `pairingCode` event; this only reports
+/// immediate failures.
+#[tauri::command(async)]
+pub(crate) async fn request_pair_code(state: State<'_, AppState>, phone: String, companion: bool) -> Result<(), String> {
+    let service = if companion {
+        state.once_service.lock().unwrap().clone().ok_or("the Android companion is not pairing")?
+    } else {
+        state.service()?
+    };
+    service.request_pair_code(&phone).await
+}
+
+/// Withdraws an outstanding pairing code so the QR (or a new code) takes over.
+#[tauri::command(async)]
+pub(crate) async fn cancel_pair_code(state: State<'_, AppState>, companion: bool) -> Result<(), String> {
+    let service = if companion {
+        state.once_service.lock().unwrap().clone()
+    } else {
+        state.service.lock().unwrap().clone()
+    };
+    if let Some(service) = service {
+        service.cancel_pair_code().await;
+    }
+    Ok(())
 }
 
 /// Connects the active account, pairing by QR the first time.

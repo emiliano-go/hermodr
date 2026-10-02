@@ -33,6 +33,8 @@ const COMMANDS: &[&str] = &[
     "once_state",
     "set_pairing",
     "connect",
+    "request_pair_code",
+    "cancel_pair_code",
     "accounts",
     "add_account",
     "switch_account",

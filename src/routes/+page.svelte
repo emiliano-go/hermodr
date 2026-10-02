@@ -1042,7 +1042,7 @@
       unlisten = await listen<ServiceEvent>("service-event", (event) =>
         dispatchServiceEvent(event.payload, host),
       );
-      unlistenOnce = await listen<ServiceEvent>("once-event", () => once.refresh());
+      unlistenOnce = await listen<ServiceEvent>("once-event", (event) => void once.noteEvent(event.payload));
 
       // Reuse a stored session automatically: pairing is only needed the very
       // first time, so the button should never be shown to a paired account.
@@ -1140,10 +1140,18 @@
     syncApplied={session.syncApplied}
     syncPercent={session.syncPercent}
     syncTimedOut={session.syncTimedOut}
+    pairCode={session.pairCode}
+    pairCodeExpiresAt={session.pairCodeExpiresAt}
+    pairCodeError={session.pairCodeError}
+    pairCodeManual={session.pairCodeManual}
+    pairCodeBusy={session.pairCodeBusy}
     onconnect={connect}
     onchoose={chooseAccount}
     onswitch={switchTo}
-    onsettings={() => openSettings("accounts")} />
+    onsettings={() => openSettings("accounts")}
+    onrequestpaircode={(phone) => void session.requestPairCode(phone)}
+    onrefreshpaircode={() => void session.refreshPairCode()}
+    oncancelpaircode={() => void session.cancelPairCode()} />
 {:else}
   <div class="layout" style="grid-template-columns: {layoutColumns}">
     <ChatSidebar

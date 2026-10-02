@@ -610,3 +610,30 @@ async fn history_chunks_replay_under_one_chat_after_late_mapping() {
     inbound.on_history_sync(&corrupt).await;
     assert_eq!(inbound.store.count().await.unwrap(), 3);
 }
+
+#[test]
+fn pair_code_failures_classify_for_the_ui() {
+    use whatsapp_rust::pair_code::PairCodeRejection;
+    use whatsapp_rust::types::events::PairingCodeError;
+
+    let class = |error: PairingCodeError| match super::connection::pairing_error_event(&error) {
+        ServiceEvent::PairingCodeError { throttled, unavailable, backoff_secs, .. } => {
+            (throttled, unavailable, backoff_secs)
+        }
+        other => panic!("expected a pair-code error event, got {other:?}"),
+    };
+    // bad-request doubles as the per-number throttle, so the UI must wait.
+    let throttle = PairingCodeError::builder()
+        .error("bad-request".into())
+        .rejection(PairCodeRejection::BadRequest)
+        .build();
+    assert_eq!(class(throttle), (true, false, None));
+    let disabled = PairingCodeError::builder()
+        .error("feature not available".into())
+        .rejection(PairCodeRejection::FeatureNotAvailable)
+        .build();
+    assert_eq!(class(disabled), (false, true, None));
+    // Local validation never reaches the server: nothing to wait for.
+    let local = PairingCodeError::builder().error("phone number too short".into()).build();
+    assert_eq!(class(local), (false, false, None));
+}

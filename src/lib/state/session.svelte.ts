@@ -42,6 +42,17 @@ export class SessionState {
   /** Set once an explicit connect starts, so a reload without one still reveals. */
   connectRequested = false;
 
+  /** Phone-number linking, an alternative to the QR shown beside it. */
+  pairCode = $state<string | null>(null);
+  pairCodeExpiresAt = $state<number | null>(null);
+  pairCodeError = $state<{ message: string; throttled: boolean; unavailable: boolean } | null>(null);
+  /** The server asked the user to request a fresh code explicitly. */
+  pairCodeManual = $state(false);
+  /** A code request is in flight. */
+  pairCodeBusy = $state(false);
+  /** The number the current code was minted for, so a refresh can reuse it. */
+  pairingPhone = $state<string | null>(null);
+
   /** Offline-backlog progress: how many the server announced and how many stored. */
   syncPending = $state(0);
   syncApplied = $state(0);
@@ -145,6 +156,46 @@ export class SessionState {
 
   async showQr(code: string | null) {
     this.qrSvg = code ? await invoke<string>("qr_svg", { value: code }) : null;
+  }
+
+  /** Asks WhatsApp to mint a phone-number pairing code for `phone` (E.164 digits). */
+  async requestPairCode(phone: string) {
+    this.pairingPhone = phone;
+    this.pairCode = null;
+    this.pairCodeExpiresAt = null;
+    this.pairCodeError = null;
+    this.pairCodeManual = false;
+    this.pairCodeBusy = true;
+    try {
+      await invoke("request_pair_code", { phone, companion: false });
+    } catch (e) {
+      this.pairCodeError = { message: String(e), throttled: false, unavailable: false };
+    } finally {
+      this.pairCodeBusy = false;
+    }
+  }
+
+  /** Mints another code for the same number, after a refresh or an expiry. */
+  async refreshPairCode() {
+    if (this.pairingPhone) await this.requestPairCode(this.pairingPhone);
+  }
+
+  /** Drops the outstanding code and falls back to the QR. */
+  async cancelPairCode() {
+    this.clearPairCode();
+    try {
+      await invoke("cancel_pair_code", { companion: false });
+    } catch {
+      // The QR flow is untouched either way.
+    }
+  }
+
+  clearPairCode() {
+    this.pairCode = null;
+    this.pairCodeExpiresAt = null;
+    this.pairCodeError = null;
+    this.pairCodeManual = false;
+    this.pairingPhone = null;
   }
 
   async loadAccounts() {

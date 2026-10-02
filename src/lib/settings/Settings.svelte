@@ -46,6 +46,7 @@
   import KeywordSettings from "$lib/settings/KeywordSettings.svelte";
   import NotificationHistory from "$lib/notifications/NotificationHistory.svelte";
   import ContactSharing from "$lib/contacts/ContactSharing.svelte";
+  import PhoneLink from "$lib/settings/PhoneLink.svelte";
   import { messages } from "$lib/state/messages.svelte";
   import { notificationHistory } from "$lib/notifications/history-store";
   import BlockedContacts from "$lib/settings/BlockedContacts.svelte";
@@ -216,6 +217,12 @@
     void settings.android_instance;
     if (section !== "device") return;
     void once.refresh();
+  });
+
+  /** The companion pairing card shows the QR unless phone-number linking is chosen. */
+  let oncePhoneMode = $state(false);
+  $effect(() => {
+    if (!once.pairing) oncePhoneMode = false;
   });
 
   const activeLabel = $derived(accounts.find((a) => a.id === active)?.label ?? "Not signed in");
@@ -902,12 +909,29 @@
                     In WhatsApp, open Settings → Linked devices → Link a device, then scan.
                   </span>
                 </div>
-                {#if once.qrSvg}
-                  <div class="qr">
-                    <div class="qr-code">
-                      {@html once.qrSvg}
+                {#if oncePhoneMode}
+                  <PhoneLink
+                    active
+                    code={once.pairCode}
+                    expiresAt={once.pairCodeExpiresAt}
+                    error={once.pairCodeError}
+                    busy={once.pairCodeBusy}
+                    manual={once.pairCodeManual}
+                    onrequest={(phone) => void once.requestPairCode(phone)}
+                    onrefresh={() => void once.refreshPairCode()}
+                    ondeactivate={() => {
+                      oncePhoneMode = false;
+                      void once.cancelPairCode();
+                    }} />
+                {:else}
+                  {#if once.qrSvg}
+                    <div class="qr">
+                      <div class="qr-code">
+                        {@html once.qrSvg}
+                      </div>
                     </div>
-                  </div>
+                  {/if}
+                  <PhoneLink onactivate={() => (oncePhoneMode = true)} />
                 {/if}
                 <button class="button" onclick={() => once.cancelPair()}>Cancel</button>
               </div>
