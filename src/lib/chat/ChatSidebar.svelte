@@ -166,12 +166,30 @@
   let preview = $state<{ chat: ChatSummary; x: number; y: number } | null>(null);
   let previewOwner: HTMLElement | null = null;
   let previewClose: ReturnType<typeof setTimeout> | undefined;
+  let previewDelay: ReturnType<typeof setTimeout> | undefined;
   let previewFocusFrame: number | undefined;
   let restoringPreviewFocus = false;
+
+  /** Hovering this long before the preview appears, so passing over the list does not open it. */
+  const PREVIEW_HOVER_DELAY = 3000;
 
   function cancelPreviewFocus() {
     if (previewFocusFrame !== undefined) cancelAnimationFrame(previewFocusFrame);
     previewFocusFrame = undefined;
+  }
+
+  /** Arms the hover delay: the row must stay under the pointer for three seconds. */
+  function schedulePreview(owner: HTMLElement, chat: ChatSummary) {
+    if (!chatPreview) return;
+    cancelPreviewFocus();
+    holdPreview();
+    clearTimeout(previewDelay);
+    previewDelay = setTimeout(() => {
+      previewDelay = undefined;
+      // The row may have moved out from under the pointer while waiting.
+      if (!owner.isConnected || !visibleChats.some((row) => row.chat === chat.chat)) return;
+      showPreview(owner, chat);
+    }, PREVIEW_HOVER_DELAY);
   }
 
   function showPreview(owner: HTMLElement, chat: ChatSummary) {
@@ -210,12 +228,16 @@
   function hidePreview() {
     cancelPreviewFocus();
     holdPreview();
+    clearTimeout(previewDelay);
+    previewDelay = undefined;
     preview = null;
     previewOwner = null;
   }
 
   function leavePreview() {
     holdPreview();
+    clearTimeout(previewDelay);
+    previewDelay = undefined;
     previewClose = setTimeout(() => {
       const overlay = document.getElementById("chat-preview");
       if (overlay?.matches(":hover") || overlay?.contains(document.activeElement) || previewOwner === document.activeElement) return;
@@ -463,7 +485,7 @@
           role="button"
           tabindex="0"
           aria-describedby={preview?.chat.chat === chat.chat ? "chat-preview" : undefined}
-          onpointerenter={(e) => showPreview(e.currentTarget, chat)}
+          onpointerenter={(e) => schedulePreview(e.currentTarget, chat)}
           onpointerleave={leavePreview}
           onfocus={(e) => focusPreview(e.currentTarget, chat)}
           onblur={leavePreview}
@@ -780,7 +802,8 @@
   onkeydown={(e) => {
     if (e.key === "Escape" && preview && !e.defaultPrevented) dismissPreview();
     if (e.key === "Escape" && chatMenu) closeChatMenu();
-  }} />
+  }}
+  onblur={hidePreview} />
 
 <style>
   .chat-label { max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 5px; border-radius: 6px; background: var(--raised); color: var(--muted); font-size: 10px; }
