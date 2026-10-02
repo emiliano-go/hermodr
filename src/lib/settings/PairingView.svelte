@@ -8,6 +8,7 @@
   import Spinner from "$lib/ui/Spinner.svelte";
   import type { Account } from "$lib/utils/models";
   import { displayName as phoneName } from "$lib/utils/phone";
+  import PhoneLink from "$lib/settings/PhoneLink.svelte";
 
   let {
     qrSvg,
@@ -24,10 +25,18 @@
     syncApplied,
     syncPercent,
     syncTimedOut,
+    pairCode = null,
+    pairCodeExpiresAt = null,
+    pairCodeError = null,
+    pairCodeManual = false,
+    pairCodeBusy = false,
     onconnect,
     onchoose,
     onswitch,
     onsettings,
+    onrequestpaircode = () => {},
+    onrefreshpaircode = () => {},
+    oncancelpaircode = () => {},
   }: {
     qrSvg: string | null;
     started: boolean;
@@ -43,11 +52,22 @@
     syncApplied: number;
     syncPercent: number;
     syncTimedOut: boolean;
+    pairCode?: string | null;
+    pairCodeExpiresAt?: number | null;
+    pairCodeError?: { message: string; throttled: boolean; unavailable: boolean } | null;
+    pairCodeManual?: boolean;
+    pairCodeBusy?: boolean;
     onconnect: () => void;
     onchoose: (id: string) => void;
     onswitch: (id: string) => void;
     onsettings: () => void;
+    onrequestpaircode?: (phone: string) => void;
+    onrefreshpaircode?: () => void;
+    oncancelpaircode?: () => void;
   } = $props();
+
+  /** The right card shows the QR unless the user chose phone-number linking. */
+  let phoneMode = $state(false);
 
   const stage = $derived(qrSvg ? 2 : started || connecting ? 1 : 0);
   // Only a completed link has a JID: the account being paired, one abandoned
@@ -203,12 +223,27 @@
     </section>
 
     <section class="intro-code">
-      {#if qrSvg}
+      {#if phoneMode}
+        <PhoneLink
+          active
+          code={pairCode}
+          expiresAt={pairCodeExpiresAt}
+          error={pairCodeError}
+          busy={pairCodeBusy}
+          manual={pairCodeManual}
+          onrequest={onrequestpaircode}
+          onrefresh={onrefreshpaircode}
+          ondeactivate={() => {
+            phoneMode = false;
+            oncancelpaircode();
+          }} />
+      {:else if qrSvg}
         <div class="qr" aria-label="Pairing QR code">
           {@html qrSvg}
           <span class="qr-logo"><Logo size={44} /></span>
         </div>
         <p class="hint">The code refreshes by itself. Keep this window open while you scan.</p>
+        <PhoneLink onactivate={() => (phoneMode = true)} />
       {:else if started || connecting}
         <div class="qr qr-loading" aria-label="Preparing a pairing code"><Spinner /></div>
         <p class="hint">Getting a pairing code from WhatsApp…</p>

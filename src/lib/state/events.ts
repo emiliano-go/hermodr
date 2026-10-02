@@ -244,8 +244,35 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
     case "qrCode":
       await session.showQr(payload.code);
       break;
+    case "pairingCode":
+      session.pairCode = payload.code;
+      session.pairCodeExpiresAt = Date.now() + payload.timeout_secs * 1000;
+      session.pairCodeError = null;
+      session.pairCodeManual = false;
+      break;
+    case "pairingCodeRefresh":
+      // The server cleared the flow, so a replacement can be minted right away.
+      if (payload.force_manual) {
+        session.pairCode = null;
+        session.pairCodeExpiresAt = null;
+        session.pairCodeManual = true;
+      } else {
+        void session.refreshPairCode();
+      }
+      break;
+    case "pairingCodeError":
+      session.pairCode = null;
+      session.pairCodeExpiresAt = null;
+      session.pairCodeManual = false;
+      session.pairCodeError = {
+        message: payload.message,
+        throttled: payload.throttled,
+        unavailable: payload.unavailable,
+      };
+      break;
     case "connected":
       session.connected = true;
+      session.clearPairCode();
       void favorites.refresh();
       // A code was on screen, so this is a fresh link: the phone's history sync starts now.
       if (session.qrSvg) session.historyPercent = 0;
@@ -260,6 +287,8 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       break;
     case "disconnected":
       session.connected = false;
+      // A dropped connection spends any code in flight.
+      session.clearPairCode();
       break;
     case "uploadProgress":
       composer.noteUploadProgress(payload.token, payload.sent, payload.total);
