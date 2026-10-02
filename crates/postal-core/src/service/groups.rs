@@ -1,6 +1,7 @@
 //! Groups and communities: names, members, invites and admin tools.
 
 use super::*;
+use crate::store::group_audit::GroupAuditKind as AuditKind;
 use whatsapp_rust::wacore::iq::groups::ParticipantChangeResponse;
 use whatsapp_rust::wacore::types::wire_enums::MemberAddMode;
 
@@ -117,6 +118,7 @@ impl WhatsAppService {
             can_send: !metadata.is_parent_group && (!metadata.is_announcement || admin),
             members_can_add: metadata.member_add_mode == Some(MemberAddMode::AllMemberAdd),
         };
+        self.record_group_profile_snapshot(chat, &info).await.logged();
         self.group_cache.lock().unwrap().insert(chat.to_string(), info.clone());
         Ok(info)
     }
@@ -312,12 +314,14 @@ impl WhatsAppService {
     pub async fn add_group_participants(&self, chat: &str, jids: &[String]) -> Result<Vec<ParticipantChange>> {
         let group: Jid = chat.parse()?;
         let participants = parse_jids(jids)?;
+        let previous = self.group_cache.lock().unwrap().get(chat).cloned();
         let results = self
             .client
             .groups()
             .add_participants(&group, &participants)
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        self.audit_participant_changes(chat, &results, AuditKind::Join, previous.as_ref()).await;
         self.after_group_change(chat);
         Ok(results.iter().map(change_of).collect())
     }
@@ -328,13 +332,15 @@ impl WhatsAppService {
         let group: Jid = chat.parse()?;
         let participants = parse_jids(jids)?;
         let groups = self.client.groups();
-        let linked = self.group_info(chat).await.is_ok_and(|info| info.community);
+        let previous = self.group_info(chat).await.ok();
+        let linked = previous.as_ref().is_some_and(|info| info.community);
         let results = if linked {
             groups.remove_participants_including_linked_groups(&group, &participants).await
         } else {
             groups.remove_participants(&group, &participants).await
         }
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        self.audit_participant_changes(chat, &results, AuditKind::Remove, previous.as_ref()).await;
         self.after_group_change(chat);
         Ok(results.iter().map(change_of).collect())
     }
@@ -343,12 +349,14 @@ impl WhatsAppService {
     pub async fn promote_group_participants(&self, chat: &str, jids: &[String]) -> Result<Vec<ParticipantChange>> {
         let group: Jid = chat.parse()?;
         let participants = parse_jids(jids)?;
+        let previous = self.group_cache.lock().unwrap().get(chat).cloned();
         let results = self
             .client
             .groups()
             .promote_participants(&group, &participants)
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        self.audit_participant_changes(chat, &results, AuditKind::Promote, previous.as_ref()).await;
         self.after_group_change(chat);
         Ok(results.iter().map(change_of).collect())
     }
@@ -357,12 +365,14 @@ impl WhatsAppService {
     pub async fn demote_group_participants(&self, chat: &str, jids: &[String]) -> Result<Vec<ParticipantChange>> {
         let group: Jid = chat.parse()?;
         let participants = parse_jids(jids)?;
+        let previous = self.group_cache.lock().unwrap().get(chat).cloned();
         let results = self
             .client
             .groups()
             .demote_participants(&group, &participants)
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        self.audit_participant_changes(chat, &results, AuditKind::Demote, previous.as_ref()).await;
         self.after_group_change(chat);
         Ok(results.iter().map(change_of).collect())
     }
@@ -376,6 +386,8 @@ impl WhatsAppService {
             .set_member_add_mode(&group, mode)
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        self.audit_local_group_change(chat, AuditKind::MemberAddMode, None, None, None, None,
+            Some(if allow { "all_member_add" } else { "admin_add" })).await.logged();
         self.after_group_change(chat);
         Ok(())
     }
@@ -385,6 +397,24 @@ impl WhatsAppService {
     pub(super) fn after_group_change(&self, chat: &str) {
         self.group_cache.lock().unwrap().remove(chat);
         let _ = self.events.send(ServiceEvent::GroupChanged { chat: chat.to_string() });
+    }
+
+    async fn audit_participant_changes(&self, chat: &str, results: &[ParticipantChangeResponse], kind: AuditKind, previous: Option<&GroupInfo>) {
+        for result in results {
+            let change = change_of(result);
+            if !change.ok || change.pending { continue; }
+            let (old, new) = {
+                let member = previous.and_then(|group| group.participants.iter().find(|member| member.jid == change.jid));
+                match kind {
+                    AuditKind::Join => (member.map(|_| "present"), "present"),
+                    AuditKind::Remove => (member.map(|_| "present"), "absent"),
+                    AuditKind::Promote | AuditKind::Demote => (member.map(|member| if member.owner { "owner" } else if member.admin { "admin" } else { "member" }),
+                        if kind == AuditKind::Promote { "admin" } else { "member" }),
+                    _ => continue,
+                }
+            };
+            self.audit_local_group_change(chat, kind, Some(&change.jid), None, None, old, Some(new)).await.logged();
+        }
     }
 
     /// A group invite link's group, without joining it.
@@ -528,6 +558,9 @@ impl WhatsAppService {
     /// Sets our own tag in a group; empty clears it.
     pub async fn set_member_label(&self, chat: &str, label: &str) -> Result<()> {
         let jid: Jid = chat.parse()?;
+        let own_jid = self.client.pn().or_else(|| self.client.lid()).map(|jid| jid.to_non_ad().to_string());
+        let old = self.group_cache.lock().unwrap().get(chat).and_then(|group| own_jid.as_ref()
+            .and_then(|own| group.participants.iter().find(|member| &member.jid == own))).and_then(|member| member.label.clone());
         self.client
             .groups()
             .update_member_label(jid, label)
@@ -543,6 +576,8 @@ impl WhatsAppService {
                 p.label = (!label.is_empty()).then(|| label.to_string());
             }
         }
+        self.audit_local_group_change(chat, AuditKind::MemberTag, own_jid.as_deref(), None, None,
+            old.as_deref(), Some(label)).await.logged();
         Ok(())
     }
 }

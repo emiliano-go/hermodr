@@ -15,6 +15,9 @@
   import NotificationSoundOverride from "$lib/settings/NotificationSoundOverride.svelte";
   import GroupInviteLinks from "$lib/chat/GroupInviteLinks.svelte";
   import GroupSettings from "$lib/chat/GroupSettings.svelte";
+  import GroupAudit from "$lib/chat/GroupAudit.svelte";
+  import type { AuditFilters, AuditPage, AuditScope } from "$lib/utils/group-audit";
+  import type { GroupAuditCursor } from "$lib/utils/wire";
   import { session } from "$lib/state/session.svelte";
   import ConfirmDialog from "$lib/ui/ConfirmDialog.svelte";
   import { changeText } from "$lib/utils/group-actions";
@@ -55,6 +58,8 @@
     ondemote,
     onmembersadd,
     onjump,
+    onloadAudit,
+    auditRevision = 0,
     onclose,
   }: {
     jid: string;
@@ -100,6 +105,8 @@
     onmembersadd: (allow: boolean) => Promise<void>;
     /** Shows a reported message in the conversation. */
     onjump: (id: string) => void;
+    onloadAudit?: (scope: AuditScope, filters: AuditFilters, cursor: GroupAuditCursor | null) => Promise<AuditPage>;
+    auditRevision?: number;
     onclose: () => void;
   } = $props();
 
@@ -127,12 +134,13 @@
     }
   }
 
-  type Section = "overview" | "settings" | "members" | "reports" | "requests";
+  type Section = "overview" | "settings" | "members" | "reports" | "requests" | "audit";
   let section = $state<Section>("overview");
   let settingsBusy = $state(false);
   const nav = $derived<{ id: Section; label: string; group: string }[]>([
     { id: "overview", label: "Overview", group: title },
     { id: "settings", label: "Settings", group: title },
+    ...(onloadAudit ? [{ id: "audit" as Section, label: "Audit log", group: title }] : []),
     {
       id: "members",
       label: info ? `Members (${info.participants.length})` : "Members",
@@ -296,7 +304,11 @@
   {#if section === "overview" && session.activeAccount && inviteAdmin === inviteOwner}
     <div class="setting stack"><GroupInviteLinks chat={jid} canReset onload={oninviteload} onreset={oninvitereset} /></div>
   {/if}
-  {#if section === "settings" && account}
+  {#if section === "audit" && onloadAudit}
+    <GroupAudit {account} group={jid} requestKey={auditRevision} onload={onloadAudit}
+      onjump={(_group, id) => onjump(id)} namer={(jid) => namer(null, jid)}
+      formatTime={(at) => new Date(at * 1000).toLocaleString()} />
+  {:else if section === "settings" && account}
     <h2>Group settings</h2>
     {#key JSON.stringify([account, jid])}
       <GroupSettings chat={jid} {account} onload={onsettingsload} onchange={onsettingchange} onpicture={onpicturechange}
@@ -524,7 +536,8 @@
             {@render avatar(member.jid, member.display, 38)}
             <span class="member-text">
               <span class="member-name">
-                <span class="member-display">{member.display}</span>
+                <button class="member-display" onclick={(event) => onprofile(member.jid, member.display, event)}
+                  aria-label="Open member sheet for {member.display}">{member.display}</button>
                 {#if member.isSelf}<span class="you">You</span>{/if}
               </span>
               {#if member.label}
@@ -836,6 +849,13 @@
     font-weight: 500;
   }
   .member-display {
+    border: 0;
+    padding: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

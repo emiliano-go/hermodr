@@ -43,6 +43,9 @@ pub fn wire_types() -> String {
         crate::notifications::DesktopChatTarget,
         crate::desktop::DesktopStatus,
         postal_core::service::ContactSendResult,
+        postal_core::store::group_audit::GroupAuditPage,
+        postal_core::store::group_audit::GroupAuditFilter,
+        postal_core::MemberProfile,
     );
     format!("// Generated from Rust Serde DTOs. Run pnpm generate:wire.\n{}", types.declarations.values().cloned().collect::<String>())
 }

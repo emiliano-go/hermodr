@@ -307,6 +307,7 @@ impl Inbound {
         let answered = request_session.and_then(|session| self.older_waits.lock().unwrap().resolve(session));
         let mut chats = Vec::new();
         let mut added_chats = 0;
+        let mut audit_chats = std::collections::HashSet::new();
         let mut names_learned;
         {
             let store = &batch_guard;
@@ -317,10 +318,11 @@ impl Inbound {
             // the picker shows them without a resync.
             self.seed_recent_stickers(&history.recent_stickers).await;
             for conversation in &history.conversations {
-                let (chat, learned) = self
+                let (chat, learned, audited) = self
                     .apply_history_conversation(store, conversation, client.as_ref(), own.as_deref(), requested.as_deref(), request_session)
                     .await;
                 names_learned += learned;
+                if let Some(chat) = audited { audit_chats.insert(chat); }
                 if let Some(chat) = chat {
                     added_chats += 1;
                     chats.push(chat);
@@ -345,7 +347,9 @@ impl Inbound {
         if let Some(percent) = sync.progress().filter(|_| sync.sync_type() != 6) {
             let _ = self.events.send(ServiceEvent::HistoryProgress { percent });
         }
-        batch_guard.finish().await.logged();
+        if batch_guard.finish().await.observed().is_some() {
+            for chat in audit_chats { let _ = self.events.send(ServiceEvent::GroupAuditChanged { chat }); }
+        }
     }
 
     /// Push names and LID/PN mappings the sync carries, as learned names.
@@ -383,14 +387,14 @@ impl Inbound {
         own: Option<&str>,
         requested: Option<&str>,
         request_session: Option<&str>,
-    ) -> (Option<String>, usize) {
+    ) -> (Option<String>, usize, Option<String>) {
         if conversation.id == "status@broadcast" {
-            return (None, 0);
+            return (None, 0, None);
         }
         let mut names_learned = self
             .pair_history_addresses(store, conversation.lid_jid.as_deref(), conversation.pn_jid.as_deref())
             .await;
-        let Some(jid) = conversation.id.parse::<Jid>().observed() else { return (None, 0) };
+        let Some(jid) = conversation.id.parse::<Jid>().observed() else { return (None, 0, None) };
         // The sync holds the store's write lease; the conversation's own LID/PN
         // pair was just recorded, so the chat resolves from the store alone.
         let chat = resolve_chat(None, store, &jid).await;
@@ -402,10 +406,11 @@ impl Inbound {
             resolve_chat(None, store, &requested).await == chat
         } else { false };
         let mut added = false;
+        let mut audited = false;
         let mut floor = None::<i64>;
         for entry in &conversation.messages {
             let (row_added, learned) =
-                self.apply_history_message(store, &chat, entry, client.map(|c| c.as_ref()), own).await;
+                self.apply_history_message(store, &chat, entry, client.map(|c| c.as_ref()), own, &mut audited).await;
             added |= row_added;
             names_learned += learned;
             let timestamp = if row_added {
@@ -430,7 +435,7 @@ impl Inbound {
                 }).await.logged();
             }
         }
-        (added.then_some(chat), names_learned)
+        (added.then(|| chat.clone()), names_learned, audited.then_some(chat))
     }
 
     /// Names a conversation from its display name (a contact) or subject (a
@@ -465,9 +470,18 @@ impl Inbound {
         entry: &wa::HistorySyncMsg,
         client: Option<&Client>,
         own: Option<&str>,
+        audited: &mut bool,
     ) -> (bool, usize) {
         let Some(web) = entry.message.as_option() else { return (false, 0) };
-        self.apply_history_pin(store, chat, web).await;
+        let pin = history_pins::history_message_pin(web).ok().flatten();
+        let target = pin.as_ref().map(|pin| pin.target.clone()).or_else(||
+            web.message.as_option().and_then(|message| group_audit::audit_message_target(message, chat)));
+        let previous = if chat.ends_with("@g.us") {
+            match target.as_deref() { Some(target) => store.message(chat, target).await.observed(), None => None }
+        } else { None };
+        if self.apply_history_pin(store, chat, web).await {
+            *audited |= group_audit::audit_group_history_message(store, chat, web, previous.as_ref()).await.observed() == Some(true);
+        }
         let Some(key) = web.key.as_option() else { return (false, 0) };
         if let Some(stub) = web.message_stub_type {
             if stub == wa::web_message_info::StubType::CIPHERTEXT {
@@ -493,7 +507,12 @@ impl Inbound {
                     .observed()
                     .unwrap_or(false);
             if !seen && store.insert_message(&stored).await.observed().is_some() {
+                member_profiles::record_member_history_context(store, &stored, web).await.logged();
+                *audited |= group_audit::audit_group_notice(store, &stored, crate::store::group_audit::GroupAuditSource::History).await.observed() == Some(true);
                 return (true, 0);
+            }
+            if seen {
+                *audited |= group_audit::audit_group_notice(store, &stored, crate::store::group_audit::GroupAuditSource::History).await.observed() == Some(true);
             }
             return (false, 0);
         }
@@ -523,7 +542,10 @@ impl Inbound {
             return (false, learned);
         }
         if let Some(target) = revoke_target(message) {
-            store.revoke_message(chat, &target).await.logged();
+            let previous = store.message(chat, &target).await.observed();
+            if store.revoke_message(chat, &target).await.observed().is_some() {
+                *audited |= group_audit::audit_group_history_message(store, chat, web, previous.as_ref()).await.observed() == Some(true);
+            }
             self.retire_unavailable(store, chat, &target).await;
             self.retire_unavailable(store, chat, &id).await;
             return (false, learned);
@@ -553,7 +575,14 @@ impl Inbound {
         };
         stored.local.read = true;
         match store.insert_history_row(&stored).await {
-            Ok(Some(_)) => {
+            Ok(Some(accepted)) => {
+                member_profiles::record_member_history_context(store, &accepted, web).await.logged();
+                if accepted.system.kind.is_some() {
+                    *audited |= group_audit::audit_group_notice(store, &accepted, crate::store::group_audit::GroupAuditSource::History).await.observed() == Some(true);
+                }
+                if target.is_some() || member_label_change(message).is_some() {
+                    *audited |= group_audit::audit_group_history_message(store, chat, web, previous.as_ref()).await.observed() == Some(true);
+                }
                 if decoded_message(&message).view_once {
                     store.set_view_once(chat, &stored.header.id, stored.header.from_me).await.logged();
                 }

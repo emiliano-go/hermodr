@@ -76,6 +76,21 @@ test("coalesced authorization deduplicates simultaneous responses and bounds nat
   assert.equal(rows[1024].media_path, "/media/1024.png");
 });
 
+test("member profiles authorize only the returned native photo", async () => {
+  const calls: string[][] = [];
+  const prepare = createMediaAssetPreparer(async (paths) => { calls.push(paths); return {}; });
+  const profile = { local: { note: { text: "/private/notes" } }, live: {
+    photo: { value: "/media/avatar.jpg" }, about: { value: "/private/about" },
+    business: { value: { address: "/private/address" } },
+  } };
+  assert.equal(await prepare("user_profile", profile), profile);
+  assert.deepEqual(calls, [["/media/avatar.jpg"]]);
+  assert.equal(profile.live.photo.value, null);
+  assert.equal(profile.local.note.text, "/private/notes");
+  assert.equal(profile.live.about.value, "/private/about");
+  assert.equal(profile.live.business.value.address, "/private/address");
+});
+
 test("missing, malformed and failed grants close media paths without failing messages or caching rejections", async () => {
   let failed = true;
   const prepare = createMediaAssetPreparer(async () => {

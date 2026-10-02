@@ -43,6 +43,7 @@ export class ChatsState {
   >({});
 
   showGroupInfo = $state(false);
+  auditRevision = $state(0);
   groupInfo = $state<GroupInfo | null>(null);
   groupInfoError = $state<string | null>(null);
 

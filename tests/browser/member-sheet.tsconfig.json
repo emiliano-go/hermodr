@@ -1,0 +1,6 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": { "types": ["node"] },
+  "include": ["../../src/lib/contacts/MemberSheet.svelte", "../../src/lib/chat/GroupAudit.svelte", "../../src/lib/utils/member-sheet.ts", "../../src/lib/utils/group-audit.ts", "../../src/lib/member-sheet.test.ts", "../../src/lib/group-audit.test.ts", "../../src/lib/member-audit-actions.test.ts", "./MemberAuditHarness.svelte"],
+  "exclude": []
+}

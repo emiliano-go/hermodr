@@ -87,8 +87,9 @@ pub(crate) async fn remove_group_participants(
     state: State<'_, AppState>,
     chat: String,
     jids: Vec<String>,
+    account: Option<String>,
 ) -> Result<Vec<postal_core::ParticipantChange>, String> {
-    let service = state.service()?;
+    let service = member_action_service(&state, account.as_deref(), &chat, &jids, "remove").await?;
     service
         .remove_group_participants(&chat, &jids)
         .await
@@ -101,8 +102,9 @@ pub(crate) async fn promote_group_participants(
     state: State<'_, AppState>,
     chat: String,
     jids: Vec<String>,
+    account: Option<String>,
 ) -> Result<Vec<postal_core::ParticipantChange>, String> {
-    let service = state.service()?;
+    let service = member_action_service(&state, account.as_deref(), &chat, &jids, "promote").await?;
     service
         .promote_group_participants(&chat, &jids)
         .await
@@ -115,12 +117,28 @@ pub(crate) async fn demote_group_participants(
     state: State<'_, AppState>,
     chat: String,
     jids: Vec<String>,
+    account: Option<String>,
 ) -> Result<Vec<postal_core::ParticipantChange>, String> {
-    let service = state.service()?;
+    let service = member_action_service(&state, account.as_deref(), &chat, &jids, "demote").await?;
     service
         .demote_group_participants(&chat, &jids)
         .await
         .map_err(|e| command_error(&service, e))
+}
+
+async fn member_action_service(state: &AppState, account: Option<&str>, chat: &str, jids: &[String], action: &str)
+    -> Result<std::sync::Arc<postal_core::WhatsAppService>, String> {
+    let service = match account { Some(account) => state.account_service(account)?, None => state.service()? };
+    if let Some(account) = account {
+        for jid in jids {
+            service.member_moderation_preflight(chat, jid, action, || {
+                anyhow::ensure!(state.account_service(account).is_ok_and(|current| std::sync::Arc::ptr_eq(&service, &current)),
+                    "account changed before member action");
+                Ok(())
+            }).await.map_err(|error| command_error(&service, error))?;
+        }
+    }
+    Ok(service)
 }
 
 /// Sets whether members, or only admins, may add people.

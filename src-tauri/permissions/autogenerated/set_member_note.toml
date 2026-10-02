@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-member-note"
+description = "Enables the set_member_note command without any pre-configured scope."
+commands.allow = ["set_member_note"]
+
+[[permission]]
+identifier = "deny-set-member-note"
+description = "Denies the set_member_note command without any pre-configured scope."
+commands.deny = ["set_member_note"]

@@ -380,6 +380,8 @@ pub(super) const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
     super::chat_unarchive::migrate,
     super::retention::migrate_history_floor,
     super::labels::migrate,
+    super::group_audit::migrate,
+    super::member_profiles::migrate,
 ];
 
 pub(super) fn migrate(conn: &Connection) -> Result<()> {

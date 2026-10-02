@@ -56,17 +56,19 @@ pub(super) fn live_message_pin(message: &wa::Message, fallback_timestamp: i64) -
 }
 
 impl Inbound {
-    pub(super) async fn apply_history_pin(&self, store: &StoreWorker, chat: &str, web: &wa::WebMessageInfo) {
+    pub(super) async fn apply_history_pin(&self, store: &StoreWorker, chat: &str, web: &wa::WebMessageInfo) -> bool {
         match history_message_pin(web) {
             Ok(Some(pin)) => {
                 let chat = chat.to_owned();
                 let event_chat = chat.clone();
-                if store.run(move |store| store.apply_message_pin_update(&chat, &pin, true)).await.observed() == Some(true) {
+                let changed = store.run(move |store| store.apply_message_pin_update(&chat, &pin, true)).await.observed();
+                if changed == Some(true) {
                     let _ = self.events.send(ServiceEvent::Marks { chat: event_chat });
                 }
+                changed.is_some()
             }
-            Ok(None) => {}
-            Err(error) => log::warn!("history message pin skipped: {error}"),
+            Ok(None) => false,
+            Err(error) => { log::warn!("history message pin skipped: {error}"); false },
         }
     }
 }

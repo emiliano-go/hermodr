@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::group_audit::GroupAuditKind as AuditKind;
 use std::collections::HashSet;
 use whatsapp_rust::wacore::iq::groups::{
     GroupCreateOptions, GroupMetadataOutcome, GroupParticipantOptions, GroupQueryIq, GroupSubject,
@@ -84,6 +85,7 @@ impl WhatsAppService {
             result.warnings.push(format!("Group created on WhatsApp, but could not be saved locally: {error}"));
         }
         self.after_group_change(&result.jid);
+        self.audit_local_group_change(&result.jid, AuditKind::Create, None, None, None, None, Some(&result.subject)).await.logged();
         if let Err(error) = current() {
             result.warnings.push(format!("Group created; participant membership was not verified: {error}"));
             return Ok(result);

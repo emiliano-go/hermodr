@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::group_audit::GroupAuditKind as AuditKind;
 use whatsapp_rust::wacore::iq::groups::{GroupMetadataOutcome, GroupQueryIq};
 
 impl WhatsAppService {
@@ -19,7 +20,10 @@ impl WhatsAppService {
         current()?;
         let link = response.map_err(|error| anyhow::anyhow!(error.to_string()))?;
         validate_link(&link)?;
-        if reset { self.after_group_change(chat); }
+        if reset {
+            self.audit_local_group_change(chat, AuditKind::InviteChange, None, None, None, None, None).await.logged();
+            self.after_group_change(chat);
+        }
         Ok(link)
     }
 

@@ -2,6 +2,7 @@
 //! protocol messages into stored rows.
 
 use super::*;
+use crate::store::group_audit::GroupAuditKind as AuditKind;
 
 impl WhatsAppService {
     /// Sends a text message to a chat.
@@ -98,11 +99,15 @@ impl WhatsAppService {
         if !existing.header.from_me {
             anyhow::bail!("only your own messages can be edited");
         }
-        self.client
+        let sent = self.client
             .edit_message(to, id, wa::Message::text(text.clone()))
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         self.store.update_message_content(chat, id, &text).await?;
+        if group_audit::audit_message_allowed(&existing) {
+            self.audit_local_group_change(chat, AuditKind::MessageEdit, Some(&existing.header.sender),
+                Some(id), Some(&sent.message_id), None, None).await.logged();
+        }
         if let Some(updated) = self.store.message(chat, id).await.observed() {
             // Status-only: the row refetches, without following or marking read.
             let _ = self.events.send(ServiceEvent::hint(&updated, false));
@@ -235,6 +240,7 @@ impl WhatsAppService {
     pub async fn clear_chat(&self, chat: &str) -> Result<usize> {
         self.cancel_older_requests(Some(chat)).await?;
         let removed = self.store.clear_chat(chat).await?;
+        if chat.ends_with("@g.us") { let _ = self.events.send(ServiceEvent::GroupAuditChanged { chat: chat.into() }); }
         self.prune_quote_files().await?;
         Ok(removed)
     }
@@ -244,6 +250,7 @@ impl WhatsAppService {
     pub async fn delete_chat(&self, chat: &str) -> Result<usize> {
         self.cancel_older_requests(Some(chat)).await?;
         let removed = self.store.delete_chat(chat).await?;
+        if chat.ends_with("@g.us") { let _ = self.events.send(ServiceEvent::GroupAuditChanged { chat: chat.into() }); }
         self.prune_quote_files().await?;
         Ok(removed)
     }
@@ -300,6 +307,7 @@ impl WhatsAppService {
         use whatsapp_rust::send::PinDuration;
         let jid: Jid = chat.parse()?;
         let key = Self::message_key(chat, id, sender, from_me);
+        let previous = if jid.is_group() { self.store.message(chat, id).await.observed() } else { None };
         let sent = if pinned {
             self.client.pin_message(jid, key, PinDuration::Days7).await
         } else {
@@ -310,6 +318,10 @@ impl WhatsAppService {
             .ok_or_else(|| anyhow::anyhow!("pin confirmation contains no target"))?;
         let chat_key = chat.to_owned();
         self.store.run(move |store| store.apply_message_pin_update(&chat_key, &pin, false)).await?;
+        if previous.as_ref().is_some_and(group_audit::audit_message_allowed) {
+            self.audit_local_group_change(chat, if pinned { AuditKind::MessagePin } else { AuditKind::MessageUnpin },
+                Some(sender), Some(id), Some(&sent.message_id), None, Some(if pinned { "true" } else { "false" })).await.logged();
+        }
         let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
         Ok(())
     }
@@ -329,16 +341,23 @@ impl WhatsAppService {
     async fn revoke_for_everyone(&self, chat: &str, id: &str, sender: &str, from_me: bool) -> Result<()> {
         use whatsapp_rust::send::RevokeType;
         let jid: Jid = chat.parse()?;
+        let previous = if jid.is_group() { self.store.message(chat, id).await.observed() } else { None };
         let kind = if from_me {
             RevokeType::Sender
         } else {
             RevokeType::Admin { original_sender: sender.parse::<Jid>()?.to_non_ad() }
         };
-        self.client
+        let sent = self.client
             .revoke_message(jid, id, kind)
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        self.store.revoke_message(chat, id).await.map(|_| ())
+        self.store.revoke_message(chat, id).await?;
+        if let Some(previous) = previous.filter(group_audit::audit_message_allowed) {
+            let old = if previous.local.revoked { "revoked" } else { "not_revoked" };
+            self.audit_local_group_change(chat, AuditKind::MessageDelete, Some(sender), Some(id),
+                Some(&sent.message_id), Some(old), Some("revoked")).await.logged();
+        }
+        Ok(())
     }
 
     /// Deletes a message on this device only: the row is kept and flagged, so

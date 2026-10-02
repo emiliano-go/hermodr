@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::group_audit::GroupAuditKind as AuditKind;
 use serde::{Deserialize, Serialize};
 use whatsapp_rust::wacore::iq::groups::{GroupDescription, GroupMetadataOutcome, GroupQueryIq, GroupSubject, MembershipApprovalMode};
 
@@ -78,7 +79,15 @@ impl WhatsAppService {
         current()?;
         response.map_err(|error| anyhow::anyhow!(error.to_string()))?;
         let chat = group.to_string();
+        let (kind, old, new) = match &change {
+            GroupSettingChange::Subject { text } => (AuditKind::Subject, settings.subject.clone(), text.clone()),
+            GroupSettingChange::Description { text, .. } => (AuditKind::Description, settings.description.clone(), text.clone().unwrap_or_default()),
+            GroupSettingChange::Announce { enabled } => (AuditKind::Announce, Some(settings.announce.to_string()), enabled.to_string()),
+            GroupSettingChange::Locked { enabled } => (AuditKind::Locked, Some(settings.locked.to_string()), enabled.to_string()),
+            GroupSettingChange::Approval { enabled } => (AuditKind::JoinApproval, Some(settings.approval.to_string()), enabled.to_string()),
+        };
         if let Some(subject) = subject { self.store.set_name(&chat, subject.as_str()).await.logged(); }
+        self.audit_local_group_change(&chat, kind, None, None, None, old.as_deref(), Some(&new)).await.logged();
         self.after_group_change(&chat);
         Ok(())
     }
@@ -87,6 +96,7 @@ impl WhatsAppService {
         current()?;
         let group = settings_group(chat)?;
         let picture = tokio::task::spawn_blocking(move || picture_value(&bytes)).await??;
+        let removed = picture.is_none();
         let settings = self.read_group_settings(&group).await?;
         anyhow::ensure!(settings.member && settings.admin, "only group admins can change the picture");
         current()?;
@@ -95,6 +105,8 @@ impl WhatsAppService {
         current()?;
         response.map_err(|error| anyhow::anyhow!(error.to_string()))?;
         let jid = group.to_string();
+        self.audit_local_group_change(&jid, AuditKind::Picture, None, None, None, None,
+            Some(if removed { "removed" } else { "set" })).await.logged();
         invalidate_avatar_cache(self.media_dir.as_deref(), &jid);
         let _ = self.events.send(ServiceEvent::AvatarChanged { jid });
         Ok(())

@@ -77,6 +77,7 @@ struct BatchCtx<'a> {
     own: Vec<String>,
     media_dir: Option<PathBuf>,
     touched: Vec<String>,
+    audit_chats: std::collections::HashSet<String>,
     /// The batch arrived live rather than from the offline drain, so an
     /// arrival goes out with its full row instead of a hint.
     live: bool,
@@ -266,16 +267,15 @@ impl Inbound {
             (ChatPresence::Composing, _) => "typing",
             _ => "paused",
         };
+        let chat = canonical_chat(self.client_for_events.get().map(|client| client.as_ref()), &self.store,
+            &update.source.chat, &update.source.sender, None).await;
+        let sender = update.source.sender.to_non_ad();
+        if sender.is_pn() || sender.is_lid() {
+            self.store.record_member_signal(&sender.to_string(), Some(&chat), None, None, Some(state), unix_now()).await.logged();
+        }
         let _ = self.events.send(ServiceEvent::Typing {
-            chat: canonical_chat(
-                self.client_for_events.get().map(|c| c.as_ref()),
-                &self.store,
-                &update.source.chat,
-                &update.source.sender,
-                None,
-            )
-            .await,
-            sender: update.source.sender.to_non_ad().to_string(),
+            chat,
+            sender: sender.to_string(),
             state: state.to_string(),
         });
     }
@@ -289,6 +289,10 @@ impl Inbound {
                     jid = Jid::new(&*entry.phone_number, whatsapp_rust::wacore_binary::Server::Pn);
                 }
             }
+        }
+        if jid.is_pn() || jid.is_lid() {
+            self.store.record_member_signal(&jid.to_string(), None, Some(!presence.unavailable),
+                presence.last_seen.map(|timestamp| timestamp.timestamp()), None, unix_now()).await.logged();
         }
         let _ = self.events.send(ServiceEvent::Presence {
             jid: jid.to_string(),
@@ -305,6 +309,9 @@ impl Inbound {
             let id = format!("group-picture-{at}-{}-{}", update.picture_id.as_deref().unwrap_or("removed"), update.removed);
             let author = update.author.as_ref().map(|jid| jid.to_non_ad().to_string()).unwrap_or_default();
             self.store_notice(&jid, id, at, "GROUP_CHANGE_ICON", vec![], author).await;
+            if group_audit::audit_group_picture(&self.store, update).await.observed() == Some(true) {
+                let _ = self.events.send(ServiceEvent::GroupAuditChanged { chat: jid.clone() });
+            }
         }
         let _ = self.events.send(ServiceEvent::AvatarChanged { jid });
     }
@@ -363,6 +370,10 @@ impl Inbound {
             self.store.set_name(&chat, subject).await.logged();
         }
         self.on_group_update(update, community).await;
+        member_profiles::record_member_group_update(&self.store, update).await.logged();
+        if group_audit::audit_group_update(&self.store, update, previous.as_ref()).await.observed() == Some(true) {
+            let _ = self.events.send(ServiceEvent::GroupAuditChanged { chat: chat.clone() });
+        }
         self.check_community_owner(update, previous.as_ref());
         let _ = self.events.send(ServiceEvent::GroupChanged { chat });
     }
@@ -434,6 +445,7 @@ impl Inbound {
             own,
             media_dir: self.media_dir.clone(),
             touched: Vec::with_capacity(batch.messages.len()),
+            audit_chats: std::collections::HashSet::new(),
             live: batch.origin == BatchOrigin::Live,
         };
         for inbound in batch.messages.iter() {
@@ -477,7 +489,7 @@ impl Inbound {
                 inbound.info.source.sender.to_non_ad().to_string()
             };
             remember_structures(ctx.store, &incoming.chat, &incoming.id, &author, &inbound.message).await;
-            if self.apply_control(&ctx, inbound, &incoming).await {
+            if self.apply_control(&mut ctx, inbound, &incoming).await {
                 self.retire_unavailable(ctx.store, &incoming.chat, &incoming.id).await;
                 continue;
             }
@@ -487,8 +499,10 @@ impl Inbound {
         if self.one_time_only {
             self.tally.note(batch.messages.len(), ingested);
         }
+        let audit_chats = ctx.audit_chats;
         if batch_guard.finish().await.observed().is_some() {
             for notice in event_notices { let _ = self.events.send(notice); }
+            for chat in audit_chats { let _ = self.events.send(ServiceEvent::GroupAuditChanged { chat }); }
         }
         log::debug!(
             "{} live message(s) in {:?} (retention {:?}, pruned {removed})",
@@ -606,8 +620,14 @@ impl Inbound {
     /// Applies a message that is state for something else rather than a message
     /// of its own: a vote, an RSVP, a reaction, a pin, a label, a revoke, an
     /// edit or a sticker pack. Returns whether it was one.
-    async fn apply_control(&self, ctx: &BatchCtx<'_>, inbound: &InboundMessage, incoming: &Incoming) -> bool {
+    async fn apply_control(&self, ctx: &mut BatchCtx<'_>, inbound: &InboundMessage, incoming: &Incoming) -> bool {
         let base = decoded_message(&inbound.message).message;
+        let previous = if incoming.chat.ends_with("@g.us") {
+            match group_audit::audit_message_target(&inbound.message, &incoming.chat) {
+                Some(target) => ctx.store.message(&incoming.chat, &target).await.observed(),
+                None => None,
+            }
+        } else { None };
         if let Some(protocol) = base.protocol_message.as_option()
             .filter(|protocol| protocol.r#type == Some(wa::message::protocol_message::Type::EPHEMERAL_SETTING))
         {
@@ -617,6 +637,9 @@ impl Inbound {
             row.header.sender = inbound.info.source.sender.to_non_ad().to_string();
             if ctx.store.insert_message(&row).await.observed().is_some() {
                 let _ = self.events.send(ServiceEvent::hint(&row, false));
+                if group_audit::audit_group_notice(ctx.store, &row, crate::store::group_audit::GroupAuditSource::Message).await.observed() == Some(true) {
+                    ctx.audit_chats.insert(incoming.chat.clone());
+                }
             }
             return true;
         }
@@ -633,15 +656,24 @@ impl Inbound {
             return true;
         }
         if base.pin_in_chat_message.as_option().is_some() {
-            self.apply_message_pin(ctx, &incoming.chat, base, inbound.info.timestamp.timestamp_millis()).await;
+            if self.apply_message_pin(ctx, &incoming.chat, base, inbound.info.timestamp.timestamp_millis()).await {
+                self.audit_control(ctx, inbound, &incoming.chat, previous.as_ref()).await;
+            }
             return true;
         }
         if let Some(label) = member_label_change(&inbound.message) {
             self.apply_label_change(&incoming.chat, &inbound.info.source.sender.to_non_ad().to_string(), label);
+            let context = StoredMessage { header: MessageHeader { chat: incoming.chat.clone(), id: incoming.id.clone(),
+                sender: inbound.info.source.sender.to_non_ad().to_string(), timestamp: inbound.info.timestamp.timestamp(),
+                from_me: incoming.from_me }, ..Default::default() };
+            member_profiles::record_member_message_context(ctx.store, &context, &inbound.message).await.logged();
+            self.audit_control(ctx, inbound, &incoming.chat, None).await;
             return true;
         }
         if let Some(target) = revoke_target(&inbound.message) {
-            self.apply_revoke(ctx, &incoming.chat, &target).await;
+            if self.apply_revoke(ctx, &incoming.chat, &target).await {
+                self.audit_control(ctx, inbound, &incoming.chat, previous.as_ref()).await;
+            }
             return true;
         }
         if let Some((target, update)) =
@@ -651,7 +683,9 @@ impl Inbound {
             return true;
         }
         if let Some((target, text, spoiler)) = edit_of(&inbound.message) {
-            self.apply_edit(ctx, &incoming.chat, &target, &text, spoiler).await;
+            if self.apply_edit(ctx, &incoming.chat, &target, &text, spoiler).await {
+                self.audit_control(ctx, inbound, &incoming.chat, previous.as_ref()).await;
+            }
             return true;
         }
         if base.sticker_pack_message.is_set() {
@@ -659,6 +693,14 @@ impl Inbound {
             return true;
         }
         false
+    }
+
+    async fn audit_control(&self, ctx: &mut BatchCtx<'_>, inbound: &InboundMessage, chat: &str, previous: Option<&StoredMessage>) {
+        if !chat.ends_with("@g.us") { return; }
+        if group_audit::audit_group_message(ctx.store, &inbound.info, &inbound.message, previous,
+            crate::store::group_audit::GroupAuditSource::Message).await.observed() == Some(true) {
+            ctx.audit_chats.insert(chat.to_owned());
+        }
     }
 
     /// A vote on a poll. The key is derived from the creator's and voter's
@@ -757,13 +799,15 @@ impl Inbound {
         let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
     }
 
-    async fn apply_message_pin(&self, ctx: &BatchCtx<'_>, chat: &str, base: &wa::Message, timestamp: i64) {
-        let Some(Some(pin)) = history_pins::live_message_pin(base, timestamp).observed() else { return };
+    async fn apply_message_pin(&self, ctx: &BatchCtx<'_>, chat: &str, base: &wa::Message, timestamp: i64) -> bool {
+        let Some(Some(pin)) = history_pins::live_message_pin(base, timestamp).observed() else { return false };
         let chat = chat.to_owned();
         let event_chat = chat.clone();
-        if ctx.store.run(move |store| store.apply_message_pin_update(&chat, &pin, false)).await.observed() == Some(true) {
+        let changed = ctx.store.run(move |store| store.apply_message_pin_update(&chat, &pin, false)).await.observed();
+        if changed == Some(true) {
             let _ = self.events.send(ServiceEvent::Marks { chat: event_chat });
         }
+        changed.is_some()
     }
 
     /// A member label change updates the cached participant and tells the UI.
@@ -784,7 +828,7 @@ impl Inbound {
     /// rather than dropping the notice. The local text and media stay and the
     /// UI greys the bubble out, so nothing becomes unavailable here. Stopping
     /// a live location arrives this way, and keeps its last position instead.
-    async fn apply_revoke(&self, ctx: &BatchCtx<'_>, chat: &str, target: &str) {
+    async fn apply_revoke(&self, ctx: &BatchCtx<'_>, chat: &str, target: &str) -> bool {
         if let Some(existing) = ctx.store.message(chat, target).await.observed() {
             if existing.media.kind.as_deref() == Some("live_location") {
                 if ctx.store.end_live_location(chat, target).await.observed() == Some(true) {
@@ -792,15 +836,17 @@ impl Inbound {
                         let _ = self.events.send(ServiceEvent::hint(&updated, false));
                     }
                 }
-                return;
+                return false;
             }
         }
-        if let Some(true) = ctx.store.revoke_message(chat, target).await.observed() {
+        let changed = ctx.store.revoke_message(chat, target).await.observed();
+        if changed == Some(true) {
             if let Some(updated) = ctx.store.message(chat, target).await.observed() {
                 let _ = self.events.send(ServiceEvent::hint(&updated, false));
             }
         }
         self.retire_unavailable(ctx.store, chat, target).await;
+        changed.is_some()
     }
 
     /// A live location edit moves the share in place. Late or replayed updates
@@ -849,13 +895,15 @@ impl Inbound {
         }
     }
 
-    async fn apply_edit(&self, ctx: &BatchCtx<'_>, chat: &str, target: &str, text: &str, spoiler: bool) {
-        if let Some(true) = ctx.store.update_message_spoiler(chat, target, text, spoiler).await.observed() {
+    async fn apply_edit(&self, ctx: &BatchCtx<'_>, chat: &str, target: &str, text: &str, spoiler: bool) -> bool {
+        let changed = ctx.store.update_message_spoiler(chat, target, text, spoiler).await.observed();
+        if changed == Some(true) {
             if let Some(updated) = ctx.store.message(chat, target).await.observed() {
                 let _ = self.events.send(ServiceEvent::hint(&updated, false));
             }
             let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
         }
+        changed.is_some()
     }
 
     /// Decodes and stores one ordinary message, then starts any media fetch.
@@ -879,6 +927,7 @@ impl Inbound {
         self.recall_quoted(ctx, &incoming.chat, &message).await;
         let live = ctx.live && !inbound.info.is_offline;
         let Some(message) = self.store_and_track(ctx, &incoming.chat, &message, live).await else { return };
+        member_profiles::record_member_message_context(ctx.store, &message, &inbound.message).await.logged();
         let auto_download = self.auto_download_for(ctx.store, &incoming.chat, message.media.kind.as_deref().unwrap_or("")).await;
         self.spawn_media_fetch(ctx, &incoming.chat, &message, auto_download, !inbound.info.is_offline);
     }
@@ -1072,7 +1121,7 @@ mod contact_identity_tests {
             downloads: Arc::new(tokio::sync::Semaphore::new(1)), sync_progress: Arc::default(), media_auto_download: Arc::default(),
             keep_archived: Arc::default(), keep_view_once: Arc::default(), one_time_only: false, tally: Arc::default(), secret_edits: Default::default(),
         };
-        let ctx = BatchCtx { store: &store, client: None, own: vec![], media_dir: None, touched: vec![], live: true };
+        let ctx = BatchCtx { store: &store, client: None, own: vec![], media_dir: None, touched: vec![], audit_chats: std::collections::HashSet::new(), live: true };
         store.set_lid_pn("77", "59891954564").await.unwrap();
         store.set_push_name("59891954564@s.whatsapp.net", "Push").await.unwrap();
         inbound.remember_alt_name(&ctx, "77@lid", "77@lid", false, false, "59891954564@s.whatsapp.net").await;

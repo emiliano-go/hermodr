@@ -644,7 +644,7 @@ fn link_preview(message: &wa::Message) -> LinkCard {
 }
 
 /// The JIDs a message mentions, from whichever message type carries them.
-fn message_context(message: &wa::Message) -> Option<&wa::ContextInfo> {
+pub(super) fn message_context(message: &wa::Message) -> Option<&wa::ContextInfo> {
     context_of(decoded_message(message).message)
 }
 

@@ -21,6 +21,7 @@ import { labels } from "./labels.svelte";
 import { composer } from "./composer.svelte";
 import { favorites } from "./favorites.svelte";
 import { members } from "./members.svelte";
+import { memberSheet } from "./member-sheet.svelte";
 import { messages } from "./messages.svelte";
 import { session } from "./session.svelte";
 import { stickers } from "./stickers.svelte";
@@ -442,9 +443,11 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       break;
     case "typing":
       members.setTyping(payload.chat, payload.sender, payload.state);
+      memberSheet.typing(payload.chat, payload.sender, payload.state);
       break;
     case "presence":
       members.setPresence(payload.jid, payload.online, payload.last_seen);
+      memberSheet.presence(payload.jid, payload.online, payload.last_seen);
       break;
     case "marks":
       if (!deferRefresh(payload.chat)) queueRefreshChats();
@@ -457,6 +460,7 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       break;
     case "storeChanged":
       labels.queueRefresh();
+      memberSheet.queueRefresh(null);
       // A listener lagged and missed store changes with no chat to name them;
       // reload everything the open view could be showing.
       if (!deferRefresh(chats.selectedChat)) {
@@ -469,6 +473,7 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       stickers.touch();
       break;
     case "memberLabel":
+      memberSheet.queueRefresh(payload.chat);
       if (payload.chat === chats.selectedChat) {
         const label = payload.label || null;
         // The roster is raw, so the changed member replaces its entry.
@@ -482,6 +487,7 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       }
       break;
     case "groupChanged":
+      memberSheet.queueRefresh(payload.chat);
       // Who may send, who is admin, or the name changed; the core dropped its cache.
       if (payload.chat === chats.selectedChat) {
         await members.loadChatGroup(payload.chat, () => chats.selectedChat === payload.chat);
@@ -489,6 +495,10 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       }
       void chats.loadGroupKinds();
       void chats.refreshChats();
+      break;
+    case "groupAuditChanged":
+      if (payload.chat === chats.selectedChat) ++chats.auditRevision;
+      memberSheet.queueRefresh(payload.chat);
       break;
     case "favoritesChanged":
       void favorites.refresh();

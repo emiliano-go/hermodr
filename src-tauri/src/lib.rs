@@ -37,6 +37,8 @@ mod scheduled;
 mod transcription;
 mod notifications;
 mod labels;
+mod group_audit;
+mod member_profiles;
 mod contact_sharing;
 mod bulk_chats;
 mod group_invites;
@@ -190,7 +192,8 @@ macro_rules! postal_commands {
             groups::admin_reports,
             groups::set_allow_admin_reports,
             media::save_sticker,
-            contacts::user_profile,
+            member_profiles::user_profile,
+            member_profiles::set_member_note,
             groups::invite_info,
             groups::join_invite,
             messages::message_info,
@@ -258,6 +261,7 @@ macro_rules! postal_commands {
             labels::label_chat,
             labels::label_message,
             labels::labelled_messages,
+            group_audit::group_audit_page,
             contact_sharing::own_contact_link,
             contact_sharing::resolve_contact_link,
             contact_sharing::send_contacts,

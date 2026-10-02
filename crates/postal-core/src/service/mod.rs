@@ -42,6 +42,9 @@ pub use contact_sharing::ContactSendResult;
 mod quick_switcher;
 mod keywords;
 mod labels;
+mod group_audit;
+mod member_profiles;
+pub use member_profiles::{MemberProfile, MemberProfileLive};
 mod diagnostics;
 mod storage;
 mod archive;
@@ -257,6 +260,7 @@ pub enum ServiceEvent {
     MemberLabel { chat: String, jid: String, label: String },
     /// A group's settings, admins, members or name changed.
     GroupChanged { chat: String },
+    GroupAuditChanged { chat: String },
     FavoritesChanged,
     LabelsChanged,
     /// Reactions, stars or the pinned message of a chat changed.

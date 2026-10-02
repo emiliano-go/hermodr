@@ -40,7 +40,7 @@ export function createMediaAssetPreparer(authorize: Authorize) {
   }
 
   return async function prepare<T>(command: string, value: T): Promise<T> {
-    if (!DTO_COMMANDS.has(command) && !SCALARS.has(command) && command !== "media_library") return value;
+    if (!DTO_COMMANDS.has(command) && !SCALARS.has(command) && command !== "media_library" && command !== "user_profile") return value;
     let result: unknown = value;
     const targets: { path: string; set: (path: string | null) => void }[] = [];
     function visit(value: unknown) {
@@ -59,6 +59,10 @@ export function createMediaAssetPreparer(authorize: Authorize) {
       rows.forEach((path, index) => { if (absolutePath(path)) targets.push({ path, set: (value) => { rows[index] = value; } }); });
     }
     if (DTO_COMMANDS.has(command)) visit(result);
+    if (command === "user_profile") {
+      const photo = (result as { live?: { photo?: { value?: unknown } } } | null)?.live?.photo;
+      if (photo && absolutePath(photo.value)) targets.push({ path: photo.value, set: (path) => { photo.value = path; } });
+    }
     await Promise.all(targets.map(async ({ path, set }) => set(await preparePath(path))));
     if (SCALARS.has(command) && command !== "avatar" && result === null) throw new Error(`Media file authorization failed for ${command}`);
     if (command === "media_library" && Array.isArray(result)) result = result.filter((path) => path !== null);

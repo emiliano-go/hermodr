@@ -9,6 +9,7 @@ pub mod history;
 pub mod ogg;
 pub mod service;
 pub use service::ContactSendResult;
+pub use service::{MemberProfile, MemberProfileLive};
 pub mod store;
 
 #[cfg(feature = "wire-types")]

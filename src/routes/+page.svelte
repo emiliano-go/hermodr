@@ -15,6 +15,8 @@
   import NewGroup from "$lib/chat/NewGroup.svelte";
   import type { ChatRetention } from "$lib/utils/models";
   import ProfileCard from "$lib/contacts/ProfileCard.svelte";
+  import MemberSheet from "$lib/contacts/MemberSheet.svelte";
+  import { memberSheet } from "$lib/state/member-sheet.svelte";
   import ContactInfo from "$lib/contacts/ContactInfo.svelte";
   import NewContact from "$lib/contacts/NewContact.svelte";
   import ContactSharing from "$lib/contacts/ContactSharing.svelte";
@@ -514,10 +516,21 @@
 
   function openProfile(jid: string, name: string, event: MouseEvent, self = false) {
     event.stopPropagation();
+    if (chats.selectedChat?.endsWith("@g.us")) {
+      ui.profileCard = null;
+      memberSheet.open(chats.selectedChat, bare(jid), name);
+      return;
+    }
     // Pills and names render from cache only; the click is what fetches.
     chats.loadAvatar(bare(jid));
     ui.profileCard = { jid: bare(jid), name, x: event.clientX, y: event.clientY, self };
   }
+
+  $effect(() => {
+    const scope = memberSheet.scope;
+    if (scope && (session.activeAccount !== scope.account || chats.selectedChat !== scope.group
+      || messages.accountGeneration !== scope.generation)) memberSheet.close();
+  });
 
   $effect(() => {
     if (!session.connected) return;
@@ -1715,6 +1728,27 @@
     onclose={() => (ui.infoFor = null)} />
 {/if}
 
+{#if memberSheet.scope}
+  {@const scope = memberSheet.scope}
+  <MemberSheet account={scope.account} group={scope.group} jid={scope.jid} title={scope.title}
+    groupName={members.displayName(null, scope.group)} requestKey={scope.requestKey} dataScope={memberSheet.profile ? scope : null}
+    connected={session.connected} local={memberSheet.profile?.local ?? null} live={memberSheet.profile?.live ?? null}
+    member={memberSheet.member()} memberSource="cached" picture={memberSheet.profile?.live?.photo.value ?? null}
+    localLoading={memberSheet.localLoading} liveLoading={memberSheet.liveLoading} error={memberSheet.error} liveError={memberSheet.liveError}
+    admin={memberSheet.admin()} blocked={memberSheet.blocked} liveCached={memberSheet.profile?.live_cached ?? false}
+    liveStale={memberSheet.profile?.live_stale ?? false} moderationAdminVerified={memberSheet.profile?.moderation_admin_verified ?? false}
+    moderationVerifiedAt={memberSheet.profile?.moderation_verified_at ?? null} moderationError={memberSheet.profile?.moderation_error ?? null}
+    community={members.chatGroup?.community ?? chats.groupInfo?.community ?? false} auditRevision={chats.auditRevision}
+    supportedActions={members.chatGroup || chats.groupInfo ? ["promote", "demote", "remove", "block", "unblock"] : ["promote", "demote", "block", "unblock"]}
+    namer={(jid) => members.displayName(null, jid)} formatTime={(at) => new Date(at * 1000).toLocaleString()}
+    onaction={(scope, action) => memberSheet.action(scope, action)} onsavelocal={(scope, text, warnings) => memberSheet.save(scope, text, warnings)}
+    onloadAudit={(scope, filter, cursor) => memberSheet.audit(scope, filter, cursor)}
+    onrefresh={(scope) => { memberSheet.current(scope); void memberSheet.load(true, true); }}
+    onmessage={(jid) => { memberSheet.close(); chats.showGroupInfo = false; void openChat(jid); }}
+    ongroup={(jid, id) => { memberSheet.close(); chats.showGroupInfo = false; if (id) void jumpTo(jid, id); else void openChat(jid); }}
+    onclose={() => memberSheet.close()} />
+{/if}
+
 {#if ui.profileCard}
   {@const card = ui.profileCard}
   <ProfileCard
@@ -1924,6 +1958,16 @@
     onjump={(id) => {
       chats.showGroupInfo = false;
       if (chats.selectedChat) void jumpTo(chats.selectedChat, id);
+    }}
+    auditRevision={chats.auditRevision}
+    onloadAudit={async (scope, filter, before) => {
+      currentGroup();
+      if (scope.account !== account || scope.group !== selectedChat) throw new Error("audit scope changed");
+      const page = await invoke<import("$lib/utils/wire").GroupAuditPage>("group_audit_page", {
+        accountId: account, chat: selectedChat, filter: { ...filter, before, limit: 50 },
+      });
+      currentGroup();
+      return page;
     }}
     onlabel={async (label) => {
       await invoke("set_member_label", { chat: selectedChat, label });

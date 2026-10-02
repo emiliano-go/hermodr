@@ -6,6 +6,8 @@
     "main"
   ],
   "permissions": [
+    "allow-group-audit-page",
+    "allow-set-member-note",
     "allow-get-desktop-status",
     "allow-desktop-unread",
     "allow-own-contact-link",

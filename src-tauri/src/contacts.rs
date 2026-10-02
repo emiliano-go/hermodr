@@ -69,8 +69,9 @@ pub(crate) async fn set_online(state: State<'_, AppState>, online: bool) -> Resu
 }
 
 #[tauri::command]
-pub(crate) async fn watch_presence(state: State<'_, AppState>, jid: String) -> Result<(), String> {
-    state.service()?.watch_presence(&jid).await.map_err(|e| e.to_string())
+pub(crate) async fn watch_presence(state: State<'_, AppState>, jid: String, account: Option<String>) -> Result<(), String> {
+    let service = match account { Some(account) => state.account_service(&account)?, None => state.service()? };
+    service.watch_presence(&jid).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -112,12 +113,6 @@ pub(crate) async fn set_privacy(
 #[tauri::command]
 pub(crate) async fn avatar(state: State<'_, AppState>, jid: String, full: Option<bool>) -> Result<Option<String>, String> {
     state.service()?.avatar(&jid, full.unwrap_or(false)).await.map_err(|e| e.to_string())
-}
-
-/// Someone's profile card: names, number, username, about.
-#[tauri::command]
-pub(crate) async fn user_profile(state: State<'_, AppState>, jid: String) -> Result<postal_core::UserProfile, String> {
-    state.service()?.user_profile(&jid).await.map_err(|e| e.to_string())
 }
 
 /// Best known names for JIDs, keyed by the JID as given.

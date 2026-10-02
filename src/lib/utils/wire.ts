@@ -20,6 +20,7 @@ export type ArchiveManifest = { format: string, version: number, messages: numbe
 export type ArchiveReport = { directory: string, messages: number, attachments: number, missing_attachments: number, };
 export type BlockedContact = { jid: string, jids: Array<string>, identity: ContactIdentity, };
 export type BooleanProp = { name: string, code: number, default: boolean, value: boolean | null, };
+export type CachedMemberGroup = { chat: string, subject: string | null, observed_at: number, present: boolean | null, admin: boolean | null, owner: boolean | null, label: string | null, own_admin: boolean | null, member_observed_at: number | null, complete_snapshot: boolean, };
 export type ChatLabelAssociation = { label_id: string, chat: string, };
 export type ChatMarks = { reactions: Array<Reaction>, starred: Array<string>, pinned: string | null, polls: Array<Poll>, events: Array<Event>,
 /**
@@ -114,6 +115,13 @@ export type GalleryFilter = { chat: string | null, kind: GalleryKind | null, fro
 export type GalleryItem = { message: StoredMessage, urls: Array<string>, };
 export type GalleryKind = "image" | "video" | "audio" | "document" | "sticker" | "gif" | "link";
 export type GalleryPage = { items: Array<GalleryItem>, next_cursor: GalleryCursor | null, };
+export type GroupAuditCursor = { timestamp: number, id: number, };
+export type GroupAuditEntry = { id: number, chat: string, kind: GroupAuditKind, actor: string | null, target: string | null, old_value: string | null, new_value: string | null, old_source: GroupAuditOldSource | null, timestamp: number | null, observed_at: number, source: GroupAuditSource, message_id: string | null, jump_available: boolean, };
+export type GroupAuditFilter = { kind: GroupAuditKind | null, actor: string | null, target: string | null, member: string | null, since: number | null, until: number | null, before: GroupAuditCursor | null, limit: number | null, };
+export type GroupAuditKind = "join" | "leave" | "remove" | "promote" | "demote" | "subject" | "description" | "locked" | "announce" | "ephemeral" | "join_approval" | "member_add_mode" | "forwarding" | "invite_change" | "create" | "delete" | "picture" | "message_edit" | "message_delete" | "message_pin" | "message_unpin" | "member_tag" | "member_link_mode" | "member_share_history_mode" | "history_sharing" | "owner_change";
+export type GroupAuditOldSource = "protocol" | "cached";
+export type GroupAuditPage = { entries: Array<GroupAuditEntry>, has_more: boolean, next_cursor: GroupAuditCursor | null, };
+export type GroupAuditSource = "notification" | "message" | "history" | "local";
 export type GroupCreateParticipant = { jid: string, state: GroupCreateParticipantState, };
 export type GroupCreateParticipantState = "added" | "pending" | "unconfirmed";
 export type GroupCreateResult = { jid: string, subject: string, participants: Array<GroupCreateParticipant>, warnings: Array<string>, };
@@ -223,6 +231,29 @@ export type MediaAction = "copy_image" | "save" | "open";
 export type MediaAutoDownload = { image: boolean, video: boolean, audio: boolean, document: boolean, sticker: boolean, gif: boolean, };
 export type MediaAutoDownloadOverrides = { image: boolean | null, video: boolean | null, audio: boolean | null, document: boolean | null, sticker: boolean | null, gif: boolean | null, };
 export type MediaQuality = "standard" | "hd";
+export type MemberBusinessHours = { day: string, mode: string, open_minutes: number | null, close_minutes: number | null, };
+export type MemberBusinessProfile = { name: string | null, description: string, email: string | null, websites: Array<string>, address: string | null, categories: Array<string>, timezone: string | null, hours: Array<MemberBusinessHours> | null, };
+export type MemberFieldState = "available" | "unavailable" | "restricted" | "error";
+export type MemberJoinEvidence = { timestamp: number, actor: string | null, kind: string, message_id: string, };
+export type MemberMessageStats = { total: number, first_at: number | null, last_at: number | null, media_total: number, reactions_sent: number, times_mentioned: number, mention_contexts_recorded: number, group_mention_contexts_recorded: number, };
+export type MemberNote = { text: string, warnings: number, updated_at: number | null, };
+export type MemberProfile = { local: MemberProfileLocal, live: MemberProfileLive | null, live_cached: boolean, live_stale: boolean, moderation_admin_verified: boolean, moderation_verified_at: number | null, moderation_error: string | null, jid: string,
+/**
+ * Saved, push, business or user name; `None` when only the number is known.
+ */
+name: string | null,
+/**
+ * Phone number digits, when known.
+ */
+number: string | null, username: string | null, about: string | null,
+/**
+ * Verified business name, for business accounts.
+ */
+business: string | null, };
+export type MemberProfileField<T> = { state: MemberFieldState, value: T | null, error: string | null, stale: boolean, };
+export type MemberProfileLive = { fetched_at: number, about: MemberProfileField<string>, username: MemberProfileField<string>, photo: MemberProfileField<string>, photo_id: string | null, business: MemberProfileField<MemberBusinessProfile>, business_name: MemberProfileField<string>, device_count: MemberProfileField<number>, };
+export type MemberProfileLocal = { jid: string, addresses: Array<string>, identity: ContactIdentity, pn_jid: string | null, lid_jid: string | null, scope_chat: string | null, stats: MemberMessageStats, note: MemberNote, group: CachedMemberGroup | null, join: MemberJoinEvidence | null, mutual_groups: Array<CachedMemberGroup>, signals: MemberSignals, };
+export type MemberSignals = { online: boolean | null, last_seen: number | null, presence_at: number | null, typing: string | null, typing_at: number | null, };
 export type MessageCursor = { timestamp: number, id: string, sort_order: number, };
 export type MessageLabelAssociation = { label_id: string, chat: string, message_id: string, };
 export type MessagePage = { messages: Array<StoredMessage>, has_more: boolean, };
@@ -340,7 +371,7 @@ change: HintChange,
 /**
  * The delivery state a [`HintChange::Status`] change carries.
  */
-status: string | null, } | { "kind": "retentionApplied", removed: number, } | { "kind": "namesUpdated", count: number, } | { "kind": "chatStateChanged", chat: string, } | { "kind": "chatPinRemoved", chat: string, } | { "kind": "syncing", pending: number, applied: number, } | { "kind": "initialSyncComplete", messages: number, chats: number, } | { "kind": "synced" } | { "kind": "historyLoaded", chats: Array<string>, } | { "kind": "historyProgress", percent: number, } | { "kind": "backfill", done: number, total: number, } | { "kind": "avatarChanged", jid: string, } | { "kind": "typing", chat: string, sender: string, state: string, } | { "kind": "presence", jid: string, online: boolean, last_seen: number | null, } | { "kind": "memberLabel", chat: string, jid: string, label: string, } | { "kind": "groupChanged", chat: string, } | { "kind": "favoritesChanged" } | { "kind": "labelsChanged" } | { "kind": "marks", chat: string, } | { "kind": "storeChanged" } | { "kind": "stickerLibraryChanged", packs: boolean, favorites: boolean, recents: boolean, } | { "kind": "uploadProgress", token: string, sent: number, total: number, };
+status: string | null, } | { "kind": "retentionApplied", removed: number, } | { "kind": "namesUpdated", count: number, } | { "kind": "chatStateChanged", chat: string, } | { "kind": "chatPinRemoved", chat: string, } | { "kind": "syncing", pending: number, applied: number, } | { "kind": "initialSyncComplete", messages: number, chats: number, } | { "kind": "synced" } | { "kind": "historyLoaded", chats: Array<string>, } | { "kind": "historyProgress", percent: number, } | { "kind": "backfill", done: number, total: number, } | { "kind": "avatarChanged", jid: string, } | { "kind": "typing", chat: string, sender: string, state: string, } | { "kind": "presence", jid: string, online: boolean, last_seen: number | null, } | { "kind": "memberLabel", chat: string, jid: string, label: string, } | { "kind": "groupChanged", chat: string, } | { "kind": "groupAuditChanged", chat: string, } | { "kind": "favoritesChanged" } | { "kind": "labelsChanged" } | { "kind": "marks", chat: string, } | { "kind": "storeChanged" } | { "kind": "stickerLibraryChanged", packs: boolean, favorites: boolean, recents: boolean, } | { "kind": "uploadProgress", token: string, sent: number, total: number, };
 export type Sticker = {
 /**
  * Base64 SHA-256 of the decrypted file: the app-state index key.

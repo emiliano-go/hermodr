@@ -262,6 +262,7 @@ impl MessageStore {
             paths
         };
         let removed = conn.execute("DELETE FROM messages WHERE chat = ?1", params![jid])?;
+        super::group_audit::clear(conn, jid)?;
         conn.execute("DELETE FROM chat_history_floor WHERE jid = ?1", params![jid])?;
         for path in paths {
             if let Err(error) = std::fs::remove_file(path) {
@@ -320,6 +321,8 @@ pub(crate) fn fold_chat(conn: &Connection, from: &str, to: &str) -> Result<()> {
     move_chat_keyed_tables(conn, from, to, MESSAGE_STATE_TABLES, "chat")?;
     super::history_pins::merge(conn, from, to)?;
     super::labels::merge(conn, from, to)?;
+    super::group_audit::merge(conn, from, to)?;
+    super::member_profiles::merge(conn, from, to)?;
     // Messages last, so `to` knows it has history before the state below.
     conn.execute("UPDATE OR IGNORE messages SET chat = ?1 WHERE chat = ?2", params![to, from])?;
     conn.execute("DELETE FROM messages WHERE chat = ?1", params![from])?;
