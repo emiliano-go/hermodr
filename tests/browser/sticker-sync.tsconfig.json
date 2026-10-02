@@ -1,6 +1,6 @@
 {
   "extends": "../../tsconfig.json",
   "compilerOptions": { "types": ["node"] },
-  "include": ["../../src/lib/media/StickerSync.svelte", "../../src/lib/composer/ExpressionPicker.svelte", "../../src/lib/settings/Settings.svelte", "../../src/lib/utils/sticker-sync.ts", "../../src/lib/sticker-sync.test.ts", "./StickerSyncHarness.svelte"],
+  "include": ["../../src/lib/media/StickerSync.svelte", "../../src/lib/composer/ExpressionPicker.svelte", "../../src/lib/settings/Settings.svelte", "../../src/lib/utils/sticker-sync.ts", "../../src/tests/sticker-sync.test.ts", "./StickerSyncHarness.svelte"],
   "exclude": []
 }

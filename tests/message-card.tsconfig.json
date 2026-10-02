@@ -3,7 +3,7 @@
   "include": [
     "../src/lib/messages/cards/MessageCard.svelte",
     "../src/lib/messages/MessageBubble.svelte",
-    "../src/lib/message-card.test.ts",
+    "../src/tests/message-card.test.ts",
     "browser/MessageCards.svelte"
   ]
 }

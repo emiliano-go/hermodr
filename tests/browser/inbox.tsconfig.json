@@ -1,6 +1,6 @@
 {
   "extends": "../../tsconfig.json",
   "compilerOptions": { "types": ["node"] },
-  "include": ["../../src/lib/chat/UnifiedInbox.svelte", "../../src/lib/labels/LabelDialog.svelte", "../../src/lib/utils/inbox.ts", "../../src/lib/inbox.test.ts", "./InboxHarness.svelte", "./LabelHarness.svelte"],
+  "include": ["../../src/lib/chat/UnifiedInbox.svelte", "../../src/lib/labels/LabelDialog.svelte", "../../src/lib/utils/inbox.ts", "../../src/tests/inbox.test.ts", "./InboxHarness.svelte", "./LabelHarness.svelte"],
   "exclude": []
 }

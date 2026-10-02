@@ -1,6 +1,6 @@
 {
   "extends": "../../tsconfig.json",
   "compilerOptions": { "types": ["node"] },
-  "include": ["../../src/lib/messages/AlbumGrid.svelte", "../../src/lib/utils/albums.ts", "../../src/lib/albums.test.ts", "./AlbumsHarness.svelte", "./AlbumRowsHarness.svelte", "./album-rows-ipc.ts", "./album-rows.vite.config.ts"],
+  "include": ["../../src/lib/messages/AlbumGrid.svelte", "../../src/lib/utils/albums.ts", "../../src/tests/albums.test.ts", "./AlbumsHarness.svelte", "./AlbumRowsHarness.svelte", "./album-rows-ipc.ts", "./album-rows.vite.config.ts"],
   "exclude": []
 }

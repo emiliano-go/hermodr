@@ -5,7 +5,7 @@
     "../src/lib/contacts/ContactSharing.svelte",
     "../src/lib/messages/cards/ContactCard.svelte",
     "../src/lib/utils/vcard.ts",
-    "../src/lib/utils/vcard.test.ts",
+    "../src/tests/utils/vcard.test.ts",
     "browser/ContactSharingHarness.svelte",
     "browser/contact-sharing-ipc.ts",
     "browser/contact-sharing.vite.config.ts"

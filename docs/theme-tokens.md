@@ -106,7 +106,7 @@ Identity hues, QR white substrates and black/white media overlays serve differen
 ## Focused source checks
 
 ```sh
-node --experimental-strip-types --test src/lib/theme-coverage.test.ts
+node --experimental-strip-types --test src/tests/theme-coverage.test.ts
 ```
 
 The seven checks cover source definitions/fallbacks, Glass accent references, documentation coverage, native-focus selector scope and leaf font/switch/alert rules and shared root, ChatPreview and TypingIndicator sender text, shell fallbacks and preview popup shadow. It does not calculate CSS inheritance, contrast, layout or native-control rendering. The separate [measured browser scope](theme-review.md#measured-synthetic-browser-scope) covers only synthetic native controls and the edited Glass send rule. See [the evidence status](theme-review.md#evidence-status) before claiming issue #220 acceptance.

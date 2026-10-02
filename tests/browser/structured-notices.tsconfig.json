@@ -5,7 +5,7 @@
     "../../src/lib/messages/StructuredNotice.svelte",
     "../../src/lib/messages/MessageList.svelte",
     "../../src/lib/utils/structured-notices.ts",
-    "../../src/lib/structured-notices.test.ts",
+    "../../src/tests/structured-notices.test.ts",
     "./StructuredNoticesHarness.svelte"
   ],
   "exclude": []
