@@ -161,7 +161,7 @@ test("unavailable hints stay within the local window, read no placeholders, and 
   await withApp(async ({ loadEvents, messages, chats, session, ui, calls }) => {
     const { dispatchServiceEvent } = await loadEvents();
     Object.defineProperty(globalThis, "document", { configurable: true, value: { addEventListener() {}, hasFocus: () => true } });
-    const host: EventHost = { scrollToBottom() {}, getScroller: () => null, reconnect: async () => {} };
+    const host: EventHost = { scrollToBottom() {}, anchor: () => null, reveal() {}, reconnect: async () => {} };
     const hint = (id = marker.id): ServiceEvent => ({ kind: "messageHint", chat, id, sender: "1@s", from_me: false, fresh: false, change: "content", status: null });
     const settle = () => new Promise((resolve) => setTimeout(resolve, 950));
     session.gateDone = true;

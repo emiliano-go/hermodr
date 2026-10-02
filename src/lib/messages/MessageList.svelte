@@ -1,6 +1,10 @@
 <!-- The open conversation's scrollback: day dividers, one bubble per message,
-  outgoing uploads and the typing indicator. Moved out of +page.svelte. -->
+  outgoing uploads and the typing indicator. Only the rows in and around the
+  viewport are mounted (virtua); everything else lives in SQLite behind the
+  cursor pager. Moved out of +page.svelte. -->
 <script lang="ts">
+  import { tick } from "svelte";
+  import { VList, type VListHandle } from "virtua/svelte";
   import MessageRow from "$lib/messages/MessageRow.svelte";
   import AlbumGrid from "$lib/messages/AlbumGrid.svelte";
   import MessageQuote from "$lib/messages/cards/MessageQuote.svelte";
@@ -13,7 +17,6 @@
   import { bare, isUnavailable } from "$lib/utils/message";
   import { UNAVAILABLE_LABEL, UNAVAILABLE_EXPLANATION } from "$lib/utils/notices";
   import { isPollNotice } from "$lib/utils/structured-notices";
-  import { MAX_DOWNLOAD_TRIES } from "$lib/state/messages.svelte";
   import type {
     ChatEvent,
     MentionTarget,
@@ -28,6 +31,7 @@
     isGroup,
     switching,
     scroller = $bindable(),
+    prepending = false,
     dayKey,
     dayLabel,
     senderLabel,
@@ -59,12 +63,8 @@
     autoplayId,
     onceAudioOpenId,
     loadingOlder,
-    atLatest = true,
-    onloadnewer = () => {},
-    onlatest = () => {},
     onrecoverquote,
     recovering,
-    onloadolder,
     uploads,
     typers,
     typerLabelOf,
@@ -107,6 +107,8 @@
     /** True while a newly opened chat's messages load, so the old ones fade out. */
     switching: boolean;
     scroller: HTMLDivElement | undefined;
+    /** An older page just landed; the list keeps the reader's place. */
+    prepending?: boolean;
     dayKey: (ts: number) => string;
     dayLabel: (ts: number) => string;
     senderLabel: (m: StoredMessage) => string;
@@ -139,14 +141,11 @@
     autoplayId: string | null;
     onceAudioOpenId: string | null;
     loadingOlder: boolean;
-    atLatest?: boolean;
-    onloadnewer?: () => void;
-    onlatest?: () => void;
-    onloadolder: () => void;
     uploads: Outgoing[];
     typers: { sender: string; state: string }[];
     typerLabelOf: (sender: string) => string;
-    onscroll: () => void;
+    /** Scroll metrics from the virtual list, so the route can follow and page. */
+    onscroll: (state: { offset: number; distance: number; viewport: number }) => void;
     toWire: (text: string) => string;
     targetOf: (user: string) => MentionTarget;
     onprofile: (jid: string, name: string, event: MouseEvent, self?: boolean) => void;
@@ -257,6 +256,111 @@
   const visibleMessages = $derived(messages.filter((message) => !keywords.hidden(message)));
   const timeline = $derived(albumTimeline(messages, firstUnreadId, (message) => keywords.hidden(message), dayKey));
 
+  type Vrow =
+    | { kind: "e2e"; key: string }
+    | { kind: "hidden"; key: string }
+    | { kind: "day"; key: string; timestamp: number }
+    | { kind: "unread"; key: string; id: string }
+    | { kind: "group"; key: string; group: ReturnType<typeof albumTimeline>[number] }
+    | { kind: "upload"; key: string; upload: Outgoing }
+    | { kind: "typing"; key: string };
+
+  /** One flat, oldest-first list: the virtualizer mounts only what is on screen. */
+  const rows = $derived.by<Vrow[]>(() => {
+    const out: Vrow[] = [];
+    if (messages.length > 0) {
+      out.push({ kind: "e2e", key: "e2e" });
+      if (visibleMessages.length === 0) out.push({ kind: "hidden", key: "hidden" });
+    }
+    for (const group of timeline) {
+      const message = group.messages[0], prev = group.prev;
+      if (!prev || dayKey(prev.timestamp) !== dayKey(message.timestamp)) {
+        out.push({ kind: "day", key: `day-${message.id}`, timestamp: message.timestamp });
+      }
+      if (group.unreadId && !isUnavailable(message)) {
+        out.push({ kind: "unread", key: `unread-${group.unreadId}`, id: group.unreadId });
+      }
+      out.push({ kind: "group", key: JSON.stringify([message.chat, message.id]), group });
+    }
+    for (const upload of uploads) out.push({ kind: "upload", key: `upload-${upload.token}`, upload });
+    if (typers.length > 0) out.push({ kind: "typing", key: "typing" });
+    return out;
+  });
+
+  let list = $state<VListHandle>();
+  let revealRequest = 0;
+  const rowIndices = $derived.by(() => {
+    const indices = new Map<string, number>();
+    rows.forEach((row, index) => {
+      if (row.kind !== "group") return;
+      for (const message of row.group.messages) indices.set(message.id, index);
+      for (const id of [...row.group.beforeIds, ...row.group.afterIds]) indices.set(id, index);
+    });
+    return indices;
+  });
+  function viewport() { return scroller?.querySelector<HTMLElement>(".message-viewport") ?? null; }
+
+  export function visibleReadIds(): Set<string> {
+    const element = viewport(), visible = new Set<string>();
+    if (!element) return visible;
+    const bottom = element.getBoundingClientRect().bottom;
+    for (const marker of element.querySelectorAll<HTMLElement>(".bubble[data-id], .album-anchor[data-id]")) {
+      if (marker.dataset.id && marker.getBoundingClientRect().top < bottom) visible.add(marker.dataset.id);
+    }
+    return visible;
+  }
+
+  function handleScroll(offset: number) {
+    const size = list?.getScrollSize() ?? 0;
+    const viewport = list?.getViewportSize() ?? 0;
+    onscroll({ offset, distance: size - offset - viewport, viewport });
+  }
+
+  /** Keeps the newest row in view; used after sends and on follow. */
+  export function scrollToBottom() {
+    const last = rows.length - 1;
+    if (last >= 0) list?.scrollToIndex(last, { align: "end" });
+  }
+
+  /** Scrolls the unread divider to the top, when the window still holds it. */
+  export function scrollToUnread(): boolean {
+    const index = rows.findIndex((row) => row.kind === "unread");
+    if (index < 0) return false;
+    list?.scrollToIndex(index, { align: "start" });
+    return true;
+  }
+
+  export function hasMessage(id: string): boolean {
+    return rowIndices.has(id);
+  }
+
+  /** Brings a loaded message into view; false when the window does not hold it. */
+  export function revealMessage(id: string): boolean {
+    const index = rowIndices.get(id);
+    if (index === undefined) return false;
+    const source = messages, request = ++revealRequest;
+    list?.scrollToIndex(index, { align: "center" });
+    void tick().then(() => requestAnimationFrame(() => {
+      if (source !== messages || request !== revealRequest || !scroller?.isConnected) return;
+      const target = [...(viewport()?.querySelectorAll<HTMLElement>("[data-id]") ?? [])].find((marker) => marker.dataset.id === id);
+      target?.scrollIntoView({ block: "center" });
+    }));
+    return true;
+  }
+
+  /** The first row on screen, for restoring the reader's place across a reload. */
+  export function anchorId(): string | null {
+    const element = viewport();
+    if (!element) return null;
+    const bounds = element.getBoundingClientRect();
+    let anchor: string | null = null, top = Infinity;
+    for (const marker of element.querySelectorAll<HTMLElement>("[data-id]")) {
+      const id = marker.dataset.id, rect = marker.getBoundingClientRect();
+      if (id && rowIndices.has(id) && rect.bottom > bounds.top && rect.top < bounds.bottom && rect.top < top) { anchor = id; top = rect.top; }
+    }
+    return anchor;
+  }
+
   // One capture listener for the list instead of one per row: picking and
   // ctrl-click intercept before any inner button sees the click.
   function captureClick(event: MouseEvent) {
@@ -278,90 +382,94 @@
   class:switching={switching && messages.length > 0}
   class:group={isGroup}
   bind:this={scroller}
-  onclickcapture={captureClick}
-  onscroll={onscroll}>
+  onclickcapture={captureClick}>
   {#if switching && messages.length === 0}
     <p class="loading">Loading messages…</p>
   {/if}
-  {#if messages.length > 0}
-    <button class="load-older" onclick={onloadolder} disabled={loadingOlder}>
-      {loadingOlder ? "Loading messages…" : "Load older messages"}
-    </button>
-    <p class="system e2e">
-      Messages are end-to-end encrypted. No one outside of this chat, not even WhatsApp, can read or listen to them.
-    </p>
+  {#if loadingOlder}
+    <p class="paging" role="status">Loading messages…</p>
   {/if}
-  {#if messages.length > 0 && visibleMessages.length === 0}
-    <p class="system" role="status">Loaded messages are hidden by your keyword rules.</p>
-  {/if}
-  {#each timeline as group (JSON.stringify([group.messages[0].chat, group.messages[0].id]))}
-    {@const message = group.messages[0]}
-    {@const prev = group.prev}
-    {@const newDay = !prev || dayKey(prev.timestamp) !== dayKey(message.timestamp)}
-    {#if newDay}
-      <div class="day"><span>{dayLabel(message.timestamp)}</span></div>
-    {/if}
-    {#each group.beforeIds as id (id)}<span class="album-anchor" data-id={id} aria-hidden="true"></span>{/each}
-    {#if group.unreadId && !isUnavailable(message)}
-      <button class="unread-divider" data-unread-divider onclick={() => onjumpunread(message.id)}>
-        <span>Unread messages</span>
-      </button>
-    {/if}
-    {#if group.parentId}
-      <AlbumGrid items={group.messages} {prev} timestamp={group.timestamp} {formatTime}>
-        {#snippet header()}
-          {#if group.parent?.reply_to_text}
-            <MessageQuote message={group.parent} author={ctx.quoteAuthorOf(group.parent.reply_to_sender)}
-              text={ctx.quoteTextOf(group.parent)} chatName={ctx.quoteChatNameOf(group.parent)} {api} />
+  <VList
+    bind:this={list}
+    class="message-viewport"
+    data={rows}
+    getKey={(row) => row.key}
+    shift={prepending}
+    bufferSize={1200}
+    ssrCount={30}
+    onscroll={handleScroll}
+    style="height: 100%;">
+    {#snippet children(row: Vrow)}
+      <div class="vrow">
+        {#if row.kind === "e2e"}
+          <p class="system e2e">
+            Messages are end-to-end encrypted. No one outside of this chat, not even WhatsApp, can read or listen to them.
+          </p>
+        {:else if row.kind === "hidden"}
+          <p class="system" role="status">Loaded messages are hidden by your keyword rules.</p>
+        {:else if row.kind === "day"}
+          <div class="day"><span>{dayLabel(row.timestamp)}</span></div>
+        {:else if row.kind === "unread"}
+          <button class="unread-divider" data-unread-divider onclick={() => onjumpunread(row.id)}>
+            <span>Unread messages</span>
+          </button>
+        {:else if row.kind === "group"}
+          {@const group = row.group}
+          {@const message = group.messages[0]}
+          {@const prev = group.prev}
+          {#each group.beforeIds as id (id)}<span class="album-anchor" data-id={id} aria-hidden="true"></span>{/each}
+          {#if group.parentId}
+            <AlbumGrid items={group.messages} {prev} timestamp={group.timestamp} {formatTime}>
+              {#snippet header()}
+                {#if group.parent?.reply_to_text}
+                  <MessageQuote message={group.parent} author={ctx.quoteAuthorOf(group.parent.reply_to_sender)}
+                    text={ctx.quoteTextOf(group.parent)} chatName={ctx.quoteChatNameOf(group.parent)} {api} />
+                {/if}
+              {/snippet}
+              {#snippet children(child, previous)}
+                <MessageRow message={child} prev={previous?.system_kind || (previous && isPollNotice(previous)) ? undefined : previous} {ctx} {api} albumCell />
+              {/snippet}
+            </AlbumGrid>
+          {:else if isUnavailable(message)}
+            <article class="unavailable-message" class:mine={message.from_me} data-id={message.id} data-chat={message.chat}>
+              <header>
+                <b>{message.from_me ? "You" : senderLabel(message)}</b>
+                <time datetime={new Date(message.timestamp * 1000).toISOString()}>{formatTime(message.timestamp)}</time>
+              </header>
+              <strong>{UNAVAILABLE_LABEL}</strong>
+              <p>{UNAVAILABLE_EXPLANATION}</p>
+            </article>
+          {:else if message.system_kind || isPollNotice(message)}
+            <StructuredNotice {message} poll={polls.find((poll) => poll.id === message.id)} {namer}
+              picture={avatarOf} onvote={async (options) => { await onvote(message, options); }} highlighted={highlightedId === message.id || keywords.highlighted(message)} />
+          {:else}
+            <MessageRow
+              {message}
+              prev={prev?.system_kind || (prev && isPollNotice(prev)) ? undefined : prev}
+              {ctx}
+              {api} />
           {/if}
-        {/snippet}
-        {#snippet children(child, previous)}
-          <MessageRow message={child} prev={previous?.system_kind || (previous && isPollNotice(previous)) ? undefined : previous} {ctx} {api} albumCell />
-        {/snippet}
-      </AlbumGrid>
-    {:else if isUnavailable(message)}
-      <article class="unavailable-message" class:mine={message.from_me} data-id={message.id} data-chat={message.chat}>
-        <header>
-          <b>{message.from_me ? "You" : senderLabel(message)}</b>
-          <time datetime={new Date(message.timestamp * 1000).toISOString()}>{formatTime(message.timestamp)}</time>
-        </header>
-        <strong>{UNAVAILABLE_LABEL}</strong>
-        <p>{UNAVAILABLE_EXPLANATION}</p>
-      </article>
-    {:else if message.system_kind || isPollNotice(message)}
-      <StructuredNotice {message} poll={polls.find((poll) => poll.id === message.id)} {namer}
-        picture={avatarOf} onvote={async (options) => { await onvote(message, options); }} highlighted={highlightedId === message.id || keywords.highlighted(message)} />
-    {:else}
-      <MessageRow {message} prev={prev?.system_kind || (prev && isPollNotice(prev)) ? undefined : prev} {ctx} {api} />
-    {/if}
-    {#each group.afterIds as id (id)}<span class="album-anchor" data-id={id} aria-hidden="true"></span>{/each}
-  {/each}
-  {#each uploads as upload (upload.token)}
-    <OutgoingItem {upload} />
-  {/each}
-  {#if !atLatest}
-    <button class="load-older" onclick={onloadnewer} disabled={loadingOlder}>Load newer messages</button>
-    <button class="load-older" onclick={onlatest}>Back to latest</button>
-  {/if}
-  {#if typers.length > 0}
-    <TypingIndicator typers={typerItems} {isGroup} avatarOf={avatarOf} />
-  {/if}
+          {#each group.afterIds as id (id)}<span class="album-anchor" data-id={id} aria-hidden="true"></span>{/each}
+        {:else if row.kind === "upload"}
+          <OutgoingItem upload={row.upload} />
+        {:else if row.kind === "typing"}
+          <TypingIndicator typers={typerItems} {isGroup} avatarOf={avatarOf} />
+        {/if}
+      </div>
+    {/snippet}
+  </VList>
 </div>
 
 <style>
   .album-anchor { display: block; height: 0; }
   .messages {
     flex: 1;
-    overflow-y: auto;
-    overflow-x: hidden;
     min-width: 0;
+    min-height: 0;
+    position: relative;
     /* Rows carry the side padding so their highlight spans the full width. */
     --pad-l: clamp(16px, 7%, 90px);
     --pad-r: clamp(16px, 7%, 90px);
-    padding: 12px 0 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
     transition:
       opacity calc(0.22s * var(--motion-scale)) var(--ease),
       transform calc(0.22s * var(--motion-scale)) var(--ease);
@@ -381,10 +489,34 @@
   .messages.group {
     --pad-l: max(56px, 7%);
   }
+  /* Every virtual row is its own flex column, as the old scroll container was. */
+  .vrow {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    padding-bottom: 2px;
+  }
   .loading {
     margin: auto;
     color: var(--muted);
     font-size: 13px;
+  }
+  /* A pill over the list rather than a row in it: adding and removing a row at
+     the top would shift the reader's place while a page is fetched. */
+  .paging {
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 3;
+    margin: 0;
+    padding: 5px 12px;
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--muted);
+    font-size: 12.5px;
+    box-shadow: 0 1px 0.5px rgba(11, 20, 26, 0.13);
+    pointer-events: none;
   }
   .day {
     display: flex;
@@ -445,24 +577,4 @@
   .unavailable-message time { color: var(--muted); }
   .unavailable-message strong { display: block; }
   .unavailable-message p { margin: 5px 0 0; color: var(--muted); font-size: 0.95em; line-height: 1.45; }
-  .load-older {
-    align-self: center;
-    background: var(--surface);
-    border: 0;
-    border-radius: var(--radius-sm);
-    color: var(--muted);
-    font: inherit;
-    font-size: 12.5px;
-    padding: 5px 12px;
-    margin-bottom: 4px;
-    cursor: pointer;
-  }
-  .load-older:hover:not(:disabled) {
-    background: var(--raised);
-    color: var(--text);
-  }
-  .load-older:disabled {
-    cursor: progress;
-    opacity: 0.7;
-  }
 </style>

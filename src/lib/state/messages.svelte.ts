@@ -2,7 +2,6 @@
 // downloads, typing state flows and autoplay. Moved out of +page.svelte.
 // Depends only on ui (failure reporting); cross-domain flows (openChat, send,
 // event dispatch) live in the route and state/events.ts.
-import { tick } from "svelte";
 import { invoke } from "$lib/utils/ipc";
 import type { Marks, Reaction, ReactionGroup, StoredMessage } from "$lib/utils/models";
 import { ui } from "./ui.svelte";
@@ -10,12 +9,14 @@ import { MessageWindow, DEFAULT_MESSAGE_WINDOW, cursorOf, type MessagePage } fro
 import { isUnavailable } from "$lib/utils/message";
 import { keywords } from "./keywords.svelte";
 
-const PAGE = 200;
+const PAGE = 50;
 export const MAX_DOWNLOAD_TRIES = 3;
 
 export class MessagesState {
   messageLimit = $state(DEFAULT_MESSAGE_WINDOW);
   atLatest = $state(true);
+  /** An older page just landed; the list shifts to keep the reader's place. */
+  prepending = $state(false);
   private window = new MessageWindow();
   private chat: string | null = null;
   private refreshPending = false;
@@ -24,6 +25,8 @@ export class MessagesState {
   private rowRequestSeq = 0;
   private rowRequests = new Map<string, number>();
   loadingOlder = $state(false);
+  /** Set while a newer page is fetched at the bottom of the scrollback. */
+  loadingNewer = $state(false);
   olderTimer: ReturnType<typeof setTimeout> | undefined = undefined;
   /** Set while a "load older" answer is in flight; its `historyLoaded` is the flush. */
   historyActive = $state(false);
@@ -140,15 +143,10 @@ export class MessagesState {
   /** Resolved whenever a recall ends, however it ends. */
   recallWaiters: (() => void)[] = [];
 
-  /**
-   * Reloads a conversation without touching the unread state.
-   *
-   * `keepPlace` holds the view on the same message when older ones are added
-   * above it, instead of letting them push it down.
-   */
-  async reloadMessages(chat: string | null, keepPlace = false, el: HTMLDivElement | null = null) {
+  /** Reloads a conversation without touching the unread state. */
+  async reloadMessages(chat: string | null) {
     if (!chat || chat !== this.chat) return false;
-    if (this.loadingOlder) { this.refreshPending = true; return false; }
+    if (this.loadingOlder || this.loadingNewer) { this.refreshPending = true; return false; }
     const seq = ++this.messagesSeq;
     let loaded: StoredMessage[];
     try {
@@ -160,7 +158,7 @@ export class MessagesState {
     }
     // A slow response must not overwrite a newer conversation.
     if (seq !== this.messagesSeq) return false;
-    await this.paint(loaded, "replace", keepPlace ? el : null);
+    this.paint(loaded, "replace");
     if (seq !== this.messagesSeq) return false;
     // The divider only makes sense while its message is still loaded.
     if (this.firstUnreadId && !loaded.some((m) => m.id === this.firstUnreadId)) {
@@ -251,10 +249,10 @@ export class MessagesState {
     }
   }
 
-  private async flushRefresh(chat: string, el: HTMLDivElement | null = null) {
+  private async flushRefresh(chat: string) {
     if (!this.refreshPending || chat !== this.chat) return;
     this.refreshPending = false;
-    await this.reloadMessages(chat, true, el);
+    await this.reloadMessages(chat);
   }
 
   resizeWindow(limit: number) {
@@ -264,21 +262,12 @@ export class MessagesState {
     this.messages = this.window.retain(this.messages, this.atLatest ? "newer" : "older");
   }
 
-  private async paint(rows: StoredMessage[], mode: "replace" | "older" | "newer", el: HTMLDivElement | null) {
-    const anchor = el ? [...el.querySelectorAll<HTMLElement>("[data-id]")]
-      .find((row) => row.getBoundingClientRect().bottom > el.getBoundingClientRect().top) : undefined;
-    const id = anchor?.dataset.id;
-    const top = anchor?.getBoundingClientRect().top ?? 0;
+  private paint(rows: StoredMessage[], mode: "replace" | "older" | "newer") {
     if (mode === "replace") this.rowRequests.clear();
     this.messages = mode === "replace" ? this.window.replace(rows) : this.window.retain(rows, mode);
-    if (el && id) {
-      await tick();
-      const row = [...el.querySelectorAll<HTMLElement>("[data-id]")].find((row) => row.dataset.id === id);
-      if (row) el.scrollTop += row.getBoundingClientRect().top - top;
-    }
   }
 
-  private async loadLocalOlder(chat: string, el: HTMLDivElement | null): Promise<number | null> {
+  private async loadLocalOlder(chat: string): Promise<number | null> {
     const oldest = this.messages.at(-1);
     if (!oldest) return 0;
     const seq = ++this.messagesSeq;
@@ -288,16 +277,19 @@ export class MessagesState {
     if (seq !== this.messagesSeq || chat !== this.chat) return null;
     if (page.messages.length) {
       this.atLatest = false;
-      await this.paint(page.messages, "older", el);
+      // One frame of shift so the virtual list anchors the prepend.
+      this.prepending = true;
+      this.paint(page.messages, "older");
+      requestAnimationFrame(() => (this.prepending = false));
       await this.loadMarks(chat);
     }
     return page.messages.length;
   }
 
-  async loadNewer(chat: string | null, el: HTMLDivElement | null = null) {
-    if (!chat || chat !== this.chat || this.loadingOlder || !this.messages[0]) return;
+  async loadNewer(chat: string | null) {
+    if (!chat || chat !== this.chat || this.loadingOlder || this.loadingNewer || !this.messages[0]) return;
     const seq = ++this.messagesSeq;
-    this.loadingOlder = true;
+    this.loadingNewer = true;
     try {
       const page = await invoke<MessagePage>("message_page", {
         chat, limit: Math.min(PAGE, Math.floor(this.messageLimit / 2)), cursor: cursorOf(this.messages[0]), direction: "after",
@@ -305,11 +297,11 @@ export class MessagesState {
       if (seq !== this.messagesSeq) return;
       this.atLatest = !page.has_more;
       this.olderExhausted = false;
-      await this.paint(page.messages, "newer", el);
+      this.paint(page.messages, "newer");
       await this.loadMarks(chat);
     } catch (e) { ui.fail(e); }
     finally {
-      if (seq === this.messagesSeq) { this.loadingOlder = false; await this.flushRefresh(chat, el); }
+      if (seq === this.messagesSeq) { this.loadingNewer = false; await this.flushRefresh(chat); }
     }
   }
 
@@ -320,6 +312,7 @@ export class MessagesState {
     this.refreshPending = false;
     this.recall = null;
     this.loadingOlder = false;
+    this.loadingNewer = false;
     this.historyActive = false;
     this.olderExhausted = false;
     clearTimeout(this.olderTimer);
@@ -424,22 +417,22 @@ export class MessagesState {
   }
 
   /** Asks the phone for the chat's previous day and waits until it has landed or given up. */
-  recallDay(chat: string | null, el: HTMLDivElement | null = null): Promise<void> {
+  recallDay(chat: string | null): Promise<void> {
     if (!chat || this.olderExhausted) return Promise.resolve();
     const done = new Promise<void>((resolve) => this.recallWaiters.push(resolve));
-    if (!this.loadingOlder) void this.loadOlder(chat, false, el);
+    if (!this.loadingOlder) void this.loadOlder(chat, false);
     return done;
   }
 
-  async loadOlder(chat: string | null, auto = false, el: HTMLDivElement | null = null) {
+  async loadOlder(chat: string | null, auto = false) {
     if (!chat || chat !== this.chat || this.loadingOlder) return;
     this.loadingOlder = true;
     try {
-      const added = await this.loadLocalOlder(chat, el);
+      const added = await this.loadLocalOlder(chat);
       if (added === null) return;
       if (added > 0) {
         this.loadingOlder = false;
-        await this.flushRefresh(chat, el);
+        await this.flushRefresh(chat);
         this.settleRecall();
         return;
       }
@@ -449,20 +442,20 @@ export class MessagesState {
     } catch (e) {
       if (chat !== this.chat) return;
       this.loadingOlder = false;
-      await this.flushRefresh(chat, el);
+      await this.flushRefresh(chat);
       this.settleRecall();
       ui.fail(e);
     }
   }
 
-  async finishOlder(chat: string, el: HTMLDivElement | null) {
+  async finishOlder(chat: string) {
     if (chat !== this.chat) return;
     clearTimeout(this.olderTimer);
     try {
-      const added = await this.loadLocalOlder(chat, el);
+      const added = await this.loadLocalOlder(chat);
       if (added !== null) {
         this.loadingOlder = false;
-        await this.flushRefresh(chat, el);
+        await this.flushRefresh(chat);
         this.continueRecall(chat, added);
       }
     } catch (e) {
@@ -531,6 +524,7 @@ export class MessagesState {
     this.messagesSeq++;
     this.recall = null;
     this.loadingOlder = false;
+    this.loadingNewer = false;
     this.historyActive = false;
     clearTimeout(this.olderTimer);
     this.settleRecall();
@@ -554,6 +548,7 @@ export class MessagesState {
     this.rowRequests.clear();
     this.recall = null;
     this.loadingOlder = false;
+    this.loadingNewer = false;
     this.historyActive = false;
     clearTimeout(this.olderTimer);
     this.settleRecall();

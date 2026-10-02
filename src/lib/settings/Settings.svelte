@@ -664,7 +664,7 @@
           <div class="setting">
             <div>
               <span class="setting-title">Messages in RAM</span>
-              <span class="setting-desc">Maximum loaded in the open conversation: 50–2,000. Default: 500. Older pages load from disk before asking your phone.</span>
+              <span class="setting-desc">Messages kept in memory per conversation: 50–2,000. Default: 150. Older pages load from disk before asking your phone.</span>
             </div>
             <input class="field number" type="number" min="50" max="2000" step="1" aria-label="Messages in RAM"
               value={draft.message_window_size} oninput={(e) => {

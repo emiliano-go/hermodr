@@ -23,6 +23,9 @@ importers:
       emojibase-data:
         specifier: ^17.0.0
         version: 17.0.0(emojibase@17.0.0)
+      virtua:
+        specifier: ^0.52.10
+        version: 0.52.10(svelte@5.57.1)
     devDependencies:
       '@sveltejs/adapter-static':
         specifier: ^3.0.10
@@ -555,6 +558,32 @@ packages:
   undici-types@7.24.6:
     resolution: {integrity: sha512-WRNW+sJgj5OBN4/0JpHFqtqzhpbnV0GuB+OozA9gCL7a993SmU+1JBZCzLNxYsbMfIeDL+lTsphD5jN5N+n0zg==}
 
+  virtua@0.52.10:
+    resolution: {integrity: sha512-AbYcd+7Vk6HznogCw28yoT+am8wK67fMfaPjHIp3+CGhvSh31FOBuVm+eAN+p4y8azjEC8kC9O1AtmyKG6ithg==}
+    peerDependencies:
+      '@angular/common': '>=20.0.0'
+      '@angular/core': '>=20.0.0'
+      react: '>=16.14.0'
+      react-dom: '>=16.14.0'
+      solid-js: '>=1.0'
+      svelte: '>=5.0'
+      vue: '>=3.2'
+    peerDependenciesMeta:
+      '@angular/common':
+        optional: true
+      '@angular/core':
+        optional: true
+      react:
+        optional: true
+      react-dom:
+        optional: true
+      solid-js:
+        optional: true
+      svelte:
+        optional: true
+      vue:
+        optional: true
+
   vite@8.3.0:
     resolution: {integrity: sha512-lhZBVvEHefgE+HQZC9O7EBJgCU/nVzFNl7vkS4RE0APtWLP02/8QVIkQtzBxPquh7lq5/78NHipTj7ODQ6XuyQ==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -993,6 +1022,10 @@ snapshots:
   typescript@6.0.3: {}
 
   undici-types@7.24.6: {}
+
+  virtua@0.52.10(svelte@5.57.1):
+    optionalDependencies:
+      svelte: 5.57.1
 
   vite@8.3.0(@types/node@24.19.0):
     dependencies:

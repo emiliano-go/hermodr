@@ -93,7 +93,7 @@ pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &s
 
     let (service, events) = WhatsAppService::start(config).await.map_err(|e| {
         log::error!("failed to start account {account}: {e:#}");
-        format!("failed to start service: {e}")
+        format!("failed to start service: {e:#}")
     })?;
     let service = Arc::new(service);
     *state.account_service.lock().unwrap() = Some((account.to_owned(), Arc::downgrade(&service)));
@@ -550,7 +550,7 @@ pub(crate) async fn start_once(app: &AppHandle, state: &AppState) -> Result<(), 
 
     let (service, events) = WhatsAppService::start(config).await.map_err(|e| {
         log::error!("failed to start the Android instance: {e:#}");
-        format!("failed to start the Android instance: {e}")
+        format!("failed to start the Android instance: {e:#}")
     })?;
     *state.once_qr.lock().unwrap() = service.current_qr();
     let service = Arc::new(service);

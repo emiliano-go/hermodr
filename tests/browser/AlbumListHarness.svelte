@@ -25,6 +25,8 @@
     media_kind: index % 2 ? "video" : "image" }));
   let rows = $state.raw<StoredMessage[]>([parent, ...children.slice(0, 2)]), width = $state(400);
   let scroller = $state<HTMLDivElement>(), firstUnreadId = $state<string | null>(null), picking = $state<Record<string, StoredMessage> | null>(null);
+  let rail = $state<ReturnType<typeof MessageList> | undefined>(), prepending = $state(false);
+  let metrics = $state({ offset: 0, distance: 0, viewport: 0 });
   let revealed = $state<Record<string, true>>({}), actions = $state<string[]>([]);
   let checks = $state<string[]>([]), complete = $state(false), failed = $state(""), readyKeyboard = $state(false);
   const dayKey = (timestamp: number) => String(Math.floor(timestamp / 86400));
@@ -48,27 +50,41 @@
     quoteTextOf: (message) => message.reply_to_view_once && !message.reply_to_path ? "[View once]" : message.reply_to_text,
     quoteChatNameOf: (message) => message.reply_to_chat ? "Synthetic quoted chat" : null, autoplayId: null, onceAudioOpenId: null });
   const props = $derived({ ...ctx, ...api, switching: false, firstUnreadId, onjumpunread: (id: string) => actions.push(`unread:${id}`),
-    dayLabel: (value: number) => `Day ${dayKey(value)}`, loadingOlder: false, atLatest: true, onloadolder: noop, onloadnewer: noop, onlatest: noop,
-    uploads: [], typers: [], typerLabelOf: (sender: string) => sender, onscroll: noop });
+    dayLabel: (value: number) => `Day ${dayKey(value)}`, loadingOlder: false, prepending,
+    uploads: [], typers: [], typerLabelOf: (sender: string) => sender,
+    onscroll: (state: { offset: number; distance: number; viewport: number }) => { metrics = state; } });
   const assert = (condition: unknown, label: string) => { if (!condition) throw new Error(label); };
   const wait = () => new Promise<void>((resolve) => setTimeout(resolve, 20));
   const grids = () => [...scroller!.querySelectorAll<HTMLElement>(".album-grid")];
   const bubble = (id: string) => scroller!.querySelector<HTMLElement>(`.bubble[data-id="${id}"]`)!;
   const ids = () => [...scroller!.querySelectorAll<HTMLElement>(".bubble[data-id]")].map((element) => element.dataset.id);
   const quote = (index = 0) => grids()[index].querySelector<HTMLButtonElement>(".embed.quote")!;
+  const viewport = () => scroller!.querySelector<HTMLDivElement>(".message-viewport")!;
   async function replace(next: StoredMessage[], unread: string | null = null) {
-    rows = next; firstUnreadId = unread; picking = null; await tick(); await wait();
+    rows = next; firstUnreadId = unread; picking = null; await tick();
+    rail!.scrollToBottom();
+    if (next.length <= 12) await until(() => next.filter((message) => !keywords.hidden(message)).every((message) => {
+      const marker = scroller!.querySelector<HTMLElement>(`[data-id="${message.id}"]`);
+      return marker && getComputedStyle(marker).visibility !== "hidden";
+    }), "small virtual timeline did not mount all expected markers");
+    await wait();
   }
   function boundary(label: string) {
     assert(grids().length === 0, `${label} root rejects folding`);
     assert(ids().includes("child-0") && ids().includes("child-1"), `${label} preserves ordinary child markers`);
   }
   function frontier() {
-    const visible: string[] = [], bottom = scroller!.getBoundingClientRect().bottom;
-    for (const marker of scroller!.querySelectorAll<HTMLElement>(".bubble[data-id], .album-anchor[data-id]")) {
-      if (marker.getBoundingClientRect().top < bottom && marker.dataset.id) visible.push(marker.dataset.id);
-    }
-    return visibleReadFrontier(rows, visible);
+    return visibleReadFrontier(rows, rail?.visibleReadIds() ?? []);
+  }
+  function inView(id: string) {
+    const marker = scroller!.querySelector<HTMLElement>(`[data-id="${id}"]`);
+    if (!marker) return false;
+    const rect = marker.getBoundingClientRect(), bounds = viewport().getBoundingClientRect();
+    return rect.top < bounds.bottom && rect.bottom > bounds.top;
+  }
+  async function until(condition: () => unknown, label: string) {
+    const deadline = performance.now() + 5000;
+    while (!condition()) { if (performance.now() > deadline) throw new Error(label); await tick(); await wait(); }
   }
 
   onMount(() => {
@@ -116,7 +132,12 @@
         await replace(children.slice(0, 2)); assert(grids().length === 1 && !scroller!.querySelector('[data-id="parent"]') && !quote(), "unloaded parent needs no fabricated anchor or quote");
         assert(grids()[0].textContent?.includes("[time-100]"), "missing envelope time falls back to first loaded child");
         await replace([parent, children[0], { ...children[1], timestamp: 86501 }]);
-        assert(grids().length === 2 && scroller!.querySelectorAll(".day").length === 2 && grids()[1].textContent?.includes("[time-86501]"), "day split preserves next-day child timestamp");
+        rail!.revealMessage("child-1");
+        await until(() => inView("child-1") && bubble("child-1").closest(".album-grid")?.textContent?.includes("[time-86501]"), "next-day child did not mount with its timestamp");
+        const nextDayGroup = bubble("child-1").closest(".album-grid");
+        rail!.revealMessage("child-0");
+        await until(() => inView("child-0") && bubble("child-0").closest(".album-grid")?.textContent?.includes("[time-99]"), "first-day child did not mount with envelope timestamp");
+        assert(bubble("child-0").closest(".album-grid") !== nextDayGroup, "day split preserves separate virtual groups and timestamps");
         checks.push("parent/child unread mapping, split/partial single-child grids, missing envelope fallback and day boundaries");
 
         const quoteVariants: Partial<StoredMessage>[] = [{ reply_to_view_once: true, reply_to_recoverable: true },
@@ -169,25 +190,53 @@
         const lateRaw = JSON.stringify(rows), anchor = scroller!.querySelector<HTMLElement>('.album-anchor[data-id="parent"]')!;
         assert(grids().length === 1 && (grids()[0].compareDocumentPosition(anchor) & Node.DOCUMENT_POSITION_FOLLOWING), "late envelope marker follows continuous child grid");
         assert(grids()[0].querySelectorAll("time").length === 1 && ids().join() === lateChildren.map((message) => message.id).join(), "late parent keeps one time and raw child markers");
-        scroller!.scrollTop = 0; await tick(); await wait();
-        assert(anchor.getBoundingClientRect().top >= scroller!.getBoundingClientRect().bottom && frontier() !== "parent", "late parent cannot become frontier before its chronological marker is visible");
+        viewport().scrollTop = 0; await tick(); await wait();
+        assert(anchor.getBoundingClientRect().top >= viewport().getBoundingClientRect().bottom && frontier() !== "parent", "late parent cannot become frontier before its chronological marker is visible");
         const markers = [...scroller!.querySelectorAll<HTMLElement>(".bubble[data-id], .album-anchor[data-id]")];
         const transforms = markers.map((marker) => marker.style.transform);
         markers.forEach((marker) => { if (marker.dataset.id !== "child-1") marker.style.transform = "translateY(2000px)"; });
-        assert(bubble("child-0").getBoundingClientRect().top >= scroller!.getBoundingClientRect().bottom && bubble("child-1").getBoundingClientRect().top < scroller!.getBoundingClientRect().bottom, "fixture creates non-monotone column positions");
+        assert(bubble("child-0").getBoundingClientRect().top >= viewport().getBoundingClientRect().bottom && bubble("child-1").getBoundingClientRect().top < viewport().getBoundingClientRect().bottom, "fixture creates non-monotone column positions");
         assert(frontier() === "child-1", "raw frontier scans past offscreen first DOM column");
         markers.forEach((marker, index) => { marker.style.transform = transforms[index]; });
-        scroller!.scrollTop = scroller!.scrollHeight; await tick(); await wait();
+        rail!.scrollToBottom(); await tick(); await wait();
         assert(frontier() === "parent", "visible late parent becomes highest raw frontier");
         assert(JSON.stringify(rows) === lateRaw && rows.at(-1)?.read === false, "frontier decision never fabricates mark-read success or changes raw metadata");
         await replace([lateChildren[0], { ...lateParent, sort_order: 2 }, { ...lateChildren[1], sort_order: 3 }]);
         assert(grids().length === 1 && scroller!.querySelectorAll('.album-anchor[data-id="parent"]').length === 1, "interleaved envelope does not split otherwise continuous children");
         await replace([lateChildren.at(-1)!, lateParent]);
         assert(grids().length === 1 && ids().join() === "child-5", "paged single child retains late parent marker without invented children");
-        scroller!.scrollTop = scroller!.scrollHeight; await tick(); await wait(); assert(frontier() === "parent", "partial paging retains late control-row frontier");
+        rail!.scrollToBottom(); await tick(); await wait(); assert(frontier() === "parent", "partial paging retains late control-row frontier");
         await replace(lateChildren.slice(0, 2));
         assert(!scroller!.querySelector('.album-anchor[data-id="parent"]') && frontier() !== "parent", "evicted parent never creates a synthetic read marker");
         checks.push("late/interleaved envelope chronology, non-monotone column raw frontier, partial paging and no synthetic mark-read success");
+
+        const ordinary = Array.from({ length: 90 }, (_, index) => row(`rail-${index}`, null, { media_kind: null, timestamp: 20 + index, text: `Synthetic rail ${index}. ${"bodyword".repeat(8)}` }));
+        const virtualParent = { ...parent, timestamp: 1000 };
+        const virtualChildren = children.map((message, index) => ({ ...message, timestamp: 1001 + index }));
+        await replace([...ordinary, virtualParent, ...virtualChildren]);
+        rail!.scrollToBottom(); await until(() => inView("child-5"), "VList bottom did not reveal last child");
+        assert(ids().length < rows.length - 1, "VList leaves offscreen raw rows unmounted");
+        assert(rail!.hasMessage("rail-0") && rail!.hasMessage("parent") && virtualChildren.every((message) => rail!.hasMessage(message.id)), "virtual lookup includes offscreen children and loaded suppressed parent");
+        assert(!rail!.hasMessage("unknown") && !rail!.revealMessage("unknown"), "virtual lookup rejects unknown IDs");
+        assert(rail!.revealMessage("rail-0"), "virtual reveal accepts offscreen ordinary row");
+        await until(() => inView("rail-0"), "offscreen ordinary row did not mount into viewport");
+        assert(rail!.revealMessage("child-0"), "virtual reveal accepts first child in tall album group");
+        await until(() => inView("child-0"), "first child in tall album group remained offscreen");
+        assert(rail!.revealMessage("parent"), "virtual reveal accepts loaded parent marker");
+        await until(() => inView("parent"), "suppressed parent marker did not enter viewport");
+        rail!.scrollToBottom(); await until(() => inView("child-5"), "virtual bottom did not restore last child");
+        const visibleAnchor = rail!.anchorId();
+        assert(visibleAnchor && inView(visibleAnchor), "virtual anchor comes from actual visible content instead of overscan");
+        assert(metrics.viewport > 0 && metrics.offset >= 0 && metrics.distance >= -1, "collaborator VList scroll metrics remain available");
+        await replace([...ordinary, virtualParent, ...virtualChildren], "child-3");
+        assert(rail!.scrollToUnread(), "virtual unread divider exists after album split");
+        await until(() => {
+          const divider = scroller!.querySelector<HTMLElement>("[data-unread-divider]");
+          return divider && divider.getBoundingClientRect().bottom > viewport().getBoundingClientRect().top && divider.getBoundingClientRect().top < viewport().getBoundingClientRect().bottom;
+        }, "virtual unread divider did not enter viewport");
+        await replace(virtualChildren.slice(0, 2));
+        assert(!rail!.hasMessage("parent"), "missing envelope is not fabricated by child association lookup");
+        checks.push("actual VList unmounting, every child/parent lookup, offscreen and tall-group reveals, visible anchor, metrics and unread split");
 
         for (const count of [1, 2, 3, 4, 6]) for (const size of [400, 320]) for (const zoom of [100, 200]) {
           await replace([parent, ...children.slice(0, count)]); width = size; document.documentElement.style.zoom = `${zoom}%`; await tick(); await wait();
@@ -210,7 +259,7 @@
 <main>
   <h1>Production album timeline with synthetic data</h1>
   {#if readyKeyboard}<p>Press Enter to open focused synthetic child.</p>{/if}
-  <div class="frame" style:width="{width}px"><MessageList {...props} messages={rows} bind:scroller /></div>
+  <div class="frame" style:width="{width}px"><MessageList {...props} messages={rows} bind:scroller bind:this={rail} /></div>
   <div id="album-list-result" data-complete={complete} data-pass={complete && !failed} data-keyboard={readyKeyboard} data-viewport={innerWidth}>
     {#if failed}<p role="alert">{failed}</p>{/if}<ul>{#each checks as check}<li>{check}</li>{/each}</ul>
   </div>

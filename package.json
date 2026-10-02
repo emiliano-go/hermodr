@@ -24,7 +24,8 @@
     "@tauri-apps/plugin-notification": "~2.4.0",
     "@tauri-apps/plugin-opener": "^2",
     "country-flag-emoji-polyfill": "^0.1.10",
-    "emojibase-data": "^17.0.0"
+    "emojibase-data": "^17.0.0",
+    "virtua": "^0.52.10"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.10",
