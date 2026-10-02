@@ -66,6 +66,14 @@ pub(crate) struct EventForm {
     link: Option<String>,
     #[serde(default)]
     canceled: bool,
+    #[serde(default)]
+    extra_guests_allowed: Option<bool>,
+    #[serde(default)]
+    is_scheduled_call: Option<bool>,
+    #[serde(default)]
+    has_reminder: Option<bool>,
+    #[serde(default)]
+    reminder_offset_sec: Option<i64>,
 }
 
 impl From<EventForm> for postal_core::NewEvent {
@@ -78,6 +86,12 @@ impl From<EventForm> for postal_core::NewEvent {
             location: event.location.filter(|s| !s.trim().is_empty()),
             link: event.link.filter(|s| !s.trim().is_empty()),
             canceled: event.canceled,
+            extra_guests_allowed: event.extra_guests_allowed,
+            is_scheduled_call: event.is_scheduled_call,
+            has_reminder: event.has_reminder,
+            reminder_offset_sec: event.reminder_offset_sec,
+            invitation_id: None,
+            invitation: false,
         }
     }
 }
@@ -92,8 +106,11 @@ pub(crate) async fn create_event(state: State<'_, AppState>, chat: String, event
 
 /// Edits or cancels one of our events.
 #[tauri::command]
-pub(crate) async fn edit_event(state: State<'_, AppState>, chat: String, id: String, event: EventForm) -> Result<(), String> {
-    state.service()?.edit_event(&chat, &id, event.into()).await.map_err(|e| e.to_string())
+pub(crate) async fn edit_event(state: State<'_, AppState>, chat: String, id: String, event: EventForm, account_id: Option<String>) -> Result<(), String> {
+    let (account, service) = operation_service(&state, account_id.as_deref())?;
+    let result = service.edit_event(&chat, &id, event.into()).await;
+    operation_current(&state, &account, &service)?;
+    result.map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -103,9 +120,10 @@ pub(crate) async fn respond_event(
     id: String,
     response: String,
     account_id: Option<String>,
+    extra_guest_count: Option<i32>,
 ) -> Result<(), String> {
     let (account, service) = operation_service(&state, account_id.as_deref())?;
-    let result = service.respond_event(&chat, &id, &response).await;
+    let result = service.respond_event(&chat, &id, &response, extra_guest_count).await;
     operation_current(&state, &account, &service)?;
     result.map_err(|e| e.to_string())
 }

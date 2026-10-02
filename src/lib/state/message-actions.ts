@@ -392,16 +392,24 @@ export async function deleteMessage(everyone: boolean) {
 }
 
 export function eventFields(event: ChatEvent) {
-  const { name, description, start, end, location, link } = event;
-  return { name, description, start, end, location, link };
+  const { name, description, start, end, location, link, extra_guests_allowed, is_scheduled_call, has_reminder, reminder_offset_sec } = event;
+  return { name, description, start, end, location, link, extra_guests_allowed, is_scheduled_call, has_reminder, reminder_offset_sec };
 }
 
 export async function saveEvent(chat: string, id: string, fields: object) {
   guardBroadcastSend(chat);
-  await composer.enqueue(() => {
+  const accountId = session.activeAccount, generation = messages.accountGeneration, event = Object.freeze(structuredClone(fields));
+  const current = () => !!accountId && accountId === session.activeAccount && generation === messages.accountGeneration && chat === chats.selectedChat;
+  if (!current()) throw new Error("Conversation changed before editing the event.");
+  await composer.enqueue((signal) => {
+    signal.throwIfAborted();
+    if (!current()) throw new Error("Conversation changed before editing the event.");
     guardBroadcastSend(chat);
-    return invoke("edit_event", { chat, id, event: fields });
+    return invoke("edit_event", { accountId, chat, id, event });
   });
-  await messages.reloadMessages(chats.selectedChat);
-  await messages.loadMarks(chats.selectedChat);
+  if (!current()) return;
+  try {
+    await messages.reloadMessages(chat);
+    if (current()) await messages.loadMarks(chat);
+  } catch (error) { if (current()) ui.fail(error); }
 }

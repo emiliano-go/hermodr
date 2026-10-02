@@ -102,6 +102,7 @@ mod messages;
 mod notices;
 mod structured_notices;
 mod polls;
+mod event_rsvps;
 mod quiz_polls;
 mod profile;
 mod receipts;

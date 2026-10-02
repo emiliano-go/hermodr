@@ -136,13 +136,20 @@ impl MessageStore {
         let chat = &*names::canonical_chat(&conn, chat)?;
         conn.execute(
             "INSERT INTO events
-                 (chat, id, creator, name, description, start_at, end_at, location, link, canceled, secret)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                 (chat, id, creator, name, description, start_at, end_at, location, link, canceled, secret,
+                  extra_guests_allowed,is_scheduled_call,has_reminder,reminder_offset_sec,invitation_id,invitation)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,?12,?13,?14,?15,?16,?17)
              ON CONFLICT(chat, id) DO UPDATE SET
                  name = excluded.name, description = excluded.description,
                  start_at = excluded.start_at, end_at = excluded.end_at, location = excluded.location,
                  link = excluded.link, canceled = excluded.canceled,
-                 secret = COALESCE(events.secret, excluded.secret)",
+                 secret = COALESCE(events.secret, excluded.secret),
+                 extra_guests_allowed=COALESCE(excluded.extra_guests_allowed,events.extra_guests_allowed),
+                 is_scheduled_call=COALESCE(excluded.is_scheduled_call,events.is_scheduled_call),
+                 has_reminder=COALESCE(excluded.has_reminder,events.has_reminder),
+                 reminder_offset_sec=COALESCE(excluded.reminder_offset_sec,events.reminder_offset_sec),
+                 invitation_id=COALESCE(excluded.invitation_id,events.invitation_id),
+                 invitation=MAX(events.invitation,excluded.invitation)",
             params![
                 chat,
                 id,
@@ -154,7 +161,8 @@ impl MessageStore {
                 event.location,
                 event.link,
                 event.canceled as i32,
-                secret
+                secret, event.extra_guests_allowed,event.is_scheduled_call,event.has_reminder,
+                event.reminder_offset_sec,event.invitation_id,event.invitation
             ],
         )?;
         Ok(())
@@ -165,7 +173,8 @@ impl MessageStore {
         let chat = &*names::canonical_chat(&conn, chat)?;
         Ok(conn
             .query_row(
-                "SELECT creator, secret FROM events WHERE chat = ?1 AND id = ?2",
+                &format!("SELECT e.creator,e.secret FROM events e JOIN messages m ON m.chat=e.chat AND m.id=e.id
+                    WHERE e.chat=?1 AND e.id=?2 AND ({})", super::event_rsvps::PUBLIC_EVENT),
                 params![chat, id],
                 |r| {
                     let creator = r.get(0)?;
@@ -179,14 +188,7 @@ impl MessageStore {
     }
 
     pub fn set_event_response(&self, chat: &str, event: &str, responder: &str, response: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        let chat = &*names::canonical_chat(&conn, chat)?;
-        conn.execute(
-            "INSERT INTO event_responses (chat, event, responder, response) VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT(chat, event, responder) DO UPDATE SET response = excluded.response",
-            params![chat, event, responder, response],
-        )?;
-        Ok(())
+        self.legacy_event_response(chat, event, responder, response)
     }
 }
 
@@ -255,19 +257,6 @@ impl StoreWorker {
         self.run(move |store| store.save_event(&chat, &id, &creator, &event, secret.as_deref())).await
     }
 
-    pub(crate) async fn event_secret(&self, chat: &str, id: &str) -> Result<Option<Secretive>> {
-        let chat = chat.to_owned();
-        let id = id.to_owned();
-        self.run(move |store| store.event_secret(&chat, &id)).await
-    }
-
-    pub(crate) async fn set_event_response(&self, chat: &str, event: &str, responder: &str, response: &str) -> Result<()> {
-        let chat = chat.to_owned();
-        let event = event.to_owned();
-        let responder = responder.to_owned();
-        let response = response.to_owned();
-        self.run(move |store| store.set_event_response(&chat, &event, &responder, &response)).await
-    }
 }
 
 
@@ -350,10 +339,20 @@ impl MarksScope<'_> {
         let mut events: Vec<Event> = self
             .conn
             .prepare(
-                "SELECT id, name, description, start_at, end_at, location, link, canceled
-                 FROM events WHERE chat = ?1 AND (?2 IS NULL OR id IN (SELECT value FROM json_each(?2)))",
+                &format!("SELECT e.id,e.name,e.description,e.start_at,e.end_at,e.location,e.link,e.canceled,
+                 e.extra_guests_allowed,e.is_scheduled_call,e.has_reminder,e.reminder_offset_sec,e.invitation_id,e.invitation,
+                 COALESCE(length(e.secret)=32 AND e.canceled=0 AND e.invitation=0 AND EXISTS(SELECT 1 FROM messages m
+                     WHERE m.chat=e.chat AND m.id=e.id AND ({})),0),
+                 EXISTS(SELECT 1 FROM messages m WHERE m.chat=e.chat AND m.id=e.id AND ({}) AND (
+                     EXISTS(SELECT 1 FROM message_pin_sync s WHERE s.chat=e.chat AND s.target=e.id AND s.pinned=1
+                         AND (s.expires_at IS NULL OR s.expires_at>?3)) OR
+                     EXISTS(SELECT 1 FROM message_pins p WHERE p.chat=e.chat AND p.id=e.id
+                         AND NOT EXISTS(SELECT 1 FROM message_pin_sync s WHERE s.chat=e.chat))))
+                 FROM events e WHERE e.chat=?1 AND (?2 IS NULL OR e.id IN (SELECT value FROM json_each(?2)))",
+                    super::event_rsvps::PUBLIC_EVENT, super::event_rsvps::PUBLIC_EVENT),
             )?
-            .query_map(params![self.chat, self.window], |r| {
+            .query_map(params![self.chat, self.window, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default().as_millis().min(i64::MAX as u128) as i64], |r| {
                 Ok(Event {
                     id: r.get(0)?,
                     name: r.get(1)?,
@@ -363,15 +362,19 @@ impl MarksScope<'_> {
                     location: r.get(5)?,
                     link: r.get(6)?,
                     canceled: r.get::<_, i32>(7)? != 0,
+                    extra_guests_allowed:r.get(8)?,is_scheduled_call:r.get(9)?,has_reminder:r.get(10)?,
+                    reminder_offset_sec:r.get(11)?,invitation_id:r.get(12)?,invitation:r.get(13)?,can_respond:r.get(14)?,pinned:r.get(15)?,
                     responses: Vec::new(),
                 })
             })?
             .collect::<rusqlite::Result<_>>()?;
         let responses: Vec<(String, EventResponse)> = self
             .conn
-            .prepare("SELECT event, responder, response FROM event_responses WHERE chat = ?1 AND (?2 IS NULL OR event IN (SELECT value FROM json_each(?2)))")?
+            .prepare("SELECT event,responder,response,extra_guest_count,timestamp_ms FROM event_responses WHERE chat=?1
+                AND (response IN ('going','not_going','maybe') OR (source_id IS NULL AND response<>''))
+                AND (?2 IS NULL OR event IN (SELECT value FROM json_each(?2)))")?
             .query_map(params![self.chat, self.window], |r| {
-                Ok((r.get(0)?, EventResponse { responder: r.get(1)?, response: r.get(2)? }))
+                Ok((r.get(0)?, EventResponse { responder:r.get(1)?,response:r.get(2)?,extra_guest_count:r.get(3)?,timestamp_ms:r.get(4)? }))
             })?
             .collect::<rusqlite::Result<_>>()?;
         for (event, response) in responses {

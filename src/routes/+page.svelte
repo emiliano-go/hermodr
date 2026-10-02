@@ -991,7 +991,7 @@
     }
   }
 
-  async function respondEvent(message: StoredMessage, response: string) {
+  async function respondEvent(message: StoredMessage, response: string, extraGuestCount?: number) {
     const accountId = session.activeAccount, chat = message.chat, id = message.id;
     const generation = messages.accountGeneration;
     const reason = broadcastSendReason(chat);
@@ -1002,8 +1002,12 @@
     await composer.enqueue(async (signal) => {
       signal.throwIfAborted();
       if (!current()) throw new Error("Conversation changed before responding.");
-      await invoke("respond_event", { accountId, chat, id, response });
+      await invoke("respond_event", { accountId, chat, id, response, extraGuestCount: extraGuestCount ?? null });
     });
+    if (current()) {
+      try { await messages.loadMarks(chat); }
+      catch (error) { if (current()) ui.fail(error); }
+    }
   }
 
   /** Pinned bar content for the chat header. */
@@ -1546,11 +1550,10 @@
           onopenmedia={openMedia}
           onopenquote={(m) => openQuote(m, m.reply_to_path!)}
           onvote={votePoll}
-          onrespond={(m, response) =>
-            act(() => respondEvent(m, response))}
+          onrespond={respondEvent}
           oneditrequest={(m) => {
             const event = messages.marks.events.find((e) => e.id === m.id);
-            if (event) ui.editingEvent = { chat: m.chat, event };
+            if (event && session.activeAccount) ui.editingEvent = { account: session.activeAccount, generation: messages.accountGeneration, chat: m.chat, event: structuredClone(event) };
           }}
           oncancelevent={(m) => {
             const event = messages.marks.events.find((e) => e.id === m.id);
@@ -1798,13 +1801,17 @@
   <CreateDialog kind={ui.creating} oncreate={create} onclose={() => (ui.creating = null)} />
 {/if}
 
-{#if ui.editingEvent}
-  {@const { chat, event } = ui.editingEvent}
+{#if ui.editingEvent && ui.editingEvent.account === session.activeAccount && ui.editingEvent.generation === messages.accountGeneration && ui.editingEvent.chat === chats.selectedChat}
+  {@const editing = ui.editingEvent}
+  {@const { chat, event } = editing}
+  {#key editing}
   <CreateDialog
     kind="event"
     initial={event}
+    scope={{ account: editing.account, chat, generation: editing.generation, requestKey: event.id }}
     oncreate={(value) => saveEvent(chat, event.id, value as object)}
-    onclose={() => (ui.editingEvent = null)} />
+    onclose={() => { if (ui.editingEvent === editing) ui.editingEvent = null; }} />
+  {/key}
 {/if}
 
 {#if ui.forwarding}

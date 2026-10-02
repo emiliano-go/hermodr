@@ -116,13 +116,13 @@ export type Contributions = { commands: Array<string>, transcription?: Transcrip
 export type DesktopChatTarget = { account_id: string, chat: string, };
 export type DesktopStatus = { start_on_login: boolean, shortcut_registered: boolean, };
 export type DiskRetention = { max_age_hours: RetentionLimit, max_messages_per_chat: RetentionLimit, };
-export type Event = { id: string, name: string, description: string | null, start: number | null, end: number | null, location: string | null, link: string | null, canceled: boolean, responses: Array<EventResponse>, };
-export type EventForm = { name: string, description: string | null, start: number | null, end: number | null, location: string | null, link: string | null, canceled: boolean, };
+export type Event = { id: string, name: string, description: string | null, start: number | null, end: number | null, location: string | null, link: string | null, canceled: boolean, extra_guests_allowed: boolean | null, is_scheduled_call: boolean | null, has_reminder: boolean | null, reminder_offset_sec: number | null, invitation_id: string | null, invitation: boolean, can_respond: boolean, pinned: boolean, responses: Array<EventResponse>, };
+export type EventForm = { name: string, description: string | null, start: number | null, end: number | null, location: string | null, link: string | null, canceled: boolean, extra_guests_allowed: boolean | null, is_scheduled_call: boolean | null, has_reminder: boolean | null, reminder_offset_sec: number | null, };
 export type EventResponse = { responder: string,
 /**
  * `going`, `not_going` or `maybe`.
  */
-response: string, };
+response: string, extra_guest_count: number | null, timestamp_ms: number | null, };
 export type GalleryCursor = { timestamp: number, sort_order: number, chat: string, id: string, };
 export type GalleryFilter = { chat: string | null, kind: GalleryKind | null, from_me: boolean | null, since: number | null, until: number | null, };
 export type GalleryItem = { message: StoredMessage, urls: Array<string>, };

@@ -3,6 +3,7 @@
 use super::*;
 
 pub(super) fn reconcile_addresses(conn: &Connection) -> Result<()> {
+    super::event_rsvps::reconcile_event_responders(conn)?;
     // One direct chat can be stored under both its LID and phone-number
     // forms, which shows the same contact twice. Fold the LID copy onto the
     // phone-number one; the write path now keys direct chats by number.
@@ -267,6 +268,7 @@ impl MessageStore {
         conn.execute("DELETE FROM secret_edit_revisions WHERE chat = ?1", params![jid])?;
         conn.execute("DELETE FROM events WHERE chat = ?1", params![jid])?;
         conn.execute("DELETE FROM event_responses WHERE chat = ?1", params![jid])?;
+        conn.execute("DELETE FROM event_rsvp_pending WHERE chat = ?1", params![jid])?;
         conn.execute("DELETE FROM view_once WHERE chat = ?1", params![jid])?;
         conn.execute("DELETE FROM forwarded WHERE chat = ?1", params![jid])?;
         conn.execute("DELETE FROM edited WHERE chat = ?1", params![jid])?;
@@ -332,6 +334,7 @@ pub(crate) fn fold_chat(conn: &Connection, from: &str, to: &str) -> Result<()> {
     if from == to {
         return Ok(());
     }
+    super::event_rsvps::reconcile_event_responders(conn)?;
     copy_shadowed_messages(conn, from, to)?;
     super::albums::merge_written(conn, from, to)?;
     merge_chat_row(conn, from, to)?;
@@ -374,6 +377,7 @@ const MESSAGE_STATE_TABLES: &[&str] = &[
     "transcripts",
     "events",
     "event_responses",
+    "event_rsvp_pending",
     "view_once",
     "forwarded",
     "edited",

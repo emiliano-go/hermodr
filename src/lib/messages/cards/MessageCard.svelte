@@ -81,10 +81,14 @@
 {:else if message.media_kind === "event"}
   <EventCard
     chat={message.chat}
+    scope={{ account: session.activeAccount, chat: message.chat, generation: messages.accountGeneration, requestKey: message.id }}
     event={vm.chatEvent}
+    names={api.namer}
+    picture={api.avatarOf}
+    pinned={!!vm.chatEvent?.pinned}
     title={message.text}
     onopenurl={api.onopenurl}
-    onrespond={async (response) => { await api.onrespond(message, response); }}
+    onrespond={async (response, extraGuestCount) => { await api.onrespond(message, response, extraGuestCount); }}
     onedit={message.from_me && vm.chatEvent ? () => api.oneditrequest(message) : undefined}
     oncancel={message.from_me && vm.chatEvent ? async () => { await api.oncancelevent(message); } : undefined} />
 {:else if message.media_kind === "live_location" && message.live_location}

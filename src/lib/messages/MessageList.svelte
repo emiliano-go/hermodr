@@ -165,7 +165,7 @@
     onopenmedia: (path: string) => void;
     onopenquote: (m: StoredMessage) => void;
     onvote: (m: StoredMessage, options: string[]) => unknown;
-    onrespond: (m: StoredMessage, response: string) => unknown;
+    onrespond: (m: StoredMessage, response: string, extraGuestCount?: number) => unknown;
     oneditrequest: (m: StoredMessage) => void;
     oncancelevent: (m: StoredMessage) => void;
     onreact: (m: StoredMessage, emoji: string) => void;

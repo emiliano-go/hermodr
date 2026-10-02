@@ -29,8 +29,9 @@ pub(super) fn poll_of(message: &wa::Message) -> Option<(String, Vec<String>, boo
 }
 
 pub(super) fn event_of(message: &wa::Message) -> Option<crate::store::NewEvent> {
-    let event = message.get_base_message().event_message.as_option()?;
-    Some(crate::store::NewEvent {
+    let base = message.get_base_message();
+    match (base.event_message.as_option(), base.event_invite_message.as_option()) {
+    (Some(event), None) => Some(crate::store::NewEvent {
         name: event.name.clone().unwrap_or_default(),
         description: event.description.clone(),
         start: event.start_time,
@@ -41,7 +42,21 @@ pub(super) fn event_of(message: &wa::Message) -> Option<crate::store::NewEvent> 
             .and_then(|l| l.name.clone().or_else(|| l.address.clone())),
         link: event.join_link.clone(),
         canceled: event.is_canceled.unwrap_or(false),
-    })
+        extra_guests_allowed: event.extra_guests_allowed,
+        is_scheduled_call: event.is_schedule_call,
+        has_reminder: event.has_reminder,
+        reminder_offset_sec: event.reminder_offset_sec,
+        invitation_id: None,
+        invitation: false,
+    }),
+    (None, Some(invite)) => Some(crate::store::NewEvent {
+        name: invite.event_title.clone().unwrap_or_default(),
+        description: invite.caption.clone(), start: invite.start_time, end: invite.end_time,
+        link: invite.call_link.clone(), canceled: invite.is_canceled.unwrap_or(false),
+        invitation_id: invite.event_id.clone(), invitation: true, ..Default::default()
+    }),
+    _ => None,
+    }
 }
 
 /// The per-message secret polls and events key their votes and RSVPs with.
@@ -62,17 +77,8 @@ pub(super) async fn remember_structures(store: &StoreWorker, chat: &str, id: &st
         secret_edits::remember_options(store, chat, id, message).await.logged();
     }
     if let Some(event) = event_of(message) {
-        store.save_event(chat, id, creator, &event, secret.as_deref()).await.logged();
-    }
-}
-
-pub(super) fn response_name(response: Option<wa::message::event_response_message::EventResponseType>) -> &'static str {
-    use wa::message::event_response_message::EventResponseType;
-    match response {
-        Some(EventResponseType::GOING) => "going",
-        Some(EventResponseType::NOT_GOING) => "not_going",
-        Some(EventResponseType::MAYBE) => "maybe",
-        _ => "",
+        let event_secret = if message.get_base_message().event_invite_message.is_set() { None } else { secret.as_deref() };
+        store.save_event(chat, id, creator, &event, event_secret).await.logged();
     }
 }
 
@@ -113,6 +119,7 @@ impl WhatsAppService {
 
     pub async fn create_event(&self, chat: &str, event: crate::store::NewEvent) -> Result<()> {
         use whatsapp_rust::EventCreationParams;
+        event_rsvps::validate_create(&event)?;
         let to = broadcast_lists::writable_target(chat)?;
         let to_self = self.is_self_jid(&to);
         let params = EventCreationParams {
@@ -125,6 +132,8 @@ impl WhatsAppService {
                 name: Some(name),
                 ..Default::default()
             }),
+            extra_guests_allowed: event.extra_guests_allowed,
+            is_scheduled_call: event.is_scheduled_call,
             ..Default::default()
         };
         let (result, secret) = self
@@ -134,46 +143,38 @@ impl WhatsAppService {
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let id = result.message_id.clone();
-        self.store.save_event(chat, &id, &self.own_jid(), &event, Some(&secret)).await?;
-        let stored = self.own_message(chat, &id, event.name, "event", to_self);
+        let stored = self.own_message(chat, &id, event.name.clone(), "event", to_self);
         let stored = self.store.insert_message_row(&stored).await?;
+        self.store.save_event(chat, &id, &self.own_jid(), &event, Some(&secret)).await?;
         let _ = self.events.send(ServiceEvent::arrival(&stored));
         Ok(())
     }
 
     /// Edits or cancels one of our events. The edit is encrypted with the
     /// event's secret, which is how WhatsApp sends event edits.
-    pub async fn edit_event(&self, chat: &str, id: &str, event: crate::store::NewEvent) -> Result<()> {
+    pub async fn edit_event(&self, chat: &str, id: &str, mut event: crate::store::NewEvent) -> Result<()> {
         let to = broadcast_lists::writable_target(chat)?;
-        let def = self
+        let current = event_rsvps::event_for_action(&self.store, chat, id).await?;
+        event_rsvps::preserve_omitted_metadata(&current,&mut event);
+        event_rsvps::validate_edit(&current, &event)?;
+        let context = self
             .store
-            .event_secret(chat, id).await?
+            .event_rsvp_context(chat, id, "@me").await?
             .ok_or_else(|| anyhow::anyhow!("this event's key never reached this device"))?;
+        anyhow::ensure!(!context.invitation && context.invitation_id.is_none(), "Event invitations are read-only.");
+        anyhow::ensure!(event.has_reminder == context.event.has_reminder && event.reminder_offset_sec == context.event.reminder_offset_sec,
+            "Event reminder changed while preparing the edit.");
+        let def = context.secret;
         let own: Vec<String> = [self.client.pn(), self.client.lid()]
             .into_iter()
             .flatten()
             .map(|j| j.to_non_ad().to_string())
             .collect();
-        if !own.contains(&def.creator) {
+        let creators = event_rsvps::namespace_forms(&self.store, Some(&self.client), &def.creator.parse::<Jid>()?).await?;
+        if !creators.iter().any(|creator|own.contains(&creator.to_string())) {
             anyhow::bail!("only the event's creator can change it");
         }
-        let content = wa::Message {
-            event_message: MessageField::some(wa::message::EventMessage {
-                name: Some(event.name.clone()),
-                description: event.description.clone(),
-                start_time: event.start,
-                end_time: event.end,
-                join_link: event.link.clone(),
-                is_canceled: Some(event.canceled),
-                location: event
-                    .location
-                    .clone()
-                    .map(|name| wa::message::LocationMessage { name: Some(name), ..Default::default() })
-                    .into(),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
+        let content = event_rsvps::event_content(&event);
         let timestamp_ms = unix_now() * 1000;
         let result = self.client
             .edit_message_encrypted(to, id, &def.secret, content)
@@ -189,28 +190,26 @@ impl WhatsAppService {
         Ok(())
     }
 
-    /// Answers an event: `going`, `not_going` or `maybe`.
-    pub async fn respond_event(&self, chat: &str, id: &str, response: &str) -> Result<()> {
-        use wa::message::event_response_message::EventResponseType;
+    /// Answers an event after validating its current public state.
+    pub async fn respond_event(&self, chat: &str, id: &str, response: &str, extra_guest_count: Option<i32>) -> Result<()> {
         let jid = broadcast_lists::writable_target(chat)?;
-        let answer = match response {
-            "going" => EventResponseType::GOING,
-            "not_going" => EventResponseType::NOT_GOING,
-            "maybe" => EventResponseType::MAYBE,
-            other => anyhow::bail!("unknown response {other}"),
-        };
-        let def = self
-            .store
-            .event_secret(chat, id).await?
-            .ok_or_else(|| anyhow::anyhow!("this event arrived without its key, so it cannot be answered here"))?;
-        let creator: Jid = def.creator.parse()?;
-        self.client
+        let current = event_rsvps::event_for_action(&self.store, chat, id).await?;
+        let answer = event_rsvps::validate_response(&current, response, extra_guest_count)?;
+        let context = self.store.event_rsvp_context(chat, id, "@me").await?
+            .ok_or_else(|| anyhow::anyhow!("This event arrived without its key, so it cannot be answered here."))?;
+        anyhow::ensure!(context.secret.secret.len()==32,"Event vote key must be 32 bytes.");
+        anyhow::ensure!(!context.canceled && !context.invitation && context.invitation_id.is_none(),"This event cannot be answered on this device.");
+        anyhow::ensure!(extra_guest_count.is_none_or(|count|count<=0) || context.extra_guests_allowed,"This event no longer permits extra guests.");
+        let creator: Jid = context.secret.creator.parse()?;
+        let request_started_ms=whatsapp_rust::wacore::time::now_millis();
+        let sent = self.client
             .events()
-            .respond(jid, id, &creator, &def.secret, answer, None)
+            .respond(jid, id, &creator, &context.secret.secret, answer, extra_guest_count)
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        self.store.set_event_response(chat, id, "@me", response).await?;
-        let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
+        if self.store.commit_event_rsvp_ack_with_bound(chat, id, "@me", &context.prior, response, extra_guest_count, &sent.message_id, Some(request_started_ms)).await? {
+            let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
+        }
         Ok(())
     }
 }

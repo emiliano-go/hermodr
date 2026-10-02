@@ -14,6 +14,8 @@ mod marks;
 pub(crate) mod broadcast_lists;
 pub use broadcast_lists::BroadcastList;
 pub(crate) mod quiz_polls;
+pub(crate) mod event_rsvps;
+pub(crate) mod event_rsvp_pending;
 mod media;
 mod messages;
 mod usernames;
@@ -467,6 +469,8 @@ pub struct EventResponse {
     pub responder: String,
     /// `going`, `not_going` or `maybe`.
     pub response: String,
+    pub extra_guest_count: Option<i32>,
+    pub timestamp_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -480,6 +484,14 @@ pub struct Event {
     pub location: Option<String>,
     pub link: Option<String>,
     pub canceled: bool,
+    pub extra_guests_allowed: Option<bool>,
+    pub is_scheduled_call: Option<bool>,
+    pub has_reminder: Option<bool>,
+    pub reminder_offset_sec: Option<i64>,
+    pub invitation_id: Option<String>,
+    pub invitation: bool,
+    pub can_respond: bool,
+    pub pinned: bool,
     pub responses: Vec<EventResponse>,
 }
 
@@ -501,6 +513,12 @@ pub struct NewEvent {
     pub location: Option<String>,
     pub link: Option<String>,
     pub canceled: bool,
+    pub extra_guests_allowed: Option<bool>,
+    pub is_scheduled_call: Option<bool>,
+    pub has_reminder: Option<bool>,
+    pub reminder_offset_sec: Option<i64>,
+    pub invitation_id: Option<String>,
+    pub invitation: bool,
 }
 
 /// Per-message state kept beside the messages of one chat.

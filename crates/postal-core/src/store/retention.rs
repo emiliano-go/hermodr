@@ -225,6 +225,7 @@ fn purge_orphan_state(conn: &Connection) -> Result<()> {
          DELETE FROM events WHERE NOT EXISTS (
              SELECT 1 FROM messages m WHERE m.chat = events.chat AND m.id = events.id);",
     )?;
+    super::event_rsvp_pending::purge(conn)?;
     Ok(())
 }
 
@@ -363,7 +364,7 @@ impl MessageStore {
              DELETE FROM quiz_source_retirements;
              DELETE FROM broadcast_lists;
              DELETE FROM secret_edit_revisions; DELETE FROM events;
-             DELETE FROM event_responses; DELETE FROM view_once; DELETE FROM forwarded;
+             DELETE FROM event_responses; DELETE FROM event_rsvp_pending; DELETE FROM view_once; DELETE FROM forwarded;
              DELETE FROM edited; DELETE FROM receipts; DELETE FROM hidden_chats;
              DELETE FROM cleared_chats; DELETE FROM chat_history_floor;",
         )?;

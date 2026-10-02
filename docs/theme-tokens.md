@@ -18,9 +18,9 @@ Native selects share raised/text/line-strong/radius-sm styles. Checkbox, radio a
 | --- | --- | ---: | --- |
 | `--bg` | Sidebar | 33 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [messages/StarredList.svelte](../src/lib/messages/StarredList.svelte) |
 | `--chat-bg` | Chat background | 8 | [routes/+page.svelte](../src/routes/+page.svelte), [messages/MessageBubble.svelte](../src/lib/messages/MessageBubble.svelte), [chat/ChatPreview.svelte](../src/lib/chat/ChatPreview.svelte) |
-| `--surface` | Headers and bars | 53 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte) |
-| `--raised` | Hover and inputs | 48 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte) |
-| `--raised-2` | Selected | 23 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/Button.svelte](../src/lib/ui/Button.svelte) |
+| `--surface` | Headers and bars | 54 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte) |
+| `--raised` | Hover and inputs | 50 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte) |
+| `--raised-2` | Selected | 24 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/Button.svelte](../src/lib/ui/Button.svelte) |
 | `--scrim` | Dialog backdrop | 29 | [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte), [messages/StructuredNotice.svelte](../src/lib/messages/StructuredNotice.svelte) |
 | `--shadow` | Popup shadow | 37 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte) |
 
@@ -35,7 +35,7 @@ Native selects share raised/text/line-strong/radius-sm styles. Checkbox, radio a
 
 | Token | Use | Direct consumers | Examples |
 | --- | --- | ---: | --- |
-| `--text` | Text | 75 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/Logo.svelte](../src/lib/ui/Logo.svelte) |
+| `--text` | Text | 76 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/Logo.svelte](../src/lib/ui/Logo.svelte) |
 | `--muted` | Secondary text | 82 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/Button.svelte](../src/lib/ui/Button.svelte) |
 | `--faint` | Faint text | 18 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte), [ui/Button.svelte](../src/lib/ui/Button.svelte) |
 | `--link` | Links and read ticks | 11 | [messages/StructuredNotice.svelte](../src/lib/messages/StructuredNotice.svelte), [messages/MessageText.svelte](../src/lib/messages/MessageText.svelte), [messages/MessageInfo.svelte](../src/lib/messages/MessageInfo.svelte) |
@@ -58,19 +58,19 @@ Native selects share raised/text/line-strong/radius-sm styles. Checkbox, radio a
 
 | Token | Use | Direct consumers | Examples |
 | --- | --- | ---: | --- |
-| `--accent` | Accent | 48 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Spinner.svelte](../src/lib/ui/Spinner.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte) |
+| `--accent` | Accent | 50 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Spinner.svelte](../src/lib/ui/Spinner.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte) |
 | `--accent-hover` | Accent hover | 5 | [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/Button.svelte](../src/lib/ui/Button.svelte), [messages/cards/InviteCard.svelte](../src/lib/messages/cards/InviteCard.svelte) |
-| `--accent-text` | Accent text | 18 | [routes/+page.svelte](../src/routes/+page.svelte), [composer/ComposerBar.svelte](../src/lib/composer/ComposerBar.svelte), [messages/MessageList.svelte](../src/lib/messages/MessageList.svelte) |
-| `--accent-ink` | Text on accent | 14 | [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/Logo.svelte](../src/lib/ui/Logo.svelte), [ui/Button.svelte](../src/lib/ui/Button.svelte) |
-| `--accent-soft` | Accent tint | 13 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Button.svelte](../src/lib/ui/Button.svelte), [messages/MessageMenuPanel.svelte](../src/lib/messages/MessageMenuPanel.svelte) |
+| `--accent-text` | Accent text | 19 | [routes/+page.svelte](../src/routes/+page.svelte), [composer/ComposerBar.svelte](../src/lib/composer/ComposerBar.svelte), [messages/MessageList.svelte](../src/lib/messages/MessageList.svelte) |
+| `--accent-ink` | Text on accent | 17 | [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/Logo.svelte](../src/lib/ui/Logo.svelte), [ui/Button.svelte](../src/lib/ui/Button.svelte) |
+| `--accent-soft` | Accent tint | 15 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Button.svelte](../src/lib/ui/Button.svelte), [messages/MessageMenuPanel.svelte](../src/lib/messages/MessageMenuPanel.svelte) |
 
 ## lines
 
 | Token | Use | Direct consumers | Examples |
 | --- | --- | ---: | --- |
-| `--line` | Dividers | 39 | [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/BooleanProps.svelte](../src/lib/ui/BooleanProps.svelte), [composer/SlashCommandMenu.svelte](../src/lib/composer/SlashCommandMenu.svelte) |
+| `--line` | Dividers | 38 | [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/BooleanProps.svelte](../src/lib/ui/BooleanProps.svelte), [composer/SlashCommandMenu.svelte](../src/lib/composer/SlashCommandMenu.svelte) |
 | `--line-soft` | Soft dividers | 0 | Registered; no direct Svelte consumer. |
-| `--line-strong` | Borders | 46 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte) |
+| `--line-strong` | Borders | 48 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte) |
 
 ## status
 
@@ -84,7 +84,7 @@ Native selects share raised/text/line-strong/radius-sm styles. Checkbox, radio a
 | Token | Use | Direct consumers | Examples |
 | --- | --- | ---: | --- |
 | `--radius-sm` | Bubble radius | 21 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/Button.svelte](../src/lib/ui/Button.svelte) |
-| `--radius` | Input radius | 24 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/Button.svelte](../src/lib/ui/Button.svelte) |
+| `--radius` | Input radius | 25 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/Button.svelte](../src/lib/ui/Button.svelte) |
 | `--radius-lg` | Dialog radius | 30 | [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/ConfirmDialog.svelte](../src/lib/ui/ConfirmDialog.svelte), [messages/StructuredNotice.svelte](../src/lib/messages/StructuredNotice.svelte) |
 | `--font` | Font family | 2 | [routes/+page.svelte](../src/routes/+page.svelte), [settings/ThemePreview.svelte](../src/lib/settings/ThemePreview.svelte) |
 | `--font-size` | Font size | 3 | [routes/+page.svelte](../src/routes/+page.svelte), [chat/ChatPreview.svelte](../src/lib/chat/ChatPreview.svelte), [settings/ThemePreview.svelte](../src/lib/settings/ThemePreview.svelte) |
@@ -94,8 +94,8 @@ Native selects share raised/text/line-strong/radius-sm styles. Checkbox, radio a
 
 | Token | Use | Direct consumers | Examples |
 | --- | --- | ---: | --- |
-| `--motion-scale` | Animation length (1 normal, 0 off, 2 slower) | 23 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/BooleanProps.svelte](../src/lib/ui/BooleanProps.svelte) |
-| `--ease` | Easing curve | 19 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/BooleanProps.svelte](../src/lib/ui/BooleanProps.svelte) |
+| `--motion-scale` | Animation length (1 normal, 0 off, 2 slower) | 24 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/BooleanProps.svelte](../src/lib/ui/BooleanProps.svelte) |
+| `--ease` | Easing curve | 21 | [routes/+page.svelte](../src/routes/+page.svelte), [ui/Panel.svelte](../src/lib/ui/Panel.svelte), [ui/BooleanProps.svelte](../src/lib/ui/BooleanProps.svelte) |
 
 ## Other CSS properties and color literals
 

@@ -381,6 +381,11 @@ fn edit_body(message: &wa::Message, kind: SecretEncKind) -> Result<Option<Secret
                     .and_then(|location| location.name.clone().or_else(|| location.address.clone())),
                 link: event.join_link.clone(),
                 canceled: event.is_canceled,
+                extra_guests_allowed: event.extra_guests_allowed,
+                is_scheduled_call: event.is_schedule_call,
+                has_reminder: event.has_reminder,
+                reminder_offset_sec: event.reminder_offset_sec,
+                invitation_id: None,
             })
         }),
         SecretEncKind::PollAddOption if poll_count == 0 && event.is_none() => add

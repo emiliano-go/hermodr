@@ -14,7 +14,9 @@
   }))));
   const poll = { id: "synthetic-poll", name: "Synthetic poll", options: ["A", "B"], multi: false, votes: [] };
   const event = { id: "synthetic-event", name: "Synthetic event", description: "Synthetic description", start: null,
-    end: null, location: "Synthetic place", link: null, canceled: false, responses: [] };
+    end: null, location: "Synthetic place", link: null, canceled: false, responses: [], extra_guests_allowed: null,
+    is_scheduled_call: null, has_reminder: null, reminder_offset_sec: null, invitation_id: null,
+    invitation: false, can_respond: true, pinned: false };
   const special = ["contact", "location", "business", "album", "music", "ai_response", "future_card", "event", "live_location"].map((kind) => ({
     ...messages[0], id: `synthetic-${kind}`, media_kind: kind, text: `Readable ${kind} <script> & details`,
     live_location: kind === "live_location" ? { lat: 1, lng: 2, accuracy: 4, speed: null, heading: null,

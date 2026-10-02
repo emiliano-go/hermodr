@@ -199,7 +199,7 @@ export type BubbleApi = {
   /** Shows the view-once copy a reply carries in the built-in viewer. */
   onopenquote: (m: StoredMessage) => void;
   onvote: (m: StoredMessage, options: string[]) => unknown;
-  onrespond: (m: StoredMessage, response: string) => unknown;
+  onrespond: (m: StoredMessage, response: string, extraGuestCount?: number) => unknown;
   oneditrequest: (m: StoredMessage) => void;
   oncancelevent: (m: StoredMessage) => void;
   onreact: (m: StoredMessage, emoji: string) => void;

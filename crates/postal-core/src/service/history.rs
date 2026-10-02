@@ -444,11 +444,11 @@ impl Inbound {
                 }).await.logged();
             }
         }
-        let (quiz_changed, notices) = self.remember_history_quizzes(store, &chat, conversation, own).await;
+        let (quiz_changed, notices) = self.remember_history_structures(store, &chat, conversation, own).await;
         (added.then(|| chat.clone()), names_learned, audited.then(|| chat.clone()), quiz_changed.then_some(chat), notices)
     }
 
-    async fn remember_history_quizzes(&self, store: &StoreWorker, chat: &str, conversation: &wa::Conversation, own: Option<&str>) -> (bool, Vec<ServiceEvent>) {
+    async fn remember_history_structures(&self, store: &StoreWorker, chat: &str, conversation: &wa::Conversation, own: Option<&str>) -> (bool, Vec<ServiceEvent>) {
         let mut changed = false;
         let mut notices = Vec::new();
         for entry in &conversation.messages {
@@ -459,7 +459,16 @@ impl Inbound {
             let sender = if from_me { own.unwrap_or(chat) } else { web.participant.as_deref().or(key.participant.as_deref()).unwrap_or(chat) };
             let decoded = decoded_message(message);
             if decoded.view_once || decoded.spoiler { continue; }
+            changed |= self.restore_history_event_key(store, chat, id, sender, message).await;
             changed |= quiz_polls::remember_quiz_definition(store, chat, id, sender, message).await.observed() == Some(true);
+            if let Some(response) = decoded.message.enc_event_response_message.as_option() {
+                let raw_sender = if from_me { own.or(web.participant.as_deref()).or(key.participant.as_deref()) } else { Some(sender) };
+                if let Some(responder) = raw_sender.and_then(|sender| sender.parse::<Jid>().ok()) {
+                    let addresses = own.map(|jid| vec![jid.to_owned()]).unwrap_or_default();
+                    changed |= event_rsvps::capture_event_response(store, self.client_for_events.get().map(|client| client.as_ref()),
+                        chat, id, &responder, None, from_me, &addresses, response).await.observed() == Some(true);
+                }
+            }
             if let Some(update) = decoded.message.poll_update_message.as_option() {
                 let Ok(voter) = sender.parse::<Jid>() else { continue };
                 let timestamp = web.message_timestamp.and_then(|at| i64::try_from(at).ok()).unwrap_or(0);
@@ -472,11 +481,21 @@ impl Inbound {
                 }
             }
         }
+        let addresses = own.map(|jid| vec![jid.to_owned()]).unwrap_or_default();
+        changed |= event_rsvps::flush_pending(store, self.client_for_events.get().map(|client| client.as_ref()), chat, None, &addresses).await.observed() == Some(true);
         (changed, notices)
     }
 
-    /// Names a conversation from its display name (a contact) or subject (a
-    /// group).
+    async fn restore_history_event_key(&self, store: &StoreWorker, chat: &str, id: &str, sender: &str, message: &wa::Message) -> bool {
+        if !event_of(message).is_some_and(|event| !event.invitation) { return false; }
+        let Some(secret) = message_secret(message).filter(|secret| secret.len() == 32) else { return false; };
+        let Ok(sender) = sender.parse::<Jid>() else { return false; };
+        let Some(forms) = event_rsvps::namespace_forms(store, self.client_for_events.get().map(|client| client.as_ref()), &sender).await.observed() else { return false; };
+        let creators = forms.into_iter().map(|jid| jid.to_non_ad().to_string()).collect::<Vec<_>>();
+        store.fill_event_secret(chat, id, &creators, &secret).await.observed() == Some(true)
+    }
+
+    /// Names a conversation from its contact display name or group subject.
     async fn name_history_chat(&self, store: &StoreWorker, chat: &str, conversation: &wa::Conversation) {
         if !chat.ends_with("@g.us") {
             if let Some(username) = conversation.username.as_deref() {

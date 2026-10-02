@@ -156,7 +156,7 @@
   let toolsMenu = $state(false);
   let toolsTimer: ReturnType<typeof setTimeout> | null = null;
   function openTools() {
-    if (disabled) return;
+    if (!account || !selectedChat) return;
     if (toolsTimer) { clearTimeout(toolsTimer); toolsTimer = null; }
     toolsMenu = true;
   }
@@ -187,9 +187,9 @@
   const slashKey = $derived(activeSlash ? JSON.stringify(activeSlash) : null);
   const slashDisabled = $derived({ location: "Location sending is unavailable.", "keep-in-chat": "Keep in chat is unavailable.",
     ...(!selectedChat.endsWith("@g.us") ? { "mention-all": "Mention all is available in groups." } : {}) });
-  $effect(() => { void account; void selectedChat; void generation; soundboardOpen = false; cameraOpen = false; dismissedSlash = null; });
+  $effect(() => { void account; void selectedChat; void generation; soundboardOpen = false; cameraOpen = false; dismissedSlash = null; closeTools(); });
   $effect(() => { if (disabled || editing) cameraOpen = false; });
-  $effect(() => { if (disabled) { closeAttach(); pickerTab = null; scheduling = false; closeTools(); } });
+  $effect(() => { if (disabled) { closeAttach(); pickerTab = null; scheduling = false; } });
 
   function updateCaret() {
     if (composerInput && (caret.start !== composerInput.selectionStart || caret.end !== composerInput.selectionEnd)) {
@@ -530,9 +530,9 @@
         aria-label="More messaging options"
         aria-haspopup="menu"
         aria-expanded={toolsMenu}
-        {disabled}
-        onclick={() => { if (!disabled) toolsMenu = !toolsMenu; }} />
-      {#if toolsMenu && !disabled}
+        disabled={!account || !selectedChat}
+        onclick={() => { if (account && selectedChat) toolsMenu = !toolsMenu; }} />
+      {#if toolsMenu && account && selectedChat}
         <div class="tools-menu" role="menu" aria-label="More messaging options">
           <QuickRepliesMenu {account} chat={selectedChat} {generation} requestKey={quickReplies.key}
             dataScope={quickReplies.scope(selectedChat)} replies={quickReplies.replies} loading={quickReplies.loading}

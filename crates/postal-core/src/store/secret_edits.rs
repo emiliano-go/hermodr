@@ -31,6 +31,11 @@ pub(crate) struct EventEdit {
     pub location: Option<String>,
     pub link: Option<String>,
     pub canceled: Option<bool>,
+    pub extra_guests_allowed: Option<bool>,
+    pub is_scheduled_call: Option<bool>,
+    pub has_reminder: Option<bool>,
+    pub reminder_offset_sec: Option<i64>,
+    pub invitation_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -228,7 +233,10 @@ impl MessageStore {
         };
         transaction.execute(
             "UPDATE events SET name = ?3, description = ?4, start_at = ?5, end_at = ?6,
-             location = ?7, link = ?8, canceled = ?9 WHERE chat = ?1 AND id = ?2",
+             location=?7,link=?8,canceled=?9,extra_guests_allowed=COALESCE(?10,extra_guests_allowed),
+             is_scheduled_call=COALESCE(?11,is_scheduled_call),has_reminder=COALESCE(?12,has_reminder),
+             reminder_offset_sec=COALESCE(?13,reminder_offset_sec),invitation_id=COALESCE(?14,invitation_id)
+             WHERE chat=?1 AND id=?2",
             params![
                 chat,
                 id,
@@ -238,7 +246,8 @@ impl MessageStore {
                 event.end,
                 event.location,
                 event.link,
-                event.canceled
+                event.canceled,event.extra_guests_allowed,event.is_scheduled_call,event.has_reminder,
+                event.reminder_offset_sec,event.invitation_id
             ],
         )?;
         transaction.execute(
@@ -424,7 +433,10 @@ impl MessageStore {
                         "UPDATE events SET name = ?3, description = COALESCE(?4, description),
                         start_at = COALESCE(?5, start_at), end_at = COALESCE(?6, end_at),
                         location = COALESCE(?7, location), link = COALESCE(?8, link),
-                        canceled = COALESCE(?9, canceled) WHERE chat = ?1 AND id = ?2",
+                        canceled=COALESCE(?9,canceled),extra_guests_allowed=COALESCE(?10,extra_guests_allowed),
+                        is_scheduled_call=COALESCE(?11,is_scheduled_call),has_reminder=COALESCE(?12,has_reminder),
+                        reminder_offset_sec=COALESCE(?13,reminder_offset_sec),invitation_id=COALESCE(?14,invitation_id)
+                        WHERE chat=?1 AND id=?2",
                         params![
                             chat,
                             id,
@@ -434,7 +446,8 @@ impl MessageStore {
                             change.end,
                             change.location,
                             change.link,
-                            change.canceled
+                            change.canceled,change.extra_guests_allowed,change.is_scheduled_call,change.has_reminder,
+                            change.reminder_offset_sec,change.invitation_id
                         ],
                     )?;
                     conn.execute(
@@ -805,6 +818,7 @@ mod tests {
                         location: None,
                         link: None,
                         canceled: false,
+                        ..Default::default()
                     },
                     Some(b"event-secret"),
                 )
@@ -1088,6 +1102,7 @@ mod tests {
             location: Some("Somewhere".into()),
             link: Some("https://join.test".into()),
             canceled: false,
+            ..Default::default()
         };
         store.save_event(CHAT, "item", CREATOR, &original, None).unwrap();
         store.set_event_response(CHAT, "item", "guest@s.whatsapp.net", "going").unwrap();

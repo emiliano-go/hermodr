@@ -4,6 +4,9 @@ use std::io::Write;
 use whatsapp_rust::wacore::types::events::LazyHistorySync;
 use whatsapp_rust::wacore::types::{events::{InboundMessage, MessageBatch, BatchOrigin, Receipt}, message::{MessageInfo, MessageSource}};
 
+#[path = "event_rsvp_integration_tests.rs"]
+mod event_rsvp_integration;
+
 pub(super) async fn inbound() -> (Inbound, broadcast::Receiver<ServiceEvent>) {
     let (events, received) = broadcast::channel(32);
     (Inbound {

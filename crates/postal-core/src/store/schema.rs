@@ -208,7 +208,8 @@ mod tests {
         conn.execute_batch(
             "PRAGMA user_version = 0;
              INSERT INTO polls VALUES ('1@s.whatsapp.net', 'poll', 'me', 'Question', '[]', 0, X'010203');
-             INSERT INTO events VALUES ('1@s.whatsapp.net', 'event', 'me', 'Meeting', NULL, NULL, NULL, NULL, NULL, 0, X'040506');
+             INSERT INTO events (chat,id,creator,name,description,start_at,end_at,location,link,canceled,secret)
+                 VALUES ('1@s.whatsapp.net', 'event', 'me', 'Meeting', NULL, NULL, NULL, NULL, NULL, 0, X'040506');
              INSERT INTO lid_pn VALUES ('9', '1');
              INSERT INTO messages (chat, id, sender, timestamp, from_me, text)
                  VALUES ('9@lid', 'older', '9@lid', 100, 0, 'old');
@@ -391,6 +392,8 @@ pub(super) const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
     migrate_v16_mention_all_only,
     migrate_v17_mute_at_all,
     super::spaces::migrate,
+    super::event_rsvps::migrate,
+    super::event_rsvp_pending::migrate,
 ];
 
 pub(super) fn migrate(conn: &Connection) -> Result<()> {

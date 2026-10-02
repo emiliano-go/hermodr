@@ -100,7 +100,7 @@ test("broadcast UI shows cached evidence, contact naming and disabled send contr
         const tag = body.match(new RegExp(`<button\\b[^>]*aria-label="${label}"[^>]*>`))?.[0];
         assert.ok(tag?.includes("disabled"), label);
       }
-      for (const label of ["Hide read receipts here", "Stop sending typing here"]) {
+      for (const label of ["More messaging options"]) {
         const tag = body.match(new RegExp(`<button\\b[^>]*aria-label="${label}"[^>]*>`))?.[0];
         assert.ok(tag && !tag.includes("disabled"), label);
       }
@@ -175,6 +175,36 @@ test("actual composer callbacks reject disabled sending before mutation and queu
     try { await context.callback({}, { chat: "123@broadcast" }); } catch (error) { assert.ok(/disabled|not supported|target changed/.test(String(error))); }
   }
   assert.equal(calls.length, 0);
+});
+
+test("disabled sending preserves access to local receipt and typing controls through messaging options", () => {
+  let receipts = 0, typing = 0;
+  const context = methods("../lib/composer/ComposerBar.svelte", ["openTools", "closeTools"], {
+    disabled: true, account: "synthetic", selectedChat: "123@broadcast", toolsTimer: null, toolsMenu: false,
+    onreceipts: () => { receipts++; }, ontyping: () => { typing++; }, clearTimeout,
+  });
+  context.openTools(); assert.equal(context.toolsMenu, true);
+  const source = readFileSync(new URL("../lib/composer/ComposerBar.svelte", import.meta.url), "utf8");
+  const controls: any[] = [];
+  const walk = (node: any) => {
+    if (!node || typeof node !== "object") return;
+    if (node.attributes?.some((attribute: any) => attribute.name === "aria-label"
+      && ["Hide read receipts here", "Stop sending typing here"].includes(attribute.value?.[0]?.data))) controls.push(node);
+    for (const value of Object.values(node)) if (Array.isArray(value)) value.forEach(walk); else if (value && typeof value === "object") walk(value);
+  };
+  walk((parse(source, { modern: true }) as any).fragment);
+  assert.equal(controls.length, 2);
+  for (const node of controls) {
+    assert.ok(!node.attributes.some((attribute: any) => attribute.name === "disabled"));
+    const value = node.attributes.find((attribute: any) => attribute.name === "onclick").value;
+    const action = (Array.isArray(value) ? value[0] : value).expression;
+    runInNewContext(ts.transpileModule(`var callback = ${source.slice(action.start, action.end)};`,
+      { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
+    context.callback(); assert.equal(context.toolsMenu, false);
+    context.openTools();
+  }
+  assert.equal(receipts, 1); assert.equal(typing, 1);
+  context.account = null; context.closeTools(); context.openTools(); assert.equal(context.toolsMenu, false);
 });
 
 test("voice finish cannot send while disabled or after permission changes during stop", () => {

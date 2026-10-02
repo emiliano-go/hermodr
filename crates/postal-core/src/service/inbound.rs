@@ -78,7 +78,7 @@ struct BatchCtx<'a> {
     media_dir: Option<PathBuf>,
     touched: Vec<String>,
     audit_chats: std::collections::HashSet<String>,
-    quiz_chats: Mutex<std::collections::HashSet<String>>,
+    mark_chats: Mutex<std::collections::HashSet<String>>,
     broadcast_chats: Mutex<std::collections::HashSet<String>>,
     sticker_changes: AtomicBool,
     /// The batch arrived live rather than from the offline drain, so an
@@ -460,7 +460,7 @@ impl Inbound {
             media_dir: self.media_dir.clone(),
             touched: Vec::with_capacity(batch.messages.len()),
             audit_chats: std::collections::HashSet::new(),
-            quiz_chats: Mutex::new(std::collections::HashSet::new()),
+            mark_chats: Mutex::new(std::collections::HashSet::new()),
             broadcast_chats: Mutex::new(std::collections::HashSet::new()),
             sticker_changes: AtomicBool::new(false),
             live: batch.origin == BatchOrigin::Live,
@@ -512,14 +512,13 @@ impl Inbound {
             }
             self.store_incoming(&ctx, inbound, &incoming).await;
         }
+        self.flush_event_responses(&ctx).await;
         let (removed, pruning) = self.enforce_retention(&mut ctx).await;
-        if self.one_time_only {
-            self.tally.note(batch.messages.len(), ingested);
-        }
+        if self.one_time_only { self.tally.note(batch.messages.len(), ingested); }
         let sticker_changes = ctx.sticker_changes.load(Ordering::Relaxed);
-        let (audit_chats, quiz_chats, broadcast_chats) = (ctx.audit_chats, ctx.quiz_chats.into_inner().unwrap(), ctx.broadcast_chats.into_inner().unwrap());
+        let (audit_chats, mark_chats, broadcast_chats) = (ctx.audit_chats, ctx.mark_chats.into_inner().unwrap(), ctx.broadcast_chats.into_inner().unwrap());
         if batch_guard.finish().await.observed().is_some() {
-            self.emit_batch_changes(event_notices, audit_chats, quiz_chats, broadcast_chats, sticker_changes);
+            self.emit_batch_changes(event_notices, audit_chats, mark_chats, broadcast_chats, sticker_changes);
         }
         log::debug!(
             "{} live message(s) in {:?} (retention {:?}, pruned {removed})",
@@ -710,10 +709,18 @@ impl Inbound {
         false
     }
 
-    fn emit_batch_changes(&self, notices: Vec<ServiceEvent>, audit_chats: std::collections::HashSet<String>, quiz_chats: std::collections::HashSet<String>, broadcast_chats: std::collections::HashSet<String>, stickers: bool) {
+    async fn flush_event_responses(&self, ctx: &BatchCtx<'_>) {
+        for chat in ctx.touched.iter().collect::<std::collections::HashSet<_>>() {
+            if event_rsvps::flush_pending(ctx.store, ctx.client.as_deref(), chat, None, &ctx.own).await.observed() == Some(true) {
+                ctx.mark_chats.lock().unwrap().insert(chat.clone());
+            }
+        }
+    }
+
+    fn emit_batch_changes(&self, notices: Vec<ServiceEvent>, audit_chats: std::collections::HashSet<String>, mark_chats: std::collections::HashSet<String>, broadcast_chats: std::collections::HashSet<String>, stickers: bool) {
         for notice in notices { let _ = self.events.send(notice); }
         for chat in audit_chats { let _ = self.events.send(ServiceEvent::GroupAuditChanged { chat }); }
-        for chat in quiz_chats { let _ = self.events.send(ServiceEvent::Marks { chat }); }
+        for chat in mark_chats { let _ = self.events.send(ServiceEvent::Marks { chat }); }
         for chat in broadcast_chats { let _ = self.events.send(ServiceEvent::ChatStateChanged { chat }); }
         if stickers { let _ = self.events.send(ServiceEvent::StickerLibraryChanged { packs: true, favorites: false, recents: true }); }
     }
@@ -749,7 +756,7 @@ impl Inbound {
         let chat = &incoming.chat;
         if quiz_polls::capture_quiz_vote(ctx.store, chat, &incoming.id, &inbound.info.source.sender.to_non_ad(),
             inbound.info.source.sender_alt.as_ref(), incoming.from_me, update, inbound.info.timestamp.timestamp()).await.observed() == Some(true) {
-            ctx.quiz_chats.lock().unwrap().insert(chat.clone());
+            ctx.mark_chats.lock().unwrap().insert(chat.clone());
         }
         let poll_id = update.poll_creation_message_key.as_option().and_then(|k| k.id.clone());
         let def = match poll_id.as_deref() { Some(id) => ctx.store.poll_secret(chat, id).await.observed().flatten(), None => None };
@@ -787,7 +794,7 @@ impl Inbound {
                 let Some(chosen) = ctx.store.poll_option_names(chat, &poll_id, &hashes).await.observed() else { return };
                 let who = if incoming.from_me { "@me".to_string() } else { voter.to_string() };
                 ctx.store.set_poll_vote(chat, &poll_id, &who, &chosen).await.logged();
-                ctx.quiz_chats.lock().unwrap().insert(chat.clone());
+                ctx.mark_chats.lock().unwrap().insert(chat.clone());
             }
             Err(e) => log::warn!("could not open a vote on poll {poll_id}: {e}"),
         }
@@ -796,34 +803,13 @@ impl Inbound {
     /// An RSVP to an event. Our own events may have been answered under our
     /// other address, so every creator form is tried.
     async fn apply_event_response(&self, ctx: &BatchCtx<'_>, inbound: &InboundMessage, incoming: &Incoming) {
-        let Some(response) = decoded_message(&inbound.message).message.enc_event_response_message.as_option() else { return };
-        let chat = &incoming.chat;
-        let event_id = response.event_creation_message_key.as_option().and_then(|k| k.id.clone());
-        let def = match event_id.as_deref() { Some(id) => ctx.store.event_secret(chat, id).await.observed().flatten(), None => None };
-        let Some((event_id, def)) = event_id.zip(def) else { return };
-        let responder = inbound.info.source.sender.to_non_ad().to_string();
-        let mut creators = vec![def.creator.clone()];
-        if ctx.own.contains(&def.creator) {
-            creators.extend(ctx.own.iter().filter(|j| **j != def.creator).cloned());
-        }
-        let opened = creators.iter().find_map(|creator| {
-            whatsapp_rust::wacore::event::decrypt_event_response_with_secret(
-                response.enc_payload.as_deref().unwrap_or_default(),
-                response.enc_iv.as_deref().unwrap_or_default(),
-                &def.secret,
-                &event_id,
-                creator,
-                &responder,
-            )
-            .ok()
-        });
-        match opened {
-            Some(answer) => {
-                let who = if incoming.from_me { "@me".to_string() } else { responder };
-                ctx.store.set_event_response(chat, &event_id, &who, response_name(answer.response)).await.logged();
-                let _ = self.events.send(ServiceEvent::Marks { chat: chat.clone() });
-            }
-            None => log::warn!("could not open an RSVP to event {event_id}"),
+        let decoded = decoded_message(&inbound.message);
+        if decoded.view_once || decoded.spoiler { return; }
+        let Some(response) = decoded.message.enc_event_response_message.as_option() else { return };
+        if event_rsvps::capture_event_response(ctx.store, ctx.client.as_deref(), &incoming.chat, &incoming.id,
+            &inbound.info.source.sender, inbound.info.source.sender_alt.as_ref(), incoming.from_me, &ctx.own, response)
+            .await.observed() == Some(true) {
+            ctx.mark_chats.lock().unwrap().insert(incoming.chat.clone());
         }
     }
 
@@ -975,7 +961,7 @@ impl Inbound {
         }
         if quiz_polls::remember_quiz_definition(ctx.store, &incoming.chat, &message.header.id,
             &message.header.sender, &inbound.message).await.observed() == Some(true) {
-            ctx.quiz_chats.lock().unwrap().insert(incoming.chat.clone());
+            ctx.mark_chats.lock().unwrap().insert(incoming.chat.clone());
         }
         member_profiles::record_member_message_context(ctx.store, &message, &inbound.message).await.logged();
         let auto_download = self.auto_download_for(ctx.store, &incoming.chat, message.media.kind.as_deref().unwrap_or("")).await;
@@ -1173,7 +1159,7 @@ mod contact_identity_tests {
             downloads: Arc::new(tokio::sync::Semaphore::new(1)), sync_progress: Arc::default(), media_auto_download: Arc::default(),
             keep_archived: Arc::default(), keep_view_once: Arc::default(), one_time_only: false, tally: Arc::default(), secret_edits: Default::default(),
         };
-        let ctx = BatchCtx { store: &store, client: None, own: vec![], media_dir: None, touched: vec![], audit_chats: std::collections::HashSet::new(), quiz_chats: Mutex::new(std::collections::HashSet::new()), broadcast_chats: Mutex::new(std::collections::HashSet::new()), sticker_changes: AtomicBool::new(false), live: true };
+        let ctx = BatchCtx { store: &store, client: None, own: vec![], media_dir: None, touched: vec![], audit_chats: std::collections::HashSet::new(), mark_chats: Mutex::new(std::collections::HashSet::new()), broadcast_chats: Mutex::new(std::collections::HashSet::new()), sticker_changes: AtomicBool::new(false), live: true };
         store.set_lid_pn("77", "59891954564").await.unwrap();
         store.set_push_name("59891954564@s.whatsapp.net", "Push").await.unwrap();
         inbound.remember_alt_name(&ctx, "77@lid", "77@lid", false, false, "59891954564@s.whatsapp.net").await;

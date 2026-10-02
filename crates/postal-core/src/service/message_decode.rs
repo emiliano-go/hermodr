@@ -698,6 +698,7 @@ fn context_of(base: &wa::Message) -> Option<&wa::ContextInfo> {
         base.poll_creation_message_v2.as_option().and_then(|m| m.context_info.as_option()),
         base.poll_creation_message_v3.as_option().and_then(|m| m.context_info.as_option()),
         base.event_message.as_option().and_then(|m| m.context_info.as_option()),
+        base.event_invite_message.as_option().and_then(|m| m.context_info.as_option()),
         base.album_message.as_option().and_then(|m| m.context_info.as_option()),
         base.group_invite_message.as_option().and_then(|m| m.context_info.as_option()),
     ].into_iter().flatten().next()

@@ -64,7 +64,7 @@ export class UiState {
 
   creating = $state<"poll" | "event" | null>(null);
   /** Our own event being edited in the create dialog. */
-  editingEvent = $state<{ chat: string; event: ChatEvent } | null>(null);
+  editingEvent = $state<{ account: string; generation: number; chat: string; event: ChatEvent } | null>(null);
   /** The profile card open beside a mention, name or picture. */
   profileCard = $state<{ jid: string; name: string; x: number; y: number; self: boolean } | null>(
     null,
@@ -93,6 +93,8 @@ export class UiState {
   }
 
   resetAccount() {
+    this.creating = null;
+    this.editingEvent = null;
     this.accountMenu = false;
     this.newGroup = false;
     this.showInbox = false;
