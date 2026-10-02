@@ -19,9 +19,27 @@ pub(super) fn migrate(conn: &Connection) -> Result<()> {
 }
 
 pub(super) fn migrate_baseline(conn: &Connection) -> Result<()> {
+    // Migration 14 created this table. A database that reached version 20
+    // without it (restored backup, manual user_version edit, dropped table)
+    // would fail ALTER with "no such table", blocking startup. Recreate the
+    // base first so the column probes below always have a target.
+    conn.execute_batch("CREATE TABLE IF NOT EXISTS contact_identity (
+        jid TEXT PRIMARY KEY, push_name TEXT, username TEXT);")
+        .context("creating contact_identity base table")?;
     for (column, kind) in [("contact_saved", "INTEGER"), ("saved_name", "TEXT"), ("contact_timestamp", "INTEGER")] {
-        let exists: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('contact_identity') WHERE name = ?1)", [column], |row| row.get(0))?;
-        if !exists { conn.execute_batch(&format!("ALTER TABLE contact_identity ADD COLUMN {column} {kind};"))?; }
+        let exists: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('contact_identity') WHERE name = ?1)", [column], |row| row.get(0))
+            .with_context(|| format!("probing contact_identity.{column}"))?;
+        if !exists {
+            if let Err(error) = conn.execute_batch(&format!("ALTER TABLE contact_identity ADD COLUMN {column} {kind};")) {
+                // A concurrent or previously-committed partial migration can
+                // leave the column in place while user_version still says 20;
+                // retrying must not fail on the column it just added.
+                if error.to_string().contains("duplicate column") {
+                    continue;
+                }
+                return Err(error).with_context(|| format!("adding contact_identity.{column}"));
+            }
+        }
     }
     Ok(())
 }
