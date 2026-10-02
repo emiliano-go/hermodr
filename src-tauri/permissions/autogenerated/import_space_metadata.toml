@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-import-space-metadata"
+description = "Enables the import_space_metadata command without any pre-configured scope."
+commands.allow = ["import_space_metadata"]
+
+[[permission]]
+identifier = "deny-import-space-metadata"
+description = "Denies the import_space_metadata command without any pre-configured scope."
+commands.deny = ["import_space_metadata"]

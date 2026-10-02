@@ -77,12 +77,13 @@ export async function openPings(chat: string | null) {
  * Searches the open finder's chat. `more` first asks the phone for the
  * previous 24 hours of the chat, then searches again over everything kept.
  */
-export async function searchChat(query: string, more = false) {
+export async function searchChat(query: string, more = false, localOnly = false) {
   let current = ui.finder;
   const chat = current?.chat;
   if (!current || !chat) return;
-  if (more && chat === chats.selectedChat) await messages.recallDay(chat);
-  if (ui.finder !== current) return;
+  const account = session.activeAccount, generation = messages.accountGeneration;
+  if (more && !localOnly && chat === chats.selectedChat) await messages.recallDay(chat);
+  if (ui.finder !== current || account !== session.activeAccount || generation !== messages.accountGeneration) return;
   const reach = messages.messages.at(-1)?.timestamp ?? null;
   if (!query.trim()) {
     ui.finder = { ...current, items: [], query, reach, more: false };
@@ -94,13 +95,11 @@ export async function searchChat(query: string, more = false) {
     ui.finder = current;
   }
   try {
-    const account = session.activeAccount;
-    const generation = messages.accountGeneration;
     const filter = labelSearch(query);
     const ids = filter && labels.account === account ? labels.view.labels.filter((label) => label.name.toLocaleLowerCase() === filter.name.toLocaleLowerCase()).map((label) => label.id) : [];
     const got = filter
       ? ids.length ? await invoke<StoredMessage[]>("labelled_messages", { accountId: account, labelIds: ids, chat, query: filter.query, limit: SEARCH_LIMIT }) : []
-      : await invoke<StoredMessage[]>("search_messages", { chat, query, limit: SEARCH_LIMIT });
+      : await invoke<StoredMessage[]>("search_messages", { accountId: account, chat, query, limit: SEARCH_LIMIT });
     if (account !== session.activeAccount || generation !== messages.accountGeneration) return;
     if (ui.finder !== current) return;
     ui.finder = {
@@ -108,9 +107,9 @@ export async function searchChat(query: string, more = false) {
       items: got.map((m) => found(m, false)),
       query,
       reach,
-      more: !messages.olderExhausted,
+      more: !localOnly && !messages.olderExhausted,
     };
   } catch (e) {
-    if (ui.finder === current) ui.fail(e);
+    if (ui.finder === current && account === session.activeAccount && generation === messages.accountGeneration) ui.fail(e);
   }
 }

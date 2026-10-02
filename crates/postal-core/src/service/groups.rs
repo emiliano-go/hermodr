@@ -467,6 +467,16 @@ impl WhatsAppService {
         }
         match self.client.groups().list_participating().await {
             Ok(groups) => {
+                let rows = groups.iter().map(|group| {
+                    use whatsapp_rust::{GroupHierarchy, SubgroupKind};
+                    let (parent, community, announcements) = match &group.hierarchy {
+                        GroupHierarchy::Community => (None, true, false),
+                        GroupHierarchy::Subgroup { parent, kind } => (Some(parent.to_non_ad().to_string()), false, *kind == SubgroupKind::Announcement),
+                        _ => (None, false, false),
+                    };
+                    CachedSpaceGroup { jid: group.id.to_non_ad().to_string(), subject: group.subject.clone(), parent, community, announcements }
+                }).collect::<Vec<_>>();
+                self.store.run(move |store| store.cache_space_groups(&rows)).await.logged();
                 *self.groups_cache.lock().unwrap() = Some(groups.clone());
                 groups
             }

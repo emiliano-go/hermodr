@@ -25,6 +25,7 @@ export type BlockedContact = { jid: string, jids: Array<string>, identity: Conta
 export type BooleanProp = { name: string, code: number, default: boolean, value: boolean | null, };
 export type BroadcastList = { chat: string, recipients: Array<string>, source_timestamp: number, };
 export type CachedMemberGroup = { chat: string, subject: string | null, observed_at: number, present: boolean | null, admin: boolean | null, owner: boolean | null, label: string | null, own_admin: boolean | null, member_observed_at: number | null, complete_snapshot: boolean, };
+export type CachedSpaceGroup = { jid: string, subject: string | null, parent: string | null, community: boolean, announcements: boolean, };
 export type ChatLabelAssociation = { label_id: string, chat: string, };
 export type ChatMarks = { reactions: Array<Reaction>, starred: Array<string>, pinned: string | null, polls: Array<Poll>, events: Array<Event>,
 /**
@@ -354,6 +355,7 @@ export type QuickRepliesView = { complete: boolean, replies: Array<QuickReply>, 
 export type QuickReply = { id: string, shortcut: string, message: string, keywords: Array<string>, count: number, associated_label_ids: Array<string>, };
 export type QuizFeedback = { correct_option: string | null, my_correct: boolean | null, results_complete: boolean, error: string | null, can_vote: boolean, };
 export type Reaction = { target: string, sender: string, emoji: string, };
+export type ResolvedSpaceItem = { item_id: string, chats: Array<string>, unavailable: string | null, };
 export type RetentionLimit = { "kind": "inherit" } | { "kind": "unlimited" } | { "kind": "limited", "value": number };
 export type ScheduledMessage = { id: string, chat: string, text: string, mentions: Array<string>, due_at: number, status: string, error: string | null, attempted: boolean, };
 export type SearchResult = { jid: string, name: string,
@@ -400,6 +402,15 @@ change: HintChange,
  * The delivery state a [`HintChange::Status`] change carries.
  */
 status: string | null, } | { "kind": "retentionApplied", removed: number, } | { "kind": "namesUpdated", count: number, } | { "kind": "chatStateChanged", chat: string, } | { "kind": "chatPinRemoved", chat: string, } | { "kind": "syncing", pending: number, applied: number, } | { "kind": "initialSyncComplete", messages: number, chats: number, } | { "kind": "synced" } | { "kind": "historyLoaded", chats: Array<string>, } | { "kind": "historyProgress", percent: number, } | { "kind": "backfill", done: number, total: number, } | { "kind": "avatarChanged", jid: string, } | { "kind": "typing", chat: string, sender: string, state: string, } | { "kind": "presence", jid: string, online: boolean, last_seen: number | null, } | { "kind": "memberLabel", chat: string, jid: string, label: string, } | { "kind": "groupChanged", chat: string, } | { "kind": "groupAuditChanged", chat: string, } | { "kind": "favoritesChanged" } | { "kind": "labelsChanged" } | { "kind": "quickRepliesChanged" } | { "kind": "marks", chat: string, } | { "kind": "storeChanged" } | { "kind": "stickerLibraryChanged", packs: boolean, favorites: boolean, recents: boolean, } | { "kind": "uploadProgress", token: string, sent: number, total: number, };
+export type Space = { id: string, parent_id: string | null, name: string, icon: string | null, color: string | null, order: number, created_at: number, };
+export type SpaceAction = { "kind": "create", id: string, parent_id: string | null, name: string, icon: string | null, color: string | null, } | { "kind": "rename", id: string, name: string, } | { "kind": "reparent", id: string, parent_id: string | null, } | { "kind": "reorder", parent_id: string | null, ids: Array<string>, } | { "kind": "delete", id: string, } | { "kind": "add_item", id: string, space_id: string, target: SpaceTarget, } | { "kind": "remove_item", id: string, } | { "kind": "reorder_items", space_id: string, ids: Array<string>, };
+export type SpaceArchive = { version: number, snapshot: SpaceSnapshot, };
+export type SpaceInboxFilters = { unread: boolean, mentions: boolean, labelled: boolean, muted: boolean, archived: boolean, label: string, query: string, };
+export type SpaceItem = { id: string, space_id: string, target: SpaceTarget, order: number, };
+export type SpaceResolution = { chats: Array<string>, items: Array<ResolvedSpaceItem>, };
+export type SpaceSelection = { "kind": "all" } | { "kind": "unsorted" } | { "kind": "space", space_id: string, };
+export type SpaceSnapshot = { spaces: Array<Space>, items: Array<SpaceItem>, };
+export type SpaceTarget = { "kind": "chat", jid: string, } | { "kind": "group", jid: string, } | { "kind": "community", jid: string, } | { "kind": "channel", jid: string, } | { "kind": "contact", jid: string, } | { "kind": "favorite_contact", jid: string, } | { "kind": "label", label_id: string, } | { "kind": "saved_message", chat: string, message_id: string, } | { "kind": "saved_search", query: string, chat: string | null, } | { "kind": "inbox_view", filters: SpaceInboxFilters, };
 export type Sticker = {
 /**
  * Base64 SHA-256 of the decrypted file: the app-state index key.

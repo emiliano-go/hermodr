@@ -1090,7 +1090,7 @@ fn reopen_heals_version_stamped_databases_missing_new_columns() {
         // sticker-sync) never ran, so opening would fail at prepare time
         // with "no such column: m.album".
         let conn = Connection::open(&path).unwrap();
-        super::schema::migrate_to(&conn, super::schema::MIGRATIONS.len() - 7).unwrap();
+        super::schema::migrate_to(&conn, 29).unwrap();
         // `mute_at_all` never existed at the old tip (v17 adds it); the @all
         // column arrives through the adoption list, so drop it to complete
         // the version-stamped-but-missing state.

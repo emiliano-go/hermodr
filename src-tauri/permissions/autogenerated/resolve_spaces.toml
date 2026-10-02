@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-resolve-spaces"
+description = "Enables the resolve_spaces command without any pre-configured scope."
+commands.allow = ["resolve_spaces"]
+
+[[permission]]
+identifier = "deny-resolve-spaces"
+description = "Denies the resolve_spaces command without any pre-configured scope."
+commands.deny = ["resolve_spaces"]

@@ -18,6 +18,7 @@
     SearchResult,
   } from "$lib/utils/models";
   import { onDestroy, tick } from "svelte";
+  import type { Snippet } from "svelte";
   import { invoke } from "$lib/utils/ipc";
 
   const STATUS_TEXT: Record<string, string> = {
@@ -84,7 +85,9 @@
     freezeOnHover = true,
     chatPreview = true,
     globalAutoDownload,
+    spacesContent,
   }: {
+    spacesContent?: Snippet;
     searchQuery: string;
     searchResults: SearchResult[];
     visibleChats: ChatSummary[];
@@ -408,6 +411,7 @@
     <Button variant="icon" icon="user" iconSize={18} title="New contact" aria-label="New contact"
       disabled={!canCreateGroup} onclick={onnewcontact} />
   </header>
+  {@render spacesContent?.()}
   <label class="search">
     <Icon name="search" size={15} />
     <input

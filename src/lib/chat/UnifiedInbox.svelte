@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import Avatar from "$lib/ui/Avatar.svelte";
   import { inboxCategories, inboxChats } from "$lib/utils/inbox";
   import type { InboxAction, InboxFilters, InboxLabel } from "$lib/utils/inbox";
@@ -7,7 +8,7 @@
   let { account, requestKey = 0, connected, chats, loading = false, error = "", labels = null,
     labelsByChat = {}, labelsWritable = false, labelsLoading = false, labelsComplete = false, labelsError = "", chatLabelOf, avatarOf = () => null,
     previewTextOf = (chat) => chat.last_text, formatTime, syncPending = 0, syncApplied = 0,
-    historyPercent = null, backfill = null, finalizing = false, onopen, onaction, onretry }: {
+    historyPercent = null, backfill = null, finalizing = false, onopen, onaction, onretry, initialFilters, onfilterschange }: {
     account: string | null;
     requestKey?: string | number;
     connected: boolean;
@@ -32,6 +33,8 @@
     onopen: (chat: string, mention?: boolean) => void;
     onaction: (account: string, chat: string, action: InboxAction) => Promise<void>;
     onretry?: () => void;
+    initialFilters?: InboxFilters;
+    onfilterschange?: (filters: InboxFilters) => void;
   } = $props();
 
   const kinds = [["unread", "Unread"], ["mentions", "Mentions"], ["labelled", "Labelled"], ["muted", "Muted"], ["archived", "Archived"]] as const;
@@ -53,7 +56,8 @@
     failures = {};
     return () => { ++generation; };
   });
-  $effect(() => { account; filters = emptyFilters(); });
+  $effect(() => { account; requestKey; filters = initialFilters ? { ...initialFilters } : emptyFilters(); });
+  $effect(() => { const current = { ...filters }; untrack(() => onfilterschange?.(current)); });
   $effect(() => {
     const timer = setInterval(() => { now = Math.floor(Date.now() / 1000); }, 1000);
     return () => clearInterval(timer);

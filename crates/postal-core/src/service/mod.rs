@@ -39,6 +39,8 @@ mod connection;
 mod contacts;
 mod usernames;
 pub use usernames::UsernameLookupResult;
+mod spaces;
+pub use spaces::{CachedSpaceGroup, ResolvedSpaceItem, Space, SpaceAction, SpaceArchive, SpaceInboxFilters, SpaceItem, SpaceResolution, SpaceSelection, SpaceSnapshot, SpaceTarget};
 mod contact_sharing;
 mod broadcast_lists;
 pub use broadcast_lists::writable_target;

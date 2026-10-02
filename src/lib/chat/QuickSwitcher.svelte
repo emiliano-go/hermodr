@@ -5,7 +5,7 @@
   import { quickChats, quickSwitcherKey, messageSnippet, type QuickChat, type QuickSwitchTarget } from "$lib/utils/quick-switcher";
   import type { ChatSummary, SearchResult, StoredMessage } from "$lib/utils/wire";
 
-  let { account, chats, onload, onmessages, onchoose, onclose, onusername }: {
+  let { account, chats, onload, onmessages, onchoose, onclose, onusername, initialQuery = "" }: {
     account: string;
     chats: ChatSummary[];
     onload: () => Promise<SearchResult[]>;
@@ -13,6 +13,7 @@
     onchoose: (target: QuickSwitchTarget) => void | Promise<void>;
     onclose: () => void;
     onusername?: () => void;
+    initialQuery?: string;
   } = $props();
 
   let dialog: HTMLDialogElement;
@@ -21,7 +22,7 @@
   const openedAccount = untrack(() => account);
   let mounted = true;
   const current = () => mounted && account === openedAccount;
-  let query = $state("");
+  let query = $state(untrack(() => initialQuery));
   let directory = $state.raw<SearchResult[]>([]);
   let messages = $state.raw<StoredMessage[]>([]);
   let messageQuery = $state("");

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-spaces-action"
+description = "Enables the spaces_action command without any pre-configured scope."
+commands.allow = ["spaces_action"]
+
+[[permission]]
+identifier = "deny-spaces-action"
+description = "Denies the spaces_action command without any pre-configured scope."
+commands.deny = ["spaces_action"]

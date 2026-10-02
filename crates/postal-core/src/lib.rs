@@ -21,6 +21,8 @@ pub use aliases::AliasStore;
 pub use history::HistoryPolicy;
 pub use service::{
     UsernameLookupResult,
+    CachedSpaceGroup, ResolvedSpaceItem, Space, SpaceAction, SpaceArchive, SpaceInboxFilters,
+    SpaceItem, SpaceResolution, SpaceSelection, SpaceSnapshot, SpaceTarget,
     GroupHistoryOffer, GroupHistoryResult, GroupMemberAddResult,
     GroupJoinRequest,
     GroupCreateResult, GroupCreateParticipant, GroupCreateParticipantState,

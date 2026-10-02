@@ -190,8 +190,13 @@ pub(crate) async fn message_info(state: State<'_, AppState>, id: String) -> Resu
 
 /// Starred messages across every chat, newest first.
 #[tauri::command(async)]
-pub(crate) async fn starred_messages(state: State<'_, AppState>) -> Result<Vec<StoredMessage>, String> {
-    state.service()?.starred_messages().await.map_err(|e| e.to_string())
+pub(crate) async fn starred_messages(state: State<'_, AppState>, account_id: Option<String>) -> Result<Vec<StoredMessage>, String> {
+    let service = match account_id.as_deref() { Some(account) => state.account_service(account)?, None => state.service()? };
+    let result = service.starred_messages().await;
+    if let Some(account) = account_id {
+        if !std::sync::Arc::ptr_eq(&service, &state.account_service(&account)?) { return Err("Account changed during starred message lookup.".into()); }
+    }
+    result.map_err(|error| error.to_string())
 }
 
 /// Messages that mention us, in one chat or (without `chat`) all of them.
@@ -207,11 +212,14 @@ pub(crate) async fn search_messages(
     chat: String,
     query: String,
     limit: Option<u32>,
+    account_id: Option<String>,
 ) -> Result<Vec<StoredMessage>, String> {
-    state
-        .service()?
-        .search_messages(&chat, &query, limit.unwrap_or(50).clamp(1, 500))
-        .await.map_err(|e| e.to_string())
+    let service = match account_id.as_deref() { Some(account) => state.account_service(account)?, None => state.service()? };
+    let result = service.search_messages(&chat, &query, limit.unwrap_or(50).clamp(1, 500)).await;
+    if let Some(account) = account_id {
+        if !std::sync::Arc::ptr_eq(&service, &state.account_service(&account)?) { return Err("Account changed during message search.".into()); }
+    }
+    result.map_err(|error| error.to_string())
 }
 
 /// Sends a text message to a chat.

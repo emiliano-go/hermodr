@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy, untrack } from "svelte";
   import type { FoundItem } from "$lib/utils/models";
   import { fade, scale } from "svelte/transition";
   import { motion } from "$lib/utils/theme.svelte";
@@ -13,6 +14,7 @@
     onquery,
     onmore,
     moreLabel = "Load more",
+    initialQuery = "",
     onopen,
     onclose,
   }: {
@@ -28,11 +30,12 @@
     /** Present while more results can be fetched. */
     onmore?: () => Promise<void>;
     moreLabel?: string;
+    initialQuery?: string;
     onopen: (item: FoundItem) => void;
     onclose: () => void;
   } = $props();
 
-  let query = $state("");
+  let query = $state(untrack(() => initialQuery));
   let loadingMore = $state(false);
   async function more() {
     if (!onmore || loadingMore) return;
@@ -44,6 +47,7 @@
     }
   }
   let timer: ReturnType<typeof setTimeout> | undefined;
+  onDestroy(() => clearTimeout(timer));
   function typed() {
     if (!onquery) return;
     clearTimeout(timer);

@@ -4,6 +4,7 @@
   import { addAccount, chooseAccount, connect, reconnect, removeAccount, switchTo, syncState } from "$lib/state/accounts";
   import { onDrop, onPaste } from "$lib/state/attachments";
   import { openPings, openStarred, searchChat } from "$lib/state/finder";
+  import { labelSearch } from "$lib/utils/label-search";
   import { act, canDeleteForEveryone, canDeletePickedForEveryone, copyMessages, deleteMessage, deleteSelected, eventFields, forwardMessages, menuItems as messageMenuItems, pickedInOrder, reactMessages, saveEvent, starMessages, target, viewableMessages } from "$lib/state/message-actions";
   import { onMount, tick, untrack } from "svelte";
   import { invoke } from "$lib/utils/ipc";
@@ -27,6 +28,12 @@
   import ContactSharing from "$lib/contacts/ContactSharing.svelte";
   import type { SharedContact, ContactShareScope } from "$lib/utils/vcard";
   import QuickSwitcher from "$lib/chat/QuickSwitcher.svelte";
+  import SpacesTree from "$lib/spaces/SpacesTree.svelte";
+  import SpaceItems from "$lib/spaces/SpaceItems.svelte";
+  import SpacePicker from "$lib/spaces/SpacePicker.svelte";
+  import { spaces } from "$lib/spaces/spaces.svelte";
+  import { targetKey, type SpaceCandidate } from "$lib/spaces/spaces";
+  import type { SpaceTarget, SpaceSelection, SpaceInboxFilters, CachedSpaceGroup } from "$lib/utils/wire";
   import UsernameLookup from "$lib/chat/UsernameLookup.svelte";
   import UnifiedInbox from "$lib/chat/UnifiedInbox.svelte";
   import LabelDialog from "$lib/labels/LabelDialog.svelte";
@@ -159,10 +166,12 @@
     void keywords.revision;
     untrack(() => { if (ui.finder?.mode === "pings") void openPings(ui.finder.chat); });
   });
-  const visibleChats = $derived(chats.visibleChats.filter((chat) => !chats.labelFilter || labels.account === session.activeAccount && labels.chatIds(chat.chat).includes(chats.labelFilter)).map((chat) => {
+  const spaceChatOrder = $derived(new Map((spaces.resolution?.chats ?? []).map((jid, index) => [jid, index])));
+  const visibleChats = $derived((spaces.account === session.activeAccount && spaces.selected.kind !== "all" && chats.chatFilter === "all" ? chats.chats : chats.visibleChats).filter((chat) => (spaces.account !== session.activeAccount || spaces.selected.kind === "all"
+    || spaces.resolution?.chats.includes(chat.chat)) && (!chats.labelFilter || labels.account === session.activeAccount && labels.chatIds(chat.chat).includes(chats.labelFilter))).map((chat) => {
     const count = keywords.account === session.activeAccount ? keywords.counts[chat.chat] ?? 0 : 0;
     return count ? { ...chat, mention_count: chat.mention_count + count } : chat;
-  }));
+  }).sort((a, b) => spaces.selected.kind === "all" ? 0 : (spaceChatOrder.get(a.chat) ?? Number.MAX_SAFE_INTEGER) - (spaceChatOrder.get(b.chat) ?? Number.MAX_SAFE_INTEGER)));
   const unreadPings = $derived(chats.chats.reduce((sum, chat) => sum + chat.mention_count
     + (keywords.account === session.activeAccount ? keywords.counts[chat.chat] ?? 0 : 0), 0));
   const inboxChats = $derived(chats.chats.map((chat) => ({ ...chat, mention_count: chat.mention_count
@@ -516,6 +525,103 @@
   }
   let newContact = $state(false);
   let quickSwitcher = $state(false);
+  let switcherQuery = $state("");
+  let spaceFinderKey = $state(0);
+  let spaceOpenSeq = 0;
+  let spaceCatalog = $state.raw<SearchResult[]>([]), spaceGroups = $state.raw<CachedSpaceGroup[]>([]), spaceSaved = $state.raw<StoredMessage[]>([]);
+  let spaceCatalogLoading = $state(false), spaceCatalogError = $state<string | null>(null);
+  let spaceCatalogRequest = 0;
+  let spacePickerFor = $state<{ account: string; generation: number; spaceId: string } | null>(null);
+  let spaceCommunityFor = $state<{ account: string; generation: number; jid: string } | null>(null);
+  let inboxSeed = $state<SpaceInboxFilters | undefined>(undefined), inboxSeedKey = $state(0);
+  let currentInboxFilters = $state<SpaceInboxFilters>({ unread: false, mentions: false, labelled: false, muted: false, archived: false, label: "", query: "" });
+  const selectedSpace = $derived.by(() => {
+    const selected = spaces.selected;
+    return selected.kind === "space" ? spaces.snapshot.spaces.find((space) => space.id === selected.space_id) ?? null : null;
+  });
+  async function refreshSpaceCatalog() {
+    const account = session.activeAccount, generation = messages.accountGeneration, request = ++spaceCatalogRequest;
+    if (!account) return;
+    const current = () => account === session.activeAccount && generation === messages.accountGeneration && request === spaceCatalogRequest;
+    spaceCatalogLoading = true; spaceCatalogError = null;
+    try {
+      const [catalog, groups, saved] = await Promise.all([
+        invoke<SearchResult[]>("switcher_catalog", { accountId: account }),
+        invoke<CachedSpaceGroup[]>("space_group_catalog", { accountId: account }), invoke<StoredMessage[]>("starred_messages", { accountId: account }),
+      ]);
+      if (current()) { spaceCatalog = catalog; spaceGroups = groups; spaceSaved = saved; }
+    } catch (error) { if (current()) spaceCatalogError = String(error); }
+    finally { if (current()) spaceCatalogLoading = false; }
+  }
+  $effect(() => {
+    const account = session.activeAccount, generation = messages.accountGeneration;
+    void session.started;
+    untrack(() => {
+      spaceCatalogRequest++; spaceCatalog = []; spaceGroups = []; spaceSaved = []; spacePickerFor = null; spaceCommunityFor = null; spaceCatalogError = null; spaceCatalogLoading = false;
+      quickSwitcher = false; switcherQuery = ""; inboxSeed = undefined; inboxSeedKey++; currentInboxFilters = { unread: false, mentions: false, labelled: false, muted: false, archived: false, label: "", query: "" };
+      spaces.reset();
+      if (!account) return;
+      void spaces.refresh();
+      void refreshSpaceCatalog();
+    });
+  });
+  spaces.keywordCounts = () => keywords.account === session.activeAccount ? { ...keywords.counts } : {};
+  $effect(() => {
+    void chats.chats; void messages.marks; void labels.view; void chats.groupKinds; void keywords.counts; void keywords.revision;
+    untrack(() => { if (spaces.loaded && spaces.account === session.activeAccount) void spaces.resolve(); });
+  });
+  $effect(() => { void chats.groupKinds; untrack(() => { if (spaces.loaded) void refreshSpaceCatalog(); }); });
+  $effect(() => {
+    if (!spaces.loaded || spaces.selected.kind === "all" || !spaces.snapshot.items.some((item) => item.target.kind === "inbox_view")) return;
+    const timer = setInterval(() => { void spaces.resolve(); }, 30_000);
+    return () => clearInterval(timer);
+  });
+  const spaceCandidates = $derived.by(() => {
+    const rows: SpaceCandidate[] = [], seen = new Set<string>();
+    const add = (target: SpaceTarget, title: string, detail?: string) => { const key = targetKey(target); if (!seen.has(key)) { seen.add(key); rows.push({ target, title, detail }); } };
+    for (const row of spaceCatalog) {
+      const title = members.displayName(row.name, row.jid);
+      const group = spaceGroups.find((group) => group.jid === row.jid);
+      const kind = group?.community ? "community" : row.jid.endsWith("@g.us") ? "group" : row.jid.endsWith("@newsletter") ? "channel" : "chat";
+      add({ kind, jid: row.jid } as SpaceTarget, title);
+      if (row.kind === "contact") add({ kind: "contact", jid: row.jid }, title);
+    }
+    for (const group of spaceGroups) add({ kind: group.community ? "community" : "group", jid: group.jid }, group.subject ?? chats.chatName(group.jid), "Cached group");
+    for (const jid of favorites.chats) {
+      if (jid.endsWith("@lid") || jid.endsWith("@s.whatsapp.net")) add({ kind: "favorite_contact", jid }, chats.chatName(jid));
+      else add({ kind: jid.endsWith("@newsletter") ? "channel" : jid.endsWith("@g.us") ? spaceGroups.some((group) => group.jid === jid && group.community) ? "community" : "group" : "chat", jid }, chats.chatName(jid), "Favorite");
+    }
+    if (labels.account === session.activeAccount) for (const label of labels.view.labels) add({ kind: "label", label_id: label.id }, label.name);
+    for (const message of spaceSaved) add({ kind: "saved_message", chat: message.chat, message_id: message.id }, plain(message.text), chats.chatName(message.chat));
+    if (ui.finder?.mode === "search" && ui.finder.query?.trim()) add({ kind: "saved_search", query: ui.finder.query, chat: ui.finder.chat }, `Search: ${ui.finder.query}`);
+    add({ kind: "inbox_view", filters: { ...currentInboxFilters } }, "Current inbox view");
+    return rows;
+  });
+  async function openSpaceTarget(target: SpaceTarget) {
+    const account = session.activeAccount, generation = messages.accountGeneration, request = ++spaceOpenSeq, opening = chatOpenSeq;
+    if (!account || spaces.account !== account || !spaces.loaded) return;
+    const current = () => account === session.activeAccount && generation === messages.accountGeneration && request === spaceOpenSeq && opening === chatOpenSeq;
+    if ("jid" in target) {
+      if (target.kind === "community") {
+        if (session.activeAccount) spaceCommunityFor = { account: session.activeAccount, generation: messages.accountGeneration, jid: target.jid };
+      }
+      else await openChat(target.jid);
+    } else if (target.kind === "saved_message") await jumpTo(target.chat, target.message_id);
+    else if (target.kind === "saved_search") {
+      if (target.chat) {
+        if (labelSearch(target.query)) {
+          const finder = ui.finder;
+          await labels.refresh();
+          if (!current() || ui.finder !== finder) return;
+        }
+        spaceFinderKey++;
+        ui.finder = { mode: "search", chat: target.chat, items: [], query: target.query, reach: null, more: false };
+        await searchChat(target.query, false, true);
+      } else { switcherQuery = target.query; quickSwitcher = true; }
+    }
+    else if (target.kind === "label") { chats.labelFilter = target.label_id; ui.showInbox = false; void labels.refresh(); }
+    else { inboxSeed = { ...target.filters }; inboxSeedKey++; ui.showInbox = true; void labels.refresh(); }
+  }
   let usernameFor = $state<{ account: string; generation: number } | null>(null);
   $effect(() => { session.activeAccount; newContact = quickSwitcher = false; });
   $effect(() => {
@@ -1030,7 +1136,7 @@
     const onAnyKey = (event: KeyboardEvent) => {
       if (!event.altKey && !event.shiftKey && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        if (session.activeAccount && session.started) quickSwitcher = !quickSwitcher;
+        if (session.activeAccount && session.started) { if (!quickSwitcher) switcherQuery = ""; quickSwitcher = !quickSwitcher; }
         return;
       }
       if (event.defaultPrevented || quickSwitcher) return;
@@ -1217,7 +1323,7 @@
   <div class="layout" style="grid-template-columns: {layoutColumns}">
     <ChatSidebar
       bind:searchQuery={chats.searchQuery}
-      searchResults={chats.searchResults}
+      searchResults={spaces.selected.kind === "all" ? chats.searchResults : chats.searchResults.filter((row) => spaces.resolution?.chats.includes(row.jid))}
       {visibleChats}
       selectedChat={chats.selectedChat}
       chatFilter={chats.chatFilter}
@@ -1284,11 +1390,22 @@
       archivedChats={chats.archivedChats}
       freezeOnHover={session.settings.freeze_chat_list_on_hover ?? false}
       chatPreview={session.settings.chat_preview ?? true}
-      onresize={startResize} />
+      onresize={startResize}>
+      {#snippet spacesContent()}
+        <SpacesTree account={session.activeAccount} generation={messages.accountGeneration} snapshot={spaces.snapshot} selected={spaces.selected}
+          loading={spaces.loading} busy={spaces.busy} error={spaces.error} onselect={(selection: SpaceSelection) => void spaces.select(selection)}
+          onaction={(action) => spaces.mutate(action)} onexport={() => spaces.exportMetadata()} onimport={(json) => spaces.importMetadata(json)} />
+        {#if selectedSpace}<SpaceItems account={session.activeAccount} generation={messages.accountGeneration} space={selectedSpace}
+          items={spaces.snapshot.items} resolution={spaces.resolution} catalog={spaceCandidates} loading={spaces.loading} busy={spaces.busy} error={spaces.error}
+          onaction={(action) => spaces.mutate(action)} onopen={openSpaceTarget}
+          onadd={() => { if (session.activeAccount) { void refreshSpaceCatalog(); void labels.refresh(); spacePickerFor = { account: session.activeAccount, generation: messages.accountGeneration, spaceId: selectedSpace.id }; } }} />{/if}
+      {/snippet}
+    </ChatSidebar>
 
     <section class="conversation">
       {#if ui.showInbox}
-        <UnifiedInbox account={session.activeAccount} requestKey={messages.accountGeneration} connected={session.connected}
+        <UnifiedInbox account={session.activeAccount} requestKey={`${messages.accountGeneration}:${inboxSeedKey}`} connected={session.connected}
+          initialFilters={inboxSeed} onfilterschange={(filters) => { currentInboxFilters = { ...filters }; }}
           chats={inboxChats} labels={labels.loaded ? labels.view.labels : null} {labelsByChat}
           labelsWritable={session.connected && labels.loaded && !labels.busy} labelsLoading={labels.loading} labelsError={labels.error ?? ""} labelsComplete={labels.view.complete}
           chatLabelOf={(chat) => chats.chatLabel(chat)} avatarOf={(jid) => chats.avatars[jid] ?? null}
@@ -1883,7 +2000,9 @@
 
 {#if ui.finder}
   {@const inChat = ui.finder.chat ? chats.chatName(ui.finder.chat) : null}
+  {#key `${messages.accountGeneration}:${ui.finder.mode}:${ui.finder.chat}:${spaceFinderKey}`}
   <MessageFinder
+    initialQuery={ui.finder.mode === "search" ? ui.finder.query ?? "" : ""}
     title={ui.finder.mode === "search" ? "Search messages" : inChat ? "Your mentions" : "Mentions"}
     subtitle={ui.finder.mode === "search" && ui.finder.reach
       ? `${inChat} · searched back to ${new Date(ui.finder.reach * 1000).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" })}`
@@ -1899,6 +2018,7 @@
       void jumpTo(item.chat, item.id);
     }}
     onclose={() => (ui.finder = null)} />
+  {/key}
 {/if}
 
 {#if galleryChat && session.activeAccount}
@@ -2167,8 +2287,8 @@
 {#if quickSwitcher && session.activeAccount}
   {@const account = session.activeAccount}
   {@const generation = messages.accountGeneration}
-  {#key account}
-    <QuickSwitcher {account} chats={chats.chats}
+  {#key `${account}:${generation}`}
+    <QuickSwitcher {account} chats={chats.chats} initialQuery={switcherQuery}
       onload={() => invoke<SearchResult[]>("switcher_catalog", { accountId: account })}
       onmessages={(query) => invoke<StoredMessage[]>("switcher_messages", { accountId: account, query, limit: 50 })}
       onchoose={async (target) => {
@@ -2199,6 +2319,37 @@
         if (usernameFor === scope && scope.account === session.activeAccount && scope.generation === messages.accountGeneration) usernameFor = null;
       }} onclose={() => { if (usernameFor === scope) usernameFor = null; }} />
   {/key}
+{/if}
+
+{#if spacePickerFor && spacePickerFor.account === session.activeAccount && spacePickerFor.generation === messages.accountGeneration
+  && spaces.snapshot.spaces.some((space) => space.id === spacePickerFor?.spaceId)}
+  {@const scope = spacePickerFor}
+  {#key scope}<SpacePicker account={scope.account} generation={scope.generation} spaceId={scope.spaceId} existing={spaces.snapshot.items}
+    catalog={spaceCandidates} loading={spaceCatalogLoading} error={spaceCatalogError}
+    onadd={async (targets) => {
+      if (spacePickerFor !== scope || scope.account !== session.activeAccount || scope.generation !== messages.accountGeneration) throw new Error("Space target changed.");
+      await spaces.add(scope.spaceId, targets);
+    }} onclose={() => { if (spacePickerFor === scope) spacePickerFor = null; }} />{/key}
+{/if}
+
+{#if spaceCommunityFor && spaceCommunityFor.account === session.activeAccount && spaceCommunityFor.generation === messages.accountGeneration}
+  {@const scope = spaceCommunityFor}
+  {@const group = spaceGroups.find((group) => group.jid === scope.jid && group.community)}
+  <Panel label="Community" nav={[{ id: "groups", label: "Linked groups", group: "Cached community" }]} section="groups"
+    onclose={() => { if (spaceCommunityFor === scope) spaceCommunityFor = null; }}>
+    {#snippet header()}<h2>{group?.subject ?? "Community"}</h2>{/snippet}
+    {#snippet children()}
+      <p>Local view of the cached community hierarchy.</p>
+      {#if group}
+        {#each spaceGroups.filter((child) => child.parent === scope.jid) as child (child.jid)}
+          <Button variant="ghost" onclick={() => {
+            if (scope.account !== session.activeAccount || scope.generation !== messages.accountGeneration) return;
+            spaceCommunityFor = null; void openChat(child.jid);
+          }}>{child.subject ?? chats.chatName(child.jid)}</Button>
+        {/each}
+      {:else}<p role="status">Community details unavailable locally.</p>{/if}
+    {/snippet}
+  </Panel>
 {/if}
 
 {#if ui.sharingContacts && chats.selectedChat}

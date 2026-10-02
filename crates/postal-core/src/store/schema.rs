@@ -390,6 +390,7 @@ pub(super) const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
     super::broadcast_lists::migrate,
     migrate_v16_mention_all_only,
     migrate_v17_mute_at_all,
+    super::spaces::migrate,
 ];
 
 pub(super) fn migrate(conn: &Connection) -> Result<()> {

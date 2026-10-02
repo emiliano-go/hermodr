@@ -17,6 +17,7 @@ pub(crate) mod quiz_polls;
 mod media;
 mod messages;
 mod usernames;
+pub(crate) mod spaces;
 mod quick_switcher;
 mod keywords;
 pub mod labels;
