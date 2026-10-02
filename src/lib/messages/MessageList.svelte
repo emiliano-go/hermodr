@@ -2,6 +2,9 @@
   outgoing uploads and the typing indicator. Moved out of +page.svelte. -->
 <script lang="ts">
   import MessageRow from "$lib/messages/MessageRow.svelte";
+  import AlbumGrid from "$lib/messages/AlbumGrid.svelte";
+  import MessageQuote from "$lib/messages/cards/MessageQuote.svelte";
+  import { albumTimeline } from "$lib/utils/album-timeline";
   import StructuredNotice from "$lib/messages/StructuredNotice.svelte";
   import { keywords } from "$lib/state/keywords.svelte";
   import type { BubbleApi, BubbleCtx } from "$lib/utils/models";
@@ -252,6 +255,7 @@
     typers.map((t) => ({ ...t, label: typerLabelOf(t.sender), hue: hue(t.sender) })),
   );
   const visibleMessages = $derived(messages.filter((message) => !keywords.hidden(message)));
+  const timeline = $derived(albumTimeline(messages, firstUnreadId, (message) => keywords.hidden(message), dayKey));
 
   // One capture listener for the list instead of one per row: picking and
   // ctrl-click intercept before any inner button sees the click.
@@ -290,18 +294,32 @@
   {#if messages.length > 0 && visibleMessages.length === 0}
     <p class="system" role="status">Loaded messages are hidden by your keyword rules.</p>
   {/if}
-  {#each visibleMessages as message, i (message.id)}
-    {@const prev = visibleMessages[i - 1]}
+  {#each timeline as group (JSON.stringify([group.messages[0].chat, group.messages[0].id]))}
+    {@const message = group.messages[0]}
+    {@const prev = group.prev}
     {@const newDay = !prev || dayKey(prev.timestamp) !== dayKey(message.timestamp)}
     {#if newDay}
       <div class="day"><span>{dayLabel(message.timestamp)}</span></div>
     {/if}
-    {#if firstUnreadId === message.id && !isUnavailable(message)}
+    {#each group.beforeIds as id (id)}<span class="album-anchor" data-id={id} aria-hidden="true"></span>{/each}
+    {#if group.unreadId && !isUnavailable(message)}
       <button class="unread-divider" data-unread-divider onclick={() => onjumpunread(message.id)}>
         <span>Unread messages</span>
       </button>
     {/if}
-    {#if isUnavailable(message)}
+    {#if group.parentId}
+      <AlbumGrid items={group.messages} {prev} timestamp={group.timestamp} {formatTime}>
+        {#snippet header()}
+          {#if group.parent?.reply_to_text}
+            <MessageQuote message={group.parent} author={ctx.quoteAuthorOf(group.parent.reply_to_sender)}
+              text={ctx.quoteTextOf(group.parent)} chatName={ctx.quoteChatNameOf(group.parent)} {api} />
+          {/if}
+        {/snippet}
+        {#snippet children(child, previous)}
+          <MessageRow message={child} prev={previous?.system_kind || (previous && isPollNotice(previous)) ? undefined : previous} {ctx} {api} albumCell />
+        {/snippet}
+      </AlbumGrid>
+    {:else if isUnavailable(message)}
       <article class="unavailable-message" class:mine={message.from_me} data-id={message.id} data-chat={message.chat}>
         <header>
           <b>{message.from_me ? "You" : senderLabel(message)}</b>
@@ -316,6 +334,7 @@
     {:else}
       <MessageRow {message} prev={prev?.system_kind || (prev && isPollNotice(prev)) ? undefined : prev} {ctx} {api} />
     {/if}
+    {#each group.afterIds as id (id)}<span class="album-anchor" data-id={id} aria-hidden="true"></span>{/each}
   {/each}
   {#each uploads as upload (upload.token)}
     <OutgoingItem {upload} />
@@ -330,6 +349,7 @@
 </div>
 
 <style>
+  .album-anchor { display: block; height: 0; }
   .messages {
     flex: 1;
     overflow-y: auto;

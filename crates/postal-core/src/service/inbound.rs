@@ -78,6 +78,7 @@ struct BatchCtx<'a> {
     media_dir: Option<PathBuf>,
     touched: Vec<String>,
     audit_chats: std::collections::HashSet<String>,
+    sticker_changes: AtomicBool,
     /// The batch arrived live rather than from the offline drain, so an
     /// arrival goes out with its full row instead of a hint.
     live: bool,
@@ -160,13 +161,13 @@ impl Inbound {
                 self.on_sticker_favorite(
                     &update.filehash,
                     update.action.is_favorite.unwrap_or(false),
-                    update.timestamp.timestamp(),
+                    update.timestamp.timestamp_millis(),
                     &update.action,
                 )
                 .await;
             }
             Event::RemoveRecentStickerUpdate(update) => {
-                self.on_sticker_recent_removed(&update.filehash, update.timestamp.timestamp()).await;
+                self.on_sticker_recent_removed(&update.filehash, update.timestamp.timestamp_millis(), update.action.last_sticker_sent_ts).await;
             }
             _ => {}
         }
@@ -451,6 +452,7 @@ impl Inbound {
             media_dir: self.media_dir.clone(),
             touched: Vec::with_capacity(batch.messages.len()),
             audit_chats: std::collections::HashSet::new(),
+            sticker_changes: AtomicBool::new(false),
             live: batch.origin == BatchOrigin::Live,
         };
         for inbound in batch.messages.iter() {
@@ -504,10 +506,10 @@ impl Inbound {
         if self.one_time_only {
             self.tally.note(batch.messages.len(), ingested);
         }
+        let sticker_changes = ctx.sticker_changes.load(Ordering::Relaxed);
         let audit_chats = ctx.audit_chats;
         if batch_guard.finish().await.observed().is_some() {
-            for notice in event_notices { let _ = self.events.send(notice); }
-            for chat in audit_chats { let _ = self.events.send(ServiceEvent::GroupAuditChanged { chat }); }
+            self.emit_batch_changes(event_notices, audit_chats, sticker_changes);
         }
         log::debug!(
             "{} live message(s) in {:?} (retention {:?}, pruned {removed})",
@@ -694,10 +696,16 @@ impl Inbound {
             return true;
         }
         if base.sticker_pack_message.is_set() {
-            self.on_sticker_pack(&inbound.message).await;
+            if self.on_sticker_pack(ctx.store, &inbound.message).await.observed() == Some(true) { ctx.sticker_changes.store(true, Ordering::Relaxed); }
             return true;
         }
         false
+    }
+
+    fn emit_batch_changes(&self, notices: Vec<ServiceEvent>, audit_chats: std::collections::HashSet<String>, stickers: bool) {
+        for notice in notices { let _ = self.events.send(notice); }
+        for chat in audit_chats { let _ = self.events.send(ServiceEvent::GroupAuditChanged { chat }); }
+        if stickers { let _ = self.events.send(ServiceEvent::StickerLibraryChanged { packs: true, favorites: false, recents: true }); }
     }
 
     async fn audit_control(&self, ctx: &mut BatchCtx<'_>, inbound: &InboundMessage, chat: &str, previous: Option<&StoredMessage>) {
@@ -970,8 +978,10 @@ impl Inbound {
             }
         };
         if message.media.kind.as_deref() == Some("sticker") {
-            if let Err(e) = record_sticker(ctx.store, &message).await {
-                log::warn!("could not record sticker {}: {e}", message.header.id);
+            match record_sticker(ctx.store, &message).await {
+                Ok(true) => ctx.sticker_changes.store(true, Ordering::Relaxed),
+                Ok(false) => {},
+                Err(error) => log::warn!("could not record sticker {}: {error}", message.header.id),
             }
         }
         self.track_sync_progress();
@@ -1126,7 +1136,7 @@ mod contact_identity_tests {
             downloads: Arc::new(tokio::sync::Semaphore::new(1)), sync_progress: Arc::default(), media_auto_download: Arc::default(),
             keep_archived: Arc::default(), keep_view_once: Arc::default(), one_time_only: false, tally: Arc::default(), secret_edits: Default::default(),
         };
-        let ctx = BatchCtx { store: &store, client: None, own: vec![], media_dir: None, touched: vec![], audit_chats: std::collections::HashSet::new(), live: true };
+        let ctx = BatchCtx { store: &store, client: None, own: vec![], media_dir: None, touched: vec![], audit_chats: std::collections::HashSet::new(), sticker_changes: AtomicBool::new(false), live: true };
         store.set_lid_pn("77", "59891954564").await.unwrap();
         store.set_push_name("59891954564@s.whatsapp.net", "Push").await.unwrap();
         inbound.remember_alt_name(&ctx, "77@lid", "77@lid", false, false, "59891954564@s.whatsapp.net").await;

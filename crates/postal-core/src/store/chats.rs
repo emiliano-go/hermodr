@@ -316,6 +316,7 @@ pub(crate) fn fold_chat(conn: &Connection, from: &str, to: &str) -> Result<()> {
         return Ok(());
     }
     copy_shadowed_messages(conn, from, to)?;
+    super::albums::merge_written(conn, from, to)?;
     merge_chat_row(conn, from, to)?;
     super::secret_edits::merge(conn, from, to)?;
     move_chat_keyed_tables(conn, from, to, MESSAGE_STATE_TABLES, "chat")?;

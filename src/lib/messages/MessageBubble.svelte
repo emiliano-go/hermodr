@@ -25,7 +25,7 @@
   import { transcription } from "$lib/state/transcription.svelte";
   import Transcript from "$lib/messages/Transcript.svelte";
 
-  let { message, vm, api }: { message: StoredMessage; vm: BubbleVm; api: BubbleApi } = $props();
+  let { message, vm, api, albumCell = false }: { message: StoredMessage; vm: BubbleVm; api: BubbleApi; albumCell?: boolean } = $props();
 
   /** A sticker file the renderer cannot draw, such as a Lottie sticker. */
   let stickerBroken = $state(false);
@@ -47,7 +47,7 @@
 {#snippet metadata()}
   {#if vm.isStarred}<span class="star"><Icon name="star" size={11} /></span>{/if}
   {#if vm.isEdited}<span class="edited-mark">Edited</span>{/if}
-  {api.formatTime(message.timestamp)}
+  {#if !albumCell}{api.formatTime(message.timestamp)}{/if}
   {#if message.from_me}
     <span class="ticks" class:read={message.status === "read"} title={message.status ?? "pending"}>
       {#if message.status === "pending"}
@@ -65,6 +65,7 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <div
   class="msg-row"
+  class:album-cell={albumCell}
   class:replying={vm.isReplying}
   class:jumped={vm.highlighted}
   class:for-me={vm.forMe || keywords.highlighted(message)}
@@ -439,6 +440,9 @@
     padding: 1px var(--pad-l) 1px var(--pad-r);
     transition: background-color calc(0.15s * var(--motion-scale)) var(--ease);
   }
+  .msg-row.album-cell { padding: 0; min-width: 0; height: 100%; }
+  .album-cell .bubble { width: 100%; max-width: 100%; box-sizing: border-box; height: 100%; margin-top: 0; }
+  .album-cell .bubble::before, .album-cell .sender-avatar { display: none; }
   .msg-row:hover {
     background: var(--row-hover);
     transition-duration: calc(0.15s * var(--motion-scale));

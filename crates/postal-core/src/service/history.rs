@@ -308,6 +308,7 @@ impl Inbound {
         let mut chats = Vec::new();
         let mut added_chats = 0;
         let mut audit_chats = std::collections::HashSet::new();
+        let mut sticker_changes = false;
         let mut names_learned;
         {
             let store = &batch_guard;
@@ -316,10 +317,10 @@ impl Inbound {
             names_learned = self.learn_history_names(store, history).await;
             // The phone's recent stickers ride the initial sync; seed them so
             // the picker shows them without a resync.
-            self.seed_recent_stickers(&history.recent_stickers).await;
+            sticker_changes |= self.seed_recent_stickers(store, &history.recent_stickers).await.observed() == Some(true);
             for conversation in &history.conversations {
                 let (chat, learned, audited) = self
-                    .apply_history_conversation(store, conversation, client.as_ref(), own.as_deref(), requested.as_deref(), request_session)
+                    .apply_history_conversation(store, conversation, client.as_ref(), own.as_deref(), requested.as_deref(), request_session, &mut sticker_changes)
                     .await;
                 names_learned += learned;
                 if let Some(chat) = audited { audit_chats.insert(chat); }
@@ -349,6 +350,7 @@ impl Inbound {
         }
         if batch_guard.finish().await.observed().is_some() {
             for chat in audit_chats { let _ = self.events.send(ServiceEvent::GroupAuditChanged { chat }); }
+            if sticker_changes { let _ = self.events.send(ServiceEvent::StickerLibraryChanged { packs: true, favorites: false, recents: true }); }
         }
     }
 
@@ -387,6 +389,7 @@ impl Inbound {
         own: Option<&str>,
         requested: Option<&str>,
         request_session: Option<&str>,
+        sticker_changes: &mut bool,
     ) -> (Option<String>, usize, Option<String>) {
         if conversation.id == "status@broadcast" {
             return (None, 0, None);
@@ -410,7 +413,7 @@ impl Inbound {
         let mut floor = None::<i64>;
         for entry in &conversation.messages {
             let (row_added, learned) =
-                self.apply_history_message(store, &chat, entry, client.map(|c| c.as_ref()), own, &mut audited).await;
+                self.apply_history_message(store, &chat, entry, client.map(|c| c.as_ref()), own, &mut audited, sticker_changes).await;
             added |= row_added;
             names_learned += learned;
             let timestamp = if row_added {
@@ -471,6 +474,7 @@ impl Inbound {
         client: Option<&Client>,
         own: Option<&str>,
         audited: &mut bool,
+        sticker_changes: &mut bool,
     ) -> (bool, usize) {
         let Some(web) = entry.message.as_option() else { return (false, 0) };
         let pin = history_pins::history_message_pin(web).ok().flatten();
@@ -538,7 +542,11 @@ impl Inbound {
         }
         // A stored row is already complete; rebuilding it would only rewrite
         // its thumbnails.
-        if store.message(chat, &id).await.observed().is_some_and(|row| !row.is_unavailable() || row.local.revoked || row.local.deleted) {
+        if let Some(row) = store.message(chat, &id).await.observed().filter(|row| !row.is_unavailable() || row.local.revoked || row.local.deleted) {
+            if !row.local.revoked && !row.local.deleted && !row.spoiler && row.media.once_kind.is_none() && row.system.kind.is_none() {
+                *sticker_changes |= self.on_sticker_pack(store, message).await.observed() == Some(true);
+                if row.media.kind.as_deref() == Some("sticker") && record_sticker(store, &row).await.observed() == Some(true) { *sticker_changes = true; }
+            }
             return (false, learned);
         }
         if let Some(target) = revoke_target(message) {
@@ -576,6 +584,10 @@ impl Inbound {
         stored.local.read = true;
         match store.insert_history_row(&stored).await {
             Ok(Some(accepted)) => {
+                if !accepted.local.revoked && !accepted.local.deleted && !accepted.spoiler && accepted.media.once_kind.is_none() && accepted.system.kind.is_none() {
+                    *sticker_changes |= self.on_sticker_pack(store, message).await.observed() == Some(true);
+                    if accepted.media.kind.as_deref() == Some("sticker") && record_sticker(store, &accepted).await.observed() == Some(true) { *sticker_changes = true; }
+                }
                 member_profiles::record_member_history_context(store, &accepted, web).await.logged();
                 if accepted.system.kind.is_some() {
                     *audited |= group_audit::audit_group_notice(store, &accepted, crate::store::group_audit::GroupAuditSource::History).await.observed() == Some(true);

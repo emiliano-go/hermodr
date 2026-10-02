@@ -40,6 +40,7 @@ mod labels;
 mod group_audit;
 mod member_profiles;
 mod quick_replies;
+mod albums;
 mod contact_sharing;
 mod bulk_chats;
 mod group_invites;
@@ -136,6 +137,7 @@ macro_rules! postal_commands {
             messages::mark_read_until,
             messages::send_reply,
             media::send_media,
+            albums::send_album,
             messages::send_text,
             messages::edit_message,
             desktop::open_path,

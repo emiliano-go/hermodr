@@ -43,6 +43,9 @@
   import LinkedDevices from "$lib/settings/LinkedDevices.svelte";
   import TranscriptionSettings from "$lib/settings/TranscriptionSettings.svelte";
   import AutoDownloadSettings from "$lib/settings/AutoDownloadSettings.svelte";
+  import StickerSync from "$lib/media/StickerSync.svelte";
+  import { stickers as stickerEvents } from "$lib/state/stickers.svelte";
+  import type { StickerLibrary, StickerResyncReport } from "$lib/utils/wire";
   import KeywordSettings from "$lib/settings/KeywordSettings.svelte";
   import NotificationHistory from "$lib/notifications/NotificationHistory.svelte";
   import ContactSharing from "$lib/contacts/ContactSharing.svelte";
@@ -984,6 +987,13 @@
             </div>
           {/if}
         {:else if section === "media"}
+          <div class="setting stack">
+            <h3>Stickers</h3>
+            <StickerSync account={active} generation={messages.accountGeneration} connected={session.connected} version={stickerEvents.version} showPacks
+              onload={(owner) => invoke<StickerLibrary>("sticker_library", { accountId: owner.account })}
+              onresync={(owner) => invoke<StickerResyncReport>("resync_stickers", { accountId: owner.account })}
+              onsynced={() => stickerEvents.touch()} />
+          </div>
           <label class="setting">
             <div><span class="setting-title">Default upload quality</span>
               <span class="setting-desc">Standard limits photos to 1600 pixels and videos to 480p. HD keeps the original file. Choose again for each attachment before sending.</span></div>

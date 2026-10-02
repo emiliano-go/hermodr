@@ -46,7 +46,10 @@ pub use retention::{DiskRetention, DiskRetentionManager};
 mod limits;
 mod storage;
 pub mod archive;
+pub mod albums;
+pub use albums::Album;
 mod stickers;
+mod sticker_sync;
 pub use stickers::{Sticker, StickerPack};
 mod worker;
 pub(crate) use worker::{StoreWorker, AliasWorker};
@@ -92,6 +95,9 @@ pub struct StoredMessage {
     pub system: SystemNotice,
     /// The last position of a live location, updated in place as edits arrive.
     pub live_location: Option<LiveLocation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "wire-types", ts(optional))]
+    pub album: Option<Album>,
 }
 
 /// A live location share as last seen: the position, its accuracy and the
@@ -294,7 +300,7 @@ const MESSAGE_COLUMNS: &str = "m.chat, m.id, m.sender, m.timestamp, m.from_me, m
     m.reply_to_kind, m.reply_to_thumb, m.media_thumb, m.media_ref, m.reply_to_chat,
     m.preview_site, m.preview_color, m.media_duration, m.system_kind, m.system_params,
     m.reply_to_view_once, m.reply_to_recoverable, m.reply_to_path, m.reply_to_locator,
-  m.media_once_kind, m.sort_order, m.deleted, m.live_location, m.history_shareable, m.spoiler";
+  m.media_once_kind, m.sort_order, m.deleted, m.live_location, m.history_shareable, m.spoiler, m.album";
 
 fn message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
     Ok(StoredMessage {
@@ -355,6 +361,7 @@ fn message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredMessage> {
         live_location: row
             .get::<_, Option<String>>(37)?
             .and_then(|json| serde_json::from_str(&json).ok()),
+        album: row.get::<_, Option<String>>(40)?.and_then(|json| serde_json::from_str(&json).ok()),
     })
 }
 

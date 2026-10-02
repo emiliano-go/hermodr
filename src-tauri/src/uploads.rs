@@ -2,8 +2,11 @@ use std::{collections::HashMap, fs::{self, OpenOptions}, io::{Seek, SeekFrom, Wr
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use tauri::{AppHandle, Manager, State};
 use crate::{AppState, account_store::active_account};
+use std::sync::Arc;
+use postal_core::WhatsAppService;
 
 pub(crate) const CHUNK_BYTES: usize = 256 * 1024;
+pub(crate) const MAX_PENDING_ATTACHMENTS: usize = 8;
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) struct StagedUpload {
@@ -43,7 +46,7 @@ impl Uploads {
         if name.is_empty() || name.len() > 1024 { return Err("invalid attachment name".into()); }
         let mut pending = self.0.lock().unwrap();
         pending.expire();
-        if pending.entries.len() >= 8 { return Err("too many pending attachments".into()); }
+        if pending.entries.len() >= MAX_PENDING_ATTACHMENTS { return Err("too many pending attachments".into()); }
         fs::create_dir_all(root).map_err(|e| e.to_string())?;
         let root = root.canonicalize().map_err(|e| e.to_string())?;
         if !pending.cleaned {
@@ -97,33 +100,99 @@ impl Uploads {
         Ok(pending.entries.remove(token).expect("checked upload exists"))
     }
 
+    pub(crate) fn take_many(&self, owner: &str, tokens: &[String]) -> Result<Vec<StagedUpload>, String> {
+        if tokens.is_empty() || tokens.len() > MAX_PENDING_ATTACHMENTS {
+            return Err("invalid attachment batch size".into());
+        }
+        let mut pending = self.0.lock().unwrap();
+        pending.expire();
+        for (index, token) in tokens.iter().enumerate() {
+            if tokens[..index].contains(token) { return Err("duplicate attachment upload".into()); }
+            let file = pending.entries.get(token).ok_or("unknown attachment upload")?;
+            if file.owner != owner { return Err("attachment belongs to another account".into()); }
+            if file.written != file.size || fs::metadata(&file.path).map_err(|e| e.to_string())?.len() != file.size {
+                return Err("attachment upload is incomplete".into());
+            }
+        }
+        Ok(tokens.iter().map(|token| pending.entries.remove(token).expect("checked upload exists")).collect())
+    }
+
+    fn cancel_owned(&self, owner: &str, token: &str) -> Result<(), String> {
+        let mut pending = self.0.lock().unwrap();
+        if pending.entries.get(token).is_some_and(|file| file.owner != owner) {
+            return Err("attachment belongs to another account".into());
+        }
+        pending.entries.remove(token);
+        Ok(())
+    }
+
+    fn complete_begin(&self, owner: &str, token: String, current: Result<(), String>) -> Result<String, String> {
+        if let Err(error) = current {
+            self.cancel_owned(owner, &token)?;
+            return Err(error);
+        }
+        Ok(token)
+    }
+
+    #[cfg(test)]
     fn cancel(&self, token: &str) { self.0.lock().unwrap().entries.remove(token); }
 }
 
+fn check_upload_scope(owner: &str, active: Option<&str>, same_service: bool) -> Result<(), String> {
+    if active == Some(owner) && same_service { Ok(()) }
+    else { Err("Attachment account changed during staging.".into()) }
+}
+
+fn upload_current(state: &AppState, owner: &str, expected: &Arc<WhatsAppService>) -> Result<(), String> {
+    let active = active_account(state);
+    let service = state.account_service(owner)?;
+    check_upload_scope(owner, active.as_deref(), Arc::ptr_eq(expected, &service))
+}
+
+fn upload_owner(state: &AppState, account: Option<String>) -> Result<(String, Arc<WhatsAppService>), String> {
+    let active = active_account(state).ok_or("no active account")?;
+    let owner = account.unwrap_or_else(|| active.clone());
+    check_upload_scope(&owner, Some(&active), true)?;
+    let service = state.account_service(&owner)?;
+    upload_current(state, &owner, &service)?;
+    Ok((owner, service))
+}
+
 #[tauri::command]
-pub(crate) async fn begin_upload(app: AppHandle, state: State<'_, AppState>, name: String, size: u64) -> Result<String, String> {
-    let owner = active_account(&state).ok_or("no active account")?;
+pub(crate) async fn begin_upload(app: AppHandle, state: State<'_, AppState>, name: String, size: u64, account_id: Option<String>) -> Result<String, String> {
+    let (owner, service) = upload_owner(&state, account_id)?;
     let root = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("uploads");
     let uploads = state.uploads.clone();
-    tauri::async_runtime::spawn_blocking(move || uploads.begin(&root, owner, name, size)).await.map_err(|e| e.to_string())?
+    let captured = owner.clone();
+    let token = tauri::async_runtime::spawn_blocking(move || uploads.begin(&root, captured, name, size)).await.map_err(|e| e.to_string())??;
+    state.uploads.complete_begin(&owner, token, upload_current(&state, &owner, &service))
 }
 
 #[tauri::command]
-pub(crate) async fn append_upload(state: State<'_, AppState>, token: String, offset: u64, data: String) -> Result<(), String> {
+pub(crate) async fn append_upload(state: State<'_, AppState>, token: String, offset: u64, data: String, account_id: Option<String>) -> Result<(), String> {
+    if token.is_empty() || token.len() > 256 { return Err("invalid attachment upload token".into()); }
     if data.len() > CHUNK_BYTES.div_ceil(3) * 4 { return Err("attachment chunk is too large".into()); }
-    let owner = active_account(&state).ok_or("no active account")?;
+    let (owner, service) = upload_owner(&state, account_id)?;
     let uploads = state.uploads.clone();
+    let captured = owner.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let bytes = BASE64.decode(data).map_err(|e| e.to_string())?;
-        uploads.append(&owner, &token, offset, &bytes)
-    }).await.map_err(|e| e.to_string())?
+        uploads.append(&captured, &token, offset, &bytes)
+    }).await.map_err(|e| e.to_string())??;
+    upload_current(&state, &owner, &service)
 }
 
 #[tauri::command]
-pub(crate) async fn cancel_upload(state: State<'_, AppState>, token: String) -> Result<(), String> {
+pub(crate) async fn cancel_upload(state: State<'_, AppState>, token: String, account_id: Option<String>) -> Result<(), String> {
+    let owner = account_id.or_else(|| active_account(&state)).ok_or("no attachment account")?;
+    if owner.is_empty() || owner.len() > 256 || token.is_empty() || token.len() > 256 { return Err("invalid attachment cleanup scope".into()); }
     let uploads = state.uploads.clone();
-    tauri::async_runtime::spawn_blocking(move || uploads.cancel(&token)).await.map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || uploads.cancel_owned(&owner, &token)).await.map_err(|e| e.to_string())?
 }
+
+#[cfg(test)]
+#[path = "albums_upload_tests.rs"]
+mod album_tests;
 
 #[cfg(test)]
 mod tests {

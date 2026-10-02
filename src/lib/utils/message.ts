@@ -81,6 +81,7 @@ export const DRAWN_KINDS = new Set([
 ]);
 
 export const CARD_LABELS: Record<string, string> = {
+  album: "Media album",
   location: "📍 Location",
   live_location: "📍 Live location",
   contact: "👤 Contact",

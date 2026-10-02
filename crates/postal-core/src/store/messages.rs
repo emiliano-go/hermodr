@@ -12,10 +12,10 @@ const INSERT_MESSAGE_SQL: &str = "INSERT INTO messages
       reply_to_kind, reply_to_thumb, media_thumb, media_ref, reply_to_chat,
       preview_site, preview_color, media_duration, system_kind, system_params,
       reply_to_view_once, reply_to_recoverable, reply_to_path, reply_to_locator,
-      media_once_kind, sort_order, live_location, history_shareable, spoiler, deleted)
+      media_once_kind, sort_order, live_location, history_shareable, spoiler, deleted, album)
  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
          ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?29, ?30,
-         ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40)
+         ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?42)
  ON CONFLICT(chat, id) DO UPDATE SET
      sort_order = CASE WHEN excluded.sort_order > 0 THEN MIN(messages.sort_order, excluded.sort_order) ELSE messages.sort_order END,
      sender = excluded.sender,
@@ -58,6 +58,7 @@ const INSERT_MESSAGE_SQL: &str = "INSERT INTO messages
       reply_to_locator = COALESCE(excluded.reply_to_locator, reply_to_locator),
       media_once_kind = COALESCE(excluded.media_once_kind, media_once_kind),
       live_location = COALESCE(excluded.live_location, live_location),
+      album = COALESCE(album, excluded.album),
       history_shareable = MIN(history_shareable, excluded.history_shareable),
       spoiler = MAX(spoiler, excluded.spoiler),
       deleted = MAX(deleted, excluded.deleted)
@@ -158,6 +159,7 @@ impl MessageStore {
                 message.spoiler,
                 message.local.deleted,
                 message.is_unavailable() || message.is_hidden_tombstone(),
+                message.album.as_ref().map(serde_json::to_string).transpose()?,
             ],
         )?;
         if message.is_unavailable() || message.is_hidden_tombstone() {

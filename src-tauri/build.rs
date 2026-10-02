@@ -48,6 +48,7 @@ const COMMANDS: &[&str] = &[
     "mark_read_until",
     "send_reply",
     "send_media",
+    "send_album",
     "send_text",
     "edit_message",
     "open_path",

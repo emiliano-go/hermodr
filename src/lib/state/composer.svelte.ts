@@ -8,12 +8,13 @@ import { invoke } from "$lib/utils/ipc";
 import { loadEmojis, rememberEmoji, searchEmojis, type Emoji } from "$lib/utils/emoji";
 import type { PickerTab } from "$lib/composer/ExpressionPicker.svelte";
 import { base64Of, imagePreview, rasterizeSvg } from "$lib/utils/files";
-import { sendAttachment } from "$lib/utils/upload";
+import { cancelStagedAttachment, isAlbumMedia, isAlbumSelection, sendAttachment, stageAttachment } from "$lib/utils/upload";
 import { canChooseMediaQuality } from "$lib/utils/media-quality";
 import { keybinds, matches, matchesDraftHistory } from "$lib/utils/keybinds.svelte";
 import { ComposerHistory, type DraftSnapshot } from "$lib/utils/composer-history";
 import type { Recording } from "$lib/composer/VoiceRecorder.svelte";
-import type { ChatPrivacy, Outgoing, PendingMedia, StoredMessage } from "$lib/utils/models";
+import type { AttachmentRecovery, AttachmentRetryContext, ChatPrivacy, Outgoing, PendingMedia, StoredMessage } from "$lib/utils/models";
+import type { AlbumSendResult } from "$lib/utils/wire";
 import { isUnavailable } from "$lib/utils/message";
 import { chats } from "./chats.svelte";
 import { members } from "./members.svelte";
@@ -45,8 +46,21 @@ export class ComposerState {
   editing = $state<{ chat: string; id: string; original: string } | null>(null);
 
   /** Files staged for review before they are sent, shown above the composer. */
-  pending = $state<PendingMedia[]>([]);
+  private pendingItems = $state<PendingMedia[]>([]);
+  private stagingTickets = new Map<number, object>();
+  get pending() { return this.pendingItems; }
+  set pending(items: PendingMedia[]) {
+    if (items.length === 0) this.stagingTickets.clear();
+    const ids = new Set(items.map((item) => item.id));
+    for (const item of this.pendingItems) {
+      if (!ids.has(item.id)) this.stagingTickets.delete(item.id);
+    }
+    this.pendingItems = items;
+  }
   pendingSeq = 0;
+  attachmentRecoveries = $state<AttachmentRecovery[]>([]);
+  private attachmentBatchSeq = 0;
+  private attachmentChatGenerations = new Map<string, number>();
   recording = $state(false);
   outgoing = $state<Outgoing[]>([]);
 
@@ -563,6 +577,10 @@ export class ComposerState {
     }
     // With attachments staged, the typed text goes out as their caption.
     if (this.pending.length > 0) {
+      if (this.pending[0].retry) {
+        await this.sendPending();
+        return;
+      }
       // Mentions in a caption go out as `@<number>` with their JIDs, as in text.
       const { text: caption, jids } = this.mentionPayload();
       this.draft = "";
@@ -615,8 +633,17 @@ export class ComposerState {
 
   /** Stages a file for review rather than sending it straight away. */
   async stageFile(file: File) {
+    const account = this.accountSeq, owner = session.activeAccount;
+    const chat = chats.selectedChat, generation = messages.accountGeneration;
+    if (!owner || !chat) return;
+    const id = this.pendingSeq++, ticket = {};
+    this.stagingTickets.set(id, ticket);
+    const current = () => account === this.accountSeq && owner === session.activeAccount
+      && chat === chats.selectedChat && generation === messages.accountGeneration
+      && this.stagingTickets.get(id) === ticket;
     try {
       if (file.type === "image/svg+xml" || /\.svg$/i.test(file.name)) file = await rasterizeSvg(file);
+      if (!current()) return;
       const kind = file.type.startsWith("image/")
         ? "image"
         : file.type.startsWith("video/")
@@ -624,38 +651,61 @@ export class ComposerState {
           : "other";
 
       // Staged before the preview is drawn, so Enter can send it straight away.
-      const id = this.pendingSeq++;
-      this.pending = [
-        ...this.pending,
+      const items = [...this.pending];
+      const next = items.findIndex((item) => item.id > id);
+      items.splice(next < 0 ? items.length : next, 0,
         { id, file, url: kind === "video" ? URL.createObjectURL(file) : "", kind, caption: "", once: false,
-          quality: canChooseMediaQuality(file) ? session.settings.media_quality : undefined },
-      ];
+          quality: canChooseMediaQuality(file) ? session.settings.media_quality : undefined });
+      this.pending = items;
       this.host.focusComposer();
       if (kind === "image") {
         const url = await imagePreview(file);
+        if (!current() || !this.pending.some((item) => item.id === id && item.file === file)) {
+          if (url.startsWith("blob:")) URL.revokeObjectURL(url);
+          return;
+        }
         this.pending = this.pending.map((p) => (p.id === id ? { ...p, url } : p));
       }
     } catch (e) {
       // Staging must never take the chat down with it.
-      ui.fail(`Could not preview that file: ${e}`);
+      if (current()) ui.fail(`Could not preview that file: ${e}`);
+    } finally {
+      if (this.stagingTickets.get(id) === ticket) this.stagingTickets.delete(id);
     }
   }
 
   /** `text` from the composer becomes the first attachment's caption, unless it has its own. */
   async sendPending(text = "", mentions: string[] = []) {
-    const account = this.accountSeq;
-    const signal = this.uploadsAbort.signal;
-    const selectedChat = chats.selectedChat;
-    if (!selectedChat || this.pending.length === 0) return;
-    const captioned = !!text && !this.pending[0].caption.trim();
-    if (captioned) this.pending[0].caption = text;
-    const firstId = this.pending[0].id;
-    const chat = selectedChat;
-    const items = [...this.pending];
-    const reply = this.replyingTo;
+    const account = this.accountSeq, owner = session.activeAccount, chat = chats.selectedChat;
+    if (!chat || this.pending.length === 0) return;
+    const retry = this.pending[0].retry;
+    if (retry && (!this.attachmentScopeCurrent(retry) || retry.chat !== chat)) {
+      ui.fail("These attachments belong to another conversation or account.");
+      return;
+    }
+    const items = (retry ? this.pending.filter((item) => item.retry?.batch === retry.batch) : this.pending)
+      .map((item) => ({ ...item }));
+    const ordinary = items.every(isAlbumMedia);
+    if (retry?.album && !ordinary) {
+      ui.fail("Album retries require ordinary photos and videos.");
+      return;
+    }
+    const album = !!owner && (retry ? retry.album && ordinary && items.length <= 8
+      && (items.length >= 2 || !!retry.parentId) : isAlbumSelection(items));
+    const captioned = !retry && !!text && !items[0].caption.trim();
+    if (captioned) items[0].caption = text;
+    const firstId = items[0].id;
+    const context: AttachmentRetryContext = retry ? { ...retry, album } : {
+      accountId: owner ?? "", accountSeq: account, generation: messages.accountGeneration, chat,
+      chatGeneration: this.attachmentChatGenerations.get(chat) ?? 0,
+      batch: `attachments-${account}-${this.attachmentBatchSeq++}`, album, parentId: null,
+      reply: this.replyingTo ? { id: this.replyingTo.id, sender: this.replyingTo.sender, text: this.replyingTo.text } : null,
+      mentions: captioned ? [...mentions] : [],
+    };
+    const reply = context.reply, signal = this.uploadsAbort.signal;
     // The tray empties at once; each file waits in the chat as a bubble instead.
-    this.pending = [];
-    this.replyingTo = null;
+    this.pending = retry ? this.pending.filter((item) => item.retry?.batch !== retry.batch) : [];
+    if (!retry) this.replyingTo = null;
     const batch: Outgoing[] = items.map((item) => ({
       token: `upload-${item.id}-${Date.now()}`,
       chat,
@@ -667,12 +717,16 @@ export class ComposerState {
     }));
     this.outgoing = [...this.outgoing, ...batch];
     this.host.scrollToBottom();
-    const finish = (token: string) => {
+    const finish = (token: string, release = true) => {
       const done = this.outgoing.find((o) => o.token === token);
-      if (done?.url.startsWith("blob:")) URL.revokeObjectURL(done.url);
+      if (release && done?.url.startsWith("blob:")) URL.revokeObjectURL(done.url);
       this.outgoing = this.outgoing.filter((o) => o.token !== token);
     };
     await this.enqueue(async () => {
+      if (album) {
+        await this.sendPendingAlbum(items, batch, context, signal, finish);
+        return;
+      }
       for (const [i, item] of items.entries()) {
         const { token } = batch[i];
         try {
@@ -683,7 +737,7 @@ export class ComposerState {
             replyToSender: reply?.sender ?? null,
             replyToText: reply?.text ?? null,
             viewOnce: item.once,
-            mentions: captioned && item.id === firstId ? mentions : [],
+            mentions: item.id === firstId ? context.mentions : [],
             progress: token,
             quality: item.quality ?? null,
           }, signal);
@@ -695,17 +749,150 @@ export class ComposerState {
         } catch (e) {
           if (account !== this.accountSeq) return;
           ui.fail(e);
-          // Unsent files return to the tray for an explicit retry.
           for (const rest of batch.slice(i)) {
-            this.outgoing = this.outgoing.filter((o) => o.token !== rest.token);
+            finish(rest.token, !this.attachmentScopeCurrent(context));
           }
-          this.pending = [...items.slice(i), ...this.pending];
+          this.recoverAttachments(context, items.slice(i), [], String(e));
           break;
         }
       }
-    }, account).catch((e) => { if (account === this.accountSeq) ui.fail(e); });
-    if (account !== this.accountSeq) return;
-    await chats.refreshChats();
+    }, account).catch((error) => {
+      for (const item of batch) finish(item.token, !this.attachmentScopeCurrent(context));
+      this.recoverAttachments(context, items, [], String(error));
+    });
+    if (this.attachmentScopeCurrent(context)) await chats.refreshChats();
+  }
+
+  private attachmentScopeCurrent(context: AttachmentRetryContext) {
+    return context.accountSeq === this.accountSeq && context.accountId === (session.activeAccount ?? "")
+      && context.generation === messages.accountGeneration
+      && context.chatGeneration === (this.attachmentChatGenerations.get(context.chat) ?? 0);
+  }
+
+  get currentAttachmentRecoveries() {
+    return this.attachmentRecoveries.filter((recovery) => recovery.context.chat === chats.selectedChat
+      && this.attachmentScopeCurrent(recovery.context));
+  }
+
+  restoreKnownUnsent(chat: string) {
+    if (chat !== chats.selectedChat) return false;
+    const restored: PendingMedia[] = [], remaining: AttachmentRecovery[] = [];
+    for (const recovery of this.attachmentRecoveries) {
+      if (recovery.context.chat !== chat || !this.attachmentScopeCurrent(recovery.context) || !recovery.retryable.length) {
+        remaining.push(recovery);
+        continue;
+      }
+      restored.push(...recovery.retryable);
+      if (recovery.uncertain.length || recovery.parentUncertain) remaining.push({ ...recovery, retryable: [] });
+    }
+    if (!restored.length) return false;
+    this.attachmentRecoveries = remaining;
+    this.pending = [...restored, ...this.pending];
+    return true;
+  }
+
+  discardAttachmentRecovery(recovery: AttachmentRecovery) {
+    if (!this.attachmentRecoveries.includes(recovery) || !this.attachmentScopeCurrent(recovery.context)
+      || recovery.context.chat !== chats.selectedChat) return;
+    for (const item of [...recovery.retryable, ...recovery.uncertain]) {
+      if (item.url.startsWith("blob:")) URL.revokeObjectURL(item.url);
+    }
+    this.attachmentRecoveries = this.attachmentRecoveries.filter((item) => item !== recovery);
+  }
+
+  forgetRecovery(chat: string) {
+    this.attachmentChatGenerations.set(chat, (this.attachmentChatGenerations.get(chat) ?? 0) + 1);
+    for (const item of [...this.pending]) {
+      if (item.retry?.chat === chat) this.removePending(item.id);
+    }
+    for (const recovery of this.attachmentRecoveries) {
+      if (recovery.context.chat !== chat) continue;
+      for (const item of [...recovery.retryable, ...recovery.uncertain]) {
+        if (item.url.startsWith("blob:")) URL.revokeObjectURL(item.url);
+      }
+    }
+    this.attachmentRecoveries = this.attachmentRecoveries.filter((item) => item.context.chat !== chat);
+  }
+
+  private recoverAttachments(context: AttachmentRetryContext, retryable: PendingMedia[], uncertain: PendingMedia[],
+    error: string, result?: AlbumSendResult) {
+    if (!this.attachmentScopeCurrent(context)) return;
+    this.attachmentRecoveries = [...this.attachmentRecoveries, {
+      context, retryable: retryable.map((item) => ({ ...item, retry: context })), uncertain,
+      sentIds: result?.sent_ids ?? [], uncertainId: result?.uncertain_id ?? null,
+      parentUncertain: result?.parent_uncertain ?? false, error,
+    }];
+    this.restoreKnownUnsent(context.chat);
+    if (chats.selectedChat === context.chat) ui.fail(error);
+  }
+
+  private async sendPendingAlbum(items: PendingMedia[], batch: Outgoing[], context: AttachmentRetryContext,
+    signal: AbortSignal, finish: (token: string, release?: boolean) => void) {
+    const uploads: string[] = [];
+    let dispatched = false;
+    try {
+      for (const item of items) {
+        if (!this.attachmentScopeCurrent(context) || chats.selectedChat !== context.chat) throw new Error("Conversation changed before album dispatch.");
+        uploads.push(await stageAttachment(item.file, signal, context.accountId));
+      }
+      signal.throwIfAborted();
+      if (!this.attachmentScopeCurrent(context) || chats.selectedChat !== context.chat) throw new Error("Conversation changed before album dispatch.");
+      dispatched = true;
+      const result = await invoke<AlbumSendResult>("send_album", {
+        accountId: context.accountId, chat: context.chat, parentId: context.parentId,
+        items: items.map((item, i) => ({ upload: uploads[i], caption: item.caption.trim() || null,
+          quality: item.quality ?? null, progress: batch[i].token })),
+        replyToId: context.reply?.id ?? null, replyToSender: context.reply?.sender ?? null,
+        replyToText: context.reply?.text ?? null, mentions: context.mentions,
+      });
+      const preflight = result && "preflight_failed" in result && result.preflight_failed === true;
+      const uncertain = result?.uncertain_index;
+      if (!result || result.account_id !== context.accountId || result.chat !== context.chat
+        || !Array.isArray(result.sent_ids) || !result.sent_ids.every((id) => typeof id === "string" && id.length > 0)
+        || new Set(result.sent_ids).size !== result.sent_ids.length
+        || !Array.isArray(result.warnings) || !result.warnings.every((warning) => typeof warning === "string")
+        || typeof result.parent_uncertain !== "boolean" || (result.error !== null && typeof result.error !== "string")
+        || (result.uncertain_id !== null && (typeof result.uncertain_id !== "string" || !result.uncertain_id))
+        || (uncertain === null && result.uncertain_id !== null)
+        || !Number.isInteger(result.next_index) || result.next_index < 0 || result.next_index > items.length
+        || (uncertain !== null && (!Number.isInteger(uncertain) || uncertain < 0 || uncertain >= items.length
+          || uncertain !== result.sent_ids.length || result.next_index !== uncertain + 1 || !result.uncertain_id))
+        || (uncertain === null && result.next_index !== result.sent_ids.length)
+        || (preflight && (result.next_index !== 0 || result.parent_uncertain || uncertain !== null))
+        || (result.parent_uncertain && (result.next_index !== 0 || uncertain !== null))
+        || typeof result.parent_id !== "string" || (!preflight && !result.parent_id)
+        || (context.parentId && !preflight && result.parent_id !== context.parentId)) {
+        throw new Error("Album response did not match the submitted batch; outcome unknown.");
+      }
+      if (!this.attachmentScopeCurrent(context)) {
+        for (const item of batch) finish(item.token);
+        return;
+      }
+      const nextContext = { ...context, parentId: result.parent_id || context.parentId,
+        mentions: result.next_index === 0 ? context.mentions : [] };
+      const tail = items.slice(result.next_index);
+      const unknown = uncertain === null ? [] : [items[uncertain]];
+      const held = new Set([...tail, ...unknown].map((item) => item.id));
+      for (const [i, item] of batch.entries()) finish(item.token, !held.has(items[i].id));
+      if (tail.length || unknown.length || result.parent_uncertain) {
+        this.recoverAttachments(nextContext, tail, unknown,
+          result.error ?? "Album outcome requires review before retrying.", result);
+      } else if (result.error && chats.selectedChat === context.chat) ui.fail(result.error);
+      if (result.warnings.length && chats.selectedChat === context.chat) ui.notify(result.warnings.join("\n"));
+    } catch (error) {
+      const keep = this.attachmentScopeCurrent(context);
+      for (const item of batch) finish(item.token, !keep);
+      this.recoverAttachments(context, dispatched ? [] : items, dispatched ? items : [],
+        dispatched ? `Album outcome unknown; review before retrying. ${error}` : String(error));
+    } finally {
+      await Promise.all(uploads.map((token) => cancelStagedAttachment(token, context.accountId)));
+    }
+    if (this.attachmentScopeCurrent(context) && chats.selectedChat === context.chat) {
+      await messages.reloadMessages(context.chat).catch((error) => {
+        if (this.attachmentScopeCurrent(context) && chats.selectedChat === context.chat) ui.fail(error);
+      });
+      if (this.attachmentScopeCurrent(context) && chats.selectedChat === context.chat) this.host.scrollToBottom();
+    }
   }
 
   async sendSoundClip(file: File, scope: { account: string; chat: string; generation: number }) {
@@ -762,7 +949,8 @@ export class ComposerState {
   removePending(id: number) {
     const item = this.pending.find((p) => p.id === id);
     if (item?.url.startsWith("blob:")) URL.revokeObjectURL(item.url);
-    this.pending = this.pending.filter((p) => p.id !== id);
+    this.stagingTickets.delete(id);
+    this.pendingItems = this.pendingItems.filter((p) => p.id !== id);
   }
 
   /** Flips one staged attachment between view-once and ordinary. */
@@ -775,6 +963,14 @@ export class ComposerState {
   /** Mirrors resetUi: drafts, tray, replies, edits and history are dropped. */
   resetAccount() {
     this.accountSeq++;
+    this.stagingTickets.clear();
+    for (const recovery of this.attachmentRecoveries) {
+      for (const item of [...recovery.retryable, ...recovery.uncertain]) {
+        if (item.url.startsWith("blob:")) URL.revokeObjectURL(item.url);
+      }
+    }
+    this.attachmentRecoveries = [];
+    this.attachmentChatGenerations.clear();
     this.uploadsAbort.abort();
     this.uploadsAbort = new AbortController();
     this.outbox = Promise.resolve();

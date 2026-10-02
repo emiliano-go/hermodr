@@ -206,7 +206,7 @@ impl WhatsAppService {
     }
 
     /// Uploads staged bytes or a file, reporting progress when a token was given.
-    async fn upload_media(
+    pub(super) async fn upload_media(
         &self,
         input: &MediaInput,
         media_type: MediaType,
@@ -233,7 +233,7 @@ impl WhatsAppService {
     }
 
     /// A thumbnail the recipient sees before the file lands, if one can be made.
-    async fn outgoing_thumbnail(&self, kind: &str, input: &MediaInput) -> Result<Option<Vec<u8>>> {
+    pub(super) async fn outgoing_thumbnail(&self, kind: &str, input: &MediaInput) -> Result<Option<Vec<u8>>> {
         match input {
             MediaInput::Bytes(bytes) => Ok(media_thumbnail(kind, bytes)),
             MediaInput::File(path) => {
@@ -247,7 +247,7 @@ impl WhatsAppService {
     /// The quote, forwarded marker and mentions an attachment goes out with.
     /// The quoted message is the message itself where the store has it, so the
     /// recipient renders the view-once it answers rather than a stand-in.
-    async fn media_context(
+    pub(super) async fn media_context(
         &self,
         to: &Jid,
         reply: Option<&(String, String, String)>,
@@ -265,7 +265,7 @@ impl WhatsAppService {
     }
 
     /// A local copy of what was just sent, so the sender sees their own media.
-    async fn keep_sent_copy(&self, input: &MediaInput, id: &str, extension: &str) -> Option<String> {
+    pub(super) async fn keep_sent_copy(&self, input: &MediaInput, id: &str, extension: &str) -> Option<String> {
         let dir = self.media_dir()?;
         if tokio::fs::create_dir_all(&dir).await.observed().is_none() {
             return None;
@@ -282,7 +282,7 @@ impl WhatsAppService {
 
     /// The stored row for media we just sent; one-time media keeps its one-time
     /// form and no file.
-    async fn record_sent_media(
+    pub(super) async fn record_sent_media(
         &self,
         chat: &str,
         chat_jid: &str,
@@ -418,7 +418,6 @@ impl WhatsAppService {
             .client
             .upload(webp.clone(), MediaType::Sticker, Default::default())
             .await?;
-        let filehash = filehash_of_hash(&upload.file_sha256);
         let message = wa::Message {
             sticker_message: buffa::MessageField::some(wa::message::StickerMessage {
                 url: Some(upload.url),
@@ -433,7 +432,7 @@ impl WhatsAppService {
                 height: Some(height),
                 is_animated: animated.then_some(true),
                 png_thumbnail,
-                sticker_sent_ts: Some(unix_now() * 1000),
+                sticker_sent_ts: Some(whatsapp_rust::wacore::time::now_millis()),
                 context_info: context.map(|c| MessageField::some(*c)).unwrap_or_else(MessageField::none),
                 ..Default::default()
             }),
@@ -459,11 +458,11 @@ impl WhatsAppService {
             stored.quote = self.reply_quote(chat, reply).await?;
         }
         let stored = self.store.insert_message_row(&stored).await?;
-        if let Err(e) = record_sticker(&self.store, &stored).await {
-            log::warn!("could not record a sent sticker: {e}");
+        match record_sticker(&self.store, &stored).await {
+            Ok(true) => { let _ = self.events.send(ServiceEvent::StickerLibraryChanged { packs: false, favorites: false, recents: true }); },
+            Ok(false) => {},
+            Err(error) => log::warn!("could not record a sent sticker: {error}"),
         }
-        let now = unix_now();
-        let _ = self.store.set_sticker_recent(filehash, Some(now), now).await;
         let _ = self.events.send(ServiceEvent::arrival(&stored));
         Ok(())
     }
@@ -555,7 +554,7 @@ fn ensure_exportable_media(message: &StoredMessage) -> Result<()> {
 
 /// Extensions with a dedicated wire media type; anything else goes as a
 /// document, which is how the receiver will render it.
-fn file_extension(file_name: &str) -> String {
+pub(super) fn file_extension(file_name: &str) -> String {
     Path::new(file_name)
         .extension()
         .and_then(|e| e.to_str())
@@ -565,7 +564,7 @@ fn file_extension(file_name: &str) -> String {
 
 /// The extension decides how the receiver renders the file, so a video only
 /// arrives as a video (not a document) if it is sent as one.
-fn media_kind_for(extension: &str) -> (MediaType, &'static str) {
+pub(super) fn media_kind_for(extension: &str) -> (MediaType, &'static str) {
     match extension {
         "jpg" | "jpeg" | "png" | "gif" | "webp" => (MediaType::Image, "image"),
         "mp4" | "mov" | "m4v" | "webm" | "mkv" => (MediaType::Video, "video"),
@@ -575,7 +574,7 @@ fn media_kind_for(extension: &str) -> (MediaType, &'static str) {
 }
 
 /// Why a video went out without a preview, when it did.
-fn missing_preview_warning(kind: &str, thumb: &Option<Vec<u8>>) -> Option<String> {
+pub(super) fn missing_preview_warning(kind: &str, thumb: &Option<Vec<u8>>) -> Option<String> {
     if !(kind == "video" || kind == "gif") || thumb.is_some() {
         return None;
     }
@@ -590,7 +589,7 @@ fn missing_preview_warning(kind: &str, thumb: &Option<Vec<u8>>) -> Option<String
 }
 
 /// The wire message for an uploaded attachment, by kind.
-fn build_media_message(
+pub(super) fn build_media_message(
     file_name: &str,
     kind: &str,
     upload: whatsapp_rust::upload::UploadResponse,

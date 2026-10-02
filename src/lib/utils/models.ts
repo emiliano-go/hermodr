@@ -43,8 +43,31 @@ export type PendingMedia = {
   /** Whether this attachment goes out as view once. */
   once: boolean;
   quality?: MediaQuality;
+  retry?: AttachmentRetryContext;
 };
 
+export type AttachmentRetryContext = {
+  accountId: string;
+  accountSeq: number;
+  generation: number;
+  chatGeneration: number;
+  chat: string;
+  batch: string;
+  album: boolean;
+  parentId: string | null;
+  reply: Pick<StoredMessage, "id" | "sender" | "text"> | null;
+  mentions: string[];
+};
+
+export type AttachmentRecovery = {
+  context: AttachmentRetryContext;
+  retryable: PendingMedia[];
+  uncertain: PendingMedia[];
+  sentIds: string[];
+  uncertainId: string | null;
+  parentUncertain: boolean;
+  error: string;
+};
 
 /** Files on their way out, drawn at the end of their chat until the sent message replaces them. */
 export type Outgoing = {

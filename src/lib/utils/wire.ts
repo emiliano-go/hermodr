@@ -16,6 +16,9 @@ export type AdminReport = { id: string,
  * The message as stored here, when this device has it.
  */
 message: StoredMessage | null, reporters: Array<[string, number]>, };
+export type Album = { parent_id: string | null, expected_images: number | null, expected_videos: number | null, index: number | null, };
+export type AlbumSendResult = { account_id: string, chat: string, parent_id: string, sent_ids: Array<string>, next_index: number, uncertain_index: number | null, uncertain_id: string | null, parent_uncertain: boolean, preflight_failed: boolean, warnings: Array<string>, error: string | null, };
+export type AlbumUploadItem = { upload: string, caption: string | null, quality: MediaQuality | null, progress: string | null, };
 export type ArchiveManifest = { format: string, version: number, messages: number, attachments: number, missing_attachments: number, };
 export type ArchiveReport = { directory: string, messages: number, attachments: number, missing_attachments: number, };
 export type BlockedContact = { jid: string, jids: Array<string>, identity: ContactIdentity, };
@@ -392,9 +395,10 @@ export type Sticker = {
  * Base64 SHA-256 of the decrypted file: the app-state index key.
  */
 filehash: string, pack_id: string | null, path: string | null, animated: boolean, lottie: boolean, emojis: Array<string>, favorite: boolean, recent_at: number | null, updated_at: number, };
-export type StickerLibrary = { packs: Array<StickerPack>, favorites: Array<Sticker>, recent: Array<Sticker>, };
+export type StickerLibrary = { packs: Array<StickerPack>, favorites: Array<Sticker>, recent: Array<Sticker>, catalog_complete: boolean, };
 export type StickerPack = { pack_id: string, name: string | null, publisher: string | null, tray_path: string | null, origin: string | null, updated_at: number, };
-export type StickerResyncReport = { packs: number, stickers: number, };
+export type StickerPackFailure = { pack_id: string, error: string, };
+export type StickerResyncReport = { packs: number, stickers: number, known_packs: number, packs_changed: number, stickers_changed: number, skipped_stickers: number, app_state_synced: boolean, app_state_retryable: boolean, app_state_fatal: boolean, app_state_error: string | null, pack_failures: Array<StickerPackFailure>, mirror_verified: boolean, catalog_complete: boolean, };
 export type StorageCleanup = { "kind": "attachment", chat: string, id: string, quoted: boolean, } | { "kind": "chat_media", chat: string, } | { "kind": "cache" };
 export type StorageFile = { chat: string, id: string, kind: string, filename: string, timestamp: number, quoted: boolean, bytes: number, available: boolean, };
 export type StorageOrder = "largest" | "oldest";
@@ -407,7 +411,7 @@ sender_name: string | null, text: string,
 /**
  * The last position of a live location, updated in place as edits arrive.
  */
-live_location: LiveLocation | null, chat: string, id: string, sender: string, timestamp: number, from_me: boolean,
+live_location: LiveLocation | null, album?: Album, chat: string, id: string, sender: string, timestamp: number, from_me: boolean,
 /**
  * `image`, `video`, `audio`, `document`, `sticker`, `gif`, `poll`, `event`…
  */

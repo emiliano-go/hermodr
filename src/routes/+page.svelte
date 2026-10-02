@@ -44,6 +44,9 @@
   import ChatHeader from "$lib/chat/ChatHeader.svelte";
   import MessageList from "$lib/messages/MessageList.svelte";
   import ComposerBar from "$lib/composer/ComposerBar.svelte";
+  import AttachmentRecoveryPanel from "$lib/composer/AttachmentRecoveryPanel.svelte";
+  import { findRecovery, saveAttachmentCopy } from "$lib/utils/attachment-recovery";
+  import { visibleReadFrontier } from "$lib/utils/album-timeline";
   import ScheduledOutbox from "$lib/composer/ScheduledOutbox.svelte";
   import SelectionBar from "$lib/messages/SelectionBar.svelte";
   import { hue } from "$lib/utils/avatar";
@@ -249,6 +252,7 @@
       ui.bulkDelete = null;
     }
     chats.selectedChat = chat;
+    composer.restoreKnownUnsent(chat);
     // One-to-one typing only arrives for contacts we are subscribed to.
     if (!chat.endsWith("@g.us")) invoke("watch_presence", { jid: chat }).catch(() => {});
     chats.titleOverride = label;
@@ -383,6 +387,7 @@
     ui.chatSettingsOpen = false;
     const ok = await chats.clearChat(chat);
     if (!ok) return;
+    composer.forgetRecovery(chat);
     // Drop per-chat transient state that belonged to the removed messages.
     if (chat === chats.selectedChat) {
       composer.replyingTo = null;
@@ -403,6 +408,7 @@
     const wasOpen = chat === chats.selectedChat;
     const ok = await chats.deleteChat(chat);
     if (!ok) return;
+    composer.forgetRecovery(chat);
     if (wasOpen) {
       messages.acceptMessages([]);
       messages.marks = structuredClone({ reactions: [], starred: [], pinned: null, polls: [], events: [], view_once: [], forwarded: [], edited: [] });
@@ -652,17 +658,15 @@
       if (!scroller || !chats.selectedChat || !document.hasFocus()) return;
       const chat = chats.selectedChat;
       const bottom = scroller.getBoundingClientRect().bottom;
-      // One pass over the rendered bubbles in draw order; the old form ran a
-      // querySelector per message, which is quadratic on a long chat.
-      let candidate: string | null = null;
-      const rows = scroller.querySelectorAll<HTMLElement>(".bubble[data-id]");
+      const ids = messages.ordered;
+      const visible = new Set<string>();
+      const rows = scroller.querySelectorAll<HTMLElement>(".bubble[data-id], .album-anchor[data-id]");
       for (const row of rows) {
-        if (row.getBoundingClientRect().top >= bottom) break;
-        candidate = row.dataset.id ?? null;
+        if (row.getBoundingClientRect().top < bottom && row.dataset.id) visible.add(row.dataset.id);
       }
+      const candidate = visibleReadFrontier(ids, visible);
       if (!candidate || candidate === messages.lastMarkedId) return;
       messages.lastMarkedId = candidate;
-      const ids = messages.ordered;
       const firstIdx = messages.firstUnreadId
         ? ids.findIndex((m) => m.id === messages.firstUnreadId)
         : -1;
@@ -1445,6 +1449,14 @@
               ui.emojiFor = null;
             }} />
         {:else}
+          <AttachmentRecoveryPanel records={composer.currentAttachmentRecoveries}
+            onrestore={(key) => { const record = findRecovery(composer.currentAttachmentRecoveries, key); if (record) composer.restoreKnownUnsent(record.context.chat); }}
+            ondismiss={(key) => { const record = findRecovery(composer.currentAttachmentRecoveries, key); if (record) composer.discardAttachmentRecovery(record); }}
+            onsave={(key, id) => {
+              const record = findRecovery(composer.currentAttachmentRecoveries, key);
+              const item = record && [...record.retryable, ...record.uncertain].find((item) => item.id === id);
+              if (item) saveAttachmentCopy(item.file);
+            }} />
           <ComposerBar
             account={session.activeAccount}
             generation={messages.accountGeneration}

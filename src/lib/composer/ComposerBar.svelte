@@ -20,6 +20,7 @@
   import SlashCommandMenu from "$lib/composer/SlashCommandMenu.svelte";
   import { slashToken, replaceSlashToken, type SlashCommandId, type SlashSelection } from "$lib/utils/slash-commands";
   import { canChooseMediaQuality } from "$lib/utils/media-quality";
+  import { isAlbumSelection } from "$lib/utils/upload";
   import type { MediaQuality } from "$lib/utils/wire";
   import ScheduleDialog from "./ScheduleDialog.svelte";
   import CameraCapture from "./CameraCapture.svelte";
@@ -263,6 +264,9 @@
 {/if}
 
 {#if pending.length > 0}
+  <p class="attachment-mode">{pending[0].retry?.parentId ? "Continue album — original captions and reply kept; draft stays in the composer."
+    : pending[0].retry ? "Retry unsent files — original captions and reply kept; draft stays in the composer."
+    : isAlbumSelection(pending) ? "Send as one album (2–8 photos or videos)." : "Send as separate files. Albums support 2–8 ordinary photos or videos."}</p>
   <div class="pending">
     {#each pending as item (item.id)}
       <div class="pending-item">
@@ -565,6 +569,7 @@
 {/if}
 
 <style>
+  .attachment-mode { margin: 4px 8px; color: var(--muted); font-size: .85em; }
   .quality { width: 100%; padding: 3px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font-size: 11px; }
   .reply-preview {
     display: flex;

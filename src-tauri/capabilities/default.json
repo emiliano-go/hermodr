@@ -63,6 +63,7 @@
     "allow-mark-read-until",
     "allow-send-reply",
     "allow-send-media",
+    "allow-send-album",
     "allow-open-path",
     "allow-read-file",
     "allow-authorize-media-assets",
