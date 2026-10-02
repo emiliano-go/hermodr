@@ -46,6 +46,7 @@ pub fn wire_types() -> String {
         postal_core::store::group_audit::GroupAuditPage,
         postal_core::store::group_audit::GroupAuditFilter,
         postal_core::MemberProfile,
+        postal_core::store::quick_replies::QuickRepliesView,
     );
     format!("// Generated from Rust Serde DTOs. Run pnpm generate:wire.\n{}", types.declarations.values().cloned().collect::<String>())
 }

@@ -22,6 +22,7 @@ import { composer } from "./composer.svelte";
 import { favorites } from "./favorites.svelte";
 import { members } from "./members.svelte";
 import { memberSheet } from "./member-sheet.svelte";
+import { quickReplies } from "./quick-replies.svelte";
 import { messages } from "./messages.svelte";
 import { session } from "./session.svelte";
 import { stickers } from "./stickers.svelte";
@@ -507,6 +508,9 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
     case "labelsChanged":
       labels.queueRefresh();
       if (!deferRefresh(null)) queueRefreshChats();
+      break;
+    case "quickRepliesChanged":
+      quickReplies.queueRefresh();
       break;
   }
 }

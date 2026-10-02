@@ -382,6 +382,7 @@ pub(super) const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
     super::labels::migrate,
     super::group_audit::migrate,
     super::member_profiles::migrate,
+    super::quick_replies::migrate,
 ];
 
 pub(super) fn migrate(conn: &Connection) -> Result<()> {

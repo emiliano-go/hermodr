@@ -129,6 +129,11 @@ impl Inbound {
                     Err(error) => log::warn!("label update failed: {error}"),
                 }
             }
+            Event::QuickReplyUpdate(_) => {
+                if quick_replies::apply_quick_reply_event(&self.store, event).await.observed() == Some(true) {
+                    let _ = self.events.send(ServiceEvent::QuickRepliesChanged);
+                }
+            }
             Event::OfflineSyncPreview(preview) => self.on_sync_preview(preview),
             Event::OfflineSyncCompleted(_) => self.on_sync_completed(),
             Event::OfflineSyncInterrupted(interrupted) => self.on_sync_interrupted(interrupted),

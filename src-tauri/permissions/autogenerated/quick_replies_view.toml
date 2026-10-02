@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-quick-replies-view"
+description = "Enables the quick_replies_view command without any pre-configured scope."
+commands.allow = ["quick_replies_view"]
+
+[[permission]]
+identifier = "deny-quick-replies-view"
+description = "Denies the quick_replies_view command without any pre-configured scope."
+commands.deny = ["quick_replies_view"]

@@ -8,6 +8,8 @@
   "permissions": [
     "allow-group-audit-page",
     "allow-set-member-note",
+    "allow-quick-replies-view",
+    "allow-sync-quick-replies",
     "allow-get-desktop-status",
     "allow-desktop-unread",
     "allow-own-contact-link",

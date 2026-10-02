@@ -300,6 +300,7 @@ const WATCHED_EVENTS: &[EventKind] = &[
     EventKind::LabelEditUpdate,
     EventKind::LabelAssociationUpdate,
     EventKind::MessageLabelAssociationUpdate,
+    EventKind::QuickReplyUpdate,
     EventKind::SelfPushNameUpdated,
     EventKind::OfflineSyncPreview,
     EventKind::OfflineSyncCompleted,

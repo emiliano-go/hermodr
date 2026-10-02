@@ -44,6 +44,7 @@ mod keywords;
 mod labels;
 mod group_audit;
 mod member_profiles;
+mod quick_replies;
 pub use member_profiles::{MemberProfile, MemberProfileLive};
 mod diagnostics;
 mod storage;
@@ -263,6 +264,7 @@ pub enum ServiceEvent {
     GroupAuditChanged { chat: String },
     FavoritesChanged,
     LabelsChanged,
+    QuickRepliesChanged,
     /// Reactions, stars or the pinned message of a chat changed.
     Marks { chat: String },
     /// Store changes were missed (a lagging listener skipped events), so the

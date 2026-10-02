@@ -23,6 +23,10 @@
   import type { MediaQuality } from "$lib/utils/wire";
   import ScheduleDialog from "./ScheduleDialog.svelte";
   import CameraCapture from "./CameraCapture.svelte";
+  import QuickRepliesMenu from "$lib/chat/QuickRepliesMenu.svelte";
+  import { quickReplies } from "$lib/state/quick-replies.svelte";
+  import type { QuickReplyScope } from "$lib/utils/quick-replies";
+  import type { QuickReply } from "$lib/utils/wire";
 
   let {
     draft = $bindable(),
@@ -67,10 +71,12 @@
     account = null,
     generation = 0,
     disabled = false,
+    connected = !disabled,
     defaultQuality = "hd",
     onsoundclip = async () => { throw new Error("Audio clip sending is unavailable."); },
     onslashcommand = () => {},
     onsharecontacts = () => {},
+    onquickreply = () => {},
   }: {
     draft: string;
     composerInput: HTMLTextAreaElement | undefined;
@@ -122,15 +128,21 @@
     account?: string | null;
     generation?: number;
     disabled?: boolean;
+    connected?: boolean;
     defaultQuality?: MediaQuality;
     onsoundclip?: (file: File, scope: { account: string; chat: string; generation: number }) => Promise<void>;
     onslashcommand?: (command: SlashCommandId) => void;
     onsharecontacts?: () => void;
+    onquickreply?: (scope: QuickReplyScope, reply: QuickReply) => void;
   } = $props();
 
   let attachMenu = $state(false);
   let soundboardOpen = $state(false);
   let cameraOpen = $state(false);
+  function submitComposer(event: SubmitEvent) {
+    event.preventDefault();
+    if (!document.querySelector("dialog[open]")) onsend();
+  }
   let caret = $state({ start: 0, end: 0 });
   let dismissedSlash = $state<string | null>(null);
   const activeSlash = $derived(slashToken(draft, caret.start, caret.end));
@@ -358,7 +370,7 @@
     onerror={onpickererror}
     onclose={() => (pickerTab = null)} />
 {/if}
-<form class="composer" onsubmit={(e) => (e.preventDefault(), onsend())}>
+<form class="composer" onsubmit={submitComposer}>
   {#if recording}
     <VoiceRecorder
       onsend={onsendvoice}
@@ -426,6 +438,11 @@
     placeholder={editing ? "Edit message" : pending.length > 0 ? "Add a caption (optional)" : "Type a message"}
   ></textarea>
   <div class="composer-tools">
+    <QuickRepliesMenu {account} chat={selectedChat} {generation} requestKey={quickReplies.key}
+      dataScope={quickReplies.scope(selectedChat)} replies={quickReplies.replies} loading={quickReplies.loading}
+      syncing={quickReplies.syncing} error={quickReplies.error} {connected}
+      disabled={!account || !!editing || recording} onselect={onquickreply}
+      onsync={(scope) => { void quickReplies.sync(scope); }} />
     <Button variant="icon" icon="volume" iconSize={20} active={soundboardOpen} title="Soundboard" aria-label="Soundboard"
       onclick={() => { soundboardOpen = !soundboardOpen; }} />
     <Button

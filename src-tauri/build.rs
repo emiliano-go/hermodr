@@ -1,6 +1,8 @@
 const COMMANDS: &[&str] = &[
     "group_audit_page",
     "set_member_note",
+    "quick_replies_view",
+    "sync_quick_replies",
     "get_desktop_status",
     "desktop_unread",
     "own_contact_link",

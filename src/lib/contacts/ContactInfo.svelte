@@ -5,7 +5,9 @@
   import Icon from "$lib/ui/Icon.svelte";
   import Lightbox from "$lib/media/Lightbox.svelte";
   import Panel from "$lib/ui/Panel.svelte";
-  import type { UserProfile } from "$lib/contacts/ProfileCard.svelte";
+  import type { MemberProfile } from "$lib/utils/wire";
+  import type { QuickReplyScope } from "$lib/utils/quick-replies";
+  import BusinessCard from "./BusinessCard.svelte";
   import { phoneLabel } from "$lib/utils/phone";
   import { members } from "$lib/state/members.svelte";
   import { bare } from "$lib/utils/message";
@@ -18,6 +20,7 @@
     aliases = [],
     account,
     connected,
+    generation = 0,
     oncontactchange,
     onclose,
   }: {
@@ -27,11 +30,16 @@
     aliases?: string[];
     account: string | null;
     connected: boolean;
+    generation?: number;
     oncontactchange: (jid: string) => void;
     onclose: () => void;
   } = $props();
 
-  let profile = $state<UserProfile | null>(null);
+  let profile = $state<MemberProfile | null>(null);
+  let dataScope = $state.raw<QuickReplyScope | null>(null);
+  let refreshVersion = $state(0);
+  let loading = $state(false);
+  let profileError = $state("");
   let failed = $state(false);
   let enlarged = $state(false);
   let section = $state<"overview">("overview");
@@ -39,13 +47,24 @@
   const nav = $derived([{ id: "overview" as const, label: "Overview", group: title }]);
 
   $effect(() => {
-    const id = account, target = jid, online = connected, generation = ++profileGeneration;
+    const id = account, target = jid, online = connected, ownerGeneration = generation, version = refreshVersion, request = ++profileGeneration;
     profile = null;
+    dataScope = null; profileError = ""; loading = !!id;
     failed = false;
-    if (!id || !online) return;
-    invoke<UserProfile>("user_profile", { jid: target })
-      .then((p) => { if (id === account && generation === profileGeneration) profile = p; })
-      .catch(() => { if (id === account && generation === profileGeneration) failed = true; });
+    if (!id) return;
+    dataScope = { account: id, chat: target, generation: ownerGeneration, requestKey: version };
+    const current = () => id === account && target === jid && ownerGeneration === generation && request === profileGeneration;
+    void (async () => {
+      try {
+        for (const live of online ? [false, true] : [false]) {
+          const value = await invoke<MemberProfile>("user_profile", { accountId: id, jid: target, live, force: version > 0 });
+          if (!current()) return;
+          profile = value;
+          dataScope = { account: id, chat: target, generation: ownerGeneration, requestKey: version };
+        }
+      } catch (error) { if (current()) { failed = true; profileError = String(error); } }
+      finally { if (current()) loading = false; }
+    })();
     return () => { ++profileGeneration; };
   });
 
@@ -112,6 +131,14 @@
       <span class="muted">Loading…</span>
     {/if}
   </p>
+
+  {#if profile?.live?.business.value || profile?.live?.business_name.value || profile?.live?.business.state === "error"}
+  <BusinessCard {account} chat={jid} {generation} requestKey={refreshVersion} {dataScope}
+    field={profile?.live?.business ?? null} {loading} error={profileError} {connected}
+    onrefresh={(scope) => {
+      if (scope.account === account && scope.chat === jid && scope.generation === generation && scope.requestKey === refreshVersion) ++refreshVersion;
+    }} />
+  {/if}
 
   {#if aliases.length > 0}
     <h3>Aliases</h3>

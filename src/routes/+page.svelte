@@ -17,6 +17,7 @@
   import ProfileCard from "$lib/contacts/ProfileCard.svelte";
   import MemberSheet from "$lib/contacts/MemberSheet.svelte";
   import { memberSheet } from "$lib/state/member-sheet.svelte";
+  import { quickReplies } from "$lib/state/quick-replies.svelte";
   import ContactInfo from "$lib/contacts/ContactInfo.svelte";
   import NewContact from "$lib/contacts/NewContact.svelte";
   import ContactSharing from "$lib/contacts/ContactSharing.svelte";
@@ -513,6 +514,11 @@
   let newContact = $state(false);
   let quickSwitcher = $state(false);
   $effect(() => { session.activeAccount; newContact = quickSwitcher = false; });
+  $effect(() => {
+    const account = session.activeAccount;
+    messages.accountGeneration;
+    untrack(() => { quickReplies.reset(); if (account) void quickReplies.refresh(); });
+  });
 
   function openProfile(jid: string, name: string, event: MouseEvent, self = false) {
     event.stopPropagation();
@@ -1434,9 +1440,18 @@
           <ComposerBar
             account={session.activeAccount}
             generation={messages.accountGeneration}
+            connected={session.connected}
             disabled={!session.connected || !!(members.chatGroup && !members.chatGroup.can_send)}
             defaultQuality={session.settings.media_quality}
             onsoundclip={(file, scope) => composer.sendSoundClip(file, scope)}
+            onquickreply={(scope, reply) => {
+              try {
+                quickReplies.current(scope);
+                const current = quickReplies.replies.find((entry) => entry.id === reply.id);
+                if (!current || current.message !== reply.message) throw new Error("quick reply changed before insertion");
+                void composer.insertAtCaret(current.message).catch((error) => ui.fail(error));
+              } catch (error) { ui.fail(error); }
+            }}
             onslashcommand={(command) => {
               if (command === "mention-all" && selectedChat.endsWith("@g.us") && !composer.chosenMentions.some((mention) => mention.jid === "@all")) {
                 composer.chosenMentions = [...composer.chosenMentions, { jid: "@all", name: "all" }];
@@ -1876,6 +1891,7 @@
     {jid}
     account={session.activeAccount}
     connected={session.connected}
+    generation={messages.accountGeneration}
     oncontactchange={() => { members.forgetUnresolvedNames(); void chats.refreshChats(); }}
     title={members.displayName(chats.chats.find((c) => c.chat === jid)?.display_name ?? null, jid)}
     picture={chats.pictureOf(jid)}

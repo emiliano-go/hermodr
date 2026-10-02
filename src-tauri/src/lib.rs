@@ -39,6 +39,7 @@ mod notifications;
 mod labels;
 mod group_audit;
 mod member_profiles;
+mod quick_replies;
 mod contact_sharing;
 mod bulk_chats;
 mod group_invites;
@@ -194,6 +195,8 @@ macro_rules! postal_commands {
             media::save_sticker,
             member_profiles::user_profile,
             member_profiles::set_member_note,
+            quick_replies::quick_replies_view,
+            quick_replies::sync_quick_replies,
             groups::invite_info,
             groups::join_invite,
             messages::message_info,

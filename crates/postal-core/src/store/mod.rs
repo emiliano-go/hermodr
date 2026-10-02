@@ -18,6 +18,7 @@ mod keywords;
 pub mod labels;
 pub mod group_audit;
 pub mod member_profiles;
+pub mod quick_replies;
 mod unavailable;
 use unavailable::VISIBLE_MESSAGE_SQL;
 pub mod scheduled;
