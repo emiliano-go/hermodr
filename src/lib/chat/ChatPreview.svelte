@@ -17,11 +17,17 @@
 </script>
 
 <script lang="ts">
+  import { tick } from "svelte";
   import { invoke } from "$lib/utils/ipc";
   import Icon from "$lib/ui/Icon.svelte";
+  import MediaViewer, { mediaSrc, type ViewerItem } from "$lib/media/MediaViewer.svelte";
   import type { MessagePage } from "$lib/utils/message-window";
+  import { cursorOf } from "$lib/utils/message-window";
   import { dayKey, dayLabel, formatTime } from "$lib/utils/message";
   import { displayName } from "$lib/utils/phone";
+  import { hue } from "$lib/utils/avatar";
+  import { player } from "$lib/state/player.svelte";
+  import { ui } from "$lib/state/ui.svelte";
 
   let {
     chat, account, name, x, y,
@@ -43,32 +49,129 @@
   } = $props();
   let rows = $state<StoredMessage[] | null>(null);
   let error = $state<string | null>(null);
+  let olderError = $state<string | null>(null);
+  let hasMore = $state(false);
+  let loadingOlder = $state(false);
   let scroller = $state<HTMLElement>();
   let viewportWidth = $state(0);
   let viewportHeight = $state(0);
+
+  /** The message whose media the built-in viewer is showing, if any. */
+  let viewerId = $state<string | null>(null);
 
   $effect(() => {
     const jid = chat;
     const owner = account;
     rows = null;
     error = null;
+    olderError = null;
+    hasMore = false;
+    loadingOlder = false;
+    viewerId = null;
     let active = true;
-    const timer = setTimeout(async () => {
-      if (!active || chat !== jid || account !== owner) return;
+    void (async () => {
       try {
         const page = await invoke<MessagePage>("message_page", { chat: jid, limit: 30 });
-        if (active && chat === jid && account === owner) rows = page.messages.toReversed();
+        if (!active || chat !== jid || account !== owner) return;
+        rows = page.messages.toReversed();
+        hasMore = page.has_more;
+        await tick();
+        if (active && scroller) {
+          scroller.scrollTop = scroller.scrollHeight;
+        }
       } catch (e) {
         if (active && chat === jid && account === owner) error = String(e);
       }
-    }, 300);
-    return () => { active = false; clearTimeout(timer); };
+    })();
+    return () => { active = false; };
   });
 
-  $effect(() => {
-    if (rows && scroller) scroller.scrollTop = scroller.scrollHeight;
-  });
+  /** Pages the local store back when the reader reaches the top. */
+  async function loadOlder() {
+    if (!hasMore || loadingOlder || !rows?.length) return;
+    const jid = chat;
+    const owner = account;
+    const el = scroller;
+    const before = el?.scrollHeight ?? 0;
+    loadingOlder = true;
+    olderError = null;
+    try {
+      const page = await invoke<MessagePage>("message_page", {
+        chat: jid, limit: 30, cursor: cursorOf(rows[0]), direction: "before",
+      });
+      if (chat !== jid || account !== owner) return;
+      rows = [...page.messages.toReversed(), ...rows];
+      hasMore = page.has_more;
+      await tick();
+      // Hold the viewport still while older rows grow above it.
+      if (el) el.scrollTop += el.scrollHeight - before;
+    } catch (e) {
+      if (chat === jid && account === owner) olderError = String(e);
+    } finally {
+      if (chat === jid && account === owner) loadingOlder = false;
+    }
+  }
 
+  function onPreviewScroll() {
+    if (scroller && scroller.scrollTop < 40) void loadOlder();
+  }
+
+  /** Local images, videos and GIFs the built-in viewer can page through. */
+  const viewable = $derived(
+    (rows ?? []).filter(
+      (message) =>
+        !isUnavailable(message) &&
+        !!message.media_path &&
+        (message.media_kind === "image" || message.media_kind === "video" || message.media_kind === "gif"),
+    ),
+  );
+  const viewerItems = $derived(viewable.map(viewerItem));
+  const viewerIndex = $derived(viewerId ? viewable.findIndex((message) => message.id === viewerId) : -1);
+
+  function viewerItem(message: StoredMessage): ViewerItem {
+    const content = previewContent(message);
+    return {
+      id: message.id,
+      path: message.media_path!,
+      thumb: message.media_thumb,
+      kind: message.media_kind!,
+      caption: content.text || content.media || "",
+      author: message.from_me ? "You" : displayName(message.sender_name, message.sender),
+      avatar: null,
+      timestamp: message.timestamp,
+    };
+  }
+
+  function viewableKind(kind: string | null) {
+    return kind === "image" || kind === "video" || kind === "gif";
+  }
+
+  const isPlaying = (message: StoredMessage) =>
+    player.track?.path === message.media_path && !player.paused;
+
+  function toggleAudio(message: StoredMessage) {
+    if (isPlaying(message)) {
+      player.pause();
+      return;
+    }
+    void player.play({
+      path: message.media_path!,
+      duration: message.media_duration,
+      avatar: null,
+      initials: "",
+      title: message.from_me ? "You" : displayName(message.sender_name, message.sender),
+    });
+  }
+
+  /** Opens a downloaded file in the desktop's own viewer. */
+  async function openExternal(path: string) {
+    if (/\.svg$/i.test(path)) return;
+    try {
+      await invoke("open_path", { path });
+    } catch (e) {
+      ui.fail(e);
+    }
+  }
 </script>
 
 <svelte:window bind:innerWidth={viewportWidth} bind:innerHeight={viewportHeight} />
@@ -113,11 +216,19 @@
         }}><Icon name="settings" size={16} /></button>
     </header>
     <!-- svelte-ignore a11y_no_noninteractive_tabindex (Scrollable content needs keyboard focus.) -->
-    <div class="preview-messages" role="region" aria-label="Recent stored messages" tabindex="0" bind:this={scroller}>
+    <div
+      class="preview-messages"
+      role="region"
+      aria-label="Recent stored messages"
+      tabindex="0"
+      bind:this={scroller}
+      onscroll={onPreviewScroll}>
       {#if error}<p class="status" role="alert">Could not load preview: {error}</p>
       {:else if rows === null}<p class="status" role="status">Loading…</p>
       {:else if rows.length === 0}<p class="status">No stored messages</p>
       {:else}
+        {#if loadingOlder}<p class="status" role="status">Loading older…</p>{/if}
+        {#if olderError}<p class="status" role="alert">Could not load older messages: {olderError}</p>{/if}
         <ol>
           {#each rows as message, index (message.id)}
             {@const content = previewContent(message)}
@@ -126,8 +237,56 @@
             {/if}
             <li class="message" class:mine={message.from_me}>
               <div class="bubble">
-                <b class="sender">{message.from_me ? "You" : displayName(message.sender_name, message.sender)}</b>
-                {#if content.media}<p class="media">{content.media}</p>{/if}
+                <b
+                  class="sender"
+                  class:themed={!message.from_me}
+                  style={message.from_me ? undefined : `--hue: ${hue(message.sender)}`}
+                  >{message.from_me ? "You" : displayName(message.sender_name, message.sender)}</b>
+                {#if content.media}
+                  {#if message.media_kind === "audio" && message.media_path}
+                    <button
+                      type="button"
+                      class="media audio"
+                      class:playing={isPlaying(message)}
+                      title={isPlaying(message) ? "Pause voice message" : "Play voice message"}
+                      onclick={(e) => {
+                        e.stopPropagation();
+                        toggleAudio(message);
+                      }}>
+                      <Icon name={isPlaying(message) ? "pause" : "play"} size={15} />
+                      <span>{content.media}</span>
+                    </button>
+                  {:else if viewableKind(message.media_kind) && message.media_path}
+                    <button
+                      type="button"
+                      class="media open"
+                      title="Open in the viewer"
+                      onclick={(e) => {
+                        e.stopPropagation();
+                        viewerId = message.id;
+                      }}>
+                      {#if message.media_thumb || message.media_kind === "image" || message.media_kind === "gif"}
+                        <img src={mediaSrc(message.media_thumb ?? message.media_path)} alt="" loading="lazy" />
+                      {:else}
+                        <span class="play-badge"><Icon name="play" size={14} /></span>
+                      {/if}
+                      <span>{content.media}</span>
+                    </button>
+                  {:else if message.media_path}
+                    <button
+                      type="button"
+                      class="media open"
+                      title="Open in the desktop"
+                      onclick={(e) => {
+                        e.stopPropagation();
+                        void openExternal(message.media_path!);
+                      }}>
+                      <span>{content.media}</span>
+                    </button>
+                  {:else}
+                    <p class="media">{content.media}</p>
+                  {/if}
+                {/if}
                 {#if content.text}<p class="text" class:notice={content.notice}>{content.text}</p>{/if}
                 <time datetime={new Date(message.timestamp * 1000).toISOString()}>{formatTime(message.timestamp)}</time>
               </div>
@@ -137,6 +296,16 @@
       {/if}
     </div>
   </div>
+
+{#if viewerIndex >= 0}
+  <MediaViewer
+    items={viewerItems}
+    index={viewerIndex}
+    onclose={() => (viewerId = null)}
+    onopen={(path) => void openExternal(path)}
+    onreply={() => {}}
+    onjump={() => {}} />
+{/if}
 
 <style>
   #chat-preview {
@@ -195,9 +364,26 @@
   .bubble { min-width: 0; max-width: 88%; padding: 9px 12px 6px; border-radius: 12px; background: var(--bubble); box-shadow: 0 1px 2px #0002; }
   .mine .bubble { background: var(--bubble-mine); }
   .sender { display: block; margin-bottom: 4px; font-size: 0.9em; font-weight: 600; overflow-wrap: anywhere; }
+  .sender.themed { color: hsl(var(--hue) 65% 68%); }
   p { margin: 0; }
   .text { white-space: pre-wrap; overflow-wrap: anywhere; }
   .media { margin-bottom: 4px; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 7px; font-weight: 500; }
+  button.media {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    box-sizing: border-box;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  button.media:hover { background: var(--raised); }
+  button.media.audio { width: auto; }
+  button.media img { width: 64px; height: 64px; flex: none; object-fit: cover; border-radius: 6px; }
+  .play-badge { display: grid; place-items: center; width: 26px; height: 26px; flex: none; border-radius: 50%; background: var(--accent); color: var(--accent-ink, #fff); }
   .notice { font-style: italic; color: var(--muted); }
   time { display: block; margin-top: 5px; color: var(--muted); font-size: 0.8em; text-align: right; }
   .status { padding: 16px 4px; color: var(--muted); overflow-wrap: anywhere; }
