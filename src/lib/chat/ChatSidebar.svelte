@@ -87,6 +87,7 @@
     onresize,
     freezeOnHover = true,
     chatPreview = true,
+    chatPreviewDelayMs = 3000,
     globalAutoDownload,
     spacesContent,
   }: {
@@ -138,6 +139,8 @@
     freezeOnHover?: boolean;
     /** Whether hovering a row shows the recent-messages popup. */
     chatPreview?: boolean;
+    /** How long the pointer must rest on a row before the popup appears, in ms (100–3000). */
+    chatPreviewDelayMs?: number;
     globalAutoDownload: MediaAutoDownload;
     onmarkallread: () => void;
     onnewgroup: () => void;
@@ -184,15 +187,19 @@
   let previewFocusFrame: number | undefined;
   let restoringPreviewFocus = false;
 
-  /** Hovering this long before the preview appears, so passing over the list does not open it. */
-  const PREVIEW_HOVER_DELAY = 3000;
+  /** Hover delay before the preview appears, so passing over the list does not open it. Configurable in settings (100-3000 ms). */
+  function previewHoverDelay(): number {
+    const raw = Math.round(chatPreviewDelayMs ?? 3000);
+    if (!Number.isFinite(raw)) return 3000;
+    return Math.min(3000, Math.max(100, raw));
+  }
 
   function cancelPreviewFocus() {
     if (previewFocusFrame !== undefined) cancelAnimationFrame(previewFocusFrame);
     previewFocusFrame = undefined;
   }
 
-  /** Arms the hover delay: the row must stay under the pointer for three seconds. */
+  /** Arms the hover delay: the row must stay under the pointer that long. */
   function schedulePreview(owner: HTMLElement, chat: ChatSummary) {
     if (!chatPreview) return;
     cancelPreviewFocus();
@@ -203,7 +210,7 @@
       // The row may have moved out from under the pointer while waiting.
       if (!owner.isConnected || !visibleChats.some((row) => row.chat === chat.chat)) return;
       showPreview(owner, chat);
-    }, PREVIEW_HOVER_DELAY);
+    }, previewHoverDelay());
   }
 
   function showPreview(owner: HTMLElement, chat: ChatSummary) {

@@ -2763,5 +2763,9 @@
   "error.calls_identifier_invalid": "The call record has an empty or oversized identifier or address, or contains control characters.",
   "error.calls_identity_conflict": "The call record conflicts with the existing caller identity or direction. The existing record was preserved.",
   "error.calls_participants_limit": "The call record contains too many participants.",
-  "error.calls_revision_invalid": "The call record has an invalid mutation timestamp."
+  "error.calls_revision_invalid": "The call record has an invalid mutation timestamp.",
+  "settings.main.chat_preview_delay": "Chat preview delay",
+  "settings.main.chat_preview_delay_hint": "How long to hover a chat before its preview appears: {min}–{max} ms. Applies immediately.",
+  "error.chat_preview_delay_bounds": "The chat preview delay must be {min}–{max} milliseconds.",
+  "settings.main.ms": "ms"
 }

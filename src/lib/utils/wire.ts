@@ -628,6 +628,11 @@ freeze_chat_list_on_hover: boolean,
  */
 chat_preview: boolean,
 /**
+ * How long the pointer must rest on a chat before its preview popup
+ * appears, in milliseconds. Clamped to 100–3000. Applies immediately.
+ */
+chat_preview_delay_ms: number,
+/**
  * Log the library's keepalive pings and transport frames, so a stalled
  * link is diagnosable. Applies the next time Postal starts.
  */
