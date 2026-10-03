@@ -177,16 +177,16 @@
         {#if stickerBroken}
           <span class="sticker sticker-unsupported" title={t("content.unsupported_sticker")}>{t("content.unsupported_sticker")}</span>
         {:else}
-          <img class="sticker" src={convertFileSrc(message.media_path)} alt={t("content.sticker")} decoding="async" onerror={() => (stickerBroken = true)} />
+          <img class="sticker" src={convertFileSrc(message.media_path)} alt={t("content.sticker")} loading="lazy" decoding="async" onerror={() => (stickerBroken = true)} />
         {/if}
       {:else}
-        <img class="media" src={convertFileSrc(message.media_path)} alt={message.text} decoding="async" />
+        <img class="media" src={convertFileSrc(message.media_path)} alt={message.text} loading="lazy" decoding="async" />
       {/if}
     {:else if message.media_kind === "sticker" && message.media_path}
       {#if stickerBroken}
         <span class="sticker sticker-unsupported" title={t("content.unsupported_sticker")}>{t("content.unsupported_sticker")}</span>
       {:else}
-        <img class="sticker" src={convertFileSrc(message.media_path)} alt={t("content.sticker")} decoding="async" onerror={() => (stickerBroken = true)} />
+        <img class="sticker" src={convertFileSrc(message.media_path)} alt={t("content.sticker")} loading="lazy" decoding="async" onerror={() => (stickerBroken = true)} />
       {/if}
     {:else if message.media_kind === "sticker"}
       <!-- Fetched on its own when shown; the placeholder keeps the sticker's space. -->
@@ -212,7 +212,7 @@
           class="media"
           src={mediaSrc((message.media_path ?? message.media_thumb)!)}
           alt={message.text}
-          decoding="async"
+          loading="lazy" decoding="async"
         />
         {#if filtered}
           <span class="media-overlay once-overlay">
@@ -236,7 +236,7 @@
       <VideoPlayer src={mediaSrc(message.media_path)} path={message.media_path} poster={message.media_thumb} round autoplay={false} />
     {:else if message.media_kind === "round_video"}
       <button class="round-video-pending" disabled={vm.downloading} onclick={() => api.ondownload(message)} aria-label={t("content.download_round_video")}>
-        {#if message.media_thumb}<img src={mediaSrc(message.media_thumb)} alt="" decoding="async" />{/if}
+        {#if message.media_thumb}<img src={mediaSrc(message.media_thumb)} alt="" loading="lazy" decoding="async" />{/if}
         {#if vm.downloading}<Spinner />{:else}<Icon name="download" size={28} />{/if}
       </button>
     {:else if ["image", "video", "gif"].includes(message.media_kind ?? "") && !message.media_path}
@@ -268,7 +268,7 @@
               ? api.onopenviewer(message)
               : api.ondownload(message)}>
         {#if message.media_thumb}
-          <img class="media" src={mediaSrc(message.media_thumb)} alt="" decoding="async" />
+          <img class="media" src={mediaSrc(message.media_thumb)} alt="" loading="lazy" decoding="async" />
         {:else}
           <!-- No stored thumbnail: draw the file's own first frame. -->
           <video class="media" src={convertFileSrc(message.media_path!)} preload="metadata" muted playsinline></video>
@@ -337,7 +337,7 @@
     {:else if isSvg(message) && message.media_path}
       <!-- An <img> never runs an SVG's scripts, so drawing it in place is safe. -->
       <span class="svg-file">
-        <img class="media" src={convertFileSrc(message.media_path)} alt={message.text} decoding="async" />
+        <img class="media" src={convertFileSrc(message.media_path)} alt={message.text} loading="lazy" decoding="async" />
       </span>
     {:else if message.media_kind === "live_location" && message.live_location}
       <MessageCard {message} {vm} {api} />

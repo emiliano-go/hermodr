@@ -399,7 +399,7 @@
     data={rows}
     getKey={(row) => row.key}
     shift={prepending}
-    bufferSize={1200}
+    bufferSize={0}
     ssrCount={30}
     onscroll={handleScroll}
     style="height: 100%;">
