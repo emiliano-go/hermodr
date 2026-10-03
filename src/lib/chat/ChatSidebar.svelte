@@ -87,7 +87,7 @@
     onresize,
     freezeOnHover = true,
     chatPreview = true,
-    chatPreviewDelayMs = 3000,
+    chatPreviewDelayMs = 600,
     globalAutoDownload,
     spacesContent,
   }: {
@@ -189,8 +189,8 @@
 
   /** Hover delay before the preview appears, so passing over the list does not open it. Configurable in settings (100-3000 ms). */
   function previewHoverDelay(): number {
-    const raw = Math.round(chatPreviewDelayMs ?? 3000);
-    if (!Number.isFinite(raw)) return 3000;
+    const raw = Math.round(chatPreviewDelayMs ?? 600);
+    if (!Number.isFinite(raw)) return 600;
     return Math.min(3000, Math.max(100, raw));
   }
 

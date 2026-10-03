@@ -90,7 +90,7 @@ pub(crate) fn default_true() -> bool {
 }
 
 pub(crate) fn default_chat_preview_delay_ms() -> u32 {
-    3000
+    600
 }
 
 impl Default for UiSettings {
@@ -320,9 +320,9 @@ mod tests {
         assert!(parse_settings("{}").unwrap().chat_preview);
         assert!(parse_settings(legacy).unwrap().chat_preview);
         assert!(!parse_settings(r#"{"chat_preview":false}"#).unwrap().chat_preview);
-        // The preview delay defaults to 3 s and stays within 100–3000 ms.
-        assert_eq!(parse_settings("{}").unwrap().chat_preview_delay_ms, 3000);
-        assert_eq!(parse_settings(legacy).unwrap().chat_preview_delay_ms, 3000);
+        // The preview delay defaults to 600 ms and stays within 100–3000 ms.
+        assert_eq!(parse_settings("{}").unwrap().chat_preview_delay_ms, 600);
+        assert_eq!(parse_settings(legacy).unwrap().chat_preview_delay_ms, 600);
         assert_eq!(parse_settings(r#"{"chat_preview_delay_ms":500}"#).unwrap().chat_preview_delay_ms, 500);
         assert_eq!(parse_settings(r#"{"chat_preview_delay_ms":10}"#).unwrap().chat_preview_delay_ms, 100);
         assert_eq!(parse_settings(r#"{"chat_preview_delay_ms":9000}"#).unwrap().chat_preview_delay_ms, 3000);

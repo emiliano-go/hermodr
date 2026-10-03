@@ -888,7 +888,7 @@
                 min="100"
                 max="3000"
                 step="100"
-                value={draft.chat_preview_delay_ms ?? 3000}
+                value={draft.chat_preview_delay_ms ?? 600}
                 disabled={!draft.chat_preview}
                 aria-label={t("settings.main.chat_preview_delay")}
                 oninput={(e) => {
@@ -900,7 +900,7 @@
                 min="100"
                 max="3000"
                 step="1"
-                value={draft.chat_preview_delay_ms ?? 3000}
+                value={draft.chat_preview_delay_ms ?? 600}
                 disabled={!draft.chat_preview}
                 aria-label={t("settings.main.chat_preview_delay")}
                 oninput={(e) => {

@@ -84,7 +84,7 @@ export const fixture = {
     },
     "auto_transcribe": false,
     "chat_preview": true,
-    "chat_preview_delay_ms": 3000,
+    "chat_preview_delay_ms": 600,
     "encrypt_databases": false,
     "freeze_chat_list_on_hover": false,
     "history_dir": null,
