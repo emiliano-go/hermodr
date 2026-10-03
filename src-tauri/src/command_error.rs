@@ -58,6 +58,23 @@ impl From<String> for CommandError {
     fn from(error: String) -> Self { Self::operation_failed(error) }
 }
 
+impl From<crate::transcription_credentials::CredentialError> for CommandError {
+    fn from(error: crate::transcription_credentials::CredentialError) -> Self {
+        use crate::transcription_credentials::CredentialError;
+        let code = match error {
+            CredentialError::OwnerInvalid => "error.credential_owner_invalid",
+            CredentialError::KeyInvalid => "error.credential_key_invalid",
+            CredentialError::StoreUnavailable => "error.credential_store_unavailable",
+            CredentialError::SaveFailed => "error.credential_save_failed",
+            CredentialError::RemoveFailed => "error.credential_remove_failed",
+        };
+        let message = if error == CredentialError::KeyInvalid {
+            MessageRef::new(code).with_param("max_bytes", serde_json::Number::from(4096))
+        } else { MessageRef::new(code) };
+        Self::new(message)
+    }
+}
+
 impl std::fmt::Display for CommandError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(self.diagnostic.as_deref().unwrap_or(&self.message.code))
@@ -69,6 +86,26 @@ impl std::error::Error for CommandError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn standalone_credential_errors_gain_shell_messages_without_shared_dependencies() {
+        use crate::transcription_credentials::CredentialError;
+        for (error, code) in [
+            (CredentialError::OwnerInvalid, "error.credential_owner_invalid"),
+            (CredentialError::KeyInvalid, "error.credential_key_invalid"),
+            (CredentialError::StoreUnavailable, "error.credential_store_unavailable"),
+            (CredentialError::SaveFailed, "error.credential_save_failed"),
+            (CredentialError::RemoveFailed, "error.credential_remove_failed"),
+        ] {
+            let result = CommandError::from(error);
+            assert_eq!(result.message.code, code);
+            assert!(result.diagnostic.is_none());
+            let params = serde_json::to_value(result.message.params).unwrap();
+            assert_eq!(params, if error == CredentialError::KeyInvalid {
+                serde_json::json!({ "max_bytes": 4096 })
+            } else { serde_json::json!({}) });
+        }
+    }
 
     #[test]
     fn typed_errors_keep_codes_params_and_outer_context() {
