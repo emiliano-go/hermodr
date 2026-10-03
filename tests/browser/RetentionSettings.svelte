@@ -13,7 +13,7 @@
     auto_download_types: { image: false, video: false, audio: false, document: false, sticker: false, gif: false },
     media_dir: null, history_dir: null, send_typing: false, send_receipts: false, keep_history: true,
     skip_loading_screen: false, start_on_login: false, keep_archived: true, android_instance: false,
-    notifications_enabled: true, mute_all_at_all: false, freeze_chat_list_on_hover: true, chat_preview: true, verbose_whatsapp_logs: true,
+    notifications_enabled: true, mute_all_at_all: false, freeze_chat_list_on_hover: true, chat_preview: true, chat_preview_delay_ms: 500, verbose_whatsapp_logs: true,
   });
   const noop = () => {};
 </script>

@@ -1430,6 +1430,7 @@
       archivedChats={chats.archivedChats}
       freezeOnHover={session.settings.freeze_chat_list_on_hover ?? false}
       chatPreview={session.settings.chat_preview ?? true}
+      chatPreviewDelayMs={session.settings.chat_preview_delay_ms ?? 600}
       onresize={startResize}>
       {#snippet spacesContent()}
         <SpacesTree account={session.activeAccount} generation={messages.accountGeneration} snapshot={spaces.snapshot} selected={spaces.selected}

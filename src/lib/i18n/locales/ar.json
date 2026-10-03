@@ -2887,5 +2887,9 @@
   "error.calls_identifier_invalid": "يحتوي سجل المكالمة على معرّف أو عنوان فارغ أو أكبر من الحد المسموح، أو على محارف تحكم.",
   "error.calls_identity_conflict": "يتعارض سجل المكالمة مع هوية المتصل أو اتجاه المكالمة المسجّل. تم الاحتفاظ بالسجل الحالي.",
   "error.calls_participants_limit": "يحتوي سجل المكالمة على عدد أكبر من المسموح من المشاركين.",
-  "error.calls_revision_invalid": "يحتوي سجل المكالمة على طابع زمني غير صالح للتعديل."
+  "error.calls_revision_invalid": "يحتوي سجل المكالمة على طابع زمني غير صالح للتعديل.",
+  "settings.main.chat_preview_delay": "تأخير معاينة المحادثة",
+  "settings.main.chat_preview_delay_hint": "مدة مرور المؤشر فوق المحادثة قبل ظهور معاينتها: من {min} إلى {max} مللي ثانية. يُطبّق فورًا.",
+  "error.chat_preview_delay_bounds": "يجب أن يكون تأخير معاينة المحادثة بين {min} و{max} مللي ثانية.",
+  "settings.main.ms": "م.ث"
 }

@@ -75,6 +75,10 @@ pub struct UiSettings {
     /// Off disables the popup. Applies immediately.
     #[serde(default = "default_true")]
     pub chat_preview: bool,
+    /// How long the pointer must rest on a chat before its preview popup
+    /// appears, in milliseconds. Clamped to 100–3000. Applies immediately.
+    #[serde(default = "default_chat_preview_delay_ms")]
+    pub chat_preview_delay_ms: u32,
     /// Log the library's keepalive pings and transport frames, so a stalled
     /// link is diagnosable. Applies the next time Postal starts.
     #[serde(default = "default_true")]
@@ -83,6 +87,10 @@ pub struct UiSettings {
 
 pub(crate) fn default_true() -> bool {
     true
+}
+
+pub(crate) fn default_chat_preview_delay_ms() -> u32 {
+    600
 }
 
 impl Default for UiSettings {
@@ -110,6 +118,7 @@ impl Default for UiSettings {
             mute_all_at_all: false,
             freeze_chat_list_on_hover: false,
             chat_preview: true,
+            chat_preview_delay_ms: default_chat_preview_delay_ms(),
             verbose_whatsapp_logs: true,
         }
     }
@@ -145,6 +154,7 @@ fn parse_settings(json: &str) -> serde_json::Result<UiSettings> {
     if let Some(policy) = legacy_downloads { settings.auto_download_types = policy; }
     if legacy { settings.retention = DiskRetention::unlimited(); }
     settings.message_window_size = settings.message_window_size.clamp(50, postal_core::store::MAX_MESSAGE_PAGE);
+    settings.chat_preview_delay_ms = settings.chat_preview_delay_ms.clamp(100, 3000);
     Ok(settings)
 }
 
@@ -185,6 +195,10 @@ pub(crate) async fn set_settings(app: AppHandle, state: State<'_, AppState>, set
     if !(50..=postal_core::store::MAX_MESSAGE_PAGE).contains(&settings.message_window_size) {
         return Err(CommandError::new(postal_core::message_ref::MessageRef::new("error.message_window_bounds")
             .with_param("min", serde_json::Number::from(50)).with_param("max", serde_json::Number::from(postal_core::store::MAX_MESSAGE_PAGE as u64))));
+    }
+    if !(100..=3000).contains(&settings.chat_preview_delay_ms) {
+        return Err(CommandError::new(postal_core::message_ref::MessageRef::new("error.chat_preview_delay_bounds")
+            .with_param("min", serde_json::Number::from(100)).with_param("max", serde_json::Number::from(3000))));
     }
     if let Some(directory) = settings.media_dir.as_deref().filter(|directory| !directory.trim().is_empty()) {
         crate::media_access::validate_directory(&app, std::path::Path::new(directory))?;
@@ -306,6 +320,12 @@ mod tests {
         assert!(parse_settings("{}").unwrap().chat_preview);
         assert!(parse_settings(legacy).unwrap().chat_preview);
         assert!(!parse_settings(r#"{"chat_preview":false}"#).unwrap().chat_preview);
+        // The preview delay defaults to 600 ms and stays within 100–3000 ms.
+        assert_eq!(parse_settings("{}").unwrap().chat_preview_delay_ms, 600);
+        assert_eq!(parse_settings(legacy).unwrap().chat_preview_delay_ms, 600);
+        assert_eq!(parse_settings(r#"{"chat_preview_delay_ms":500}"#).unwrap().chat_preview_delay_ms, 500);
+        assert_eq!(parse_settings(r#"{"chat_preview_delay_ms":10}"#).unwrap().chat_preview_delay_ms, 100);
+        assert_eq!(parse_settings(r#"{"chat_preview_delay_ms":9000}"#).unwrap().chat_preview_delay_ms, 3000);
         // Verbose WhatsApp logs default to on, switchable from Advanced.
         assert!(parse_settings("{}").unwrap().verbose_whatsapp_logs);
         assert!(!parse_settings(r#"{"verbose_whatsapp_logs":false}"#).unwrap().verbose_whatsapp_logs);

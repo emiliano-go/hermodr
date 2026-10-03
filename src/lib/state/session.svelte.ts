@@ -110,6 +110,7 @@ export class SessionState {
     mute_all_at_all: false,
     freeze_chat_list_on_hover: false,
     chat_preview: true,
+    chat_preview_delay_ms: 600,
     verbose_whatsapp_logs: true,
   });
 

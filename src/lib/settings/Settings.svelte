@@ -875,6 +875,40 @@
             </div>
             <input class="switch" type="checkbox" bind:checked={draft.chat_preview} />
           </label>
+          <div class="setting">
+            <div>
+              <span class="setting-title">{t("settings.main.chat_preview_delay")}</span>
+              <span class="setting-desc">
+                {t("settings.main.chat_preview_delay_hint", { min: 100, max: 3000 })}
+              </span>
+            </div>
+            <span class="unit-field">
+              <input
+                type="range"
+                min="100"
+                max="3000"
+                step="100"
+                value={draft.chat_preview_delay_ms ?? 600}
+                disabled={!draft.chat_preview}
+                aria-label={t("settings.main.chat_preview_delay")}
+                oninput={(e) => {
+                  draft.chat_preview_delay_ms = Math.min(3000, Math.max(100, Math.round(Number(e.currentTarget.value) || 0) || 100));
+                }} />
+              <input
+                class="field number"
+                type="number"
+                min="100"
+                max="3000"
+                step="1"
+                value={draft.chat_preview_delay_ms ?? 600}
+                disabled={!draft.chat_preview}
+                aria-label={t("settings.main.chat_preview_delay")}
+                oninput={(e) => {
+                  if (e.currentTarget.validity.valid && e.currentTarget.value !== "") draft.chat_preview_delay_ms = Math.min(3000, Math.max(100, Math.round(Number(e.currentTarget.value))));
+                }} />
+              <span aria-hidden="true">{t("settings.main.ms")}</span>
+            </span>
+          </div>
         {:else if section === "spaces"}
           <div class="setting">
             <div>
