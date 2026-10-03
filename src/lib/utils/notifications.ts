@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { plain } from "./format.ts";
 import { MEDIA_LABELS, captionOf } from "./message.ts";
 import type { StoredMessage } from "./models.ts";
+import { t } from "../i18n/localizer.ts";
 
 /**
  * How old a message may be and still ping. `fresh` only means "arrival-shaped";
@@ -64,18 +65,18 @@ export function notificationBody(
   message: Pick<StoredMessage, "text" | "media_kind"> & { spoiler?: boolean },
   mentionName: (user: string) => string = (u) => u,
 ): string {
-  if (message.spoiler) return "Spoiler message";
+  if (message.spoiler) return t("content.spoiler_message");
   const kind = message.media_kind;
   const text = message.text ?? "";
   if (kind === "poll") return `📊 ${plain(text, mentionName)}`.trim();
   if (kind === "event") return `📅 ${plain(text, mentionName)}`.trim();
-  if (kind === "view_once") return "View once message";
-  if (kind === "missed_call") return "Missed call";
-  if (kind && text.trim() === `[${kind}]`) return MEDIA_LABELS[kind] ?? "Attachment";
+  if (kind === "view_once") return t("state.view_once");
+  if (kind === "missed_call") return t("state.missed_call");
+  if (kind && text.trim() === `[${kind}]`) return MEDIA_LABELS[kind] ?? t("state.attachment");
   const body = plain(text || captionOf(message as StoredMessage), mentionName).trim();
   if (body) return body.length > 300 ? `${body.slice(0, 297)}…` : body;
-  if (kind) return MEDIA_LABELS[kind] ?? "Attachment";
-  return "New message";
+  if (kind) return MEDIA_LABELS[kind] ?? t("state.attachment");
+  return t("state.new_message");
 }
 
 /**

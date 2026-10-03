@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { installLocaleProvider, loadCatalog, t } from "../lib/i18n/localizer.ts";
 import {
   groupNotificationBody,
   isChatMuted,
@@ -93,4 +94,38 @@ test("bodies preview text and label uncaptioned media", () => {
     groupNotificationBody("Ana", "hello"),
     "Ana: hello",
   );
+});
+
+test("metadata notification labels follow locale without rewriting payloads", async () => {
+  const cases = [
+    { message: { text: "private spoiler payload", media_kind: "image", spoiler: true }, key: "content.spoiler_message" },
+    { message: { text: "private view-once payload", media_kind: "view_once" }, key: "state.view_once" },
+    { message: { text: "private call payload", media_kind: "missed_call" }, key: "state.missed_call" },
+    { message: { text: "[future_media]", media_kind: "future_media" }, key: "state.attachment" },
+    { message: { text: "", media_kind: "future_media" }, key: "state.attachment" },
+    { message: { text: "", media_kind: null }, key: "state.new_message" },
+  ];
+  const original = structuredClone(cases);
+  const english = cases.map(({ message, key }) => {
+    const body = notificationBody(message);
+    assert.equal(body, t(key));
+    return body;
+  });
+  const catalog = await loadCatalog("ar");
+  const restore = installLocaleProvider(() => ({ locale: "ar", catalog }));
+  try {
+    cases.forEach(({ message, key }, index) => {
+      const body = notificationBody(message);
+      assert.equal(body, t(key));
+      assert.notEqual(body, english[index]);
+      assert.doesNotMatch(body, /private .* payload/);
+    });
+    for (const text of ["Spoiler message", "View once message", "Missed call", "Attachment", "New message"]) {
+      assert.equal(notificationBody({ text, media_kind: null }), text);
+    }
+    assert.equal(groupNotificationBody("Ana", "user payload"), "Ana: user payload");
+    assert.equal(notificationTitle({ isGroup: false, chatName: "Family", senderName: "Ana" }), "Ana");
+    assert.deepEqual(cases, original);
+  } finally { restore(); }
+  cases.forEach(({ message }, index) => assert.equal(notificationBody(message), english[index]));
 });

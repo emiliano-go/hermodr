@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
+import { t } from "../lib/i18n/localizer.ts";
 
 test("notification delivery stays account-bound through permission and sound awaits", async () => {
   const source = readFileSync(new URL("../lib/utils/notifications.ts", import.meta.url), "utf8");
@@ -27,12 +28,12 @@ test("notification delivery stays account-bound through permission and sound awa
   const windowStub = { focus() {}, dispatchEvent() {} };
   const exports = new Function(
     "isPermissionGranted", "requestPermission", "sendNotification", "invoke", "plain",
-    "MEDIA_LABELS", "captionOf", "Notification", "window", "CustomEvent",
+    "MEDIA_LABELS", "captionOf", "Notification", "window", "CustomEvent", "t",
     `${compiled}\nreturn { showChatNotification };`,
   )(
     () => permission(), async () => true, async () => {},
     (command: string, args: unknown) => { calls.push({ command, args }); return invokeImpl(command, args); },
-    (text: string) => text, {}, () => "", FakeNotification, windowStub, class {},
+    (text: string) => text, {}, () => "", FakeNotification, windowStub, class {}, t,
   ) as { showChatNotification: (title: string, body: string, chat: string, accountId: string, current: () => boolean) => Promise<void> };
 
   let current = true;
