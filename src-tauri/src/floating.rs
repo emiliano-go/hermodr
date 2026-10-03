@@ -59,6 +59,17 @@ fn title(value: &str, fallback: &str) -> String {
     if clean.trim().is_empty() { fallback.to_owned() } else { clean.trim().to_owned() }
 }
 
+/// Prefix on the OS window title so tiling compositors can match float
+/// windows. The Wayland app_id is shared with the main window, and the
+/// Tauri label (`postal-float-<pid>-<n>`) is not visible to the compositor,
+/// so sway can only match on `title`:
+/// `for_window [title="^Postal Float — "] floating enable`.
+pub(crate) const FLOAT_TITLE_PREFIX: &str = "Postal Float — ";
+
+pub(crate) fn float_window_title(chat_title: &str) -> String {
+    format!("{FLOAT_TITLE_PREFIX}{chat_title}")
+}
+
 fn same_service<T>(weak: &Weak<T>, current: &Arc<T>) -> bool {
     weak.upgrade().is_some_and(|bound| Arc::ptr_eq(&bound, current))
 }
@@ -125,11 +136,12 @@ pub(crate) async fn open_float_chat(window: WebviewWindow, state: State<'_, AppS
     if existing {
         check(app, &label, &bound, &service)?;
         let existing = app.get_webview_window(&label).ok_or("Floating chat is still opening.")?;
+        let _ = existing.set_title(&float_window_title(&bound.title));
         existing.unminimize().and_then(|_| existing.show()).and_then(|_| existing.set_focus()).map_err(|error| error.to_string())?;
         return check(app, &label, &bound, &service);
     }
     let built = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("float".into()))
-        .title(&bound.title).inner_size(420.0, 620.0).min_inner_size(300.0, 300.0)
+        .title(float_window_title(&bound.title)).inner_size(420.0, 620.0).min_inner_size(300.0, 300.0)
         .transparent(true).background_color(tauri::window::Color(0, 0, 0, 0)).disable_drag_drop_handler().build();
     let created = match built {
         Ok(created) => created,

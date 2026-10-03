@@ -173,6 +173,13 @@ slider that keeps text opaque. Drafts are saved on this device separately from t
 main composer. Account switching or logout closes floats; they never follow another
 account. Media and unsupported message types use readable summaries. Native macOS
 transparency uses Tauri's private API feature, which prevents App Store acceptance.
+Float windows share the main window's Wayland app_id, so tiling compositors
+cannot match them by app_id: their OS window titles start with `Postal Float — `
+(the in-window header keeps the plain chat name). To float them under sway:
+
+```conf
+for_window [title="^Postal Float — "] floating enable
+```
 
 ## Installing
 

@@ -10,6 +10,8 @@ fn floating_targets_and_text_reject_cross_surface_identifiers_and_invalid_payloa
     for text in [" ".into(), "a\0b".into(), "x".repeat(65537)] { assert!(checked_text(&text).is_err()); }
     assert_eq!(title("\r\n", "1@lid"), "1@lid"); assert_eq!(title("Real\nName", "fallback"), "RealName");
     assert_eq!(title(&"x".repeat(200), "fallback").len(), 120);
+    assert_eq!(float_window_title("Ada"), "Postal Float — Ada");
+    assert!(float_window_title("Ada").starts_with(FLOAT_TITLE_PREFIX));
 }
 
 fn entry(account: &str, chat: &str) -> Entry {
