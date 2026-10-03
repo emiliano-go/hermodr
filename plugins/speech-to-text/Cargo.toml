@@ -9,7 +9,7 @@ license = "MIT"
 [dependencies]
 postal-plugins = { path = "../../crates/postal-plugins" }
 anyhow = "1"
-base64 = "0.22"
+base64 = "0.23"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "multipart", "query"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

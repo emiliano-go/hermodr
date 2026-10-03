@@ -39,7 +39,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
 # Decodes attachment payloads arriving from the webview.
-base64 = "0.22"
+base64 = "0.23"
 tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
 # `std::fs::canonicalize` returns `\\?\` paths on Windows, which the shell
 # cannot open.

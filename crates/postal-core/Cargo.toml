@@ -33,7 +33,7 @@ ureq = "3"
 buffa = "0.9"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 # Received thumbnails are kept in the row as `data:` URIs.
-base64 = "0.22"
+base64 = "0.23"
 # Sticker files are addressed by the SHA-256 of their bytes (app-state filehash).
 sha2 = "0.11"
 # Decodes any stored audio to PCM WAV for playback, so the web view never
