@@ -247,7 +247,7 @@
   }
   h2 {
     margin: 0;
-    font-size: 17px;
+    font-size: 1.0625rem;
     font-weight: 600;
   }
   .close,
@@ -278,7 +278,7 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
-    font-size: 12px;
+    font-size: 0.75rem;
     font-weight: 600;
     color: var(--muted);
   }
@@ -289,7 +289,7 @@
     padding: 8px 10px;
     color: var(--text);
     font: inherit;
-    font-size: 14px;
+    font-size: 0.875rem;
     font-weight: 400;
   }
   textarea.field {
@@ -312,7 +312,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 14px;
+    font-size: 0.875rem;
   }
   .check-row input {
     accent-color: var(--accent);
@@ -323,7 +323,7 @@
   .error {
     margin: 0;
     color: var(--danger);
-    font-size: 13px;
+    font-size: 0.8125rem;
   }
   .actions {
     display: flex;

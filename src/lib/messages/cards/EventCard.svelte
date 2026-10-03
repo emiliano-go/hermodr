@@ -200,19 +200,19 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 12px;
+    font-size: 0.75rem;
     font-weight: 600;
     color: var(--accent);
   }
   .name {
-    font-size: 16px;
+    font-size: 1rem;
     font-weight: 600;
   }
   .line {
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 13.5px;
+    font-size: 0.8438rem;
     color: var(--muted);
   }
   .link {
@@ -221,16 +221,16 @@
     background: transparent;
     color: var(--link);
     font: inherit;
-    font-size: 13.5px;
+    font-size: 0.8438rem;
     cursor: pointer;
   }
   .description {
     margin: 2px 0;
     white-space: pre-wrap;
-    font-size: 13.5px;
+    font-size: 0.8438rem;
   }
   .muted {
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     color: var(--muted);
   }
   .answers {
@@ -247,7 +247,7 @@
     background: transparent;
     color: var(--text);
     font: inherit;
-    font-size: 13px;
+    font-size: 0.8125rem;
     cursor: pointer;
   }
   .answer:hover:not(:disabled) {
@@ -267,15 +267,15 @@
   .danger {
     color: var(--danger);
   }
-  .error { color: var(--danger); font-size: 13px; overflow-wrap: anywhere; }
-  .your-response { font-size: 13px; }
-  summary { cursor: pointer; font-size: 13px; color: var(--link); }
+  .error { color: var(--danger); font-size: 0.8125rem; overflow-wrap: anywhere; }
+  .your-response { font-size: 0.8125rem; }
+  summary { cursor: pointer; font-size: 0.8125rem; color: var(--link); }
   details[open] { max-height: 280px; overflow-y: auto; }
-  .attendees h3 { margin: 8px 0; font-size: 13px; }
+  .attendees h3 { margin: 8px 0; font-size: 0.8125rem; }
   .attendees ul { margin: 0; padding: 0; list-style: none; }
-  .attendees li { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; }
-  .attendees :global(.avatar) { width: 24px; height: 24px; flex-shrink: 0; font-size: 11px; }
+  .attendees li { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 0.8125rem; }
+  .attendees :global(.avatar) { width: 24px; height: 24px; flex-shrink: 0; font-size: 0.6875rem; }
   small { display: block; color: var(--muted); }
-  .guests { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
+  .guests { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 0.8125rem; }
   .guests input { width: 80px; padding: 5px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; }
 </style>

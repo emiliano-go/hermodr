@@ -282,7 +282,7 @@
     border: 2px dashed currentColor;
     width: 28px;
     height: 28px;
-    font-size: 12px;
+    font-size: 0.75rem;
     font-weight: 700;
   }
   .once.on {
@@ -303,7 +303,7 @@
   }
   .time {
     min-width: 42px;
-    font-size: 16px;
+    font-size: 1rem;
     font-variant-numeric: tabular-nums;
   }
   .levels {

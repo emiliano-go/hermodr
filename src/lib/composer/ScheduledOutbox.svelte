@@ -72,8 +72,8 @@
   pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   dialog { width: min(560px, 85vw); max-height: 80vh; color: var(--text); background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius-lg); padding: 22px; box-shadow: var(--shadow); }
   dialog::backdrop { background: var(--scrim); }
-  h2 { margin: 0; font-size: 18px; }
-  p, span, .status { color: var(--muted); font-size: 13px; line-height: 1.5; }
+  h2 { margin: 0; font-size: 1.125rem; }
+  p, span, .status { color: var(--muted); font-size: 0.8125rem; line-height: 1.5; }
   ul { list-style: none; padding: 0; margin: 0; }
   li { border-top: 1px solid var(--line-strong); padding: 14px 0; }
   .header, .actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }

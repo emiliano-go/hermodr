@@ -61,8 +61,8 @@
   form, label { display: flex; flex-direction: column; gap: 10px; }
   form { gap: 16px; }
   h2, p { margin: 0; }
-  h2 { font-size: 18px; }
-  p { color: var(--muted); font-size: 13px; line-height: 1.5; }
+  h2 { font-size: 1.125rem; }
+  p { color: var(--muted); font-size: 0.8125rem; line-height: 1.5; }
   input, textarea { padding: 9px 10px; color: inherit; font: inherit; background: var(--bg); border: 1px solid var(--line-strong); border-radius: 6px; }
   textarea { resize: vertical; }
   .actions { display: flex; gap: 8px; justify-content: flex-end; }

@@ -181,7 +181,7 @@
   }
   h2 {
     margin: 0;
-    font-size: 17px;
+    font-size: 1.0625rem;
     font-weight: 600;
   }
   .sub {
@@ -189,7 +189,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     color: var(--muted);
-    font-size: 12.5px;
+    font-size: 0.7812rem;
   }
   .close {
     display: grid;
@@ -240,7 +240,7 @@
   .count {
     padding: 2px 12px 6px;
     color: var(--faint);
-    font-size: 11.5px;
+    font-size: 0.7188rem;
     letter-spacing: 0.04em;
     text-transform: uppercase;
   }
@@ -271,7 +271,7 @@
     display: flex;
     justify-content: space-between;
     gap: 12px;
-    font-size: 12.5px;
+    font-size: 0.7812rem;
   }
   .who {
     display: flex;
@@ -320,7 +320,7 @@
     background: transparent;
     color: var(--text);
     font: inherit;
-    font-size: 13px;
+    font-size: 0.8125rem;
     cursor: pointer;
   }
   .more:hover:not(:disabled) {

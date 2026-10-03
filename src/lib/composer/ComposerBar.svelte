@@ -678,7 +678,7 @@
 
 <style>
   .attachment-mode { margin: 4px 8px; color: var(--muted); font-size: .85em; }
-  .quality { width: 100%; padding: 3px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font-size: 11px; }
+  .quality { width: 100%; padding: 3px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font-size: 0.6875rem; }
   .reply-preview {
     display: flex;
     align-items: center;
@@ -688,7 +688,7 @@
     background: var(--surface);
     border-inline-start: 3px solid var(--accent);
     border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-    font-size: 12px;
+    font-size: 0.75rem;
     color: var(--muted);
   }
   .reply-body {
@@ -714,7 +714,7 @@
     flex: none;
   }
   .reply-icon {
-    font-size: 16px;
+    font-size: 1rem;
     flex: none;
   }
   .pending {
@@ -754,7 +754,7 @@
     align-items: center;
     gap: 8px;
     color: var(--muted);
-    font-size: 13px;
+    font-size: 0.8125rem;
   }
   .pending :global(.remove) {
     position: absolute;
@@ -789,7 +789,7 @@
     background: color-mix(in srgb, var(--bg) 75%, transparent);
     color: var(--muted);
     font: inherit;
-    font-size: 12px;
+    font-size: 0.75rem;
     font-weight: 700;
     cursor: pointer;
     box-shadow: 0 0 0 1px var(--line-strong);
@@ -803,14 +803,14 @@
     box-shadow: 0 0 0 1px var(--accent);
   }
   .pending-name {
-    font-size: 11px;
+    font-size: 0.6875rem;
     color: var(--muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .pending-caption {
-    font-size: 11px;
+    font-size: 0.6875rem;
     color: var(--accent-text);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -840,7 +840,7 @@
   .mention-handle {
     margin-inline-start: 6px;
     color: var(--muted);
-    font-size: 12.5px;
+    font-size: 0.7812rem;
   }
   .composer-area {
     position: relative;
@@ -865,7 +865,7 @@
   }
   .suggest-title {
     padding: 2px 8px 6px;
-    font-size: 11.5px;
+    font-size: 0.7188rem;
     font-weight: 700;
     letter-spacing: 0.02em;
     text-transform: uppercase;
@@ -881,7 +881,7 @@
     background: transparent;
     color: var(--text);
     font: inherit;
-    font-size: 14.5px;
+    font-size: 0.9062rem;
     text-align: start;
     cursor: pointer;
   }
@@ -889,7 +889,7 @@
     background: var(--raised);
   }
   .suggest-emoji {
-    font-size: 20px;
+    font-size: 1.25rem;
     width: 26px;
     text-align: center;
   }
@@ -939,7 +939,7 @@
     background: transparent;
     color: var(--text);
     font: inherit;
-    font-size: 14.5px;
+    font-size: 0.9062rem;
     text-align: start;
     cursor: pointer;
   }

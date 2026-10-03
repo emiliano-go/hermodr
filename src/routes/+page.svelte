@@ -95,6 +95,13 @@
   import CreateDialog from "$lib/chat/CreateDialog.svelte";
   import { plain } from "$lib/utils/format";
   import { customization, lensMap } from "$lib/utils/theme.svelte";
+  import {
+    accessibility,
+    applyAccessibility,
+    onAnnouncement,
+    type Announcement,
+  } from "$lib/utils/accessibility.svelte";
+  import AccessibilityPrompt from "$lib/settings/AccessibilityPrompt.svelte";
 
   import type {
     ParticipantChange,
@@ -111,6 +118,29 @@
     ui.settingsSection = section;
     ui.accountMenu = false;
     ui.showSettings = true;
+  }
+
+  // Accessibility: first-launch prompt state and the polite live region.
+  let a11yPromptOpen = $state(false);
+  let liveMessage = $state("");
+  let liveAssertive = $state("");
+  let liveTimer: ReturnType<typeof setTimeout> | undefined;
+  let liveAssertiveTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function pushLive(a: Announcement) {
+    // Clearing then setting re-announces repeated text; the text is cleared
+    // again shortly after so the region does not accumulate history.
+    if (a.assertive) {
+      liveAssertive = "";
+      clearTimeout(liveAssertiveTimer);
+      const text = a.text;
+      liveAssertiveTimer = setTimeout(() => { liveAssertive = text; }, 30);
+    } else {
+      liveMessage = "";
+      clearTimeout(liveTimer);
+      const text = a.text;
+      liveTimer = setTimeout(() => { liveMessage = text; }, 30);
+    }
   }
 
   async function inboxAction(account: string, chat: string, action: InboxAction) {
@@ -253,6 +283,11 @@
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
+  }
+
+  /** Keyboard/button equivalent of the drag resize (WCAG 2.5.7). */
+  function nudgeListWidth(delta: number) {
+    customization.listWidth = Math.max(180, Math.min(640, (customization.listWidth ?? 300) + delta));
   }
 
   $effect(() => {
@@ -1131,9 +1166,23 @@
     }
   }
 
+  /** Continue the launch flow after the Accessibility prompt is answered. */
+  async function afterA11yPrompt() {
+    a11yPromptOpen = false;
+    applyAccessibility();
+    if (!session.started && session.accountList.filter((a) => a.jid).length > 1) {
+      session.choosingAccount = true;
+    } else if (!session.started) {
+      await connect();
+      await session.loadAccounts();
+    }
+  }
+
   onMount(() => {
     let unlisten: (() => void) | undefined;
     let unlistenOnce: (() => void) | undefined;
+    applyAccessibility();
+    const stopAnnouncements = onAnnouncement(pushLive);
 
     // Surface anything that escapes a handler, so a failure shows a message
     // rather than leaving the interface silently unresponsive.
@@ -1229,6 +1278,9 @@
         return;
       }
       if (event.key.length !== 1) return;
+      // WCAG 2.1.4: single-character shortcuts can be disabled from
+      // Settings → Accessibility → Keyboard.
+      if (!accessibility.charShortcutsEnabled) return;
       composerInput.focus();
     };
     window.addEventListener("keydown", onAnyKey);
@@ -1256,6 +1308,12 @@
       // With several linked accounts the user picks one first.
       await session.loadAccounts();
       await syncState();
+      // First launch, before pairing: offer Accessibility mode. The prompt
+      // gates the automatic connect so it is answered before any pairing.
+      if (!accessibility.promptSeen && session.accountList.filter((a) => a.jid).length === 0 && !session.started) {
+        a11yPromptOpen = true;
+        return;
+      }
       if (!session.started && session.accountList.filter((a) => a.jid).length > 1) {
         session.choosingAccount = true;
       } else {
@@ -1267,6 +1325,7 @@
     setup();
 
     return () => {
+      stopAnnouncements();
       unlisten?.();
       unlistenOnce?.();
       window.removeEventListener("error", onError);
@@ -1283,6 +1342,13 @@
 </svelte:head>
 
 <ThemeLayers />
+<!-- Skip link and screen-reader live regions (WCAG 2.4.1, 4.1.3). -->
+<a class="skip-link" href="#message-region">{t("settings.a11y.skip_link")}</a>
+<div class="sr-only" aria-live="polite" role="status" aria-label={t("settings.a11y.live_region")}>{liveMessage}</div>
+<div class="sr-only" aria-live="assertive" role="alert">{liveAssertive}</div>
+{#if a11yPromptOpen}
+  <AccessibilityPrompt ondone={() => void afterA11yPrompt()} />
+{/if}
 <ScheduledOutbox
   enqueue={<T>(task: (signal: AbortSignal) => Promise<T>) => composer.enqueue(task)}
   displayName={(chat) => members.displayName(chats.chats.find((item) => item.chat === chat)?.display_name ?? null, chat)} />
@@ -1441,7 +1507,8 @@
       freezeOnHover={session.settings.freeze_chat_list_on_hover ?? false}
       chatPreview={session.settings.chat_preview ?? true}
       chatPreviewDelayMs={session.settings.chat_preview_delay_ms ?? 600}
-      onresize={startResize}>
+      onresize={startResize}
+      onresizekey={nudgeListWidth}>
       {#snippet spacesContent()}
         <SpacesTree account={session.activeAccount} generation={messages.accountGeneration} snapshot={spaces.snapshot} selected={spaces.selected}
           loading={spaces.loading} busy={spaces.busy} error={spaces.error} onselect={(selection: SpaceSelection) => void spaces.select(selection)}
@@ -1453,7 +1520,7 @@
       {/snippet}
     </ChatSidebar>
 
-    <section class="conversation">
+    <section class="conversation" aria-label={t("page.conversation")}>
       {#if ui.showInbox}
         <UnifiedInbox account={session.activeAccount} requestKey={`${messages.accountGeneration}:${inboxSeedKey}`} connected={session.connected}
           initialFilters={inboxSeed} onfilterschange={(filters) => { currentInboxFilters = { ...filters }; }}
@@ -1500,7 +1567,7 @@
           onclearchat={() => (ui.chatConfirm = { kind: "clear", chat: selectedChat })}
           ondeletechat={() => (ui.chatConfirm = { kind: "delete", chat: selectedChat })} />
 
-        <div class="list-wrap">
+        <div class="list-wrap" id="message-region" role="log" aria-label={t("settings.a11y.live_region")} tabindex="-1">
         <MessageList
           messages={messages.ordered}
           isGroup={selectedChat.endsWith("@g.us")}
@@ -2553,8 +2620,123 @@
     color: var(--text);
     /* The flag font only covers flag codepoints, so it never shadows --font. */
     font-family: "Twemoji Country Flags", var(--font);
-    font-size: var(--font-size);
+    /* Text size (100–200%) scales text only: rem-based components follow the
+       root font size, and the base body size follows --font-scale. Images and
+       layout stay in px. */
+    font-size: calc(var(--font-size) * var(--font-scale, 1));
     -webkit-font-smoothing: antialiased;
+  }
+  /* Reflow (WCAG 1.4.10): text wraps instead of scrolling horizontally. */
+  :global(.bubble, .preview, .name, .message-text, .embed, .quote) {
+    overflow-wrap: anywhere;
+    min-width: 0;
+  }
+  /* Screen-reader-only live regions. */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  /* Skip link (WCAG 2.4.1): visible on focus only. */
+  .skip-link {
+    position: fixed;
+    top: -100px;
+    left: 12px;
+    z-index: 500;
+    padding: 8px 14px;
+    background: var(--accent);
+    color: var(--accent-ink);
+    border-radius: var(--radius);
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-decoration: none;
+    transition: top calc(0.15s * var(--motion-scale)) var(--ease);
+  }
+  .skip-link:focus-visible {
+    top: 12px;
+  }
+  /* Reduce transparency: disable glass blur and translucent layers. */
+  :global(html[data-a11y-transparency="reduce"] .menu),
+  :global(html[data-a11y-transparency="reduce"] .sheet),
+  :global(html[data-a11y-transparency="reduce"] .modal),
+  :global(html[data-a11y-transparency="reduce"] .intro-card),
+  :global(html[data-a11y-transparency="reduce"] .attach-menu),
+  :global(html[data-a11y-transparency="reduce"] .account-menu),
+  :global(html[data-a11y-transparency="reduce"] .card),
+  :global(html[data-a11y-transparency="reduce"] .bubble),
+  :global(html[data-a11y-transparency="reduce"] .reply-preview),
+  :global(html[data-a11y-transparency="reduce"] .chip) {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+  :global(html[data-a11y-transparency="reduce"] body::before),
+  :global(html[data-a11y-transparency="reduce"] .stage::before) {
+    animation: none !important;
+    opacity: 0.25;
+  }
+  /* Larger targets: comfortable 24px (AA), large 44px. */
+  :global(html[data-a11y-targets="large"] button),
+  :global(html[data-a11y-targets="large"] .icon),
+  :global(html[data-a11y-targets="large"] .chip),
+  :global(html[data-a11y-targets="large"] .tool),
+  :global(html[data-a11y-targets="large"] .control) {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  :global(html[data-a11y-targets="comfortable"] button:not(.resizer)),
+  :global(html[data-a11y-targets="comfortable"] .chip) {
+    min-height: 24px;
+  }
+  /* Always-on and enhanced focus (WCAG 2.4.7, 2.4.11). */
+  :global(html[data-a11y-focus="always"] :focus) {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  :global(html[data-a11y-focus-thick="on"] :focus-visible),
+  :global(html[data-a11y-focus-thick="on"][data-a11y-focus="always"] :focus) {
+    outline-width: 3px;
+    outline-offset: 3px;
+    box-shadow: 0 0 0 5px var(--accent-soft);
+  }
+  /* Colour-blind friendly palette (WCAG 1.4.1): never colour alone. */
+  :global(html[data-a11y-color-blind="on"] .badge) {
+    outline: 2px solid currentColor;
+    outline-offset: -2px;
+  }
+  :global(html[data-a11y-color-blind="on"] .time.unread) {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  :global(html[data-a11y-color-blind="on"] .mention-badge) {
+    outline: 2px dashed currentColor;
+    outline-offset: 1px;
+  }
+  :global(html[data-a11y-color-blind="on"] .presence.online) {
+    box-shadow: 0 0 0 3px var(--surface), 0 0 0 5px var(--accent);
+  }
+  /* Text spacing (WCAG 1.4.12). */
+  :global(html[data-a11y-spacing="on"] body) {
+    line-height: var(--a11y-line-height, 1.5);
+    letter-spacing: var(--a11y-letter-spacing, 0.12em);
+    word-spacing: var(--a11y-word-spacing, 0.16em);
+  }
+  /* High-legibility font option. */
+  :global(html[data-a11y-font="legible"] body) {
+    font-family: "Atkinson Hyperlegible", "OpenDyslexic", Verdana, var(--font);
+    line-height: 1.6;
+  }
+  /* High contrast hardening beyond the token transform. */
+  :global(html[data-a11y-contrast="more"] .bubble) {
+    border: 1px solid var(--line-strong);
+  }
+  :global(html[data-a11y-contrast="more"] :focus-visible) {
+    outline-width: 3px;
   }
   :global(*) {
     scrollbar-width: thin;
@@ -2567,7 +2749,7 @@
   :global(html.density-compact .chat-row .avatar) {
     width: 42px;
     height: 42px;
-    font-size: 14px;
+    font-size: 0.875rem;
   }
   :global(html.density-compact .chat-row::after) {
     left: 70px;
@@ -2588,7 +2770,7 @@
   :global(html.density-cozy .chat-row .avatar) {
     width: 54px;
     height: 54px;
-    font-size: 16px;
+    font-size: 1rem;
   }
   :global(html.density-cozy .chat-row::after) {
     left: 82px;
@@ -2665,7 +2847,7 @@
     border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
     border-radius: var(--radius);
     box-shadow: var(--shadow);
-    font-size: 13px;
+    font-size: 0.8125rem;
   }
   /* Dismiss buttons live in $lib/ui/Button.svelte (icon variant, already muted). */
   :global(.intro-settings) {
@@ -2679,7 +2861,7 @@
     border-radius: 50%;
     object-fit: cover;
     background: var(--raised-2);
-    font-size: 30px;
+    font-size: 1.875rem;
     font-weight: 600;
     box-shadow: 0 0 0 4px var(--accent-soft);
   }
@@ -2711,7 +2893,7 @@
     display: grid;
     place-items: center;
     background: var(--raised-2);
-    font-size: 10px;
+    font-size: 0.625rem;
   }
   .layout {
     display: grid;
@@ -2734,7 +2916,7 @@
     border-radius: 50%;
     background: hsl(var(--hue) 28% 24%);
     color: hsl(var(--hue) 45% 80%);
-    font-size: 15px;
+    font-size: 0.9375rem;
     font-weight: 500;
     letter-spacing: 0.02em;
     user-select: none;
@@ -2746,7 +2928,7 @@
   :global(.conversation header .avatar) {
     width: 40px;
     height: 40px;
-    font-size: 14px;
+    font-size: 0.875rem;
   }
   /* Message text lives in $lib/messages/MessageText.svelte. The mention avatar sizes
      stay global so they reach inside it. */
@@ -2761,7 +2943,7 @@
   :global(.mention-initials) {
     display: grid;
     place-items: center;
-    font-size: 8px;
+    font-size: 0.5rem;
     background: hsl(var(--hue) 28% 24%);
     color: hsl(var(--hue) 45% 80%);
   }
@@ -2778,7 +2960,7 @@
     padding: 8px 14px;
     background: var(--raised-2);
     border-radius: 8px;
-    font-size: 13px;
+    font-size: 0.8125rem;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
   }
   .notice-copy { min-width: 0; }
@@ -2803,7 +2985,7 @@
   :global(.hint) {
     margin: 0;
     color: var(--faint);
-    font-size: 12px;
+    font-size: 0.75rem;
     max-width: 44ch;
     text-wrap: balance;
   }
@@ -2815,7 +2997,7 @@
     align-items: center;
     justify-content: center;
     color: var(--text);
-    font-size: 28px;
+    font-size: 1.75rem;
     text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
     pointer-events: none;
   }
@@ -2835,7 +3017,7 @@
   :global(.sender-avatar .avatar) {
     width: 28px;
     height: 28px;
-    font-size: 11px;
+    font-size: 0.6875rem;
   }
   :global(.me-avatar) {
     display: grid;
@@ -2846,7 +3028,7 @@
     object-fit: cover;
     background: hsl(var(--hue, 160) 28% 24%);
     color: hsl(var(--hue, 160) 45% 80%);
-    font-size: 13px;
+    font-size: 0.8125rem;
     font-weight: 500;
   }
   /* Half-lit: online, but only contacts can see it. */
@@ -2862,7 +3044,7 @@
     object-fit: cover;
     background: hsl(var(--hue, 160) 28% 24%);
     color: hsl(var(--hue, 160) 45% 80%);
-    font-size: 11px;
+    font-size: 0.6875rem;
   }
   .conversation {
     display: flex;
@@ -2878,7 +3060,7 @@
     border: 0;
     background: none;
     font: inherit;
-    font-size: 12.8px;
+    font-size: 0.8rem;
     font-weight: 500;
     line-height: 22px;
     color: color-mix(in srgb, hsl(var(--hue) 65% 68%) 25%, var(--text));
@@ -2902,13 +3084,13 @@
     box-sizing: border-box;
     background: var(--surface);
     color: var(--muted);
-    font-size: 13.5px;
+    font-size: 0.8438rem;
     text-align: center;
   }
   /* Active tint comes from Button itself. */
   :global(.tool-text) {
     font: inherit;
-    font-size: 11px;
+    font-size: 0.6875rem;
     font-weight: 800;
     letter-spacing: 0.04em;
   }
@@ -2935,7 +3117,7 @@
   }
   .placeholder-title {
     margin: 0;
-    font-size: 15px;
+    font-size: 0.9375rem;
     font-weight: 600;
   }
   .list-wrap {
@@ -2960,7 +3142,7 @@
     padding: 6px 10px 6px 14px;
     cursor: pointer;
     font: inherit;
-    font-size: 12px;
+    font-size: 0.75rem;
     box-shadow: var(--shadow);
   }
   .jump:hover {

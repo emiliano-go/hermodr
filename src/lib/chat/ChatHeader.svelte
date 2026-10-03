@@ -254,7 +254,7 @@
     color: var(--accent-text);
   }
   .chat-sub {
-    font-size: 13px;
+    font-size: 0.8125rem;
     font-weight: 400;
     color: var(--muted);
     overflow: hidden;
@@ -264,7 +264,7 @@
     color: var(--accent);
   }
   .chat-title {
-    font-size: 16px;
+    font-size: 1rem;
     font-weight: 400;
   }
   .jump-mention {
@@ -277,7 +277,7 @@
     border-radius: 999px;
     padding: 4px 10px;
     font: inherit;
-    font-size: 12px;
+    font-size: 0.75rem;
     font-weight: 600;
     cursor: pointer;
   }
@@ -292,7 +292,7 @@
     background: var(--surface);
     color: var(--muted);
     font: inherit;
-    font-size: 13.5px;
+    font-size: 0.8438rem;
     text-align: start;
     cursor: pointer;
   }

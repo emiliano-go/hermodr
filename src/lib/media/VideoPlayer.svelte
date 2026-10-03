@@ -5,6 +5,7 @@
   import { invoke } from "$lib/utils/ipc";
   import Icon from "$lib/ui/Icon.svelte";
   import Spinner from "$lib/ui/Spinner.svelte";
+  import { accessibility } from "$lib/utils/accessibility.svelte";
 
   let {
     src,
@@ -126,6 +127,12 @@
   let rate = $state(saved.rate);
   // svelte-ignore state_referenced_locally
   let looping = $state(gif);
+  // WCAG 2.2.2: pause animated media turns GIFs into tap-to-play and stops
+  // autoplay; the Media panel's Autoplay videos toggle gates the rest.
+  const effectiveAutoplay = $derived(
+    autoplay && accessibility.autoplayVideos && !(gif && accessibility.pauseAnimatedMedia),
+  );
+  const effectiveLoop = $derived(gif ? looping && !accessibility.pauseAnimatedMedia : looping);
   let fullscreen = $state(false);
   let remaining = $state(false);
   let speedMenu = $state(false);
@@ -254,8 +261,8 @@
     src={source}
     poster={poster ?? undefined}
     preload="none"
-    {autoplay}
-    loop={looping}
+    autoplay={effectiveAutoplay}
+    loop={effectiveLoop}
     bind:paused
     bind:currentTime={current}
     bind:duration
@@ -281,10 +288,26 @@
     <div
       class="bar"
       bind:this={bar}
+      role="slider"
+      tabindex="0"
+      aria-label={t("content.seek")}
+      aria-valuemin={0}
+      aria-valuemax={Math.round(duration || 0)}
+      aria-valuenow={Math.round(current)}
+      aria-valuetext={`${clock(current)} / ${clock(duration)}`}
       onpointerdown={onBarDown}
       onpointermove={onBarMove}
       onpointerup={() => (scrubbing = false)}
-      onpointerleave={() => (hover = null)} dir="ltr">
+      onpointerleave={() => (hover = null)}
+      onkeydown={(e) => {
+        if (e.key === "ArrowLeft" || e.key === "ArrowDown") { e.preventDefault(); seek(current - 5); }
+        else if (e.key === "ArrowRight" || e.key === "ArrowUp") { e.preventDefault(); seek(current + 5); }
+        else if (e.key === "Home") { e.preventDefault(); seek(0); }
+        else if (e.key === "End") { e.preventDefault(); seek(duration); }
+        else if (e.key === "PageDown") { e.preventDefault(); seek(current - 10); }
+        else if (e.key === "PageUp") { e.preventDefault(); seek(current + 10); }
+      }}
+      dir="ltr">
       <div class="track">
         <div class="loaded" style="width: {loaded * 100}%"></div>
         <div class="played" style="width: {duration ? (current / duration) * 100 : 0}%"></div>
@@ -438,7 +461,7 @@
     gap: 8px;
     background: rgba(0, 0, 0, 0.5);
     color: #fff;
-    font-size: 13px;
+    font-size: 0.8125rem;
   }
   .controls {
     position: absolute;
@@ -506,7 +529,7 @@
     border-radius: 4px;
     background: var(--surface);
     color: var(--text);
-    font-size: 12px;
+    font-size: 0.75rem;
     font-variant-numeric: tabular-nums;
     pointer-events: none;
     white-space: nowrap;
@@ -539,11 +562,11 @@
     color: var(--accent);
   }
   .time {
-    font-size: 13px;
+    font-size: 0.8125rem;
     font-variant-numeric: tabular-nums;
   }
   .rate {
-    font-size: 13px;
+    font-size: 0.8125rem;
     font-weight: 600;
   }
   .spacer {
@@ -601,7 +624,7 @@
     background: transparent;
     color: inherit;
     font: inherit;
-    font-size: 13px;
+    font-size: 0.8125rem;
     text-align: start;
     cursor: pointer;
   }

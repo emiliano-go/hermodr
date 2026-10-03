@@ -81,11 +81,11 @@
   .wallpaper { display: grid; gap: 10px; }
   .heading, .darken { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
   .heading > div { display: grid; gap: 4px; }
-  .name { font-size: 14px; }
-  .hint { display: block; color: var(--muted); font-size: 12px; }
+  .name { font-size: 0.875rem; }
+  .hint { display: block; color: var(--muted); font-size: 0.75rem; }
   img { width: 56px; height: 40px; border-radius: var(--radius-sm); object-fit: cover; }
   .file { display: none; }
   .actions { display: flex; gap: 6px; }
   input[type="range"] { width: 140px; accent-color: var(--accent); }
-  .error { margin: 0; color: var(--danger); font-size: 13px; }
+  .error { margin: 0; color: var(--danger); font-size: 0.8125rem; }
 </style>

@@ -762,7 +762,7 @@
     background: transparent;
     color: var(--muted);
     font: inherit;
-    font-size: 14px;
+    font-size: 0.875rem;
     font-weight: 600;
     cursor: pointer;
   }
@@ -810,7 +810,7 @@
     border: 0;
     border-radius: 6px;
     background: transparent;
-    font-size: 18px;
+    font-size: 1.125rem;
     cursor: pointer;
     filter: grayscale(0.6);
   }
@@ -826,7 +826,7 @@
   }
   h4 {
     margin: 8px 4px 4px;
-    font-size: 12px;
+    font-size: 0.75rem;
     font-weight: 600;
     color: var(--muted);
   }
@@ -844,7 +844,7 @@
     border: 0;
     border-radius: 6px;
     background: transparent;
-    font-size: 24px;
+    font-size: 1.5rem;
     cursor: pointer;
   }
   .grid button:hover {
@@ -853,7 +853,7 @@
   .empty {
     margin: 16px;
     color: var(--muted);
-    font-size: 13px;
+    font-size: 0.8125rem;
     text-align: center;
   }
   .library {
@@ -875,7 +875,7 @@
     background: transparent;
     color: var(--muted);
     font: inherit;
-    font-size: 13.5px;
+    font-size: 0.8438rem;
     cursor: pointer;
   }
   .upload:hover {
@@ -907,7 +907,7 @@
     background: var(--raised);
     color: var(--text);
     font: inherit;
-    font-size: 12px;
+    font-size: 0.75rem;
     cursor: pointer;
   }
   .pack-chip img {
@@ -938,7 +938,7 @@
     cursor: pointer;
   }
   .pack-name {
-    font-size: 13px;
+    font-size: 0.8125rem;
     font-weight: 600;
   }
   .fetch-all {
@@ -949,7 +949,7 @@
     background: var(--raised);
     color: var(--muted);
     font: inherit;
-    font-size: 12px;
+    font-size: 0.75rem;
     font-weight: 600;
     cursor: pointer;
   }
@@ -960,7 +960,7 @@
     opacity: 0.7;
     cursor: default;
   }
-  .sticker-error { color: var(--danger, #ef7777); font-size: 12px; white-space: pre-wrap; }
+  .sticker-error { color: var(--danger, #ef7777); font-size: 0.75rem; white-space: pre-wrap; }
   .stickers {
     grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
   }
@@ -995,7 +995,7 @@
     border-radius: 8px;
     border: 2px dashed var(--faint);
     color: var(--muted);
-    font-size: 11px;
+    font-size: 0.6875rem;
     font-weight: 600;
     text-align: center;
   }

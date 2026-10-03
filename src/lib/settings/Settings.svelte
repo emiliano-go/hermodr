@@ -21,6 +21,7 @@
     | "plugins"
     | "keybinds"
     | "appearance"
+    | "accessibility"
     | "advanced"
     | "about";
   import type { Profile } from "$lib/utils/wire";
@@ -54,6 +55,7 @@
   import { messages } from "$lib/state/messages.svelte";
   import { notificationHistory } from "$lib/notifications/history-store";
   import BlockedContacts from "$lib/settings/BlockedContacts.svelte";
+  import AccessibilitySettings from "$lib/settings/AccessibilitySettings.svelte";
   import AtAllMuteList from "$lib/settings/AtAllMuteList.svelte";
   import { session } from "$lib/state/session.svelte";
   import { locale } from "$lib/i18n/locale.svelte";
@@ -235,6 +237,7 @@
     { id: "plugins", label: t("settings.main.plugins"), group: t("settings.main.postal") },
     { id: "keybinds", label: t("settings.main.keybinds"), group: t("settings.main.app_group") },
     { id: "appearance", label: t("settings.main.appearance"), group: t("settings.main.app_group") },
+    { id: "accessibility", label: t("settings.main.accessibility"), group: t("settings.main.app_group") },
     { id: "advanced", label: t("settings.main.advanced"), group: t("settings.main.postal") },
     { id: "about", label: t("settings.main.about"), group: t("settings.main.postal") },
   ]);
@@ -544,6 +547,9 @@
     {:else if section === "appearance"}
       <h2>{t("settings.main.appearance")}</h2>
       <p class="lede">{t("settings.main.appearance_hint")}</p>
+    {:else if section === "accessibility"}
+      <h2>{t("settings.main.accessibility")}</h2>
+      <p class="lede">{t("settings.main.accessibility_hint")}</p>
     {:else if section === "advanced"}
       <h2>{t("settings.main.advanced")}</h2>
       <p class="lede">{t("settings.main.advanced_hint")}</p>
@@ -1249,6 +1255,8 @@
           </label>
           {#if locale.error}<p class="error" role="alert">{locale.errorText}</p>{/if}
           <div class="customization"><Customization /></div>
+        {:else if section === "accessibility"}
+          <AccessibilitySettings />
         {:else if section === "advanced"}
           <label class="setting">
             <div>
@@ -1321,7 +1329,7 @@
     white-space: nowrap;
   }
   .me-sub {
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     color: var(--muted);
   }
   .account {
@@ -1359,7 +1367,7 @@
     gap: 10px;
     padding-block: 10px 12px;
     padding-inline: 60px 14px;
-    font-size: 13px;
+    font-size: 0.8125rem;
     color: var(--muted);
   }
   .remove-confirm > span {
@@ -1385,7 +1393,7 @@
     border-radius: 50%;
     object-fit: cover;
     flex: none;
-    font-size: 32px;
+    font-size: 2rem;
   }
   .profile-fields {
     flex: 1;
@@ -1397,7 +1405,7 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
-    font-size: 12px;
+    font-size: 0.75rem;
     font-weight: 600;
     color: var(--muted);
   }
@@ -1426,7 +1434,7 @@
     border-radius: 50%;
     background: rgba(0, 0, 0, 0.55);
     color: #fff;
-    font-size: 11px;
+    font-size: 0.6875rem;
     font-weight: 600;
     opacity: 0;
     transition: opacity calc(0.15s * var(--motion-scale)) var(--ease);
@@ -1437,14 +1445,14 @@
     opacity: 1;
   }
   .link-button.small {
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     color: var(--muted);
   }
   .file-input {
     display: none;
   }
   .readonly {
-    font-size: 14px;
+    font-size: 0.875rem;
     font-weight: 400;
     color: var(--text);
   }
@@ -1470,7 +1478,7 @@
     align-items: center;
     gap: 8px;
     color: var(--muted);
-    font-size: 13px;
+    font-size: 0.8125rem;
   }
   .unit-field select.field {
     min-width: 0;
@@ -1502,7 +1510,7 @@
     border: 0;
     color: var(--text);
     font: inherit;
-    font-size: 14px;
+    font-size: 0.875rem;
     cursor: pointer;
   }
   .link-button:hover {

@@ -145,6 +145,6 @@
   .requests li { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--line); }
   .requests label { flex: 1; min-width: 0; }
   .requests label span { overflow-wrap: anywhere; }
-  .outcomes li { display: flex; flex-direction: column; gap: 3px; margin: 8px 0; font-size: 13px; }
+  .outcomes li { display: flex; flex-direction: column; gap: 3px; margin: 8px 0; font-size: 0.8125rem; }
   .refused, .deny { color: var(--danger); }
 </style>

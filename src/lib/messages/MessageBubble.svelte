@@ -25,6 +25,7 @@
   import { labels } from "$lib/state/labels.svelte";
   import { transcription } from "$lib/state/transcription.svelte";
   import Transcript from "$lib/messages/Transcript.svelte";
+  import { mediaAltText } from "$lib/utils/accessibility.svelte";
 
   let { message, vm, api, albumCell = false }: { message: StoredMessage; vm: BubbleVm; api: BubbleApi; albumCell?: boolean } = $props();
 
@@ -36,7 +37,10 @@
   const messageLabels = $derived(labels.account === session.activeAccount && !message.revoked && !message.deleted && !message.spoiler && !message.system_kind && !message.media_once_kind && !isUnavailable(message)
     ? labels.view.labels.filter((label) => labels.messageIds(message.chat, message.id).includes(label.id)) : []);
 
-  /** The media kind a downloaded file's extension implies. */
+  /** Meaningful alt text for media: sender + media kind + caption (WCAG 1.1.1). */
+  const altText = $derived(
+    mediaAltText(vm.senderText || (message.from_me ? t("chat.you") : message.sender), message.media_kind ?? "image", vm.caption || message.text),
+  );
   function kindOfFile(path: string) {
     if (/\.(ogg|opus|mp3|m4a|aac|wav)$/i.test(path)) return "audio";
     if (/\.(mp4|mov|m4v|webm|mkv)$/i.test(path)) return "video";
@@ -50,7 +54,19 @@
   {#if vm.isEdited}<span class="edited-mark">{t("content.edited")}</span>{/if}
   {#if !albumCell}{api.formatTime(message.timestamp)}{/if}
   {#if message.from_me}
-    <span class="ticks" class:read={message.status === "read"} title={message.status ?? t("content.pending")}>
+    <span
+      class="ticks"
+      class:read={message.status === "read"}
+      class:delivered={message.status === "delivered"}
+      role="img"
+      aria-label={message.status === "read"
+        ? t("content.read")
+        : message.status === "delivered"
+          ? t("content.delivered")
+          : message.status === "sent"
+            ? t("content.sent")
+            : t("content.pending")}
+      title={message.status ?? t("content.pending")}>
       {#if message.status === "pending"}
         <Icon name="clock" size={14} />
       {:else if message.status === "sent"}
@@ -236,7 +252,7 @@
       <VideoPlayer src={mediaSrc(message.media_path)} path={message.media_path} poster={message.media_thumb} round autoplay={false} />
     {:else if message.media_kind === "round_video"}
       <button class="round-video-pending" disabled={vm.downloading} onclick={() => api.ondownload(message)} aria-label={t("content.download_round_video")}>
-        {#if message.media_thumb}<img src={mediaSrc(message.media_thumb)} alt="" loading="lazy" decoding="async" />{/if}
+        {#if message.media_thumb}<img src={mediaSrc(message.media_thumb)} alt={altText} loading="lazy" decoding="async" />{/if}
         {#if vm.downloading}<Spinner />{:else}<Icon name="download" size={28} />{/if}
       </button>
     {:else if ["image", "video", "gif"].includes(message.media_kind ?? "") && !message.media_path}
@@ -268,10 +284,10 @@
               ? api.onopenviewer(message)
               : api.ondownload(message)}>
         {#if message.media_thumb}
-          <img class="media" src={mediaSrc(message.media_thumb)} alt="" loading="lazy" decoding="async" />
+          <img class="media" src={mediaSrc(message.media_thumb)} alt={altText} loading="lazy" decoding="async" />
         {:else}
           <!-- No stored thumbnail: draw the file's own first frame. -->
-          <video class="media" src={convertFileSrc(message.media_path!)} preload="metadata" muted playsinline></video>
+          <video class="media" src={convertFileSrc(message.media_path!)} preload="metadata" muted playsinline aria-label={altText}></video>
         {/if}
         {#if filtered}
           <span class="media-overlay once-overlay">
@@ -434,7 +450,7 @@
 <style>
   .download-diagnostic pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   .message-labels { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 5px; }
-  .message-labels span { border-radius: 8px; padding: 2px 6px; background: var(--raised); color: var(--muted); font-size: 11px; }
+  .message-labels span { border-radius: 8px; padding: 2px 6px; background: var(--raised); color: var(--muted); font-size: 0.6875rem; }
   .spoiler-reveal { padding: 8px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--raised); color: var(--text); font: inherit; cursor: pointer; }
   .round-video-pending { position: relative; display: grid; place-items: center; width: 240px; height: 240px; padding: 0; border: 0; border-radius: 50%; overflow: hidden; background: var(--raised); color: var(--text); cursor: pointer; }
   .round-video-pending img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
@@ -499,7 +515,7 @@
     border-color: var(--accent);
     background: var(--accent);
     color: var(--accent-text);
-    font-size: 12px;
+    font-size: 0.75rem;
     font-weight: 700;
     line-height: 1;
   }
@@ -608,12 +624,12 @@
     gap: 4px;
     margin-bottom: 2px;
     color: var(--muted);
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     font-style: italic;
   }
   .member-label {
     margin-top: -4px;
-    font-size: 12px;
+    font-size: 0.75rem;
     color: var(--muted);
   }
   .revoked {
@@ -690,7 +706,7 @@
   }
   .once small {
     color: var(--muted);
-    font-size: 12px;
+    font-size: 0.75rem;
   }
   .once.spent {
     cursor: default;
@@ -705,7 +721,7 @@
     border: 2px dashed var(--accent);
     border-radius: 50%;
     color: var(--accent);
-    font-size: 12px;
+    font-size: 0.75rem;
     font-weight: 700;
   }
   .once.spent .once-mark {
@@ -764,7 +780,7 @@
        the overlay, which can hold two lines, has to restore it. */
     line-height: 1.3;
     color: var(--text);
-    font-size: 14px;
+    font-size: 0.875rem;
     font-weight: 700;
     letter-spacing: 1px;
     text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
@@ -779,7 +795,7 @@
     box-sizing: border-box;
     border-radius: 999px;
     background: rgba(6, 8, 10, 0.6);
-    font-size: 16px;
+    font-size: 1rem;
     text-shadow: none;
   }
   /* A kept one-time copy sits behind its filter until clicked once. */
@@ -793,7 +809,7 @@
     flex-direction: column;
     gap: 8px;
     background: rgba(6, 8, 10, 0.35);
-    font-size: 13px;
+    font-size: 0.8125rem;
     font-weight: 600;
     letter-spacing: 0;
   }
@@ -804,7 +820,7 @@
     gap: 2px;
   }
   .once-overlay small {
-    font-size: 11.5px;
+    font-size: 0.7188rem;
     font-weight: 500;
     color: var(--muted);
   }
@@ -833,7 +849,7 @@
     background: linear-gradient(135deg, var(--raised), var(--raised-2));
     color: var(--muted);
     font: inherit;
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     cursor: pointer;
   }
   .media-stub:hover .media-fetch {
@@ -858,7 +874,7 @@
     border-radius: 999px;
     color: var(--accent-text);
     font: inherit;
-    font-size: 12px;
+    font-size: 0.75rem;
     padding: 4px 12px 4px 10px;
     cursor: pointer;
   }
@@ -876,7 +892,7 @@
     border-radius: 999px;
     color: var(--danger);
     font: inherit;
-    font-size: 12px;
+    font-size: 0.75rem;
     padding: 4px 12px 4px 10px;
     cursor: pointer;
   }
@@ -884,7 +900,7 @@
     cursor: default;
   }
   .meta, :global(.meta-spacer) {
-    font-size: 11px;
+    font-size: 0.6875rem;
     line-height: 15px;
     font-variant-numeric: tabular-nums;
     color: color-mix(in srgb, var(--text) 60%, transparent);
@@ -945,7 +961,7 @@
     border: 2px dashed var(--faint);
     background: var(--surface);
     color: var(--muted);
-    font-size: 13px;
+    font-size: 0.8125rem;
     font-weight: 600;
     text-align: center;
   }
@@ -988,6 +1004,16 @@
   .ticks.read {
     color: var(--link);
   }
+  /* Non-colour cue (WCAG 1.4.1): read ticks are bolder and underlined in
+     addition to the blue colour, so delivered vs read never relies on hue. */
+  .ticks.read :global(svg) {
+    filter: drop-shadow(0 0 1px currentColor);
+    stroke-width: 2.5;
+  }
+  .ticks.delivered {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
   /* WhatsApp's reaction pill, hanging off the bubble's bottom edge. */
   .reactions {
     position: absolute;
@@ -1001,7 +1027,7 @@
     border-radius: 999px;
     background: var(--surface);
     font: inherit;
-    font-size: 13px;
+    font-size: 0.8125rem;
     line-height: 18px;
     color: var(--muted);
     cursor: pointer;
@@ -1013,7 +1039,7 @@
   }
   .reaction-count {
     margin-inline-start: 3px;
-    font-size: 12px;
+    font-size: 0.75rem;
   }
   @keyframes shimmer {
     to {

@@ -86,8 +86,8 @@
   dialog { width: min(560px, calc(100vw - 32px)); box-sizing: border-box; padding: 18px; border: 1px solid var(--line); border-radius: var(--radius-lg); color: var(--text); background: var(--surface); box-shadow: 0 8px 28px var(--shadow); }
   dialog::backdrop { background: var(--scrim); }
   header, footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-  h2 { margin: 0; font-size: 18px; }
-  p { margin: 10px 0; color: var(--muted); font-size: 13px; }
+  h2 { margin: 0; font-size: 1.125rem; }
+  p { margin: 10px 0; color: var(--muted); font-size: 0.8125rem; }
   video { display: block; width: 100%; max-height: 50vh; object-fit: contain; background: #000; border-radius: var(--radius-sm); }
   footer { justify-content: flex-end; margin-top: 14px; }
   .error { color: var(--danger); }

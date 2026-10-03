@@ -141,20 +141,20 @@
   dialog { width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 64px); overflow: auto; box-sizing: border-box; padding: 20px; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
   dialog::backdrop { background: var(--scrim); }
   header, footer, .selected li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  h2 { margin: 0; font-size: 17px; }
-  h3 { font-size: 14px; }
-  label { display: grid; gap: 6px; margin: 10px 0; font-size: 13px; }
+  h2 { margin: 0; font-size: 1.0625rem; }
+  h3 { font-size: 0.875rem; }
+  label { display: grid; gap: 6px; margin: 10px 0; font-size: 0.8125rem; }
   input:not([type="checkbox"]), select { box-sizing: border-box; width: 100%; padding: 8px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
   ul { margin: 0; padding: 0; list-style: none; }
   .catalog { max-height: 220px; overflow-y: auto; }
   .catalog label, .check { display: flex; align-items: flex-start; gap: 8px; }
   .catalog span, .selected span { overflow-wrap: anywhere; }
-  small { display: block; margin-top: 3px; font-size: 12px; color: var(--muted); }
-  .muted { color: var(--muted); font-size: 12px; }
+  small { display: block; margin-top: 3px; font-size: 0.75rem; color: var(--muted); }
+  .muted { color: var(--muted); font-size: 0.75rem; }
   fieldset { margin: 12px 0; border: 1px solid var(--line-strong); border-radius: 6px; }
   button { padding: 5px 8px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--bg); color: var(--text); font: inherit; cursor: pointer; }
-  .selected li { padding: 6px 0; font-size: 13px; }
+  .selected li { padding: 6px 0; font-size: 0.8125rem; }
   footer { justify-content: flex-end; margin-top: 16px; }
-  .error { color: var(--danger); font-size: 13px; }
+  .error { color: var(--danger); font-size: 0.8125rem; }
   button:disabled { opacity: .5; cursor: default; }
 </style>

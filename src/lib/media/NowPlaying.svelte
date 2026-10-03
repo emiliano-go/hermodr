@@ -95,7 +95,7 @@
     place-items: center;
     background: var(--raised-2);
     color: var(--text);
-    font-size: 12px;
+    font-size: 0.75rem;
     font-weight: 600;
   }
   .name {
@@ -104,7 +104,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 13px;
+    font-size: 0.8125rem;
     color: var(--text);
   }
   .rate {
@@ -117,7 +117,7 @@
     background: color-mix(in srgb, var(--text) 14%, transparent);
     color: var(--text);
     font: inherit;
-    font-size: 12px;
+    font-size: 0.75rem;
     font-weight: 600;
     cursor: pointer;
   }
@@ -173,7 +173,7 @@
   }
   .time {
     flex: none;
-    font-size: 11px;
+    font-size: 0.6875rem;
     color: var(--muted);
     font-variant-numeric: tabular-nums;
   }

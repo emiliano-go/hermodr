@@ -112,7 +112,7 @@
     padding: 0;
     color: var(--accent-text);
     font: inherit;
-    font-size: 13px;
+    font-size: 0.8125rem;
     cursor: pointer;
   }
   .toggle:hover {
@@ -139,7 +139,7 @@
   }
   .code {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 30px;
+    font-size: 1.875rem;
     font-weight: 600;
     letter-spacing: 3px;
     color: var(--text);
@@ -150,14 +150,14 @@
   .hint {
     margin: 0;
     color: var(--muted);
-    font-size: 13px;
+    font-size: 0.8125rem;
     line-height: 1.5;
     text-align: center;
   }
   .error {
     margin: 0;
     color: var(--danger, #e5484d);
-    font-size: 13px;
+    font-size: 0.8125rem;
     text-align: center;
   }
 </style>

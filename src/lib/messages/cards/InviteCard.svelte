@@ -155,7 +155,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 11.5px;
+    font-size: 0.7188rem;
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
@@ -195,12 +195,12 @@
     white-space: nowrap;
   }
   .meta {
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     color: var(--muted);
   }
   .description {
     margin: 0;
-    font-size: 13px;
+    font-size: 0.8125rem;
     color: var(--muted);
     display: -webkit-box;
     -webkit-line-clamp: 3;

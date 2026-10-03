@@ -239,7 +239,7 @@
     pointer-events: none;
   }
   .time {
-    font-size: 11px;
+    font-size: 0.6875rem;
     color: var(--muted);
     font-variant-numeric: tabular-nums;
   }
@@ -253,7 +253,7 @@
     background: color-mix(in srgb, var(--text) 14%, transparent);
     color: var(--text);
     font: inherit;
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     font-weight: 600;
     cursor: pointer;
   }

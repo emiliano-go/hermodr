@@ -254,7 +254,7 @@
   .avatar.blank {
     background: hsl(var(--hue) 28% 24%);
     color: hsl(var(--hue) 45% 80%);
-    font-size: 28px;
+    font-size: 1.75rem;
     font-weight: 600;
   }
   .body {
@@ -265,7 +265,7 @@
   }
   h2 {
     margin: 0;
-    font-size: 20px;
+    font-size: 1.25rem;
     font-weight: 600;
     display: flex;
     align-items: center;
@@ -277,7 +277,7 @@
     border-radius: 4px;
     background: var(--accent-soft);
     color: var(--accent-text);
-    font-size: 11px;
+    font-size: 0.6875rem;
     font-weight: 600;
   }
   .handles {
@@ -285,7 +285,7 @@
     flex-wrap: wrap;
     gap: 4px 10px;
     color: var(--muted);
-    font-size: 13px;
+    font-size: 0.8125rem;
   }
   .badge,
   .tag {
@@ -295,7 +295,7 @@
     gap: 4px;
     padding: 2px 8px;
     border-radius: 999px;
-    font-size: 12px;
+    font-size: 0.75rem;
   }
   .badge {
     background: var(--accent-soft);
@@ -313,7 +313,7 @@
   }
   h3 {
     margin: 0 0 4px;
-    font-size: 11px;
+    font-size: 0.6875rem;
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -321,7 +321,7 @@
   }
   p {
     margin: 0;
-    font-size: 13.5px;
+    font-size: 0.8438rem;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
@@ -330,7 +330,7 @@
   }
   .alias-note {
     color: var(--muted);
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     line-height: 1.4;
   }
   .alias-list {
@@ -349,7 +349,7 @@
     border-radius: 999px;
     background: var(--raised);
     color: var(--text);
-    font-size: 12px;
+    font-size: 0.75rem;
   }
   .alias-drop {
     display: grid;
@@ -387,7 +387,7 @@
     background: var(--surface);
     color: inherit;
     font: inherit;
-    font-size: 14px;
+    font-size: 0.875rem;
   }
   .field:focus {
     outline: none;
@@ -420,7 +420,7 @@
   .error-text {
     margin: 8px 0 0;
     color: var(--danger);
-    font-size: 13px;
+    font-size: 0.8125rem;
   }
   .message {
     display: flex;

@@ -31,6 +31,7 @@ import { keywords } from "./keywords.svelte";
 import { t } from "../i18n/localizer.ts";
 import { uiMessage } from "./localized.ts";
 import { notificationHistory } from "$lib/notifications/history-store";
+import { announceMessage, announceStatus, announceTyping } from "$lib/utils/accessibility.svelte";
 
 export type EventHost = {
   scrollToBottom(): void;
@@ -351,6 +352,11 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       session.syncPending = session.syncApplied = 0;
       // A dropped connection spends any code in flight.
       session.clearPairCode();
+      try {
+        announceStatus("Disconnected", session.gateDone);
+      } catch {
+        // Announcements must never break event handling.
+      }
       break;
     case "uploadProgress":
       composer.noteUploadProgress(payload.token, payload.sent, payload.total);
@@ -421,6 +427,23 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       if (fresh && !fromMe) {
         if (payload.kind === "message") notifyForMessage(payload.message, true);
         else void notifyForHint(chat, payload.id, true);
+        // Screen-reader announcement (WCAG 4.1.3), suppressed during the
+        // initial sync backlog via the gate signal.
+        try {
+          const gateReady = session.gateDone;
+          const chatName = chats.chats.find((c) => c.chat === chat)?.display_name
+            ?? members.displayName(null, chat);
+          if (payload.kind === "message") {
+            const m = payload.message;
+            const preview = (m.text ?? "").trim()
+              || (m.media_kind ? (m.media_kind === "audio" ? "Voice message" : m.media_kind) : "New message");
+            announceMessage(chatName, preview.slice(0, 220), gateReady, { mention: !!m.mentioned });
+          } else {
+            announceMessage(chatName, "New message", gateReady);
+          }
+        } catch {
+          // Announcements must never break event handling.
+        }
       }
       break;
     }
@@ -477,6 +500,11 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
           session.gateDone = true;
           session.finalizing = false;
           flushDeferred(host);
+          try {
+            announceStatus("Sync complete", true);
+          } catch {
+            // Announcements must never break event handling.
+          }
         }
       }
       break;
@@ -523,6 +551,13 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
     case "typing":
       members.setTyping(payload.chat, payload.sender, payload.state);
       memberSheet.typing(payload.chat, payload.sender, payload.state);
+      if (payload.state !== "paused") {
+        try {
+          announceTyping(members.displayName(null, payload.sender), session.gateDone);
+        } catch {
+          // Announcements must never break event handling.
+        }
+      }
       break;
     case "presence":
       members.setPresence(payload.jid, payload.online, payload.last_seen);

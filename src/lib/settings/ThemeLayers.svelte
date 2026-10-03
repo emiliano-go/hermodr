@@ -2,9 +2,24 @@
   import { chats } from "$lib/state/chats.svelte";
   import { session } from "$lib/state/session.svelte";
   import { activeTheme, appPicture, applyTheme, chatPicture, customization, save as saveCustomization } from "$lib/utils/theme.svelte";
+  import { accessibility, applyAccessibility } from "$lib/utils/accessibility.svelte";
 
   $effect(() => {
     applyTheme(activeTheme());
+    // The accessibility layer owns motion-off, font scale and data attributes;
+    // re-apply after the theme so its overrides win.
+    void accessibility.enabled;
+    void accessibility.reduceMotion;
+    void accessibility.highContrast;
+    void accessibility.reduceTransparency;
+    void accessibility.targetSize;
+    void accessibility.alwaysShowFocus;
+    void accessibility.enhancedFocus;
+    void accessibility.colorBlindPalette;
+    void accessibility.textScale;
+    void accessibility.textSpacing;
+    void accessibility.fontChoice;
+    applyAccessibility();
     saveCustomization();
   });
 

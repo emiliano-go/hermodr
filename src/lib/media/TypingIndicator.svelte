@@ -86,14 +86,14 @@
     gap: 8px;
   }
   .typer {
-    font-size: 12.8px;
+    font-size: 0.8rem;
     font-weight: 500;
     line-height: 22px;
     color: color-mix(in srgb, hsl(var(--hue) 65% 68%) 25%, var(--text));
   }
   .typing-more {
     color: var(--muted);
-    font-size: 12.8px;
+    font-size: 0.8rem;
     padding-inline-start: 2px;
   }
   .recording {
@@ -101,6 +101,6 @@
     align-items: center;
     gap: 6px;
     color: var(--accent);
-    font-size: 13px;
+    font-size: 0.8125rem;
   }
 </style>

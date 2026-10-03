@@ -159,14 +159,14 @@
   }
   .question {
     font-weight: 600;
-    font-size: 15px;
+    font-size: 0.9375rem;
     overflow-wrap: anywhere;
   }
-  .feedback, .error { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+  .feedback, .error { margin: 0; font-size: 0.8125rem; overflow-wrap: anywhere; }
   .error { color: var(--danger, #ef7777); }
   .hint,
   .footer {
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     color: var(--muted);
     overflow-wrap: anywhere;
   }
@@ -222,7 +222,7 @@
   }
   .count {
     color: var(--muted);
-    font-size: 13px;
+    font-size: 0.8125rem;
   }
   .option-name {
     flex: 1;
@@ -267,13 +267,13 @@
     display: flex;
     justify-content: space-between;
     font-weight: 600;
-    font-size: 13px;
+    font-size: 0.8125rem;
   }
   .voter {
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 13.5px;
+    font-size: 0.8438rem;
   }
   .link {
     padding: 0;

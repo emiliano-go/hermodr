@@ -118,12 +118,12 @@
     align-items: baseline;
     gap: 8px;
     margin: 0;
-    font-size: 17px;
+    font-size: 1.0625rem;
     font-weight: 600;
   }
   .count {
     color: var(--muted);
-    font-size: 13.5px;
+    font-size: 0.8438rem;
     font-weight: 400;
   }
   .close {
@@ -161,11 +161,11 @@
     margin: 0;
     padding: 8px 12px 4px;
     color: var(--muted);
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     font-weight: 600;
   }
   .emoji {
-    font-size: 15px;
+    font-size: 0.9375rem;
   }
   .remove {
     display: grid;
@@ -211,7 +211,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 14.5px;
+    font-size: 0.9062rem;
   }
   /* Avatar renders this class inside its own template, so it needs the
      unscoped selector to reach it. */
@@ -224,7 +224,7 @@
     border-radius: 50%;
     background: hsl(var(--hue) 28% 24%);
     color: hsl(var(--hue) 45% 80%);
-    font-size: 14px;
+    font-size: 0.875rem;
     font-weight: 500;
     letter-spacing: 0.02em;
     user-select: none;

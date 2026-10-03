@@ -64,10 +64,10 @@
 <style>
   .notification-history { min-width: 0; color: var(--text); padding-top: 1rem; }
   header { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
-  h2 { margin: 0; font-size: 18px; }
-  header p, .metadata, time { color: var(--muted); font-size: 12px; }
+  h2 { margin: 0; font-size: 1.125rem; }
+  header p, .metadata, time { color: var(--muted); font-size: 0.75rem; }
   header p { margin: 6px 0 16px; }
-  .close { background: transparent; color: inherit; border: 0; font-size: 22px; cursor: pointer; }
+  .close { background: transparent; color: inherit; border: 0; font-size: 1.375rem; cursor: pointer; }
   ol { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
   .entry { width: 100%; display: grid; gap: 6px; padding: 12px; text-align: start; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: inherit; cursor: pointer; }
   .entry:hover { background: var(--raised); }
@@ -76,7 +76,7 @@
   .heading { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
   strong, .metadata, .body { overflow-wrap: anywhere; }
   time { white-space: nowrap; }
-  .body { font-size: 13px; white-space: pre-wrap; }
-  .empty, .offline { color: var(--muted); font-size: 13px; }
-  .error { color: var(--danger); font-size: 13px; overflow-wrap: anywhere; }
+  .body { font-size: 0.8125rem; white-space: pre-wrap; }
+  .empty, .offline { color: var(--muted); font-size: 0.8125rem; }
+  .error { color: var(--danger); font-size: 0.8125rem; overflow-wrap: anywhere; }
 </style>

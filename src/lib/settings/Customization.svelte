@@ -566,7 +566,7 @@
   }
   h3 {
     margin: 0;
-    font-size: 11.5px;
+    font-size: 0.7188rem;
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -575,7 +575,7 @@
   .hint {
     margin: 0;
     color: var(--muted);
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     line-height: 1.45;
   }
   .spacer {
@@ -617,7 +617,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 0 4px;
-    font-size: 13px;
+    font-size: 0.8125rem;
     font-weight: 500;
   }
   .theme-card.active .card-name {
@@ -738,7 +738,7 @@
   }
   .segmented.small button {
     padding: 3px 10px;
-    font-size: 12.5px;
+    font-size: 0.7812rem;
   }
   .input {
     background: var(--bg);
@@ -747,7 +747,7 @@
     padding: 6px 9px;
     color: inherit;
     font: inherit;
-    font-size: 13px;
+    font-size: 0.8125rem;
     outline: none;
   }
   .input:focus {
@@ -762,7 +762,7 @@
     width: 100%;
     box-sizing: border-box;
     resize: vertical;
-    font: 12.5px/1.5 ui-monospace, Consolas, monospace;
+    font: 0.7812rem/1.5 ui-monospace, Consolas, monospace;
   }
   .import {
     display: flex;
@@ -776,7 +776,7 @@
   .error-text {
     margin: 0;
     color: var(--danger);
-    font-size: 12.5px;
+    font-size: 0.7812rem;
   }
 
   /* Quick settings */
@@ -804,7 +804,7 @@
     min-width: 0;
   }
   .q-title {
-    font-size: 14px;
+    font-size: 0.875rem;
   }
   .accents {
     display: flex;
@@ -860,7 +860,7 @@
     width: 52px;
     text-align: end;
     font-variant-numeric: tabular-nums;
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     color: var(--muted);
   }
   .segmented {
@@ -877,7 +877,7 @@
     border-radius: calc(var(--radius) - 2px);
     color: var(--muted);
     font: inherit;
-    font-size: 13px;
+    font-size: 0.8125rem;
     cursor: pointer;
   }
   .segmented button.active {
@@ -913,7 +913,7 @@
     background: var(--raised);
   }
   .g-name {
-    font-size: 14px;
+    font-size: 0.875rem;
     min-width: 120px;
   }
   .g-strip {
@@ -923,7 +923,7 @@
   }
   .g-count {
     color: var(--faint);
-    font-size: 12px;
+    font-size: 0.75rem;
     font-variant-numeric: tabular-nums;
   }
   .g-chevron {
@@ -946,7 +946,7 @@
     align-items: center;
     gap: 10px;
     min-height: 38px;
-    font-size: 13px;
+    font-size: 0.8125rem;
   }
   .token-label {
     min-width: 0;
@@ -956,7 +956,7 @@
     width: 100%;
     box-sizing: border-box;
     font-family: ui-monospace, Consolas, monospace;
-    font-size: 12px;
+    font-size: 0.75rem;
     text-overflow: ellipsis;
   }
   /* Colour over a checkerboard, so transparency shows. */
@@ -989,7 +989,7 @@
     padding: 18px;
     text-align: center;
     color: var(--faint);
-    font-size: 13px;
+    font-size: 0.8125rem;
     border: 1px dashed var(--line-strong);
     border-radius: var(--radius-lg);
   }

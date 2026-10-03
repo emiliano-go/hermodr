@@ -183,7 +183,7 @@
 <style>
   .gallery { display: flex; flex-direction: column; min-height: 0; flex: 1; background: var(--bg); color: var(--text); }
   header { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid var(--line); }
-  h2 { font-size: 18px; margin: 0; }
+  h2 { font-size: 1.125rem; margin: 0; }
   button, select, input { font: inherit; color: inherit; }
   button { cursor: pointer; border: 1px solid var(--line); border-radius: 7px; padding: 8px 12px; background: var(--surface); }
   button:hover { background: var(--raised); }
@@ -194,7 +194,7 @@
   nav button { display: inline-flex; align-items: center; gap: 6px; }
   nav button.active { color: var(--accent); border-color: var(--accent); }
   .filters { display: flex; flex-wrap: wrap; gap: 10px; padding: 14px 20px; border-bottom: 1px solid var(--line); }
-  label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--muted); }
+  label { display: flex; flex-direction: column; gap: 5px; font-size: 0.75rem; color: var(--muted); }
   select, input { padding: 7px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); min-width: 0; max-width: 220px; }
   .results { flex: 1; min-height: 0; overflow: auto; padding: 20px; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; }
@@ -202,18 +202,18 @@
   article { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
   .preview { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; width: 100%; height: 160px; padding: 0; position: relative; border: 0; border-radius: 0; background: var(--raised); }
   .preview img { width: 100%; height: 100%; object-fit: cover; }
-  .kind { position: absolute; bottom: 6px; inset-inline-start: 6px; padding: 3px 6px; border-radius: 5px; color: white; background: #0009; font-size: 11px; }
+  .kind { position: absolute; bottom: 6px; inset-inline-start: 6px; padding: 3px 6px; border-radius: 5px; color: white; background: #0009; font-size: 0.6875rem; }
   .hidden { color: var(--muted); }
-  .caption { margin: 9px 12px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+  .caption { margin: 9px 12px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.8125rem; }
   footer { display: flex; align-items: center; gap: 8px; padding: 10px 12px; }
-  .details { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; font-size: 12px; }
+  .details { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; font-size: 0.75rem; }
   .details strong, .details span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  time, .details span { color: var(--muted); font-size: 11px; }
+  time, .details span { color: var(--muted); font-size: 0.6875rem; }
   .link-content { padding: 12px; overflow-wrap: anywhere; }
   .link-thumb { width: 64px; height: 64px; object-fit: cover; float: inline-end; margin: 0 0 8px 8px; border-radius: 5px; }
   .url { display: flex; align-items: baseline; gap: 5px; padding: 5px 0; width: 100%; text-align: start; color: var(--accent); border: 0; background: transparent; overflow-wrap: anywhere; }
-  .link-content p { font-size: 13px; margin: 8px 0 0; white-space: pre-wrap; }
-  .paging { display: flex; align-items: center; justify-content: center; gap: 18px; padding: 12px 20px; border-top: 1px solid var(--line); font-size: 13px; }
+  .link-content p { font-size: 0.8125rem; margin: 8px 0 0; white-space: pre-wrap; }
+  .paging { display: flex; align-items: center; justify-content: center; gap: 18px; padding: 12px 20px; border-top: 1px solid var(--line); font-size: 0.8125rem; }
   .empty { text-align: center; padding: 35px 15px; color: var(--muted); }
   .error { color: var(--danger); padding: 10px 20px; overflow-wrap: anywhere; }
   .error button { margin-inline-start: 10px; }

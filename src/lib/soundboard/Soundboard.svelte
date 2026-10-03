@@ -97,18 +97,18 @@
   .soundboard { position: absolute; bottom: calc(100% + 8px); inset-inline-start: 0; z-index: 30; width: min(420px, calc(100vw - 32px)); max-height: min(65vh, 600px); overflow: auto; box-sizing: border-box; padding: 14px; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 8px 24px var(--shadow); }
   header, li, .actions { display: flex; align-items: center; gap: 8px; }
   header { justify-content: space-between; }
-  h2 { font-size: 17px; margin: 0; }
-  p, .description { font-size: 12px; color: var(--muted); }
+  h2 { font-size: 1.0625rem; margin: 0; }
+  p, .description { font-size: 0.75rem; color: var(--muted); }
   .error { color: var(--danger); overflow-wrap: anywhere; }
   .soundboard-error { position: absolute; bottom: calc(100% + 8px); inset-inline-start: 0; z-index: 30; margin: 0; max-width: min(420px, calc(100vw - 32px)); padding: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
   ul { list-style: none; padding: 0; display: grid; gap: 8px; }
   .send { flex: 1; min-width: 0; display: grid; gap: 3px; text-align: start; }
   .send strong { overflow-wrap: anywhere; }
-  .send span { color: var(--muted); font-size: 11px; }
+  .send span { color: var(--muted); font-size: 0.6875rem; }
   button, input, select { font: inherit; color: var(--text); background: var(--raised); border: 1px solid var(--line); border-radius: var(--radius); padding: 7px; }
   button { cursor: pointer; } button:disabled { opacity: .5; cursor: default; }
   button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   fieldset { border: 0; margin: 0; padding: 8px 0 0; display: grid; gap: 8px; }
-  legend { font-size: 13px; } label { font-size: 12px; display: grid; gap: 4px; }
+  legend { font-size: 0.8125rem; } label { font-size: 0.75rem; display: grid; gap: 4px; }
   input, select { min-width: 0; box-sizing: border-box; width: 100%; }
 </style>

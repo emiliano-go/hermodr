@@ -268,8 +268,8 @@ import { loadEmojis, recentEmojis, rememberEmoji, searchEmojis, type Emoji } fro
   .space-row:has(> .name[aria-pressed="true"]) { background: var(--raised-2); }
   .space-row .name:hover, .space-row .name[aria-pressed="true"], .space-row .toggle:hover { background: transparent; }
   header { justify-content: space-between; }
-  h2 { margin: 0; font-size: 16px; }
-  p { font-size: 12px; }
+  h2 { margin: 0; font-size: 1rem; }
+  p { font-size: 0.75rem; }
   .muted { color: var(--muted); }
   ul { margin: 0; padding: 0; list-style: none; }
   li ul { margin-inline-start: 18px; }
@@ -280,7 +280,7 @@ import { loadEmojis, recentEmojis, rememberEmoji, searchEmojis, type Emoji } fro
   .name span { margin-inline-end: 6px; }
   .name .glyph-icon { display: inline-flex; vertical-align: -2px; }
   .toggle { box-sizing: border-box; width: 24px; flex-shrink: 0; }
-  summary { list-style: none; padding: 4px 6px; border-radius: 6px; color: var(--muted); font-size: 14px; line-height: 1; }
+  summary { list-style: none; padding: 4px 6px; border-radius: 6px; color: var(--muted); font-size: 0.875rem; line-height: 1; }
   summary::-webkit-details-marker { display: none; }
   summary::marker { content: none; }
   summary:hover { background: var(--raised); color: var(--text); }
@@ -293,23 +293,23 @@ import { loadEmojis, recentEmojis, rememberEmoji, searchEmojis, type Emoji } fro
     background: var(--surface); border: 1px solid var(--line-strong);
     border-radius: var(--radius); box-shadow: var(--shadow);
   }
-  .actions button { font-size: 13px; }
+  .actions button { font-size: 0.8125rem; }
   .error { color: var(--danger); }
   dialog { width: min(440px, calc(100vw - 32px)); max-height: calc(100vh - 64px); overflow: auto; box-sizing: border-box; padding: 20px; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
   dialog::backdrop { background: var(--scrim); }
-  form, label { display: grid; gap: 6px; margin: 12px 0; font-size: 13px; }
-  .icon-field { position: relative; display: grid; gap: 6px; margin: 12px 0; font-size: 13px; }
+  form, label { display: grid; gap: 6px; margin: 12px 0; font-size: 0.8125rem; }
+  .icon-field { position: relative; display: grid; gap: 6px; margin: 12px 0; font-size: 0.8125rem; }
   .icon-current { display: flex; align-items: center; gap: 8px; }
-  .icon-current .preview { display: grid; place-items: center; width: 34px; height: 30px; flex: none; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--bg); font-size: 18px; }
-  .icon-current button:not(.link) { padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 12px; cursor: pointer; }
+  .icon-current .preview { display: grid; place-items: center; width: 34px; height: 30px; flex: none; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--bg); font-size: 1.125rem; }
+  .icon-current button:not(.link) { padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 0.75rem; cursor: pointer; }
   .icon-current button:not(.link):hover:not(:disabled) { border-color: var(--accent); }
   .icon-current button:not(.link)[aria-expanded="true"] { border-color: var(--accent); background: var(--accent-soft); }
-  .icon-current .link { padding: 0; border: 0; background: transparent; color: var(--accent-text); font-size: 12px; cursor: pointer; }
+  .icon-current .link { padding: 0; border: 0; background: transparent; color: var(--accent-text); font-size: 0.75rem; cursor: pointer; }
   .icon-popup { position: absolute; inset-inline: 0; top: calc(100% + 4px); z-index: 60; max-height: 260px; overflow-y: auto; padding: 10px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius); box-shadow: var(--shadow); }
   .icon-popup input[type="search"] { margin-bottom: 4px; }
   .icon-popup .muted { margin: 6px 0 0; }
   .icon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(32px, 1fr)); gap: 4px; margin-top: 8px; }
-  button.glyph { display: grid; place-items: center; min-height: 32px; padding: 2px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted); font-size: 18px; cursor: pointer; }
+  button.glyph { display: grid; place-items: center; min-height: 32px; padding: 2px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted); font-size: 1.125rem; cursor: pointer; }
   button.glyph:hover:not(:disabled) { background: var(--raised); color: var(--text); }
   button.glyph.chosen { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
   button.glyph:disabled { opacity: 0.5; cursor: default; }

@@ -170,9 +170,9 @@
 
 <style>
   section, form { display: grid; gap: 10px; }
-  h3 { margin: 0; font-size: 15px; }
-  p { margin: 0; color: var(--muted); font-size: 12px; }
-  label { display: grid; gap: 5px; font-size: 13px; }
+  h3 { margin: 0; font-size: 0.9375rem; }
+  p { margin: 0; color: var(--muted); font-size: 0.75rem; }
+  label { display: grid; gap: 5px; font-size: 0.8125rem; }
   .qr { width: 180px; height: 180px; background: #fff; padding: 8px; border-radius: var(--radius); }
   button, input { font: inherit; color: var(--text); background: var(--raised); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px; }
   input { width: 100%; min-width: 0; box-sizing: border-box; }

@@ -53,6 +53,29 @@
 
   const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
+  /** Keyboard equivalent of dragging (WCAG 2.5.7): arrows move, Shift+arrows resize. */
+  function nudge(dx: number, dy: number, resize = false) {
+    const step = 0.02;
+    if (!resize) {
+      crop = { ...crop, x: clamp(crop.x + dx * step, 0, 1 - crop.w), y: clamp(crop.y + dy * step, 0, 1 - crop.h) };
+      return;
+    }
+    const min = 0.05;
+    crop = {
+      ...crop,
+      w: clamp(crop.w + dx * step, min, 1 - crop.x),
+      h: clamp(crop.h + dy * step, min, 1 - crop.y),
+    };
+  }
+
+  function onCropKey(e: KeyboardEvent) {
+    const resize = e.shiftKey;
+    if (e.key === "ArrowLeft") { e.preventDefault(); nudge(-1, 0, resize); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); nudge(1, 0, resize); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); nudge(0, -1, resize); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); nudge(0, 1, resize); }
+  }
+
   function down(mode: string, e: PointerEvent) {
     e.stopPropagation();
     drag = { mode, x: e.clientX, y: e.clientY, start: { ...crop } };
@@ -96,8 +119,7 @@
     crop = { x, y, w, h };
   }
 
-  async function apply(use: (result: File) => void = onapply) {
-    const sx = Math.round(crop.x * natural.w);
+  async function apply(use: (result: File) => void = onapply) {    const sx = Math.round(crop.x * natural.w);
     const sy = Math.round(crop.y * natural.h);
     const sw = Math.max(1, Math.round(crop.w * natural.w));
     const sh = Math.max(1, Math.round(crop.h * natural.h));
@@ -122,8 +144,16 @@
     <img bind:this={image} {src} alt="" draggable="false" onload={loaded} />
     <div
       class="crop"
+      role="slider"
+      tabindex="0"
+      aria-label={t("content.crop_area")}
+      aria-valuemin={5}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(crop.w * 100)}
+      aria-valuetext={`${Math.round(crop.w * natural.w)} × ${Math.round(crop.h * natural.h)}`}
       style="left: {crop.x * 100}%; top: {crop.y * 100}%; width: {crop.w * 100}%; height: {crop.h * 100}%"
-      onpointerdown={(e) => down("move", e)}>
+      onpointerdown={(e) => down("move", e)}
+      onkeydown={onCropKey}>
       {#each ["nw", "ne", "sw", "se"] as corner (corner)}
         <span class="handle {corner}" onpointerdown={(e) => down(corner, e)}></span>
       {/each}
@@ -131,6 +161,7 @@
   </div>
   <div class="controls">
     <span class="dims">{Math.round(crop.w * natural.w)} × {Math.round(crop.h * natural.h)}</span>
+    <Button variant="ghost" type="button" onclick={() => (crop = { x: 0, y: 0, w: 1, h: 1 })}>{t("content.use_full_image")}</Button>
     {#if sizes}
       <select class="field" bind:value={longEdge} aria-label={t("content.size")}>
         <option value={0}>{t("content.original_size")}</option>
@@ -211,7 +242,7 @@
     gap: 8px;
   }
   .dims {
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     color: var(--muted);
     font-variant-numeric: tabular-nums;
   }

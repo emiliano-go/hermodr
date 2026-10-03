@@ -39,7 +39,7 @@
   .muted {
     margin: 4px 0;
     color: var(--muted);
-    font-size: 13px;
+    font-size: 0.8125rem;
   }
   .mute-list {
     list-style: none;
@@ -64,6 +64,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 14px;
+    font-size: 0.875rem;
   }
 </style>

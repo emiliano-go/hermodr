@@ -502,7 +502,7 @@
   .loading {
     margin: auto;
     color: var(--muted);
-    font-size: 13px;
+    font-size: 0.8125rem;
   }
   /* A pill over the list rather than a row in it: adding and removing a row at
      the top would shift the reader's place while a page is fetched. */
@@ -517,7 +517,7 @@
     border-radius: var(--radius-sm);
     background: var(--surface);
     color: var(--muted);
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     box-shadow: 0 1px 0.5px rgba(11, 20, 26, 0.13);
     pointer-events: none;
   }
@@ -529,7 +529,7 @@
   .day span {
     background: var(--surface);
     color: var(--muted);
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     padding: 5px 12px;
     border-radius: var(--radius-sm);
     box-shadow: 0 1px 0.5px rgba(11, 20, 26, 0.13);
@@ -545,7 +545,7 @@
     background: none;
     color: var(--accent-text);
     font: inherit;
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     font-weight: 600;
     cursor: pointer;
   }
@@ -567,7 +567,7 @@
     background: var(--surface);
     color: var(--muted);
     border-radius: var(--radius-sm);
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     text-align: center;
     box-shadow: 0 1px 0.5px rgba(11, 20, 26, 0.13);
   }

@@ -306,12 +306,12 @@
   }
   .intro-head h1 {
     margin: 0;
-    font-size: 26px;
+    font-size: 1.625rem;
     letter-spacing: -0.01em;
   }
   .intro-tag {
     color: var(--muted);
-    font-size: 13.5px;
+    font-size: 0.8438rem;
   }
   .intro-card {
     display: grid;
@@ -345,12 +345,12 @@
   }
   .intro-card.resume h2 {
     margin: 8px 0 0;
-    font-size: 22px;
+    font-size: 1.375rem;
     font-weight: 500;
   }
   .resume-who {
     color: var(--muted);
-    font-size: 13.5px;
+    font-size: 0.8438rem;
   }
   .account-choices {
     display: flex;
@@ -404,7 +404,7 @@
     justify-content: space-between;
     gap: 12px;
     color: var(--muted);
-    font-size: 12.5px;
+    font-size: 0.7812rem;
   }
   .resume-count {
     font-variant-numeric: tabular-nums;
@@ -456,7 +456,7 @@
     border: 0;
     color: var(--muted);
     font: inherit;
-    font-size: 12px;
+    font-size: 0.75rem;
     padding: 4px 10px;
     border-radius: 4px;
     cursor: pointer;
@@ -475,7 +475,7 @@
   }
   .intro-steps h2 {
     margin: 0 0 18px;
-    font-size: 24px;
+    font-size: 1.5rem;
     font-weight: 400;
   }
   .intro-steps ol {
@@ -485,7 +485,7 @@
     display: flex;
     flex-direction: column;
     gap: 14px;
-    font-size: 15px;
+    font-size: 0.9375rem;
     line-height: 1.45;
   }
   .intro-steps li {
@@ -502,14 +502,14 @@
     border-radius: 50%;
     border: 1px solid var(--line-strong);
     color: var(--muted);
-    font-size: 12.5px;
+    font-size: 0.7812rem;
   }
   .intro-progress {
     display: flex;
     flex-wrap: wrap;
     gap: 6px 18px;
     margin-top: 26px;
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     color: var(--faint);
   }
   .phase {
@@ -549,7 +549,7 @@
     gap: 8px;
   }
   .intro-label {
-    font-size: 12px;
+    font-size: 0.75rem;
     color: var(--faint);
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -574,7 +574,7 @@
   .intro-foot {
     margin: 0;
     color: var(--faint);
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     text-align: center;
   }
   .qr {

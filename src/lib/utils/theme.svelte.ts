@@ -528,9 +528,41 @@ export function duplicate(theme: Theme, name = `${theme.name} copy`): Theme {
 
 const reducedMotion = typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
 
-/** The theme's `motion-scale`, or 0 when the OS asks for reduced motion. */
+/** Reads the accessibility reduce-motion preference without importing the store (avoids a cycle). */
+function accessibilityWantsReducedMotion(): boolean | null {
+  try {
+    const raw = JSON.parse(localStorage.getItem("postal.accessibility") ?? "null");
+    if (!raw || typeof raw !== "object") return null;
+    if (raw.reduceMotion === "on") return true;
+    if (raw.reduceMotion === "off") return false;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Reads the accessibility high-contrast preference without importing the store. */
+function accessibilityWantsHighContrast(): boolean {
+  try {
+    const raw = JSON.parse(localStorage.getItem("postal.accessibility") ?? "null");
+    if (!raw || typeof raw !== "object") return false;
+    if (raw.highContrast === "on") return true;
+    if (raw.highContrast === "off") return false;
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+/** The theme's `motion-scale`, or 0 when reduced motion is requested (setting or OS). */
 function motionScale(theme: Theme): number {
-  if (reducedMotion?.matches) return 0;
+  const pref = accessibilityWantsReducedMotion();
+  if (pref === true) return 0;
+  if (pref === false) {
+    // Explicit "off" keeps theme motion even under an OS reduce request.
+  } else if (reducedMotion?.matches) {
+    return 0;
+  }
   const scale = Number.parseFloat(theme.tokens["motion-scale"] ?? "1");
   return Number.isFinite(scale) && scale >= 0 ? scale : 1;
 }
@@ -544,17 +576,123 @@ export function motion(ms: number): number {
  * Writes the theme onto the document root, clearing tokens it does not set.
  * At scale 0 `no-motion` stops decorative animations with fixed durations.
  * Progress spinners independently honor the OS reduced-motion preference.
+ * When the accessibility high-contrast preference (or its OS "system"
+ * fallback) is active, tokens pass through the high-contrast transform first.
  */
 export function applyTheme(theme: Theme) {
   const root = document.documentElement;
+  let tokens = theme.tokens;
+  if (wantsHighContrastTokens()) {
+    tokens = highContrastTransform(tokens);
+  }
   for (const { key } of TOKENS) {
-    const value = theme.tokens[key];
+    const value = (tokens as Record<string, string>)[key];
     if (value) root.style.setProperty(`--${key}`, value);
     else root.style.removeProperty(`--${key}`);
   }
   const scale = motionScale(theme);
-  root.style.setProperty("--motion-scale", String(scale));
-  root.classList.toggle("no-motion", scale === 0);
+  // The accessibility layer owns motion when it requests reduce; otherwise the
+  // theme scale applies.
+  if (typeof document !== "undefined" && document.documentElement.dataset.a11yMotion === "reduce") {
+    root.style.setProperty("--motion-scale", "0");
+    root.classList.add("no-motion");
+  } else {
+    root.style.setProperty("--motion-scale", String(scale));
+    root.classList.toggle("no-motion", scale === 0);
+  }
+}
+
+/** Whether the high-contrast token transform applies right now. */
+function wantsHighContrastTokens(): boolean {
+  try {
+    const raw = JSON.parse(localStorage.getItem("postal.accessibility") ?? "null");
+    if (raw && typeof raw === "object") {
+      if (raw.highContrast === "on") return true;
+      if (raw.highContrast === "off") return false;
+    }
+  } catch {
+    // Fall through to the OS preference.
+  }
+  if (typeof matchMedia === "function") {
+    try {
+      if (matchMedia("(prefers-contrast: more)").matches) return true;
+    } catch {
+      // Unsupported query; no transform.
+    }
+  }
+  return accessibilityWantsHighContrast();
+}
+
+/** Local high-contrast transform (mirrors the accessibility store; avoids a module cycle). */
+function highContrastTransform(tokens: Record<string, string>): Record<string, string> {
+  const parse = (value: string): [number, number, number] | null => {
+    const v = value.trim();
+    const h = /^#([0-9a-f]{6})$/i.exec(v);
+    if (h) {
+      const n = Number.parseInt(h[1], 16);
+      return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    }
+    const m = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(v);
+    return m ? [+m[1], +m[2], +m[3]] : null;
+  };
+  const lum = ([r, g, b]: [number, number, number]): number => {
+    const f = (c: number) => {
+      const s = c / 255;
+      return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+  };
+  const ratio = (a: string, b: string): number => {
+    const ca = parse(a);
+    const cb = parse(b);
+    if (!ca || !cb) return 0;
+    const la = lum(ca);
+    const lb = lum(cb);
+    const [hi, lo] = la >= lb ? [la, lb] : [lb, la];
+    return (hi + 0.05) / (lo + 0.05);
+  };
+  const hex = (r: number, g: number, b: number): string =>
+    "#" + [r, g, b].map((x) => Math.max(0, Math.min(255, Math.round(x))).toString(16).padStart(2, "0")).join("");
+  const ensure = (fg: string, bg: string, want: number): string => {
+    if (ratio(fg, bg) >= want) return fg;
+    const cb = parse(bg) ?? [0, 0, 0];
+    const dark = lum(cb) < 0.4;
+    const t: [number, number, number] = dark ? [255, 255, 255] : [0, 0, 0];
+    const cf = parse(fg) ?? [128, 128, 128];
+    let [r, g, b] = cf;
+    for (let i = 0; i < 24; i++) {
+      r += (t[0] - r) * 0.25;
+      g += (t[1] - g) * 0.25;
+      b += (t[2] - b) * 0.25;
+      const c = hex(r, g, b);
+      if (ratio(c, bg) >= want) return c;
+    }
+    return hex(t[0], t[1], t[2]);
+  };
+  const out = { ...tokens };
+  for (const key of ["bg", "chat-bg", "surface", "raised", "raised-2", "bubble", "bubble-mine"] as const) {
+    const c = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)$/i.exec(out[key] ?? "");
+    if (c) out[key] = hex(+c[1], +c[2], +c[3]);
+  }
+  const bg = out["chat-bg"] ?? out.bg ?? "#000000";
+  const surface = out.surface ?? bg;
+  const bubble = out.bubble ?? surface;
+  const light = (out.scheme ?? "dark") === "light";
+  out.text = ensure(out.text ?? (light ? "#111b21" : "#e9edef"), bg, 7);
+  out.muted = ensure(out.muted ?? "#667781", bg, 4.5);
+  out.faint = ensure(out.faint ?? "#8696a0", surface, 4.5);
+  out.link = ensure(out.link ?? "#53bdeb", bubble, 4.5);
+  out.accent = ensure(out.accent ?? "#00a884", bg, 3);
+  out["accent-hover"] = ensure(out["accent-hover"] ?? out.accent, bg, 3);
+  out["accent-text"] = ensure(out["accent-text"] ?? out.accent, bg, 4.5);
+  out.danger = ensure(out.danger ?? "#f15c6d", bg, 4.5);
+  out.mention = ensure(out.mention ?? "#f0b232", bg, 4.5);
+  out["mention-pill"] = ensure(out["mention-pill"] ?? out.link, bubble, 4.5);
+  out.replying = ensure(out.replying ?? "#00a884", bg, 3);
+  out.line = ensure(out.line ?? "#222d34", bg, 3);
+  out["line-soft"] = out.line;
+  out["line-strong"] = ensure(out["line-strong"] ?? "#3b4a54", bg, 3);
+  return out;
 }
 
 reducedMotion?.addEventListener("change", () => applyTheme(activeTheme()));

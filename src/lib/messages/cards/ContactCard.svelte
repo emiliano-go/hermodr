@@ -77,14 +77,14 @@
 <style>
   .contact { display: grid; gap: 5px; }
   .contact + .contact { border-top: 1px solid var(--line); padding-top: 8px; }
-  strong { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
-  .phone { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 13px; }
+  strong { font-size: 0.875rem; font-weight: 600; overflow-wrap: anywhere; }
+  .phone { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 0.8125rem; }
   .phone span { overflow-wrap: anywhere; }
-  button { border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--link); background: var(--raised); padding: 3px 7px; font: inherit; font-size: 12px; cursor: pointer; }
+  button { border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--link); background: var(--raised); padding: 3px 7px; font: inherit; font-size: 0.75rem; cursor: pointer; }
   button:disabled { opacity: .5; cursor: default; }
   button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .retry { align-self: start; }
   .fallback { white-space: pre-wrap; overflow-wrap: anywhere; }
-  .error { color: var(--danger); font-size: 12px; overflow-wrap: anywhere; }
-  .meta { display: flex; align-items: center; align-self: flex-end; gap: 3px; font-size: 11px; line-height: 15px; font-variant-numeric: tabular-nums; color: color-mix(in srgb, var(--text) 60%, transparent); white-space: nowrap; }
+  .error { color: var(--danger); font-size: 0.75rem; overflow-wrap: anywhere; }
+  .meta { display: flex; align-items: center; align-self: flex-end; gap: 3px; font-size: 0.6875rem; line-height: 15px; font-variant-numeric: tabular-nums; color: color-mix(in srgb, var(--text) 60%, transparent); white-space: nowrap; }
 </style>

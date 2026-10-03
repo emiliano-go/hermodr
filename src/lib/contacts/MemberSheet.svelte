@@ -202,22 +202,22 @@
   dialog { width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 32px); box-sizing: border-box; overflow: auto; padding: 24px; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
   dialog::backdrop { background: var(--scrim); }
   header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  h2 { margin: 0 0 5px; font-size: 20px; overflow-wrap: anywhere; } h3 { margin: 0 0 12px; font-size: 15px; }
+  h2 { margin: 0 0 5px; font-size: 1.25rem; overflow-wrap: anywhere; } h3 { margin: 0 0 12px; font-size: 0.9375rem; }
   .close { border: 0; background: transparent; padding: 5px; display: grid; place-items: center; }
   .identity-head { display: flex; align-items: center; gap: 18px; margin: 20px 0; }
   .photo { padding: 0; border: 0; border-radius: 50%; background: transparent; }
-  :global(.member-sheet-avatar) { width: 72px; height: 72px; border-radius: 50%; display: grid; place-items: center; object-fit: cover; background: hsl(var(--hue, 0) 25% 35%); color: white; font-size: 25px; }
+  :global(.member-sheet-avatar) { width: 72px; height: 72px; border-radius: 50%; display: grid; place-items: center; object-fit: cover; background: hsl(var(--hue, 0) 25% 35%); color: white; font-size: 1.5625rem; }
   section { padding-top: 18px; margin-top: 18px; border-top: 1px solid var(--line); }
-  dl { display: grid; grid-template-columns: minmax(110px, 0.35fr) minmax(0, 1fr); gap: 8px 14px; margin: 0; font-size: 13px; }
+  dl { display: grid; grid-template-columns: minmax(110px, 0.35fr) minmax(0, 1fr); gap: 8px 14px; margin: 0; font-size: 0.8125rem; }
   dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; } .about { white-space: pre-wrap; }
-  label { display: grid; gap: 6px; margin-bottom: 10px; font-size: 13px; }
+  label { display: grid; gap: 6px; margin-bottom: 10px; font-size: 0.8125rem; }
   input, textarea { box-sizing: border-box; width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--bg); color: inherit; font: inherit; }
-  textarea { resize: vertical; } button { padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--raised-2); color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
+  textarea { resize: vertical; } button { padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--raised-2); color: inherit; font: inherit; font-size: 0.75rem; cursor: pointer; }
   button:disabled, input:disabled, textarea:disabled { opacity: 0.55; cursor: default; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; } .confirmation { margin-top: 14px; padding: 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); }
-  .confirmation button + button { margin-inline-start: 8px; } .muted { color: var(--muted); font-size: 12px; } .error { color: var(--danger); overflow-wrap: anywhere; font-size: 13px; }
+  .confirmation button + button { margin-inline-start: 8px; } .muted { color: var(--muted); font-size: 0.75rem; } .error { color: var(--danger); overflow-wrap: anywhere; font-size: 0.8125rem; }
   ul { padding-inline-start: 20px; } li { margin-bottom: 6px; }
-  small { display: block; color: var(--muted); font-size: 11px; margin-top: 5px; }
+  small { display: block; color: var(--muted); font-size: 0.6875rem; margin-top: 5px; }
   .business { margin-top: 14px; }
   @media (max-width: 480px) { dialog { padding: 16px; } dl { grid-template-columns: 1fr; gap: 4px; } dd { margin-bottom: 8px; } }
   details pre { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }

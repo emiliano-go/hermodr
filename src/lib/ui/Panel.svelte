@@ -6,6 +6,7 @@
   import { motion } from "$lib/utils/theme.svelte";
   import { cubicOut } from "svelte/easing";
   import Icon from "$lib/ui/Icon.svelte";
+  import { onMount } from "svelte";
 
   let {
     label,
@@ -32,9 +33,43 @@
     nav.filter((n) => n.label.toLowerCase().includes(query.trim().toLowerCase())),
   );
   const groups = $derived([...new Set(shown.map((n) => n.group))]);
+
+  // Focus management (WCAG 2.4.3/2.4.7): trap Tab inside the dialog, focus the
+  // dialog on open, and restore focus to the opener on close.
+  let modal: HTMLDivElement | undefined = $state();
+  let opener: Element | null = null;
+  onMount(() => {
+    opener = document.activeElement;
+    // Focus the search field first so keyboard users land on a control.
+    const first = modal?.querySelector<HTMLElement>("input, button:not(.close), [tabindex]") ?? modal;
+    first?.focus({ preventScroll: true });
+    return () => {
+      if (opener instanceof HTMLElement && opener.isConnected) opener.focus({ preventScroll: true });
+    };
+  });
+
+  function trapTab(e: KeyboardEvent) {
+    if (e.key !== "Tab" || !modal) return;
+    const items = [...modal.querySelectorAll<HTMLElement>(
+      'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])',
+    )].filter((el) => el.offsetParent !== null || el === document.activeElement);
+    if (!items.length) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
 </script>
 
-<svelte:window onkeydown={(e) => e.key === "Escape" && onclose()} />
+<svelte:window onkeydown={(e) => {
+  if (e.key === "Escape") onclose();
+  else trapTab(e);
+}} />
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <div
@@ -49,6 +84,7 @@
     role="dialog"
     aria-modal="true"
     aria-label={label}
+    bind:this={modal}
     transition:scale|global={{ start: 0.94, duration: motion(200), easing: cubicOut }}>
     <nav>
       {@render header()}
@@ -130,11 +166,11 @@
     outline: none;
     color: var(--text);
     font: inherit;
-    font-size: 13px;
+    font-size: 0.8125rem;
   }
   .nav-group {
     margin: 12px 2px 4px;
-    font-size: 11.5px;
+    font-size: 0.7188rem;
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -147,7 +183,7 @@
     border-radius: var(--radius-sm);
     color: var(--muted);
     font: inherit;
-    font-size: 14.5px;
+    font-size: 0.9062rem;
     padding: 7px 10px;
     cursor: pointer;
   }
@@ -192,13 +228,13 @@
   }
   .titles :global(h2) {
     margin: 0;
-    font-size: 20px;
+    font-size: 1.25rem;
     font-weight: 600;
   }
   .titles :global(.lede) {
     margin: 0;
     color: var(--muted);
-    font-size: 14px;
+    font-size: 0.875rem;
   }
   .close {
     flex: none;
@@ -210,7 +246,7 @@
     border: 0;
     color: var(--muted);
     font: inherit;
-    font-size: 11px;
+    font-size: 0.6875rem;
     font-weight: 600;
     cursor: pointer;
   }
@@ -235,13 +271,13 @@
   /* Shared building blocks for every panel's sections. */
   .content :global(h2) {
     margin: 0 0 6px;
-    font-size: 20px;
+    font-size: 1.25rem;
     font-weight: 600;
   }
   .content :global(.lede) {
     margin: 0 0 16px;
     color: var(--muted);
-    font-size: 14px;
+    font-size: 0.875rem;
   }
   .content :global(.card) {
     display: flex;
@@ -273,11 +309,11 @@
     gap: 3px;
   }
   .content :global(.setting-title) {
-    font-size: 15px;
+    font-size: 0.9375rem;
   }
   .content :global(.setting-desc),
   .content :global(.muted) {
-    font-size: 13px;
+    font-size: 0.8125rem;
     color: var(--muted);
   }
   .content :global(.field) {
@@ -287,10 +323,10 @@
     padding: 7px 10px;
     color: inherit;
     font: inherit;
-    font-size: 14px;
+    font-size: 0.875rem;
   }
   .content :global(.tag) {
-    font-size: 12px;
+    font-size: 0.75rem;
     font-weight: 600;
     color: var(--accent);
     padding: 0 8px;
@@ -334,7 +370,7 @@
     border-radius: var(--radius);
     color: var(--text);
     font: inherit;
-    font-size: 14px;
+    font-size: 0.875rem;
     padding: 8px 14px;
     cursor: pointer;
     white-space: nowrap;
@@ -360,7 +396,7 @@
   .content :global(.error-text) {
     margin: 8px 0 0;
     color: var(--danger);
-    font-size: 13px;
+    font-size: 0.8125rem;
   }
   :global([dir="rtl"]) .content :global(.switch:checked::after) { transform: translateX(-16px); }
 </style>

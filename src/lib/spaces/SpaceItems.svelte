@@ -83,8 +83,8 @@
 <style>
   .space-items { padding: 12px; border-bottom: 1px solid var(--line); }
   header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  h2 { margin: 0; font-size: 16px; overflow-wrap: anywhere; }
-  p, .kind, .unavailable, .muted { font-size: 12px; }
+  h2 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
+  p, .kind, .unavailable, .muted { font-size: 0.75rem; }
   .muted, .kind { color: var(--muted); }
   ol { margin: 0; padding-inline-start: 20px; }
   li { padding: 8px 0; border-bottom: 1px solid var(--line); }
@@ -93,7 +93,7 @@
   .open { padding: 0; border: 0; background: transparent; color: var(--text); text-align: start; overflow-wrap: anywhere; }
   .open:not(:disabled):hover { color: var(--accent-text); }
   .actions { display: flex; gap: 6px; margin-top: 6px; }
-  .actions button { padding: 4px 6px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--surface); color: var(--text); font-size: 12px; }
+  .actions button { padding: 4px 6px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--surface); color: var(--text); font-size: 0.75rem; }
   .error, .unavailable { color: var(--danger); }
   button:disabled { opacity: .5; cursor: default; }
 </style>

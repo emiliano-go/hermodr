@@ -120,11 +120,11 @@
   dialog { width: min(400px, calc(100vw - 32px)); max-height: calc(100vh - 64px); overflow: auto; box-sizing: border-box; padding: 20px 22px; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
   dialog::backdrop { background: var(--scrim); }
   header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
-  h2 { margin: 0; font-size: 17px; }
-  .close { border: 0; background: transparent; color: var(--text); font: inherit; font-size: 24px; cursor: pointer; }
-  label { display: block; margin-bottom: 6px; font-size: 13px; }
+  h2 { margin: 0; font-size: 1.0625rem; }
+  .close { border: 0; background: transparent; color: var(--text); font: inherit; font-size: 1.5rem; cursor: pointer; }
+  label { display: block; margin-bottom: 6px; font-size: 0.8125rem; }
   input { box-sizing: border-box; width: 100%; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
-  .status, .error { margin: 12px 0; font-size: 13px; }
+  .status, .error { margin: 12px 0; font-size: 0.8125rem; }
   .status { color: var(--muted); }
   .error { color: var(--danger); }
   footer { display: flex; justify-content: flex-end; margin-top: 16px; }

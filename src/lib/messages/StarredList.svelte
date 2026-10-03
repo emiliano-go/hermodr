@@ -104,7 +104,7 @@
   }
   h2 {
     margin: 0;
-    font-size: 17px;
+    font-size: 1.0625rem;
     font-weight: 600;
   }
   .close,
@@ -185,7 +185,7 @@
     display: flex;
     justify-content: space-between;
     gap: 12px;
-    font-size: 12.5px;
+    font-size: 0.7812rem;
   }
   .who {
     font-weight: 600;

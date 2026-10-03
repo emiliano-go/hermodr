@@ -27,9 +27,9 @@
 </Embed>
 
 <style>
-  .quote-where { flex: none; max-width: 16ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--muted); }
-  .quote-once { display: flex; flex: none; align-items: center; gap: 4px; margin-inline-start: auto; font-size: 11px;
+  .quote-where { flex: none; max-width: 16ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.6875rem; color: var(--muted); }
+  .quote-once { display: flex; flex: none; align-items: center; gap: 4px; margin-inline-start: auto; font-size: 0.6875rem;
     color: color-mix(in srgb, var(--text) 60%, transparent); white-space: nowrap; }
   .once-mark { display: grid; place-items: center; width: 26px; height: 26px; flex: none; border: 2px dashed var(--accent);
-    border-radius: 50%; color: var(--accent); font-size: 12px; font-weight: 700; }
+    border-radius: 50%; color: var(--accent); font-size: 0.75rem; font-weight: 700; }
 </style>

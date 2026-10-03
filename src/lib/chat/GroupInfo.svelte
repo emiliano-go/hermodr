@@ -640,7 +640,7 @@
     white-space: nowrap;
   }
   .head-sub {
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     color: var(--muted);
   }
   .hero {
@@ -654,7 +654,7 @@
   }
   h3 {
     margin: 12px 0 6px;
-    font-size: 12px;
+    font-size: 0.75rem;
     font-weight: 600;
     color: var(--muted);
   }
@@ -709,7 +709,7 @@
     background: var(--raised);
     color: var(--text);
     font: inherit;
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     cursor: pointer;
   }
   .link-button {
@@ -717,7 +717,7 @@
     background: transparent;
     color: var(--muted);
     font: inherit;
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     cursor: pointer;
   }
   .link-button:hover {
@@ -734,7 +734,7 @@
   }
   .member-actions .muted {
     flex: 1;
-    font-size: 12.5px;
+    font-size: 0.7812rem;
   }
   .member-actions .button {
     padding: 4px 8px;
@@ -743,7 +743,7 @@
     background: var(--bg);
     color: var(--text);
     font: inherit;
-    font-size: 12px;
+    font-size: 0.75rem;
     cursor: pointer;
   }
   .member-actions .button.danger {
@@ -786,7 +786,7 @@
   }
   .report-author {
     font-weight: 600;
-    font-size: 13px;
+    font-size: 0.8125rem;
   }
   .report-text {
     white-space: pre-wrap;
@@ -813,7 +813,7 @@
     margin: 18px 0 6px;
     padding: 0 10px 6px;
     border-bottom: 1px solid var(--line);
-    font-size: 11.5px;
+    font-size: 0.7188rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
@@ -866,7 +866,7 @@
   }
   .you {
     flex: none;
-    font-size: 11px;
+    font-size: 0.6875rem;
     font-weight: 400;
     color: var(--muted);
   }
@@ -875,7 +875,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     color: var(--muted);
   }
   .member-tag {
@@ -887,7 +887,7 @@
     border-radius: 6px;
     background: var(--accent-soft);
     color: var(--accent-text);
-    font-size: 11px;
+    font-size: 0.6875rem;
     font-weight: 600;
   }
   .role.owner {

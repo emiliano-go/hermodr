@@ -279,7 +279,7 @@
     border-radius: 50%;
     object-fit: cover;
     background: var(--raised-2);
-    font-size: 14px;
+    font-size: 0.875rem;
     font-weight: 600;
   }
   .heading {
@@ -293,14 +293,14 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 16px;
+    font-size: 1rem;
     font-weight: 600;
   }
   .sub,
   .muted,
   .desc {
     color: var(--muted);
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     line-height: 1.4;
   }
   .close {
@@ -335,7 +335,7 @@
     gap: 6px;
     margin: 0 0 10px;
     color: var(--muted);
-    font-size: 11.5px;
+    font-size: 0.7188rem;
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -347,7 +347,7 @@
     margin-bottom: 14px;
   }
   .name {
-    font-size: 14px;
+    font-size: 0.875rem;
   }
   .choices {
     display: flex;
@@ -362,7 +362,7 @@
     background: transparent;
     color: var(--text);
     font: inherit;
-    font-size: 13px;
+    font-size: 0.8125rem;
     cursor: pointer;
     transition:
       background calc(0.15s * var(--motion-scale)) var(--ease),
@@ -448,7 +448,7 @@
   .error {
     margin: 4px 0;
     color: var(--danger);
-    font-size: 13px;
+    font-size: 0.8125rem;
   }
   footer {
     display: flex;

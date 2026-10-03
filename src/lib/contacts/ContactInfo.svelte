@@ -190,7 +190,7 @@
     white-space: nowrap;
   }
   .head-sub {
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     color: var(--muted);
   }
   .hero {
@@ -215,11 +215,11 @@
     border-radius: 999px;
     background: var(--accent-soft);
     color: var(--accent-text);
-    font-size: 12px;
+    font-size: 0.75rem;
   }
   h3 {
     margin: 12px 0 6px;
-    font-size: 12px;
+    font-size: 0.75rem;
     font-weight: 600;
     color: var(--muted);
   }

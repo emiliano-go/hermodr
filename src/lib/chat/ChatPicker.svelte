@@ -111,7 +111,7 @@
 </div>
 
 <style>
-  .reason { display: block; color: var(--muted); font-size: 11px; white-space: normal; }
+  .reason { display: block; color: var(--muted); font-size: 0.6875rem; white-space: normal; }
   .backdrop {
     position: fixed;
     inset: 0;
@@ -139,7 +139,7 @@
   }
   h2 {
     margin: 0;
-    font-size: 17px;
+    font-size: 1.0625rem;
     font-weight: 600;
   }
   .close {
@@ -179,7 +179,7 @@
   .error {
     margin: 0 20px 8px;
     color: var(--danger);
-    font-size: 13px;
+    font-size: 0.8125rem;
   }
   ul {
     list-style: none;

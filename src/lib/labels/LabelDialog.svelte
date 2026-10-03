@@ -126,17 +126,17 @@
   dialog { width: min(480px, calc(100vw - 32px)); max-height: calc(100vh - 32px); box-sizing: border-box; padding: 20px; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface); color: var(--text); box-shadow: var(--shadow); overflow: auto; }
   dialog::backdrop { background: var(--scrim); }
   header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  h2 { margin: 0; font-size: 18px; } h3 { margin: 0; font-size: 14px; }
+  h2 { margin: 0; font-size: 1.125rem; } h3 { margin: 0; font-size: 0.875rem; }
   ul { padding: 0; margin: 16px 0; list-style: none; }
   li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 9px 0; border-bottom: 1px solid var(--line); }
   .label-name, .apply { flex: 1; min-width: 0; overflow-wrap: anywhere; }
   .apply { display: flex; align-items: center; gap: 10px; cursor: pointer; border-radius: var(--radius-sm); padding: 2px 4px; margin: -2px -4px; }
   .apply:hover { background: var(--raised); }
-  button { border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 6px 9px; background: var(--raised-2); color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
+  button { border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 6px 9px; background: var(--raised-2); color: inherit; font: inherit; font-size: 0.75rem; cursor: pointer; }
   button:disabled, input:disabled { opacity: 0.55; cursor: default; }
   .close { display: grid; place-items: center; padding: 5px; border: 0; background: transparent; }
   form { display: grid; gap: 10px; margin-top: 18px; }
-  form label { display: grid; gap: 5px; font-size: 13px; }
+  form label { display: grid; gap: 5px; font-size: 0.8125rem; }
   input:not([type="checkbox"]) { width: 100%; min-width: 0; box-sizing: border-box; padding: 8px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--bg); color: inherit; font: inherit; }
   input[type="checkbox"] { appearance: none; -webkit-appearance: none; flex: none; width: 18px; height: 18px; margin: 0; display: grid; place-items: center; border: 1.5px solid var(--line-strong); border-radius: 6px; background: var(--bg); cursor: pointer; transition: background-color 0.15s var(--ease), border-color 0.15s var(--ease); }
   input[type="checkbox"]:hover:not(:disabled) { border-color: var(--accent); }
@@ -145,9 +145,9 @@
   input[type="checkbox"]:checked::after { content: ""; width: 9px; height: 5px; border-inline-start: 2px solid var(--accent-ink); border-bottom: 2px solid var(--accent-ink); transform: rotate(-45deg) translateY(-1px); }
   input[type="checkbox"]:indeterminate::after { content: ""; width: 9px; height: 2px; border-radius: 1px; background: var(--accent-ink); }
   .form-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-  .muted { color: var(--muted); font-size: 12px; }
+  .muted { color: var(--muted); font-size: 0.75rem; }
   .confirmation { margin-top: 18px; padding-top: 10px; border-top: 1px solid var(--line-strong); }
-  .confirmation p { overflow-wrap: anywhere; font-size: 13px; }
+  .confirmation p { overflow-wrap: anywhere; font-size: 0.8125rem; }
   .confirmation button + button { margin-inline-start: 8px; }
-  .danger, .error { color: var(--danger); } .error { overflow-wrap: anywhere; font-size: 13px; }
+  .danger, .error { color: var(--danger); } .error { overflow-wrap: anywhere; font-size: 0.8125rem; }
 </style>

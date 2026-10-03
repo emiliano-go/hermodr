@@ -154,24 +154,24 @@
   button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .trigger { display: grid; place-items: center; width: 34px; height: 34px; padding: 0; flex-shrink: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted); }
   .trigger:hover:not(:disabled), .close:hover { background: var(--raised); color: var(--text); }
-  .menu-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text); font-size: 14px; text-align: start; }
+  .menu-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text); font-size: 0.875rem; text-align: start; }
   .menu-row:hover:not(:disabled) { background: var(--raised); }
   .menu-row :global(svg) { color: var(--accent); flex: none; }
   dialog { width: min(440px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); margin: auto; padding: 18px; box-sizing: border-box; overflow: auto; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
   dialog::backdrop { background: var(--scrim); }
   header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  h2 { margin: 0; font-size: 17px; }
+  h2 { margin: 0; font-size: 1.0625rem; }
   .close { display: grid; place-items: center; padding: 5px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted); }
-  .note, .error { margin: 10px 0; font-size: 12px; overflow-wrap: anywhere; }
+  .note, .error { margin: 10px 0; font-size: 0.75rem; overflow-wrap: anywhere; }
   .note, .sync-row span { color: var(--muted); }
   .error { color: var(--danger); }
-  .sync-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px; }
+  .sync-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 0.75rem; }
   .sync-row button { padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--raised); color: var(--text); }
   input { width: 100%; min-width: 0; box-sizing: border-box; margin: 4px 0 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg); color: var(--text); font: inherit; }
   ul { list-style: none; max-height: min(300px, 45dvh); overflow-y: auto; margin: 0; padding: 0; }
   li button { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; width: 100%; min-width: 0; padding: 10px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); text-align: start; }
   li button.active, li button:hover:not(:disabled) { background: var(--raised); }
   .shortcut, .message { width: 100%; overflow-wrap: anywhere; }
-  .shortcut { font-weight: 600; font-size: 13px; }
-  .message { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; white-space: pre-wrap; color: var(--muted); font-size: 12px; }
+  .shortcut { font-weight: 600; font-size: 0.8125rem; }
+  .message { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; white-space: pre-wrap; color: var(--muted); font-size: 0.75rem; }
 </style>

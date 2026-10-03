@@ -197,11 +197,11 @@
   dialog::backdrop { background: var(--scrim); }
   form { display: flex; flex-direction: column; gap: 10px; padding: 18px 20px; }
   header { display: flex; align-items: center; justify-content: space-between; }
-  h2 { margin: 0; font-size: 17px; font-weight: 600; }
+  h2 { margin: 0; font-size: 1.0625rem; font-weight: 600; }
   .close { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 50%; background: transparent; color: var(--muted); cursor: pointer; }
   .close:hover { background: var(--raised); color: var(--text); }
-  .field-label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 600; }
-  .field { padding: 8px 10px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 6px; color: var(--text); font: inherit; font-size: 14px; font-weight: 400; }
+  .field-label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 0.75rem; font-weight: 600; }
+  .field { padding: 8px 10px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 6px; color: var(--text); font: inherit; font-size: 0.875rem; font-weight: 400; }
   .search { display: flex; align-items: center; gap: 8px; padding: 0 10px; height: 34px; background: var(--surface); border-radius: 6px; color: var(--muted); }
   .search input { flex: 1; min-width: 0; background: transparent; border: 0; color: var(--text); font: inherit; }
   ul { margin: 0; padding: 0; list-style: none; }
@@ -213,10 +213,10 @@
   .placeholder { display: grid; place-items: center; background: var(--raised); color: var(--muted); font-weight: 600; }
   .label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .picked { display: flex; flex-wrap: wrap; gap: 6px; }
-  .picked button { display: flex; align-items: center; gap: 5px; padding: 5px 8px; border: 0; border-radius: 6px; background: var(--raised); color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
-  .note { margin: 0; font-size: 12.5px; color: var(--muted); }
+  .picked button { display: flex; align-items: center; gap: 5px; padding: 5px 8px; border: 0; border-radius: 6px; background: var(--raised); color: var(--text); font: inherit; font-size: 0.75rem; cursor: pointer; }
+  .note { margin: 0; font-size: 0.7812rem; color: var(--muted); }
   .error, .unconfirmed .note { color: var(--danger); }
-  .error { margin: 0; font-size: 13px; }
+  .error { margin: 0; font-size: 0.8125rem; }
   .subject { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
   .outcomes { max-height: 240px; overflow-y: auto; }
   .outcomes li { display: flex; flex-direction: column; gap: 3px; padding: 6px 8px; }

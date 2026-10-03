@@ -1,6 +1,6 @@
 # Theme review checklist
 
-Issue [#220](https://github.com/emiliano-go/postal/issues/220) remains open. This is a source-inspected checklist of all 102 production Svelte components, plus the HTML shell and preset/theme layers. No full component/theme visual acceptance has passed.
+Issue [#220](https://github.com/emiliano-go/postal/issues/220) remains open. This is a source-inspected checklist of all 104 production Svelte components, plus the HTML shell and preset/theme layers. No full component/theme visual acceptance has passed.
 
 ## Evidence status
 
@@ -164,6 +164,8 @@ Paths are relative to `src/lib`, except `routes/+page.svelte`. Token cells omit 
 | [messages/StructuredNotice.svelte](../src/lib/messages/StructuredNotice.svelte) | S | Pending | `accent`, `danger`, `line-strong`, `link`, `muted`, `radius-lg`, `radius-sm`, `raised-2`, `scrim`, `shadow`, `surface`, `text` | Fixed black alpha shadow; visual review pending. |
 | [messages/Transcript.svelte](../src/lib/messages/Transcript.svelte) | S | Pending | `danger`, `muted` | Token fallback literals remain; root supplies those tokens. |
 | [notifications/NotificationHistory.svelte](../src/lib/notifications/NotificationHistory.svelte) | S | Pending | `accent`, `danger`, `line`, `muted`, `radius`, `raised`, `surface`, `text` | Token inventory inspected; inherited styles and state rendering remain to verify. |
+| [settings/AccessibilityPrompt.svelte](../src/lib/settings/AccessibilityPrompt.svelte) | S | Pending | `faint`, `line-strong`, `muted`, `scrim`, `shadow`, `surface` | First-run Accessibility-mode prompt in the intro-card language. |
+| [settings/AccessibilitySettings.svelte](../src/lib/settings/AccessibilitySettings.svelte) | S | Pending | `accent`, `bg`, `line-strong`, `muted`, `radius`, `raised-2`, `surface`, `text` | Accessibility section groups; uses panel and segmented tokens only. Native elements: input, select; focus/disabled states need visual review. |
 | [settings/ArchiveManager.svelte](../src/lib/settings/ArchiveManager.svelte) | S | Pending | `danger`, `ease`, `line-strong`, `motion-scale`, `muted`, `raised`, `text` | Fixed select/divider tokens and error color. Native elements: select; focus/disabled states need visual review. |
 | [settings/AtAllMuteList.svelte](../src/lib/settings/AtAllMuteList.svelte) | S | Pending | `muted`, `radius`, `surface` | Muted-chats list with per-chat unmute buttons; uses panel and text tokens only. |
 | [settings/AutoDownloadOverride.svelte](../src/lib/settings/AutoDownloadOverride.svelte) | S | Pending | `danger`, `muted` | Select uses shared route rules; danger fallback is inactive with root tokens. Token fallback literals remain; root supplies those tokens. Native elements: select; focus/disabled states need visual review. |

@@ -45,7 +45,7 @@
 {/if}
 
 <style>
-  .system { align-self: center; max-width: min(60ch, 80%); margin: 6px 0; padding: 5px 12px; border: 0; background: var(--surface); color: var(--muted); border-radius: var(--radius-sm); font: inherit; font-size: 12.5px; text-align: center; box-shadow: 0 1px 0.5px rgba(11, 20, 26, 0.13); overflow-wrap: anywhere; }
+  .system { align-self: center; max-width: min(60ch, 80%); margin: 6px 0; padding: 5px 12px; border: 0; background: var(--surface); color: var(--muted); border-radius: var(--radius-sm); font: inherit; font-size: 0.7812rem; text-align: center; box-shadow: 0 1px 0.5px rgba(11, 20, 26, 0.13); overflow-wrap: anywhere; }
   .poll-notice { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; cursor: pointer; }
   .poll-notice:hover, .poll-notice:focus-visible { color: var(--text); }
   .highlighted { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -54,8 +54,8 @@
   dialog::backdrop { background: var(--scrim); }
   dialog :global(.poll) { min-width: 0; }
   header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
-  h2 { margin: 0; font-size: 16px; }
+  h2 { margin: 0; font-size: 1rem; }
   .close { display: grid; place-items: center; padding: 5px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted); cursor: pointer; }
   .close:hover { color: var(--text); background: var(--raised-2); }
-  .error { color: var(--danger); font-size: 13px; }
+  .error { color: var(--danger); font-size: 0.8125rem; }
 </style>

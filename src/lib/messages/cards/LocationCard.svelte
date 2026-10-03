@@ -159,7 +159,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     font-weight: 700;
     color: var(--accent-text);
   }
@@ -187,7 +187,7 @@
     .state::before { animation: none; }
   }
   .age {
-    font-size: 11.5px;
+    font-size: 0.7188rem;
     color: var(--muted);
     text-align: end;
   }
@@ -195,7 +195,7 @@
     display: flex;
     flex-wrap: wrap;
     gap: 4px 10px;
-    font-size: 12px;
+    font-size: 0.75rem;
     color: var(--muted);
     font-variant-numeric: tabular-nums;
   }
@@ -211,7 +211,7 @@
     background: var(--raised);
     color: var(--text);
     font: inherit;
-    font-size: 11.5px;
+    font-size: 0.7188rem;
     cursor: pointer;
   }
   .actions button:hover {

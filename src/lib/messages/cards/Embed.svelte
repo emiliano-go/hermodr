@@ -105,7 +105,7 @@
     gap: 6px;
   }
   .embed-label {
-    font-size: 12px;
+    font-size: 0.75rem;
     color: var(--muted);
   }
   .embed-title {
@@ -115,7 +115,7 @@
     background: none;
     color: var(--text);
     font: inherit;
-    font-size: 15px;
+    font-size: 0.9375rem;
     font-weight: 600;
     line-height: 20px;
     text-align: start;
@@ -128,7 +128,7 @@
     text-decoration: underline;
   }
   .embed-text {
-    font-size: 13.5px;
+    font-size: 0.8438rem;
     line-height: 18px;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
@@ -153,7 +153,7 @@
   }
   .embed-icon {
     flex: none;
-    font-size: 14px;
+    font-size: 0.875rem;
   }
   .embed.wide .embed-image img {
     width: auto;
@@ -170,7 +170,7 @@
     margin: 0 0 2px;
     padding: 5px 8px 6px;
     border-radius: 6px;
-    font-size: 13px;
+    font-size: 0.8125rem;
     line-height: 18px;
     color: var(--muted);
     overflow: hidden;

@@ -155,20 +155,20 @@
   dialog { width: min(580px, calc(100vw - 32px)); max-height: calc(100vh - 64px); padding: 16px; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--bg); color: var(--text); box-shadow: var(--shadow); }
   dialog::backdrop { background: var(--scrim); }
   header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-  h2 { margin: 0; font-size: 16px; font-weight: 600; }
-  .close { width: 28px; height: 28px; border: 0; border-radius: 50%; background: transparent; color: var(--muted); font: inherit; font-size: 20px; cursor: pointer; }
+  h2 { margin: 0; font-size: 1rem; font-weight: 600; }
+  .close { width: 28px; height: 28px; border: 0; border-radius: 50%; background: transparent; color: var(--muted); font: inherit; font-size: 1.25rem; cursor: pointer; }
   .close:hover { background: var(--raised); color: var(--text); }
   input { box-sizing: border-box; width: 100%; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; }
-  .heading { margin: 12px 4px 6px; color: var(--muted); font-size: 12px; }
+  .heading { margin: 12px 4px 6px; color: var(--muted); font-size: 0.75rem; }
   ul { max-height: min(420px, 55vh); margin: 0; padding: 0; overflow-y: auto; list-style: none; }
   li button { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; box-sizing: border-box; width: 100%; padding: 10px 12px; border: 0; border-radius: 6px; background: transparent; color: var(--text); font: inherit; text-align: start; cursor: pointer; }
   li button.active { background: var(--raised); }
   .label, .snippet { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .kind, .snippet, footer, .status { color: var(--muted); font-size: 12px; }
+  .kind, .snippet, footer, .status { color: var(--muted); font-size: 0.75rem; }
   .kind { text-transform: capitalize; }
   .snippet { grid-column: 1 / -1; }
   .status, .error { margin: 10px 4px; }
-  .error { color: var(--danger); font-size: 12px; }
+  .error { color: var(--danger); font-size: 0.75rem; }
   footer { display: flex; gap: 18px; margin-top: 12px; }
   .username { margin-inline-start: auto; border: 0; padding: 0; color: var(--text); background: transparent; font: inherit; cursor: pointer; }
 </style>

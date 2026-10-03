@@ -171,7 +171,7 @@
   }
   h2 {
     margin: 0;
-    font-size: 17px;
+    font-size: 1.0625rem;
     font-weight: 600;
   }
   .close {
@@ -218,7 +218,7 @@
     align-items: center;
     gap: 8px;
     margin: 0 0 6px;
-    font-size: 13px;
+    font-size: 0.8125rem;
     font-weight: 600;
     color: var(--muted);
   }
@@ -258,14 +258,14 @@
     white-space: nowrap;
   }
   .at {
-    font-size: 12px;
+    font-size: 0.75rem;
     color: var(--muted);
     white-space: nowrap;
   }
   .empty,
   .muted {
     color: var(--muted);
-    font-size: 13px;
+    font-size: 0.8125rem;
   }
   .muted {
     margin: 12px 0 0;
@@ -285,14 +285,14 @@
     place-items: center;
     min-width: 22px;
     color: var(--muted);
-    font-size: 12px;
+    font-size: 0.75rem;
   }
   .mark.read {
     color: var(--link);
   }
   .note {
     margin: 12px 20px 16px;
-    font-size: 11.5px;
+    font-size: 0.7188rem;
     color: var(--faint);
   }
 </style>

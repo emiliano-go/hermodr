@@ -27,6 +27,6 @@
     border-radius: var(--radius-lg); box-shadow: var(--shadow); }
   dialog::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
   header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
-  h2 { margin: 0; font-size: 17px; }
-  header button { color: var(--text); background: transparent; border: 0; font-size: 24px; cursor: pointer; }
+  h2 { margin: 0; font-size: 1.0625rem; }
+  header button { color: var(--text); background: transparent; border: 0; font-size: 1.5rem; cursor: pointer; }
 </style>

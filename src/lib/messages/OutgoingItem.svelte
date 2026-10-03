@@ -165,7 +165,7 @@
   .ring-label {
     grid-area: 1 / 1;
     color: #fff;
-    font-size: 11px;
+    font-size: 0.6875rem;
     font-weight: 600;
   }
   .upload-caption {

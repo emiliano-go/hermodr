@@ -101,18 +101,18 @@
 <style>
   .audit { min-width: 0; color: var(--text); }
   header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-  h3 { margin: 0; font-size: 16px; }
+  h3 { margin: 0; font-size: 1rem; }
   .filters { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0; }
-  label { flex: 1 1 150px; display: grid; gap: 5px; font-size: 12px; }
+  label { flex: 1 1 150px; display: grid; gap: 5px; font-size: 0.75rem; }
   input, select { min-width: 0; padding: 7px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--bg); color: inherit; font: inherit; }
-  button { padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
+  button { padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); color: inherit; font: inherit; font-size: 0.75rem; cursor: pointer; }
   button:disabled { opacity: 0.55; cursor: default; }
-  .muted, small, time { color: var(--muted); font-size: 12px; }
-  .error { color: var(--danger); font-size: 13px; overflow-wrap: anywhere; }
+  .muted, small, time { color: var(--muted); font-size: 0.75rem; }
+  .error { color: var(--danger); font-size: 0.8125rem; overflow-wrap: anywhere; }
   ol { list-style: none; padding: 0; margin: 12px 0; }
   li { padding: 12px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
-  .row-head { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; }
-  li p { margin: 6px 0; font-size: 13px; }
+  .row-head { display: flex; flex-wrap: wrap; gap: 12px; font-size: 0.75rem; }
+  li p { margin: 6px 0; font-size: 0.8125rem; }
   small { display: block; margin-bottom: 6px; }
-  dl { display: grid; grid-template-columns: 60px minmax(0, 1fr); gap: 5px; margin: 6px 0; font-size: 12px; } dt { color: var(--muted); } dd { margin: 0; white-space: pre-wrap; }
+  dl { display: grid; grid-template-columns: 60px minmax(0, 1fr); gap: 5px; margin: 6px 0; font-size: 0.75rem; } dt { color: var(--muted); } dd { margin: 0; white-space: pre-wrap; }
 </style>

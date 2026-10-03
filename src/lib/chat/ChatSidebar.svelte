@@ -87,6 +87,7 @@
     markingAllRead = false,
     archivedChats,
     onresize,
+    onresizekey = () => {},
     freezeOnHover = true,
     chatPreview = true,
     chatPreviewDelayMs = 600,
@@ -138,6 +139,8 @@
     onmarkread: (chat: ChatSummary) => void;
     archivedChats: number;
     onresize: (event: MouseEvent) => void;
+    /** Keyboard/button equivalent of the drag resize (WCAG 2.5.7). */
+    onresizekey?: (delta: number) => void;
     /** Pause list reordering while the pointer is over the list. */
     freezeOnHover?: boolean;
     /** Whether hovering a row shows the recent-messages popup. */
@@ -450,7 +453,7 @@
   });
 </script>
 
-<aside class="chats">
+<aside class="chats" aria-label={t("nav.chats")}>
   <header>
     <h1 class="title">{t("nav.chats")}</h1>
     <Button
@@ -731,7 +734,32 @@
       aria-label={t("settings.title")}
       onclick={() => onsettings("profile")} />
   </footer>
-  <button type="button" class="resizer" aria-label={t("nav.resize_chat_list")} onmousedown={onresize}></button>
+  <!-- Keyboard-operable separator (WCAG 2.5.7): arrows/Home/End resize; the
+    Customization slider is the button equivalent. -->
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <div
+    role="separator"
+    tabindex="0"
+    class="resizer"
+    aria-orientation="vertical"
+    aria-label={t("nav.resize_chat_list")}
+    onmousedown={onresize}
+    onkeydown={(e) => {
+      const step = e.shiftKey ? 40 : 10;
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        e.preventDefault();
+        const rtl = locale.dir === "rtl";
+        const widen = e.key === "ArrowRight" ? !rtl : rtl;
+        onresizekey(widen ? step : -step);
+      } else if (e.key === "Home") {
+        e.preventDefault();
+        onresizekey(-460);
+      } else if (e.key === "End") {
+        e.preventDefault();
+        onresizekey(460);
+      }
+    }}></div>
 </aside>
 
 {#if preview}
@@ -990,7 +1018,7 @@
   onblur={hidePreview} />
 
 <style>
-  .chat-label { max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 5px; border-radius: 6px; background: var(--raised); color: var(--muted); font-size: 10px; }
+  .chat-label { max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 5px; border-radius: 6px; background: var(--raised); color: var(--muted); font-size: 0.625rem; }
   .chat-labels { grid-column: 2 / 4; grid-row: 3; min-width: 0; display: flex; flex-wrap: wrap; gap: 3px; }
   .chats {
     position: relative;
@@ -1015,7 +1043,7 @@
   }
   .title {
     margin: 0;
-    font-size: 22px;
+    font-size: 1.375rem;
     font-weight: 700;
   }
   /* Shared button shapes live in $lib/ui/Button.svelte; only spot tweaks stay here. */
@@ -1037,7 +1065,7 @@
     border-radius: 999px;
     background: var(--mention);
     color: var(--accent-ink);
-    font-size: 10px;
+    font-size: 0.625rem;
     font-weight: 700;
     line-height: 16px;
     text-align: center;
@@ -1108,7 +1136,7 @@
     background: var(--raised);
     color: var(--text);
     font: inherit;
-    font-size: 14.5px;
+    font-size: 0.9062rem;
     font-weight: 600;
     text-align: start;
     cursor: pointer;
@@ -1134,7 +1162,7 @@
     border-radius: 999px;
     background: var(--accent);
     color: var(--accent-ink);
-    font-size: 12px;
+    font-size: 0.75rem;
     font-weight: 700;
     text-align: center;
   }
@@ -1206,7 +1234,7 @@
     border: 0;
     cursor: pointer;
     font: inherit;
-    font-size: 11px;
+    font-size: 0.6875rem;
     font-weight: 700;
   }
   .muted-mark {
@@ -1241,18 +1269,18 @@
   .time {
     grid-area: time;
     color: var(--muted);
-    font-size: 12px;
+    font-size: 0.75rem;
     font-variant-numeric: tabular-nums;
   }
   .time.unread {
     color: var(--accent);
   }
   .chat-row .name {
-    font-size: 17px;
+    font-size: 1.0625rem;
     font-weight: 400;
   }
   .chat-row .preview {
-    font-size: 14px;
+    font-size: 0.875rem;
     color: var(--muted);
   }
   .preview.typing {
@@ -1271,7 +1299,7 @@
     grid-area: preview;
     min-width: 0;
     color: var(--muted);
-    font-size: 12px;
+    font-size: 0.75rem;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1281,7 +1309,7 @@
     place-items: center;
     background: var(--accent);
     color: var(--accent-ink);
-    font-size: 12px;
+    font-size: 0.75rem;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
     border-radius: 999px;
@@ -1364,14 +1392,14 @@
     line-height: 1.25;
   }
   .me-name {
-    font-size: 14px;
+    font-size: 0.875rem;
     font-weight: 600;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .me-status {
-    font-size: 12px;
+    font-size: 0.75rem;
     color: var(--muted);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1392,7 +1420,7 @@
   }
   .menu-label {
     padding: 6px 8px 4px;
-    font-size: 12px;
+    font-size: 0.75rem;
     font-weight: 600;
     color: var(--muted);
   }
@@ -1430,6 +1458,19 @@
     width: 6px;
     cursor: col-resize;
     z-index: 5;
+  }
+  .resizer:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+    background: var(--accent-soft);
+  }
+  /* Non-colour cues (WCAG 1.4.1): unread rows are bold with a leading bar in
+     addition to the accent time; mentions keep their "@" text label. */
+  .chat-row:has(.badge) .name {
+    font-weight: 700;
+  }
+  .time.unread {
+    font-weight: 700;
   }
   .chats .resizer {
     display: block;
@@ -1480,7 +1521,7 @@
     border: 0;
     border-radius: 6px;
     color: var(--text);
-    font-size: 14px;
+    font-size: 0.875rem;
     cursor: default;
   }
   .mute-parent:hover {

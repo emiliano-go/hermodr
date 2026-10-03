@@ -111,7 +111,7 @@
     border: 1px solid var(--line-strong);
     border-radius: var(--radius);
     color: var(--text);
-    font-size: 14px;
+    font-size: 0.875rem;
     padding: 8px 16px;
   }
   .btn-ghost:hover:not(:disabled) {
@@ -136,7 +136,7 @@
     border: 0;
     border-radius: 999px;
     color: var(--muted);
-    font-size: 14px;
+    font-size: 0.875rem;
     padding: 5px 12px;
   }
   .btn-chip:hover {
@@ -147,7 +147,7 @@
     color: var(--accent);
   }
   .chip-count {
-    font-size: 12px;
+    font-size: 0.75rem;
   }
   /* Round composer send/record button. */
   .btn-send {
@@ -177,7 +177,7 @@
     border: 0;
     border-radius: 6px;
     color: var(--text);
-    font-size: 14px;
+    font-size: 0.875rem;
     text-align: start;
   }
   .btn-menu:hover {

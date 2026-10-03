@@ -331,7 +331,7 @@
   }
   h2 {
     margin: 0;
-    font-size: 16px;
+    font-size: 1rem;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -423,7 +423,7 @@
     color: var(--danger, #f15c6d);
   }
   .note {
-    font-size: 12.5px;
+    font-size: 0.7812rem;
   }
   .history-offer, .history-result {
     padding: 0 8px;
@@ -432,7 +432,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 13px;
+    font-size: 0.8125rem;
   }
   .history-offer .note, .history-result .note {
     margin: 6px 0;
@@ -441,12 +441,12 @@
   .empty {
     margin: 12px 8px;
     color: var(--muted);
-    font-size: 13px;
+    font-size: 0.8125rem;
   }
   .error {
     margin: 0 8px;
     color: var(--danger, #f15c6d);
-    font-size: 13px;
+    font-size: 0.8125rem;
   }
   footer {
     display: flex;
@@ -460,7 +460,7 @@
     background: var(--raised);
     color: var(--text);
     font: inherit;
-    font-size: 13px;
+    font-size: 0.8125rem;
     cursor: pointer;
   }
   .button.primary {

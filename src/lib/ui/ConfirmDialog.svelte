@@ -59,13 +59,13 @@
   }
   .sheet.confirm h2 {
     margin: 0;
-    font-size: 17px;
+    font-size: 1.0625rem;
     font-weight: 600;
   }
   .hint {
     margin: 0;
     color: var(--faint);
-    font-size: 12px;
+    font-size: 0.75rem;
     max-width: 44ch;
     text-wrap: balance;
   }

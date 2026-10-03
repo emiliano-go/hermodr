@@ -78,7 +78,7 @@
 </div>
 
 <style>
-  .reaction-reason { color: var(--muted); font-size: 12px; max-width: 260px; padding: 4px 6px; }
+  .reaction-reason { color: var(--muted); font-size: 0.75rem; max-width: 260px; padding: 4px 6px; }
   .menu {
     position: fixed;
     z-index: 271;
@@ -124,7 +124,7 @@
     border: 0;
     border-radius: 8px;
     background: transparent;
-    font-size: 20px;
+    font-size: 1.25rem;
     cursor: pointer;
     transition: transform calc(0.1s * var(--motion-scale)) var(--ease);
   }
@@ -154,7 +154,7 @@
     background: transparent;
     color: var(--text);
     font: inherit;
-    font-size: 14.5px;
+    font-size: 0.9062rem;
     text-align: start;
     cursor: pointer;
   }

@@ -46,9 +46,9 @@
 
 <style>
   .broadcast-info { padding: 16px; }
-  h3 { margin: 0 0 10px; font-size: 15px; }
+  h3 { margin: 0 0 10px; font-size: 0.9375rem; }
   p { margin: 0; }
-  .source { color: var(--muted); font-size: 12px; }
+  .source { color: var(--muted); font-size: 0.75rem; }
   .source time, .source span { display: block; margin-top: 4px; }
   .error { color: var(--danger); }
   ul { margin: 12px 0 0; padding: 0; list-style: none; max-height: 280px; overflow-y: auto; }

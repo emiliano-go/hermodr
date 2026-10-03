@@ -269,7 +269,7 @@
     font-weight: 600;
   }
   .who-time {
-    font-size: 12.5px;
+    font-size: 0.7812rem;
     color: var(--muted);
   }
   .tools {

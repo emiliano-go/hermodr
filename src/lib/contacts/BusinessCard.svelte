@@ -52,14 +52,14 @@
 <style>
   section { min-width: 0; color: var(--text); }
   header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-  h3 { margin: 0; font-size: 14px; }
+  h3 { margin: 0; font-size: 0.875rem; }
   button { padding: 5px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--raised); color: var(--text); font: inherit; cursor: pointer; }
   button:disabled { opacity: .5; cursor: default; }
   button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  p { margin: 10px 0; overflow-wrap: anywhere; font-size: 13px; }
+  p { margin: 10px 0; overflow-wrap: anywhere; font-size: 0.8125rem; }
   .muted { color: var(--muted); }
   .error { color: var(--danger); }
-  dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 9px 16px; margin: 12px 0 0; font-size: 13px; }
+  dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 9px 16px; margin: 12px 0 0; font-size: 0.8125rem; }
   dt { color: var(--muted); }
   dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
   ul { list-style: none; margin: 0; padding: 0; }

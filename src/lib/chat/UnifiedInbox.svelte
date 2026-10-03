@@ -163,18 +163,18 @@
 <style>
   .inbox { min-width: 0; min-height: 0; overflow: auto; padding: 20px; color: var(--text); background: var(--bg); }
   header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-  h2 { margin: 0; font-size: 20px; }
-  .connection, .status, .sync { color: var(--muted); font-size: 13px; }
+  h2 { margin: 0; font-size: 1.25rem; }
+  .connection, .status, .sync { color: var(--muted); font-size: 0.8125rem; }
   .sync { display: grid; gap: 5px; margin: 12px 0; }
   progress { width: 100%; height: 7px; accent-color: var(--accent); }
   .filters { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 18px 0 12px; }
   .search { flex: 1 1 100%; min-width: 0; }
   input, select { padding: 7px 9px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); color: inherit; font: inherit; }
   fieldset { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; border: 0; }
-  legend { margin-bottom: 6px; color: var(--muted); font-size: 12px; }
-  fieldset label, .choice { display: flex; align-items: center; gap: 5px; font-size: 13px; }
+  legend { margin-bottom: 6px; color: var(--muted); font-size: 0.75rem; }
+  fieldset label, .choice { display: flex; align-items: center; gap: 5px; font-size: 0.8125rem; }
   .filters > .choice:first-of-type { margin-inline-start: auto; }
-  .choice select { border: 0; border-radius: 999px; background: var(--surface); color: var(--muted); padding: 5px 12px; font-size: 13px; }
+  .choice select { border: 0; border-radius: 999px; background: var(--surface); color: var(--muted); padding: 5px 12px; font-size: 0.8125rem; }
   .choice select:hover { background: var(--raised); }
   .pill { position: relative; padding: 5px 12px; border-radius: 999px; background: var(--surface); color: var(--muted); cursor: pointer; }
   .pill:hover { background: var(--raised); }
@@ -182,26 +182,26 @@
   .pill input { position: absolute; inset: 0; margin: 0; padding: 0; opacity: 0; cursor: pointer; }
   .pill:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
   .pill:has(input:disabled) { opacity: 0.55; cursor: default; }
-  button { padding: 6px 9px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
+  button { padding: 6px 9px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); color: inherit; font: inherit; font-size: 0.75rem; cursor: pointer; }
   button:hover:not(:disabled) { background: var(--raised-2); }
   button:disabled, select:disabled { opacity: 0.55; cursor: default; }
   ul { margin: 0; padding: 0; list-style: none; }
   li { padding: 14px 0; border-bottom: 1px solid var(--line); }
   .chat { display: flex; width: 100%; align-items: center; gap: 10px; padding: 0; border: 0; background: transparent; text-align: start; }
   .body { flex: 1; min-width: 0; display: grid; gap: 4px; }
-  .title { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
-  .preview { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  time { flex: none; color: var(--muted); font-size: 11px; }
+  .title { font-size: 0.875rem; font-weight: 600; overflow-wrap: anywhere; }
+  .preview { color: var(--muted); font-size: 0.75rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  time { flex: none; color: var(--muted); font-size: 0.6875rem; }
   .badges, .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
-  .badges { color: var(--muted); font-size: 12px; }
+  .badges { color: var(--muted); font-size: 0.75rem; }
   .badges > span, .mention { padding: 3px 7px; border: 0; border-radius: var(--radius-sm); background: var(--surface); }
   .mention { color: var(--accent-text); }
   .label { display: inline-flex; align-items: center; gap: 5px; }
-  .label button { padding: 0 3px; border: 0; background: transparent; font-size: 15px; }
-  .actions select { max-width: 100%; font-size: 12px; }
-  .actions span { color: var(--muted); font-size: 12px; }
-  .error { color: var(--danger); font-size: 13px; overflow-wrap: anywhere; }
+  .label button { padding: 0 3px; border: 0; background: transparent; font-size: 0.9375rem; }
+  .actions select { max-width: 100%; font-size: 0.75rem; }
+  .actions span { color: var(--muted); font-size: 0.75rem; }
+  .error { color: var(--danger); font-size: 0.8125rem; overflow-wrap: anywhere; }
   .error button { margin-inline-start: 10px; }
-  :global(.inbox-avatar) { width: 36px; height: 36px; flex: none; border-radius: 50%; object-fit: cover; display: grid; place-items: center; background: hsl(var(--hue, 0) 25% 35%); color: white; font-size: 14px; }
+  :global(.inbox-avatar) { width: 36px; height: 36px; flex: none; border-radius: 50%; object-fit: cover; display: grid; place-items: center; background: hsl(var(--hue, 0) 25% 35%); color: white; font-size: 0.875rem; }
   @media (max-width: 480px) { .inbox { padding: 12px; } time { max-width: 80px; text-align: end; } }
 </style>
