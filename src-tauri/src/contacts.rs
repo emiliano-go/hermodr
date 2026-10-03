@@ -70,9 +70,9 @@ pub(crate) async fn set_online(state: State<'_, AppState>, online: bool) -> Comm
 }
 
 #[tauri::command]
-pub(crate) async fn watch_presence(state: State<'_, AppState>, jid: String, account: Option<String>) -> CommandResult<()> {
+pub(crate) async fn watch_presence(state: State<'_, AppState>, jid: Option<String>, account: Option<String>, active: Option<bool>) -> CommandResult<()> {
     let service = match account { Some(account) => state.account_service(&account).map_err(|error| CommandError::code("error.account_changed").with_diagnostic(error))?, None => state.service().map_err(|error| CommandError::code("error.not_connected").with_diagnostic(error))? };
-    service.watch_presence(&jid).await.map_err(CommandError::from)
+    service.watch_presence(jid.as_deref(), active.unwrap_or(false)).await.map_err(CommandError::from)
 }
 
 #[tauri::command]

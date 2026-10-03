@@ -6,6 +6,7 @@ use whatsapp_rust::wacore::iq::groups::{
     GroupCreateOptions, GroupMetadataOutcome, GroupParticipantOptions, GroupQueryIq, GroupSubject,
     GROUP_SIZE_LIMIT,
 };
+use whatsapp_rust::wacore::iq::{abprops::web, props::{PropsResponse, PropsSpec}};
 
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
@@ -60,7 +61,10 @@ impl WhatsAppService {
     pub async fn create_group(&self, subject: &str, jids: &[String], current: impl Fn() -> Result<()> + Send) -> Result<GroupCreateResult> {
         current()?;
         anyhow::ensure!(self.is_connected(), MessageRef::new("error.not_connected"));
-        let (subject, selected) = creation_input(subject, jids)?;
+        let (subject, selected) = creation_input(subject, jids, usize::MAX)?;
+        let limit = self.client.execute_streaming(PropsSpec::new().retaining([web::GROUP_SIZE_LIMIT.code]))
+            .await.ok().and_then(server_group_size_limit).unwrap_or(GROUP_SIZE_LIMIT);
+        creation_count(jids.len(), limit)?;
         let mut participants = Vec::new();
         let mut seen = HashSet::new();
         for requested in selected {
@@ -146,14 +150,25 @@ fn creation_address(value: &str) -> Result<Jid> {
     Ok(jid.to_non_ad())
 }
 
-fn creation_input(subject: &str, jids: &[String]) -> Result<(String, Vec<Jid>)> {
+fn server_group_size_limit(response: PropsResponse) -> Option<usize> {
+    if response.delta_update { return None; }
+    let mut values = response.experiment_props.iter().filter(|(code, _)| *code == web::GROUP_SIZE_LIMIT.code);
+    let limit = values.next()?.1.parse::<usize>().ok().filter(|limit| *limit > 1)?;
+    values.next().is_none().then_some(limit)
+}
+
+fn creation_count(count: usize, limit: usize) -> Result<()> {
+    anyhow::ensure!(count > 0 && count < limit, MessageRef::new("error.group_creation_count").with_param("limit", serde_json::Number::from(limit - 1)));
+    Ok(())
+}
+
+fn creation_input(subject: &str, jids: &[String], limit: usize) -> Result<(String, Vec<Jid>)> {
     let subject = subject.trim();
     anyhow::ensure!(!subject.is_empty(), MessageRef::new("error.group_subject_required"));
     let subject = GroupSubject::new(subject).map_err(|error| anyhow::Error::new(
         MessageRef::new("error.group_subject_invalid")
     ).context(error.to_string()))?.into_string();
-    // ponytail: pinned SDK group limit; use server props if larger groups are needed.
-    anyhow::ensure!(!jids.is_empty() && jids.len() < GROUP_SIZE_LIMIT, MessageRef::new("error.group_creation_count").with_param("limit", serde_json::Number::from(GROUP_SIZE_LIMIT - 1)));
+    creation_count(jids.len(), limit)?;
     let mut seen = HashSet::new();
     let mut selected = Vec::new();
     for value in jids {
@@ -179,20 +194,35 @@ mod tests {
     #[test]
     fn creation_validates_subject_and_people_before_network_work() {
         let person = "100@s.whatsapp.net".to_string();
-        assert!(creation_input("  ", std::slice::from_ref(&person)).is_err());
-        assert!(creation_input(&"🦀".repeat(100), std::slice::from_ref(&person)).is_ok());
-        assert!(creation_input(&"🦀".repeat(101), std::slice::from_ref(&person)).is_err());
-        let error = creation_input("Group", &[]).unwrap_err();
+        assert!(creation_input("  ", std::slice::from_ref(&person), GROUP_SIZE_LIMIT).is_err());
+        assert!(creation_input(&"🦀".repeat(100), std::slice::from_ref(&person), GROUP_SIZE_LIMIT).is_ok());
+        assert!(creation_input(&"🦀".repeat(101), std::slice::from_ref(&person), GROUP_SIZE_LIMIT).is_err());
+        let error = creation_input("Group", &[], GROUP_SIZE_LIMIT).unwrap_err();
         let reference = error.downcast_ref::<MessageRef>().unwrap();
         assert_eq!(reference.code, "error.group_creation_count");
         assert_eq!(serde_json::to_value(reference).unwrap()["params"]["limit"], GROUP_SIZE_LIMIT - 1);
-        assert!(creation_input("Group", &vec![person.clone(); GROUP_SIZE_LIMIT]).is_err());
+        assert!(creation_input("Group", &vec![person.clone(); GROUP_SIZE_LIMIT], GROUP_SIZE_LIMIT).is_err());
         for value in ["@s.whatsapp.net", "1@g.us", "1@newsletter", "status@broadcast", "name@lid", "bad"] {
-            assert!(creation_input("Group", &[value.into()]).is_err());
+            assert!(creation_input("Group", &[value.into()], GROUP_SIZE_LIMIT).is_err());
         }
-        let (subject, selected) = creation_input(" Group ", &[person, "100:2@s.whatsapp.net".into(), "200@lid".into()]).unwrap();
+        let (subject, selected) = creation_input(" Group ", &[person, "100:2@s.whatsapp.net".into(), "200@lid".into()], GROUP_SIZE_LIMIT).unwrap();
         assert_eq!(subject, "Group");
         assert_eq!(selected.iter().map(ToString::to_string).collect::<Vec<_>>(), ["100@s.whatsapp.net", "200@lid"]);
+    }
+
+    #[test]
+    fn group_creation_uses_server_limit_or_pinned_fallback() {
+        let response = |value: &str| PropsResponse {
+            experiment_props: vec![(web::GROUP_SIZE_LIMIT.code, value.into())], ..Default::default()
+        };
+        assert_eq!(server_group_size_limit(response("1025")), Some(1025));
+        assert_eq!(server_group_size_limit(response("0")), None);
+        assert_eq!(server_group_size_limit(response("invalid")), None);
+        assert_eq!(server_group_size_limit(PropsResponse::default()), None);
+        let person = "100@s.whatsapp.net".to_string();
+        assert!(creation_count(GROUP_SIZE_LIMIT, GROUP_SIZE_LIMIT).is_err());
+        assert!(creation_input("Group", &vec![person; GROUP_SIZE_LIMIT], usize::MAX).is_ok());
+        assert!(creation_count(GROUP_SIZE_LIMIT, server_group_size_limit(response("1025")).unwrap_or(GROUP_SIZE_LIMIT)).is_ok());
     }
 
     #[test]

@@ -272,3 +272,17 @@ fn nvidia_modules_are_detected_for_the_renderer_workaround() {
     assert!(!nvidia_module_loaded("amdgpu 1 0 - Live 0x0\ni915 0 0 - Live 0x0"));
     assert!(!nvidia_module_loaded(""));
 }
+
+#[test]
+fn renderer_workaround_preserves_x11_and_user_overrides_across_driver_matrix() {
+    use crate::renderer_workaround;
+    for nvidia in [false, true] {
+        assert_eq!(renderer_workaround(false, nvidia, false, false), None);
+    }
+    assert_eq!(renderer_workaround(true, true, false, false), Some("__NV_DISABLE_EXPLICIT_SYNC"));
+    assert_eq!(renderer_workaround(true, false, false, false), Some("WEBKIT_DISABLE_DMABUF_RENDERER"));
+    assert_eq!(renderer_workaround(true, true, true, false), None);
+    assert_eq!(renderer_workaround(true, false, false, true), None);
+    assert_eq!(renderer_workaround(true, true, false, true), Some("__NV_DISABLE_EXPLICIT_SYNC"));
+    assert_eq!(renderer_workaround(true, false, true, false), Some("WEBKIT_DISABLE_DMABUF_RENDERER"));
+}

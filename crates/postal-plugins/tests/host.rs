@@ -195,6 +195,44 @@ async fn shutdown_kills_uncooperative_process() {
 }
 
 #[tokio::test]
+async fn stalled_handshake_times_out_and_host_restarts_after_killing_sidecar() {
+    let fixture = Fixture::new("lazy", None, "stall-handshake");
+    let host = fixture.host();
+    enable(&host).await;
+    let started = Instant::now();
+    let error = tokio::time::timeout(Duration::from_secs(15), host.send_event(ID, json!({"marker":"stalled"})))
+        .await.expect("handshake hung").unwrap_err();
+    assert!(error.to_string().contains("handshake timed out"));
+    assert!(started.elapsed() >= Duration::from_secs(5));
+    wait(|| host.list()[0].error.is_some()).await;
+    std::fs::write(fixture.plugin.join("mode"), "").unwrap();
+    host.send_event(ID, json!({"marker":"recovered"})).await.unwrap();
+    host.shutdown().await;
+    assert_eq!(fixture.trace().matches("start\n").count(), 2);
+    assert!(fixture.trace().contains("recovered"));
+    assert!(fixture.trace().contains("ack"));
+}
+
+#[tokio::test]
+async fn stalled_request_times_out_and_same_host_retries_with_fresh_sidecar() {
+    let fixture = Fixture::new("lazy", None, "no-ack");
+    let host = fixture.host();
+    enable(&host).await;
+    let started = Instant::now();
+    let error = tokio::time::timeout(Duration::from_secs(20), host.send_event(ID, json!({"marker":"stalled"})))
+        .await.expect("request hung").unwrap_err();
+    assert!(error.to_string().contains("request timed out"));
+    assert!(started.elapsed() >= Duration::from_secs(10));
+    wait(|| host.list()[0].error.is_some()).await;
+    std::fs::write(fixture.plugin.join("mode"), "").unwrap();
+    host.send_event(ID, json!({"marker":"recovered"})).await.unwrap();
+    host.shutdown().await;
+    assert_eq!(fixture.trace().matches("start\n").count(), 2);
+    assert!(fixture.trace().contains("recovered"));
+    assert!(fixture.trace().contains("shutdown"));
+}
+
+#[tokio::test]
 async fn shutdown_releases_executable_for_replacement_and_restart() {
     let fixture = Fixture::new("eager", None, "");
     let host = fixture.host();

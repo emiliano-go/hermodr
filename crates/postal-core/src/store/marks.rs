@@ -60,6 +60,7 @@ impl MessageStore {
             view_once: scope.view_once()?,
             forwarded: scope.simple_marks("forwarded")?,
             edited: scope.simple_marks("edited")?,
+            download_failures: scope.download_failures()?,
         })
     }
 
@@ -412,6 +413,16 @@ impl MarksScope<'_> {
             .query_map(params![self.chat, self.window], |r| r.get(0))?
             .collect::<rusqlite::Result<_>>()?;
         Ok(rows)
+    }
+
+    fn download_failures(&self) -> Result<Option<BTreeMap<String, MessageFailure>>> {
+        let rows = self.conn.prepare("SELECT id,download_error FROM messages WHERE chat=?1 AND download_error IS NOT NULL
+            AND (?2 IS NULL OR id IN (SELECT value FROM json_each(?2)))")?
+            .query_map(params![self.chat, self.window], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut failures = BTreeMap::new();
+        for (id, json) in rows { failures.insert(id, serde_json::from_str(&json)?); }
+        Ok((!failures.is_empty()).then_some(failures))
     }
 }
 

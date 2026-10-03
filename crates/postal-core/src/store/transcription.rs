@@ -125,6 +125,7 @@ mod tests {
         migrate(&conn).unwrap();
         MessageStore {
             conn: Mutex::new(conn),
+            pending_rsvp_limit: 512,
         }
     }
     fn transcript(id: &str) -> StoredTranscript {

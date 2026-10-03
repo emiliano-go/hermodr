@@ -138,6 +138,15 @@ impl MessageStore {
         Ok(())
     }
 
+    pub fn set_media_download_error(&self, chat: &str, id: &str, failure: Option<MessageFailure>) -> Result<()> {
+        let json = failure.as_ref().map(serde_json::to_string).transpose()?;
+        let conn = self.conn.lock().unwrap();
+        let chat = &*names::canonical_chat(&conn, chat)?;
+        anyhow::ensure!(conn.execute("UPDATE messages SET download_error=?3 WHERE chat=?1 AND id=?2",
+            params![chat, id, json])? == 1, "message disappeared before its download result could be saved");
+        Ok(())
+    }
+
     /// Records a preview for downloaded media whose sender sent none.
     pub fn set_media_thumb(&self, chat: &str, id: &str, thumb: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
@@ -407,6 +416,11 @@ impl StoreWorker {
         let id = id.to_owned();
         let path = path.to_owned();
         self.run(move |store| store.set_media_path(&chat, &id, &path)).await
+    }
+
+    pub(crate) async fn set_media_download_error(&self, chat: &str, id: &str, failure: Option<MessageFailure>) -> Result<()> {
+        let (chat, id) = (chat.to_owned(), id.to_owned());
+        self.run(move |store| store.set_media_download_error(&chat, &id, failure)).await
     }
 
     pub(crate) async fn set_media_thumb(&self, chat: &str, id: &str, thumb: &str) -> Result<()> {

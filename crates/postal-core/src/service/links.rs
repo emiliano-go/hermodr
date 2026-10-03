@@ -7,6 +7,7 @@ use super::*;
 mod tests;
 
 /// A link preview fetched from a URL.
+#[derive(Clone)]
 pub(super) struct LinkPreview {
     pub(super) url: String,
     pub(super) title: Option<String>,
@@ -37,6 +38,33 @@ pub(super) fn fetch_link_preview(url: &str) -> Option<LinkPreview> {
     fetch_preview_with(&public_agent(), url)
 }
 
+const PREVIEW_TTL: Duration = Duration::from_secs(300);
+const PREVIEW_CACHE_SIZE: usize = 16;
+
+#[derive(Default)]
+pub(super) struct PreviewCache(std::collections::VecDeque<(String, std::time::Instant, LinkPreview)>);
+
+impl PreviewCache {
+    pub(super) fn get_or_fetch(&mut self, url: &str, now: std::time::Instant, fetch: impl FnOnce(&str) -> Option<LinkPreview>) -> Option<LinkPreview> {
+        let mut parsed = url::Url::parse(url).ok()?;
+        if !matches!(parsed.scheme(), "http" | "https") { return None; }
+        parsed.set_fragment(None);
+        let key = parsed.to_string();
+        self.0.retain(|(_, at, _)| now.saturating_duration_since(*at) < PREVIEW_TTL);
+        if let Some(index) = self.0.iter().position(|(saved, _, _)| *saved == key) {
+            let entry = self.0.remove(index).unwrap();
+            let mut preview = entry.2.clone();
+            preview.url = url.to_owned();
+            self.0.push_back(entry);
+            return Some(preview);
+        }
+        let preview = fetch(url)?;
+        if self.0.len() == PREVIEW_CACHE_SIZE { self.0.pop_front(); }
+        self.0.push_back((key, now, preview.clone()));
+        Some(preview)
+    }
+}
+
 fn public_agent() -> ureq::Agent {
     let config = ureq::Agent::config_builder()
         .max_redirects(5)
@@ -54,11 +82,19 @@ pub(super) fn fetch_public_thumbnail(url: &str) -> Option<Vec<u8>> {
     fetch_thumbnail_with(&public_agent(), url)
 }
 
+pub(super) fn fetch_public_avatar(url: &str) -> Option<Vec<u8>> {
+    fetch_public_bytes_with(&public_agent(), url, 8 << 20)
+}
+
 fn fetch_thumbnail_with(agent: &ureq::Agent, url: &str) -> Option<Vec<u8>> {
+    let bytes = fetch_public_bytes_with(agent, url, 8 << 20)?;
+    link_thumbnail(&bytes)
+}
+
+fn fetch_public_bytes_with(agent: &ureq::Agent, url: &str, limit: usize) -> Option<Vec<u8>> {
     if agent.config().proxy().is_some() { return None; }
     let mut response = fetch_public(agent, url)?;
-    let bytes = response.body_mut().with_config().limit(8 << 20).read_to_vec().ok()?;
-    link_thumbnail(&bytes)
+    response.body_mut().with_config().limit(limit as u64).read_to_vec().ok()
 }
 
 fn fetch_preview_with(agent: &ureq::Agent, url: &str) -> Option<LinkPreview> {

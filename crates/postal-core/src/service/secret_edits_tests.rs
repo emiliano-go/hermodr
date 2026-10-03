@@ -104,23 +104,17 @@ fn divergent_enc_payloads_fail_closed_and_duplicates_keep_provenance() {
 }
 
 #[test]
-fn cache_is_bounded_and_live_expiry_degrades_missing_provenance() {
+fn busy_captures_survive_until_expiry_and_live_expiry_degrades_missing_provenance() {
     let now = Instant::now();
     let mut captures = Captures::default();
-    let held: Vec<_> = (0..=CAPACITY).map(|index| info(&index.to_string())).collect();
+    let held: Vec<_> = (0..=2048).map(|index| info(&index.to_string())).collect();
     for info in &held {
         captures.record(info, &poll_body().encode_to_vec(), now);
     }
-    assert_eq!(captures.entries.len(), CAPACITY);
-    assert!(captures.degraded);
-    assert_eq!(
-        held[..CAPACITY]
-            .iter()
-            .filter(|info| captures.candidate(info, now).is_none())
-            .count(),
-        1
-    );
-    assert!(matches!(captures.candidate(&held[CAPACITY], now), Some(Candidate::Plain)));
+    assert_eq!(captures.entries.len(), held.len());
+    assert!(!captures.degraded);
+    assert!(matches!(captures.candidate(&held[0], now), Some(Candidate::Plain)));
+    assert!(matches!(captures.candidate(held.last().unwrap(), now), Some(Candidate::Plain)));
     let mut captures = Captures::default();
     captures.record(&held[0], &poll_body().encode_to_vec(), now);
     assert!(captures.candidate(&held[0], now + MAX_AGE).is_none());

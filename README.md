@@ -20,8 +20,10 @@ Postal takes the other path. Because it implements the protocol itself:
   window only unless *Settings → Storage & history → Request full history when
   pairing* is on (off by default). This requests up to 10,000 days; the phone
   may supply less. Older messages load on demand as you scroll.
-  Sync requests never change disk retention. Legacy full-history settings
-  migrate to explicit unlimited global disk retention, preserving their effect.
+  Sync requests never change disk retention. Settings saved before history
+  requests were separated from disk retention migrate the old default caps
+  independently: 24 hours and 500 messages per chat become unlimited. Custom
+  caps remain unchanged. New-format settings keep their saved limits.
 - **Disk history and RAM have separate limits.** SQLite is a durable archive,
   unlimited on new installations unless explicit disk retention is configured.
   Existing disk policies survive upgrades. The open conversation keeps a bounded
@@ -216,7 +218,9 @@ installers land in `src-tauri/target/release/bundle/`.
 The release bundles, AppImage included, are built with `scripts/build-release.sh`,
 which sets the two environment variables the AppImage tooling needs on current
 distros, and leaves the files to upload (AppImage, icon, `SHA256SUMS`) in
-`dist/`. `install-dev.sh` never bundles, so it does not run into them.
+`dist/`. Before publishing a release, complete the
+[release memory and GPU checklist](docs/release-checklist.md).
+`install-dev.sh` never bundles, so it does not run into them.
 
 Dependencies are declared in `Cargo.toml`: Tauri comes from crates.io, and
 `whatsapp-rust` is pinned to a git revision because per-chunk history control
@@ -291,7 +295,10 @@ instead of leaving the app silently offline.
 The app itself logs to `postal.log` in its data directory (*Settings → About →
 Open log*): connection changes, sync progress, per-batch timings, failed store
 writes, failed UI commands and crashes with a backtrace. `RUST_LOG` overrides
-the levels; past 5 MB the file moves to `postal.log.old`.
+the levels; past 5 MiB the file moves to `postal.log.old`.
+
+For a blank WebKit window, Linux GPU workarounds, or crash logs, see the
+[troubleshooting guide](docs/troubleshooting.md).
 
 Tolerated database and media-cache failures use the `postal_core::storage`
 error target with the calling source location. Missing message rows are normal
@@ -402,6 +409,12 @@ Working:
 - A mentions inbox, starred messages and search within a chat; a quick switcher
   across chats, contacts and messages; and a notification history that jumps
   back to its message
+- Quick switcher opens with 20 recent chats. Typing searches the full directory
+  on the backend and returns at most 30 fuzzy matches, plus 50 message results.
+  Contacts beyond the recent list remain searchable.
+- Composer formatting shortcuts: Ctrl/Cmd+B for bold, Ctrl/Cmd+I for italic,
+  Ctrl/Cmd+U for strikethrough, and Ctrl/Cmd+Shift+M for monospace. Change them
+  in Settings → Keybindings; draft undo restores the prior text and selection.
 - Slash commands in the composer: polls, events, stickers, GIFs, locations,
   @all mentions and keep-in-chat
 - Labels with colors for chats and messages, created and managed from the chat

@@ -53,6 +53,7 @@ export class UiState {
   removeMember = $state<{ chat: string; jid: string; name: string } | null>(null);
   /** Messages picked for a bulk action, in the open chat; null when not picking. */
   picking = $state<Record<string, StoredMessage> | null>(null);
+  selectionAnchor = $state<string | null>(null);
   /** The picked message ids a bulk delete is confirming. */
   bulkDelete = $state<string[] | null>(null);
   reporting = $state<StoredMessage | null>(null);
@@ -107,6 +108,8 @@ export class UiState {
   }
 
   resetAccount() {
+    this.picking = null;
+    this.selectionAnchor = null;
     this.creating = null;
     this.editingEvent = null;
     this.accountMenu = false;

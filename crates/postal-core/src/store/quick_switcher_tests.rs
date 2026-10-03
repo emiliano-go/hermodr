@@ -54,6 +54,31 @@ fn catalog_collapses_address_forms_and_keeps_local_name_and_alias_authority() {
 }
 
 #[test]
+fn search_20k_catalog_bounds_payload_and_finds_late_fuzzy_matches() {
+    let store = memory();
+    {
+        let mut conn = store.conn.lock().unwrap();
+        let transaction = conn.transaction().unwrap();
+        {
+            let mut stmt = transaction.prepare("INSERT INTO names(jid, name) VALUES (?1, ?2)").unwrap();
+            for index in 0..20_000 {
+                stmt.execute(params![format!("12{index:05}@s.whatsapp.net"), format!("Contact {index:05}")]).unwrap();
+            }
+        }
+        transaction.commit().unwrap();
+    }
+    store.set_name("group@g.us", "Development Group").unwrap();
+    store.set_name("999@lid", "Álvaro").unwrap();
+    assert!(store.switcher_search(&[], &[], "").unwrap().is_empty());
+    let rows = store.switcher_search(&[], &[], "ct19999").unwrap();
+    assert!(rows.len() <= SWITCHER_SEARCH_LIMIT);
+    assert_eq!(rows[0].name, "Contact 19999");
+    assert!(serde_json::to_vec(&rows).unwrap().len() < 16_384);
+    assert_eq!(store.switcher_search(&[], &[], "dvg").unwrap()[0].jid, "group@g.us");
+    assert_eq!(store.switcher_search(&[], &[], "alvr").unwrap()[0].name, "Álvaro");
+}
+
+#[test]
 fn global_search_matches_literal_body_and_has_a_stable_cross_chat_order() {
     let store = memory();
     for (chat, id, text) in [("b@g.us", "same", "LITERAL 10%_\\"), ("a@g.us", "same", "literal 10%_\\"), ("a@g.us", "other", "literal 100xx")] {

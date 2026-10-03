@@ -93,3 +93,10 @@ test("read frontier uses highest raw visible row independent of DOM column order
   assert.equal(visibleReadFrontier(rows.slice(1), ["b", "parent"]), "parent");
   assert.deepEqual(rows, before);
 });
+
+test("read frontier advances through skipped virtual rows without crossing below the fold", () => {
+  const messages = Array.from({ length: 400 }, (_, index) => ({ id: `message-${index}` }));
+  assert.equal(visibleReadFrontier(messages, ["message-395", "message-399"]), "message-399");
+  assert.equal(visibleReadFrontier(messages, ["message-195", "message-199"]), "message-199");
+  assert.equal(visibleReadFrontier(messages, ["message-100"]), "message-100");
+});

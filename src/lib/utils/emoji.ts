@@ -7,6 +7,23 @@ export type Emoji = {
   group: number;
 };
 
+export type EmojiToken = { query: string; raw: string; start: number; end: number; closed: boolean };
+
+export function emojiTokenAt(text: string, caret: number, selectionEnd = caret): EmojiToken | null {
+  if (!Number.isInteger(caret) || caret !== selectionEnd || caret < 0 || caret > text.length) return null;
+  const match = /(?:^|\s)(:([a-z0-9_+-]{2,})(:)?)$/i.exec(text.slice(0, caret));
+  return match ? { query: match[2].toLowerCase(), raw: match[1], start: caret - match[1].length, end: caret, closed: !!match[3] } : null;
+}
+
+export function replaceEmojiToken(text: string, token: EmojiToken, emoji: string): { text: string; caret: number } | null {
+  if (text.slice(token.start, token.end) !== token.raw) return null;
+  return { text: text.slice(0, token.start) + emoji + text.slice(token.end), caret: token.start + emoji.length };
+}
+
+export function exactEmojiForToken(all: Emoji[], token: EmojiToken): string | null {
+  return token.closed ? all.find((entry) => entry.shortcodes.includes(token.query))?.emoji ?? null : null;
+}
+
 /** Emojibase groups in picker order; 2 is skin-tone components and is left out. */
 export const GROUPS: { id: number; label: string; icon: string }[] = [
   { id: 0, label: "Smileys & emotion", icon: "😀" },
@@ -52,7 +69,7 @@ export function loadEmojis(): Promise<Emoji[]> {
 }
 
 /** Best matches for a `:query`: shortcode prefix, then shortcode word, then label and tags. */
-export function searchEmojis(all: Emoji[], query: string, limit = 24): Emoji[] {
+export function searchEmojis(all: Emoji[], query: string, limit = 24, recent: readonly string[] = []): Emoji[] {
   const q = query.toLowerCase().replace(/^:|:$/g, "");
   if (!q) return [];
   const rank = (e: Emoji) => {
@@ -64,9 +81,9 @@ export function searchEmojis(all: Emoji[], query: string, limit = 24): Emoji[] {
     return 9;
   };
   return all
-    .map((e) => ({ e, r: rank(e) }))
+    .map((e) => ({ e, r: rank(e), recent: recent.indexOf(e.emoji) }))
     .filter((x) => x.r < 9)
-    .sort((a, b) => a.r - b.r)
+    .sort((a, b) => a.r - b.r || (a.recent < 0 ? recent.length : a.recent) - (b.recent < 0 ? recent.length : b.recent))
     .slice(0, limit)
     .map((x) => x.e);
 }
@@ -75,7 +92,8 @@ const RECENT_KEY = "postal.recentEmoji";
 
 export function recentEmojis(): string[] {
   try {
-    return JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]");
+    const value: unknown = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]");
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
   } catch {
     return [];
   }

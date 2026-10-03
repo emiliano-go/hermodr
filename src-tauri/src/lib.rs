@@ -333,8 +333,9 @@ macro_rules! postal_commands {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let context = tauri::generate_context!();
     // Before any app path resolves, adopt an install from before the rename.
-    migrate_bundle_id();
+    if context.config().identifier == migration::IDENTIFIER { migrate_bundle_id(); }
     webkit_renderer_workaround();
 
     let builder = app_builder();
@@ -346,7 +347,7 @@ pub fn run() {
     builder
         .setup(setup_app)
         .invoke_handler(postal_commands!())
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application")
         .run(handle_run_event);
 }
@@ -361,18 +362,23 @@ fn webkit_renderer_workaround() {
     {
         let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some()
             || std::env::var("XDG_SESSION_TYPE").is_ok_and(|session| session == "wayland");
-        if !wayland {
-            return;
+        if let Some(name) = renderer_workaround(
+            wayland,
+            wayland && nvidia_loaded(),
+            std::env::var_os("__NV_DISABLE_EXPLICIT_SYNC").is_some(),
+            std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_some(),
+        ) {
+            std::env::set_var(name, "1");
         }
-        if nvidia_loaded() {
-            if std::env::var_os("__NV_DISABLE_EXPLICIT_SYNC").is_none() {
-                std::env::set_var("__NV_DISABLE_EXPLICIT_SYNC", "1");
-            }
-            return;
-        }
-        if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
-            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-        }
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn renderer_workaround(wayland: bool, nvidia: bool, explicit_sync_set: bool, dmabuf_set: bool) -> Option<&'static str> {
+    match (wayland, nvidia) {
+        (true, true) if !explicit_sync_set => Some("__NV_DISABLE_EXPLICIT_SYNC"),
+        (true, false) if !dmabuf_set => Some("WEBKIT_DISABLE_DMABUF_RENDERER"),
+        _ => None,
     }
 }
 
@@ -417,7 +423,18 @@ fn single_instance() -> tauri::plugin::TauriPlugin<tauri::Wry> {
 
 fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let mut settings = load_settings(app.handle());
-    init_logging(&log_path(app.handle()), settings.verbose_whatsapp_logs);
+    let path = log_path(app.handle());
+    if let Err(error) = init_logging(&path, settings.verbose_whatsapp_logs) {
+        use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+        app.dialog()
+            .message(format!(
+                "Postal could not write {}: {error}. Check folder permissions and free space. Logs will be sent to stderr for this run.",
+                path.display(),
+            ))
+            .title("Postal logging unavailable")
+            .kind(MessageDialogKind::Warning)
+            .show(|_| {});
+    }
     #[cfg(desktop)]
     match desktop::get_desktop_status(app.handle().clone()) {
         Ok(status) => settings.start_on_login = status.start_on_login,

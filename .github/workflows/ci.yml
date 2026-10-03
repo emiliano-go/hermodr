@@ -37,7 +37,18 @@ jobs:
       - run: pnpm check
       - run: node --experimental-strip-types src/lib/utils/phone.ts
       - run: node --experimental-strip-types src/lib/utils/format.ts
-      - run: pnpm test
+      - if: runner.os == 'Linux'
+        env:
+          NODE_V8_COVERAGE: ${{ runner.temp }}/frontend-coverage
+        run: node --experimental-test-coverage --experimental-strip-types --test "src/tests/**/*.test.ts"
+      - if: runner.os != 'Linux'
+        run: pnpm test
+      - if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: ${{ runner.temp }}/frontend-coverage/
+          if-no-files-found: error
       # Fails when a production Rust function grows past 80 lines.
       - run: pnpm check:fn-length
       # Fails when a Tauri command misses its build.rs or ACL wiring.
@@ -59,9 +70,24 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y lld ffmpeg
       - if: runner.os == 'macOS'
         run: command -v ffmpeg >/dev/null || brew install ffmpeg
-      - run: node scripts/cargo.mjs test --locked --workspace
+      - if: runner.os == 'Linux'
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - if: runner.os == 'Linux'
+        run: rustup component add llvm-tools-preview
+      - if: runner.os == 'Linux'
+        run: |
+          node scripts/cargo.mjs llvm-cov --locked --workspace
+          node scripts/cargo.mjs llvm-cov report --lcov --output-path target/core.lcov
+      - if: runner.os != 'Linux'
+        run: node scripts/cargo.mjs test --locked --workspace
       - if: runner.os == 'Linux'
         run: cargo test --locked --manifest-path plugins/speech-to-text/Cargo.toml
+      - if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-coverage
+          path: target/core.lcov
+          if-no-files-found: error
       - run: sccache --show-stats
 
   tauri:
@@ -92,5 +118,22 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: node scripts/build-transcription-helper.mjs
-      - run: node scripts/cargo.mjs test --locked --manifest-path src-tauri/Cargo.toml --features wire-types
+      # If Rust DTOs drift, run pnpm generate:wire and commit the generated files.
+      - run: pnpm check:wire
+      - if: runner.os == 'Linux'
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - if: runner.os == 'Linux'
+        run: rustup component add llvm-tools-preview
+      - if: runner.os == 'Linux'
+        run: |
+          node scripts/cargo.mjs llvm-cov --locked --manifest-path src-tauri/Cargo.toml --features wire-types
+          node scripts/cargo.mjs llvm-cov report --manifest-path src-tauri/Cargo.toml --features wire-types --lcov --output-path src-tauri/target/tauri.lcov
+      - if: runner.os != 'Linux'
+        run: node scripts/cargo.mjs test --locked --manifest-path src-tauri/Cargo.toml --features wire-types
+      - if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-coverage
+          path: src-tauri/target/tauri.lcov
+          if-no-files-found: error
       - run: sccache --show-stats

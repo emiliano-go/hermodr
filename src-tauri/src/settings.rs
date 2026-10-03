@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use postal_core::{DiskRetention, WhatsAppService};
+use postal_core::store::RetentionLimit;
 use tauri::{AppHandle, Manager, State};
 use crate::AppState;
 
@@ -141,9 +142,6 @@ pub(crate) fn load_settings(app: &AppHandle) -> UiSettings {
 
 fn parse_settings(json: &str) -> serde_json::Result<UiSettings> {
     let value: serde_json::Value = serde_json::from_str(json)?;
-    // Files written before history requests and disk retention were split kept
-    // the old bounded default (24 h / 500 per chat). That was never an explicit
-    // choice: today's default is unlimited, so pre-refactor files adopt it.
     let legacy = value.get("request_full_history").is_none();
     let legacy_downloads = value.get("auto_download_types").is_none().then(|| {
         postal_core::store::media_policy::MediaAutoDownload::all(
@@ -152,7 +150,15 @@ fn parse_settings(json: &str) -> serde_json::Result<UiSettings> {
     });
     let mut settings: UiSettings = serde_json::from_value(value)?;
     if let Some(policy) = legacy_downloads { settings.auto_download_types = policy; }
-    if legacy { settings.retention = DiskRetention::unlimited(); }
+    if legacy {
+        // Legacy defaults were implicit; preserve each custom cap.
+        if settings.retention.max_age_hours == RetentionLimit::Limited(24) {
+            settings.retention.max_age_hours = RetentionLimit::Unlimited;
+        }
+        if settings.retention.max_messages_per_chat == RetentionLimit::Limited(500) {
+            settings.retention.max_messages_per_chat = RetentionLimit::Unlimited;
+        }
+    }
     settings.message_window_size = settings.message_window_size.clamp(50, postal_core::store::MAX_MESSAGE_PAGE);
     settings.chat_preview_delay_ms = settings.chat_preview_delay_ms.clamp(100, 3000);
     Ok(settings)
@@ -268,7 +274,6 @@ pub(crate) async fn set_settings(app: AppHandle, state: State<'_, AppState>, set
 #[cfg(test)]
 mod tests {
     use super::*;
-    use postal_core::store::RetentionLimit;
 
     #[test]
     fn media_policy_migrates_legacy_choices_and_preserves_partial_types() {
@@ -298,6 +303,15 @@ mod tests {
         let declined = parse_settings(&legacy.replace("true", "false")).unwrap();
         assert!(!declined.request_full_history);
         assert_eq!(declined.retention, DiskRetention::unlimited());
+        let custom = parse_settings(r#"{"accept_full_history":true,"retention":{"max_age_hours":48,"max_messages_per_chat":250}}"#).unwrap();
+        assert_eq!(custom.retention.max_age_hours, RetentionLimit::Limited(48));
+        assert_eq!(custom.retention.max_messages_per_chat, RetentionLimit::Limited(250));
+        let custom_age = parse_settings(r#"{"retention":{"max_age_hours":48,"max_messages_per_chat":500}}"#).unwrap();
+        assert_eq!(custom_age.retention.max_age_hours, RetentionLimit::Limited(48));
+        assert_eq!(custom_age.retention.max_messages_per_chat, RetentionLimit::Unlimited);
+        let custom_count = parse_settings(r#"{"retention":{"max_age_hours":24,"max_messages_per_chat":250}}"#).unwrap();
+        assert_eq!(custom_count.retention.max_age_hours, RetentionLimit::Unlimited);
+        assert_eq!(custom_count.retention.max_messages_per_chat, RetentionLimit::Limited(250));
         // Once the file carries the new key, its retention limits are honored.
         let explicit = parse_settings(&legacy.replace("accept_full_history", "request_full_history")).unwrap();
         assert!(explicit.request_full_history);

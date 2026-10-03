@@ -30,6 +30,22 @@ const PRIVATE_TARGET_SQL: &str = "s.deleted<>0 OR s.revoked<>0 OR s.spoiler<>0 O
     OR s.media_kind='view_once' OR (s.system_kind IS NOT NULL AND s.system_kind<>'UNAVAILABLE_MESSAGE')
     OR (s.system_kind IS NULL AND COALESCE(s.media_kind,'')<>'event')";
 
+fn parse_limit(value: Option<&str>) -> Result<i64> {
+    match value {
+        None => Ok(512),
+        Some(value) => value.parse::<i64>().ok().filter(|limit| *limit > 0)
+            .ok_or_else(|| anyhow::anyhow!("POSTAL_PENDING_RSVP_LIMIT must be a positive integer")),
+    }
+}
+
+pub(super) fn configured_limit() -> Result<i64> {
+    match std::env::var("POSTAL_PENDING_RSVP_LIMIT") {
+        Ok(value) => parse_limit(Some(&value)),
+        Err(std::env::VarError::NotPresent) => parse_limit(None),
+        Err(_) => anyhow::bail!("POSTAL_PENDING_RSVP_LIMIT must be UTF-8"),
+    }
+}
+
 pub(super) fn purge(conn: &Connection) -> Result<()> {
     conn.execute(&format!("DELETE FROM event_rsvp_pending AS p WHERE
         EXISTS(SELECT 1 FROM hidden_chats h WHERE h.jid=p.chat) OR EXISTS(SELECT 1 FROM cleared_chats h WHERE h.jid=p.chat)
@@ -92,8 +108,7 @@ impl MessageStore {
         let changed=tx.execute("INSERT OR IGNORE INTO event_rsvp_pending VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
             params![chat.as_ref(),record.event_id,record.source_id,record.responder,record.responder_alt,record.from_me,
                 record.key_chat,record.creator_hint,record.key_from_me,record.payload,record.iv,record.received_at])?>0;
-        // ponytail: 512 pending ciphertexts; configurable budget if bursts exceed it.
-        tx.execute("DELETE FROM event_rsvp_pending WHERE rowid NOT IN(SELECT rowid FROM event_rsvp_pending ORDER BY rowid DESC LIMIT 512)",[])?;
+        tx.execute("DELETE FROM event_rsvp_pending WHERE rowid NOT IN(SELECT rowid FROM event_rsvp_pending ORDER BY rowid DESC LIMIT ?1)",[self.pending_rsvp_limit])?;
         tx.commit()?;
         Ok(changed)
     }

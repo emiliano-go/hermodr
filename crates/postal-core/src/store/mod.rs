@@ -2,11 +2,12 @@
 //!
 //! The repository owns persisted rows; disk pruning is a separate policy.
 
-use std::{path::Path, sync::Mutex};
+use std::{collections::BTreeMap, path::Path, sync::Mutex};
 
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use crate::message_ref::MessageFailure;
 
 mod chats;
 mod schema;
@@ -543,6 +544,9 @@ pub struct ChatMarks {
     pub forwarded: Vec<String>,
     /// Ids of messages their sender edited.
     pub edited: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "wire-types", ts(optional))]
+    pub download_failures: Option<BTreeMap<String, MessageFailure>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -558,6 +562,7 @@ pub struct ViewOnce {
 /// SQLite-backed message store.
 pub struct MessageStore {
     conn: Mutex<Connection>,
+    pending_rsvp_limit: i64,
 }
 
 fn unix_now() -> i64 {
@@ -599,6 +604,7 @@ impl MessageStore {
     }
 
     pub fn open_with_key(path: &Path, key: Option<&crate::database_crypto::DatabaseKey>) -> Result<Self> {
+        let pending_rsvp_limit = event_rsvp_pending::configured_limit()?;
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
                 std::fs::create_dir_all(parent)?;
@@ -636,6 +642,7 @@ impl MessageStore {
 
         Ok(Self {
             conn: Mutex::new(conn),
+            pending_rsvp_limit,
         })
     }
 

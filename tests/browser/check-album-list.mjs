@@ -6,6 +6,8 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 const tempRoot = await realpath(tmpdir()), profileName = `postal-album-list-${randomUUID()}`, profile = join(tempRoot, profileName);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const railMode = process.argv.includes("--message-rail");
+const switcherMode = process.argv.includes("--quick-switcher");
 let browser, socket, command, exited, browserExited = false, profileCreated = false;
 try {
   await mkdir(profile);
@@ -70,12 +72,19 @@ try {
     sessions.add(sessionId);
     await call("Network.enable", {}, sessionId);
     await call("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: false }, sessionId);
-    await call("Page.navigate", { url: "http://127.0.0.1:1464/album-list.html" }, sessionId);
+    await call("Page.navigate", { url: `http://127.0.0.1:1464/${switcherMode ? "quick-switcher" : railMode ? "message-rail" : "album-list"}.html` }, sessionId);
     await call("Page.bringToFront", {}, sessionId);
     let result, pressed = false;
     while (Date.now() < deadline) {
       const read = await call("Runtime.evaluate", { returnByValue: true, expression: `(() => {
-        const node = document.querySelector("#album-list-result");
+        if (${switcherMode}) {
+          const node = document.querySelector('output[aria-label="Check result"]');
+          return node ? JSON.stringify({ viewport: innerWidth, complete: /^(PASS|FAIL):/.test(node.textContent) ? "true" : "false",
+            pass: node.textContent.startsWith("PASS:") ? "true" : "false", text: node.textContent,
+            checks: [...document.querySelectorAll("#app > ul > li")].map((item) => item.textContent),
+            alerts: [...document.querySelectorAll('[role="alert"]')].map((item) => item.textContent) }) : null;
+        }
+        const node = document.querySelector("#${railMode ? "message-rail" : "album-list"}-result");
         return node ? JSON.stringify({ viewport: innerWidth, complete: node.dataset.complete, keyboard: node.dataset.keyboard,
           pass: node.dataset.pass, text: node.innerText }) : null;
       })()` }, sessionId);
@@ -91,7 +100,7 @@ try {
       await sleep(100);
     }
     console.log(JSON.stringify({ requestedWidth: width, pressed, ...result }));
-    if (!result || result.complete !== "true" || result.pass !== "true" || result.viewport !== width || !pressed) process.exitCode = 1;
+    if (!result || result.complete !== "true" || result.pass !== "true" || result.viewport !== width || !railMode && !switcherMode && !pressed) process.exitCode = 1;
     await call("Target.closeTarget", { targetId });
   }
   if (unexpectedOrigins.size) throw new Error(`Unexpected fixture request origins: ${[...unexpectedOrigins].join(", ")}`);

@@ -1,0 +1,30 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      non-major:
+        update-types: [minor, patch]
+      major:
+        update-types: [major]
+
+  - package-ecosystem: cargo
+    directories:
+      - /
+      - /src-tauri
+      - /plugins/speech-to-text
+    schedule:
+      interval: weekly
+    groups:
+      by-dependency:
+        group-by: dependency-name
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

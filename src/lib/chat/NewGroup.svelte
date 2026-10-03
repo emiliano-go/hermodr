@@ -37,7 +37,7 @@
   const current = () => mounted && account === session.activeAccount;
   const picked = $derived(Object.keys(chosen));
   const subjectLength = $derived(Array.from(subject.trim()).length);
-  const valid = $derived(subjectLength > 0 && subjectLength <= 100 && picked.length > 0 && picked.length <= 256);
+  const valid = $derived(subjectLength > 0 && subjectLength <= 100 && picked.length > 0);
   const shown = $derived(results.filter((row) => row.kind === "contact" && row.jid !== me && row.number !== me?.split("@")[0]));
 
   $effect(() => {
@@ -70,7 +70,7 @@
     if (busy || created || !current()) return;
     const next = { ...chosen };
     if (next[row.jid]) delete next[row.jid];
-    else if (picked.length < 256) next[row.jid] = members.displayName(row.name, row.jid);
+    else next[row.jid] = members.displayName(row.name, row.jid);
     chosen = next;
   }
 
@@ -172,7 +172,7 @@
                 <span class="avatar placeholder">{members.displayName(row.name, row.jid).slice(0, 1).toUpperCase()}</span>
               {/if}
               <span class="label">{members.displayName(row.name, row.jid)}</span>
-              <input type="checkbox" checked={!!chosen[row.jid]} disabled={busy || (!chosen[row.jid] && picked.length >= 256)} onchange={() => toggle(row)} />
+              <input type="checkbox" checked={!!chosen[row.jid]} disabled={busy} onchange={() => toggle(row)} />
             </label>
           </li>
         {/each}

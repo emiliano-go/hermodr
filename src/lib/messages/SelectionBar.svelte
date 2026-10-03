@@ -2,9 +2,11 @@
 <script lang="ts">
   import { t } from "$lib/i18n/localizer";
   import Icon from "$lib/ui/Icon.svelte";
+  import { selectionShortcut } from "$lib/utils/message-selection";
 
   let {
     count,
+    onselectloaded,
     onforward,
     ondelete,
     oncopy,
@@ -16,6 +18,7 @@
     oncancel,
   }: {
     count: number;
+    onselectloaded?: () => void;
     onforward: () => void;
     ondelete: () => void;
     oncopy: () => unknown;
@@ -33,15 +36,23 @@
     busy = true;
     try { await action(); } finally { busy = false; }
   }
+
+  function keydown(event: KeyboardEvent) {
+    const editable = event.target instanceof HTMLElement && (event.target.isContentEditable || !!event.target.closest("input, textarea"));
+    const action = selectionShortcut(event, editable);
+    if (action === "clear") { event.preventDefault(); oncancel(); }
+    else if (action === "loaded" && onselectloaded && !busy) { event.preventDefault(); onselectloaded(); }
+  }
 </script>
 
-<svelte:window onkeydown={(e) => e.key === "Escape" && oncancel()} />
+<svelte:window onkeydown={keydown} />
 
 <div class="selection-bar">
   <button class="icon" aria-label={t("content.cancel_selection")} title={t("content.cancel")} onclick={oncancel}>
     <Icon name="x" size={18} />
   </button>
   <span class="count">{t("content.selected_count", { count })}</span>
+  {#if onselectloaded}<button class="action" disabled={busy} onclick={onselectloaded}>{t("content.select_loaded_messages")}</button>{/if}
   <button class="action" disabled={count === 0 || busy} onclick={() => run(onlabel)}>{t("content.labels")}</button>
   <button class="forward" disabled={count === 0 || busy} onclick={onforward}>
     <Icon name="forward" size={16} /> {t("content.forward")}

@@ -1,0 +1,9 @@
+{
+  "productName": "Postal Rail Smoke",
+  "identifier": "com.postal.rail-smoke",
+  "build": {
+    "beforeBuildCommand": "node scripts/build-transcription-helper.mjs && pnpm exec vite build --config tests/browser/rail-smoke/vite.config.ts",
+    "frontendDist": "../build/rail-smoke"
+  },
+  "bundle": { "active": false }
+}

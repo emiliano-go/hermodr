@@ -7,6 +7,7 @@
   import { members } from "$lib/state/members.svelte";
   import { labels } from "$lib/state/labels.svelte";
   import { MEDIA_TYPES, emptyMediaOverrides } from "$lib/utils/auto-download";
+  import { draftPreview } from "$lib/utils/drafts";
   import type { MediaAutoDownload, MediaAutoDownloadOverrides } from "$lib/utils/wire";
   import Avatar from "$lib/ui/Avatar.svelte";
   import Button from "$lib/ui/Button.svelte";
@@ -47,6 +48,7 @@
     chatLabelOf,
     formatTime,
     typingLabelOf,
+    draftFor = () => "",
     previewAuthorOf,
     previewTextOf,
     mediaIconOf,
@@ -107,6 +109,7 @@
     chatLabelOf: (chat: ChatSummary) => string;
     formatTime: (ts: number) => string;
     typingLabelOf: (chat: string) => string | null;
+    draftFor?: (account: string | null, chat: string) => string;
     previewAuthorOf: (chat: ChatSummary) => string | null;
     previewTextOf: (chat: ChatSummary) => string;
     mediaIconOf: (kind: string | null) => IconName | null;
@@ -597,7 +600,9 @@
               >{/if}{chatLabelOf(chat)}</span>
           <span class="time" class:unread={chat.unread_count > 0}
             >{chat.last_message_at > 0 ? formatTime(chat.last_message_at) : ""}</span>
-          {#if typingLabelOf(chat.chat)}
+          {#if draftPreview(draftFor(activeAccount, chat.chat))}
+            <span class="preview draft"><span class="draft-label">{t("chat.draft_label")}:</span> {draftPreview(draftFor(activeAccount, chat.chat))}</span>
+          {:else if typingLabelOf(chat.chat)}
             <span class="preview typing">{typingLabelOf(chat.chat)}</span>
           {:else if chat.message_count === 0}
             <span class="preview empty-chat">{t("chat.no_messages")}</span>
@@ -1252,6 +1257,10 @@
   }
   .preview.typing {
     color: var(--accent);
+  }
+  .draft-label {
+    color: var(--accent);
+    font-weight: 600;
   }
   .preview-icon {
     display: inline-flex;

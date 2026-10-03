@@ -20,6 +20,11 @@ async fn retries_replace_and_persist_locators_and_stop_after_one_reupload() {
             ..Default::default() };
         store.insert_message(&row).await.unwrap();
         store.set_media_ref(&row.header.chat, &row.header.id, &locator.encode_to_vec()).await.unwrap();
+        if scenario == "recovered" {
+            store.set_media_download_error(&row.header.chat, &row.header.id, Some(crate::message_ref::MessageFailure {
+                message: MessageRef::new("error.media_reupload_unavailable"), diagnostic: None,
+            })).await.unwrap();
+        }
         if scenario == "write-failed" {
             std::fs::create_dir_all(&root).unwrap();
             std::fs::write(&directory, b"not a directory").unwrap();
@@ -33,7 +38,8 @@ async fn retries_replace_and_persist_locators_and_stop_after_one_reupload() {
                 assert_eq!(media.downloadable.direct_path(), Some(if attempt == 0 { "/old" } else { "/new" }));
                 if scenario != "direct" && attempt == 0 || scenario == "download-failed" {
                     writer.write_all(b"unverified partial data that must be discarded")?;
-                    anyhow::bail!("synthetic CDN failure");
+                    return Err(whatsapp_rust::download::MediaDownloadError::ReferenceRejected(
+                        anyhow::anyhow!("Download failed with status: 403")).into());
                 }
                 writer.write_all(b"synthetic attachment")?;
                 Ok(writer)
@@ -49,12 +55,28 @@ async fn retries_replace_and_persist_locators_and_stop_after_one_reupload() {
         assert_eq!(requests.load(Ordering::SeqCst), usize::from(!matches!(scenario, "direct" | "write-failed")));
         let persisted = store.message(&row.header.chat, &row.header.id).await.unwrap();
         assert_eq!(persisted.text, "caption survives");
+        let failure = store.marks(&row.header.chat).await.unwrap().download_failures
+            .and_then(|failures| failures.get(&row.header.id).cloned());
+        assert_eq!(failure.is_some(), !matches!(scenario, "direct" | "recovered"));
+        if scenario == "download-failed" {
+            assert_eq!(failure.as_ref().unwrap().message.code, "error.media_fresh_reference_rejected");
+        }
         if matches!(scenario, "direct" | "recovered") {
             let updated = result.unwrap();
             assert_eq!(updated.media.path, persisted.media.path);
             assert_eq!(std::fs::read(updated.media.path.unwrap()).unwrap(), b"synthetic attachment");
         } else {
             assert!(result.is_err(), "{scenario}");
+            if scenario == "download-failed" {
+                let failure = crate::message_ref::MessageFailure::from(result.unwrap_err());
+                assert_eq!(failure.message.code, "error.media_fresh_reference_rejected");
+                assert!(failure.diagnostic.unwrap().contains("403"));
+            } else if scenario == "reupload-failed" {
+                let failure = crate::message_ref::MessageFailure::from(result.unwrap_err());
+                assert_eq!(failure.message.code, "error.media_reupload_unavailable");
+                let diagnostic = failure.diagnostic.unwrap();
+                assert!(diagnostic.contains("403") && diagnostic.contains("synthetic sender refusal"));
+            }
             assert!(persisted.media.path.is_none(), "failed download must not advertise a file");
         }
         let bytes = store.media_ref_for(&row.header.chat, &row.header.id).await.unwrap().unwrap();

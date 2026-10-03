@@ -63,6 +63,8 @@
   import AttachmentRecoveryPanel from "$lib/composer/AttachmentRecoveryPanel.svelte";
   import { findRecovery, saveAttachmentCopy } from "$lib/utils/attachment-recovery";
   import { visibleReadFrontier } from "$lib/utils/album-timeline";
+  import { loadedSelection, pickLoaded } from "$lib/utils/message-selection";
+  import { latestUnreadCount } from "$lib/utils/latest-unread";
   import ScheduledOutbox from "$lib/composer/ScheduledOutbox.svelte";
   import SelectionBar from "$lib/messages/SelectionBar.svelte";
   import { hue } from "$lib/utils/avatar";
@@ -288,7 +290,8 @@
     chats.selectedChat = chat;
     composer.restoreKnownUnsent(chat);
     // One-to-one typing only arrives for contacts we are subscribed to.
-    if (!chat.endsWith("@g.us") && !isBroadcastList(chat)) invoke("watch_presence", { jid: chat }).catch(() => {});
+    invoke("watch_presence", { account: session.activeAccount, active: true,
+      jid: chat.endsWith("@s.whatsapp.net") || chat.endsWith("@lid") ? chat : null }).catch(() => {});
     chats.titleOverride = label;
     ui.scrolledUp = false;
     messages.prepareChat(chat, session.settings.message_window_size);
@@ -303,7 +306,7 @@
     members.participants = members.memberCache[chat] ?? [];
     composer.chosenMentions = [];
     composer.mentionQuery = null;
-    composer.draft = composer.drafts[chat] ?? "";
+    composer.draft = composer.draftFor(session.activeAccount, chat);
     composer.resetUndo();
     chats.showGroupInfo = false;
     chats.groupInfo = null;
@@ -438,11 +441,15 @@
 
   /** Deletes one chat on this device only; it leaves the list. */
   async function doDeleteChat(chat: string) {
+    const account = session.activeAccount, generation = messages.accountGeneration;
     ui.chatConfirm = null;
     ui.chatSettingsOpen = false;
     const wasOpen = chat === chats.selectedChat;
     const ok = await chats.deleteChat(chat);
     if (!ok) return;
+    composer.clearDraft(chat, account);
+    if (account !== session.activeAccount || generation !== messages.accountGeneration) return;
+    if (wasOpen) void invoke("watch_presence", { account, jid: null, active: true }).catch(() => {});
     composer.forgetRecovery(chat);
     if (wasOpen) {
       messages.acceptMessages([]);
@@ -453,7 +460,6 @@
       messages.lastUnreadId = null;
       composer.replyingTo = null;
       composer.editing = null;
-      delete composer.drafts[chat];
       if (composer.draft && chats.selectedChat === null) composer.draft = "";
     }
   }
@@ -739,6 +745,12 @@
     if (messages.atLatest && !untrack(() => ui.scrolledUp)) scrollToBottom();
   });
 
+  let visibleBoundary = $state<{ chat: string; id: string | null; account: string | null; generation: number } | null>(null);
+  const latestUnread = $derived(latestUnreadCount(messages.ordered,
+    visibleBoundary?.chat === chats.selectedChat && visibleBoundary.account === session.activeAccount
+      && visibleBoundary.generation === messages.accountGeneration ? visibleBoundary.id : null,
+    chats.chats.find((chat) => chat.chat === chats.selectedChat)?.unread_count ?? 0));
+
   /** The virtual list's scroll metrics: follow, page older, and mark read. */
   function onScroll({ offset, distance }: { offset: number; distance: number; viewport: number }) {
     const scrolledUp = !messages.atLatest || distance > 120;
@@ -764,20 +776,17 @@
     scheduleReadMarking();
   }
 
-  /**
-   * Advances the read marker to the oldest message still in view, throttled.
-   *
-   * Marking up to that id rather than the whole chat leaves messages below the
-   * fold unread, which is what makes the divider meaningful.
-   */
+  /** Advances the read marker through the newest visible message, throttled. */
   function scheduleReadMarking() {
     clearTimeout(messages.readMarkTimer);
     messages.readMarkTimer = setTimeout(() => {
-      if (!scroller || !chats.selectedChat || !document.hasFocus()) return;
+      if (!scroller || !chats.selectedChat) return;
       const chat = chats.selectedChat;
       const ids = messages.ordered;
       const visible = messageList?.visibleReadIds() ?? [];
       const candidate = visibleReadFrontier(ids, visible);
+      visibleBoundary = { chat, id: candidate, account: session.activeAccount, generation: messages.accountGeneration };
+      if (!document.hasFocus()) return;
       if (!candidate || candidate === messages.lastMarkedId) return;
       messages.lastMarkedId = candidate;
       const firstIdx = messages.firstUnreadId
@@ -1375,6 +1384,7 @@
       {unreadPings}
       avatars={chats.avatars}
       chatLabelOf={(chat) => chats.chatLabel(chat)}
+      draftFor={(account, chat) => composer.draftFor(account, chat)}
       {formatTime}
       typingLabelOf={(chat) => members.typingLabel(chat)}
       previewAuthorOf={(chat) => chats.previewAuthor(chat)}
@@ -1519,11 +1529,10 @@
           onjumpunread={(id) => scrollToMessage(id)}
           menuId={ui.menu?.message.id ?? null}
           picking={ui.picking}
-          onpick={(m) => {
-            const next = { ...(ui.picking ?? {}) };
-            if (next[m.id]) delete next[m.id];
-            else next[m.id] = m;
-            ui.picking = next;
+          onpick={(m, extend = false) => {
+            const next = pickLoaded(messages.ordered, ui.picking, ui.selectionAnchor, m, extend, (message) => keywords.hidden(message));
+            ui.picking = next.selected;
+            ui.selectionAnchor = next.anchor;
           }}
           polls={messages.marks.polls}
           events={messages.marks.events}
@@ -1622,8 +1631,8 @@
           }} />
 
         {#if ui.scrolledUp}
-          <button class="jump" onclick={scrollToBottom}>
-            {t("page.latest")} <Icon name="chevronDown" size={15} />
+          <button class="jump" onclick={scrollToBottom} aria-label={latestUnread > 0 ? t("page.latest_unread", { count: latestUnread }) : t("page.latest")}>
+            {t("page.latest")} {#if latestUnread > 0}<span class="jump-count" aria-hidden="true">{latestUnread}</span>{/if}<Icon name="chevronDown" size={15} />
           </button>
         {/if}
         </div>
@@ -1633,6 +1642,10 @@
         {#if ui.picking}
           <SelectionBar
             count={Object.keys(ui.picking).length}
+            onselectloaded={() => {
+              ui.picking = loadedSelection(messages.ordered, (message) => keywords.hidden(message));
+              ui.selectionAnchor = Object.keys(ui.picking)[0] ?? null;
+            }}
             reactionReason={broadcastSendReason(selectedChat)}
             allStarred={Object.keys(ui.picking).length > 0 && Object.keys(ui.picking).every((id) => messages.starred.has(id))}
             onforward={() => {
@@ -1658,6 +1671,7 @@
             }}
             oncancel={() => {
               ui.picking = null;
+              ui.selectionAnchor = null;
               ui.bulkDelete = null;
               ui.emojiFor = null;
             }} />
@@ -2334,7 +2348,7 @@
   {@const generation = messages.accountGeneration}
   {#key `${account}:${generation}`}
     <QuickSwitcher {account} chats={chats.chats} initialQuery={switcherQuery}
-      onload={() => invoke<SearchResult[]>("switcher_catalog", { accountId: account })}
+      onload={(query) => invoke<SearchResult[]>("switcher_catalog", { accountId: account, query })}
       onmessages={(query) => invoke<StoredMessage[]>("switcher_messages", { accountId: account, query, limit: 50 })}
       onchoose={async (target) => {
         if (account !== session.activeAccount || generation !== messages.accountGeneration) return;

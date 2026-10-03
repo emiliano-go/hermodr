@@ -113,8 +113,10 @@ export class MessagesState {
   downloading = $state<Record<string, true>>({});
   /** Why a message's last download failed, until it is tried again. */
   #downloadErrors = $state<Record<string, LocalizedError>>({});
-  get downloadErrors() { return Object.fromEntries(Object.entries(this.#downloadErrors).map(([id, error]) => [id, error.message])); }
-  get downloadDiagnostics(): Record<string, string> { return Object.fromEntries(Object.entries(this.#downloadErrors)
+  #allDownloadErrors = $derived({ ...Object.fromEntries(Object.entries(this.marks.download_failures ?? {})
+    .map(([id, error]) => [id, normalizeError({ kind: "postal_error", ...error })])), ...this.#downloadErrors });
+  get downloadErrors() { return Object.fromEntries(Object.entries(this.#allDownloadErrors).map(([id, error]) => [id, error.message])); }
+  get downloadDiagnostics(): Record<string, string> { return Object.fromEntries(Object.entries(this.#allDownloadErrors)
     .flatMap(([id, error]) => error.diagnostic === undefined ? [] : [[id, error.diagnostic]])); }
   /** Failed downloads per message; at `MAX_DOWNLOAD_TRIES` the retry is withdrawn. */
   downloadTries = $state<Record<string, number>>({});
@@ -367,6 +369,7 @@ export class MessagesState {
       await invoke("download_media", { chat, id: message.id });
       if (account !== this.accountSeq) return;
       delete this.downloadTries[message.id];
+      delete this.marks.download_failures?.[message.id];
       // Fold the fetched path into its row instead of reloading the window;
       // a chat full of stickers used to reload once per file.
       await this.refreshRow(chat, message.id, true);

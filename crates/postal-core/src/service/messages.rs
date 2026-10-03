@@ -39,10 +39,13 @@ impl WhatsAppService {
         // A link in the text gets an Open Graph preview, fetched off the runtime.
         let preview = if mentioned.is_empty() {
             match first_url(&text) {
-                Some(url) => tokio::task::spawn_blocking(move || fetch_link_preview(&url))
+                Some(url) => {
+                    let cache = self.link_previews.clone();
+                    tokio::task::spawn_blocking(move || cache.lock().unwrap().get_or_fetch(&url, std::time::Instant::now(), fetch_link_preview))
                     .await
                     .ok()
-                    .flatten(),
+                    .flatten()
+                },
                 None => None,
             }
         } else {

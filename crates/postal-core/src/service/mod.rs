@@ -609,6 +609,7 @@ pub struct WhatsAppService {
     history_shares: group_history::PendingHistoryShares,
     user_info_slots: tokio::sync::Semaphore,
     client: Arc<Client>,
+    media_downloads: inbound::MediaDownloadQueue,
     store: StoreWorker,
     scheduled: crate::store::scheduled::ScheduledWorker,
     disk_retention: Arc<DiskRetentionManager>,
@@ -645,6 +646,8 @@ pub struct WhatsAppService {
     /// Shared with the event handler, which completes one when the phone's
     /// history sync carries that session back.
     older_waits: Arc<Mutex<OlderWaits>>,
+    presence_watches: tokio::sync::Mutex<profile::PresenceWatches>,
+    link_previews: Arc<Mutex<links::PreviewCache>>,
 }
 
 /// Seconds since the Unix epoch.

@@ -200,7 +200,7 @@ impl Inbound {
         }
         let mut row = system_row(chat, id, timestamp, kind.to_string(), params);
         row.header.sender = sender;
-        match store.insert_message(&row).await {
+        match store.insert_generated_system(&row).await {
             Ok(()) => {
                 let _ = events.send(ServiceEvent::hint(&row, false));
                 if group_audit::audit_group_notice(store, &row, crate::store::group_audit::GroupAuditSource::Notification).await.observed() == Some(true) {

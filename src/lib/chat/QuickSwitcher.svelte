@@ -4,13 +4,13 @@
   import { onMount, untrack } from "svelte";
   import { members } from "$lib/state/members.svelte";
   import { plain } from "$lib/utils/format";
-  import { quickChats, quickSwitcherKey, messageSnippet, type QuickChat, type QuickSwitchTarget } from "$lib/utils/quick-switcher";
+  import { QUICK_RECENT_LIMIT, quickChats, quickSwitcherKey, messageSnippet, type QuickChat, type QuickSwitchTarget } from "$lib/utils/quick-switcher";
   import type { ChatSummary, SearchResult, StoredMessage } from "$lib/utils/wire";
 
   let { account, chats, onload, onmessages, onchoose, onclose, onusername, initialQuery = "" }: {
     account: string;
     chats: ChatSummary[];
-    onload: () => Promise<SearchResult[]>;
+    onload: (query: string) => Promise<SearchResult[]>;
     onmessages: (query: string) => Promise<StoredMessage[]>;
     onchoose: (target: QuickSwitchTarget) => void | Promise<void>;
     onclose: () => void;
@@ -26,21 +26,21 @@
   const current = () => mounted && account === openedAccount;
   let query = $state(untrack(() => initialQuery));
   let directory = $state.raw<SearchResult[]>([]);
+  let directoryQuery = $state("");
   let messages = $state.raw<StoredMessage[]>([]);
   let messageQuery = $state("");
   let selected = $state(0);
-  let loading = $state(true);
   let searching = $state(false);
   let busy = $state(false);
   let catalogError = $state<LocalizedError | string | null>(null);
   let error = $state<LocalizedError | string | null>(null);
 
-  const recent = $derived.by((): QuickChat[] => [...chats].sort((a, b) => b.last_message_at - a.last_message_at).map((chat) => ({
+  const recent = $derived.by((): QuickChat[] => [...chats].sort((a, b) => b.last_message_at - a.last_message_at).slice(0, QUICK_RECENT_LIMIT).map((chat) => ({
     jid: chat.chat, name: chat.display_name ?? chat.chat.split("@")[0], number: chat.chat.split("@")[0],
     kind: chat.chat.endsWith("@newsletter") ? "channel" : chat.chat.endsWith("@g.us") ? "group" : "chat",
     aliases: members.aliasesFor(chat.chat),
   })));
-  const chatMatches = $derived(quickChats(recent, directory, query));
+  const chatMatches = $derived(quickChats(recent, directoryQuery === query.trim() ? directory : [], query));
   const rows = $derived(account === openedAccount ? [
     ...chatMatches.map((chat) => ({ key: `chat:${chat.jid}`, chat: chat.jid, label: chat.name,
       title: members.displayName(chat.name, chat.jid), messageId: undefined as string | undefined,
@@ -57,10 +57,6 @@
   onMount(() => {
     dialog.showModal();
     input.focus();
-    void onload().then((found) => {
-      if (current()) { directory = found; selected = 0; }
-    }).catch((failure) => { if (current()) catalogError = normalizeError(failure); })
-      .finally(() => { if (current()) loading = false; });
     return () => { mounted = false; dialog.close(); };
   });
 
@@ -69,20 +65,22 @@
     const value = query.trim();
     let active = true;
     selected = 0;
+    directory = [];
+    directoryQuery = "";
     messages = [];
     messageQuery = "";
     searching = !!value;
+    catalogError = null;
     error = null;
     if (!value) return;
     const timer = setTimeout(async () => {
-      try {
-        const found = await onmessages(value);
-        if (active && current()) { messages = found.slice(0, 50); messageQuery = value; }
-      } catch (failure) {
-        if (active && current()) error = normalizeError({ kind: "postal_error", code: "error.quick_search", params: {}, diagnostic: normalizeError(failure).diagnostic });
-      } finally {
-        if (active && current()) searching = false;
-      }
+      await Promise.all([
+        onload(value).then((found) => { if (active && current()) { directory = found; directoryQuery = value; } })
+          .catch((failure) => { if (active && current()) catalogError = normalizeError(failure); }),
+        onmessages(value).then((found) => { if (active && current()) { messages = found.slice(0, 50); messageQuery = value; } })
+          .catch((failure) => { if (active && current()) error = normalizeError({ kind: "postal_error", code: "error.quick_search", params: {}, diagnostic: normalizeError(failure).diagnostic }); }),
+      ]);
+      if (active && current()) searching = false;
     }, 180);
     return () => { active = false; clearTimeout(timer); };
   });
@@ -132,7 +130,7 @@
     aria-activedescendant={rows[selected] ? `quick-switcher-option-${selected}` : undefined}
     placeholder={t("nav.quick_hint")} disabled={busy} />
   <p class="heading">{query.trim() ? t("nav.chats_messages") : t("nav.recent_chats")}</p>
-  <ul bind:this={list} id="quick-switcher-results" role="listbox" aria-label={t("nav.quick_results")} aria-busy={loading || searching}>
+  <ul bind:this={list} id="quick-switcher-results" role="listbox" aria-label={t("nav.quick_results")} aria-busy={searching}>
     {#each rows as row, index (row.key)}
       <li role="presentation">
         <button id={`quick-switcher-option-${index}`} type="button" role="option" tabindex="-1"
@@ -144,8 +142,8 @@
       </li>
     {/each}
   </ul>
-  {#if loading || searching}<p class="status" role="status">{searching ? t("nav.messages_searching") : t("contact.loading")}</p>{/if}
-  {#if !rows.length && !loading && !searching}<p class="status">{query.trim() ? t("ui.no_matches") : t("nav.recent_empty")}</p>{/if}
+  {#if searching}<p class="status" role="status">{t("nav.messages_searching")}</p>{/if}
+  {#if !rows.length && !searching}<p class="status">{query.trim() ? t("ui.no_matches") : t("nav.recent_empty")}</p>{/if}
   {#if catalogError}<p class="error" role="alert">{t("nav.contacts_load_error", { error: normalizeError(catalogError).message })}</p>{/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   <footer><span>{t("nav.quick_move_keys")}</span><span>{t("nav.quick_open_key")}</span><span>{t("nav.quick_close_key")}</span>

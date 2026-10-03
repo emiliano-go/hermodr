@@ -6,7 +6,7 @@
  * and `Ctrl+ArrowUp` never collide.
  */
 
-export type Action = "undoDraft" | "redoDraft" | "cancelReply" | "historyPrev" | "historyNext" | "editLast" | "jumpUnread" | "searchChat";
+export type Action = "undoDraft" | "redoDraft" | "formatBold" | "formatItalic" | "formatStrike" | "formatMono" | "cancelReply" | "historyPrev" | "historyNext" | "editLast" | "jumpUnread" | "searchChat";
 
 export type Binding = {
   key: string;
@@ -19,6 +19,10 @@ export type Binding = {
 export const ACTIONS: { id: Action; label: string; description: string }[] = [
   { id: "undoDraft", label: "Undo draft edit", description: "Undoes edits in the current composer draft. Message deletion and chat clearing are excluded." },
   { id: "redoDraft", label: "Redo draft edit", description: "Restores an undone draft edit. Default shortcuts also accept Cmd on macOS." },
+  { id: "formatBold", label: "Bold", description: "Wraps selected text in WhatsApp bold markers. Default also accepts Cmd." },
+  { id: "formatItalic", label: "Italic", description: "Wraps selected text in WhatsApp italic markers. Default also accepts Cmd." },
+  { id: "formatStrike", label: "Strikethrough", description: "Wraps selected text in WhatsApp strikethrough markers. Default also accepts Cmd." },
+  { id: "formatMono", label: "Monospace", description: "Wraps selected text in WhatsApp monospace markers. Default also accepts Cmd." },
   { id: "cancelReply", label: "Cancel reply / edit", description: "Clears a staged reply or an in-progress edit." },
   { id: "historyPrev", label: "Previous sent message", description: "Recalls the previous message you sent into the composer." },
   { id: "historyNext", label: "Next sent message", description: "Walks forward through recalled messages." },
@@ -30,6 +34,10 @@ export const ACTIONS: { id: Action; label: string; description: string }[] = [
 const DEFAULTS: Record<Action, string> = {
   undoDraft: "Ctrl+z",
   redoDraft: "Ctrl+Shift+z",
+  formatBold: "Ctrl+b",
+  formatItalic: "Ctrl+i",
+  formatStrike: "Ctrl+u",
+  formatMono: "Ctrl+Shift+m",
   cancelReply: "Escape",
   historyPrev: "ArrowUp",
   historyNext: "ArrowDown",
@@ -155,10 +163,14 @@ export function matches(event: KeyboardEvent, binding: Binding): boolean {
   return same(bindingFromEvent(event), binding);
 }
 
-export function matchesDraftHistory(event: KeyboardEvent, action: "undoDraft" | "redoDraft"): boolean {
+export function matchesPortable(event: KeyboardEvent, action: Action): boolean {
   const binding = keybinds[action];
   return matches(event, binding) || (isDefault(action) &&
     matches(event, { ...binding, ctrl: false, meta: true }));
+}
+
+export function matchesDraftHistory(event: KeyboardEvent, action: "undoDraft" | "redoDraft"): boolean {
+  return matchesPortable(event, action);
 }
 
 /** Actions that share a binding, as a set of action ids. */

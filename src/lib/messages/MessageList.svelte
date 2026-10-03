@@ -157,7 +157,7 @@
     formatTime: (ts: number) => string;
     onreplydraft: (m: StoredMessage) => void;
     onmenu: (e: MouseEvent, m: StoredMessage) => void;
-    onpick: (m: StoredMessage) => void;
+    onpick: (m: StoredMessage, extend?: boolean) => void;
     /** Messages picked for a bulk action, in the open chat; null when not picking. */
     picking?: Record<string, StoredMessage> | null;
     onjumpquoted: (m: StoredMessage) => void;
@@ -376,7 +376,7 @@
     if (picking || event.ctrlKey || event.metaKey) {
       event.preventDefault();
       event.stopPropagation();
-      onpick(message);
+      onpick(message, event.shiftKey);
     }
   }
 </script>
@@ -400,7 +400,6 @@
     getKey={(row) => row.key}
     shift={prepending}
     bufferSize={0}
-    ssrCount={30}
     onscroll={handleScroll}
     style="height: 100%;">
     {#snippet children(row: Vrow)}

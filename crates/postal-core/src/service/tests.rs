@@ -31,11 +31,13 @@ async fn storage_failures_are_logged_and_event_processing_continues() {
     let conn = rusqlite::Connection::open(&path).unwrap();
     conn.execute_batch("CREATE TRIGGER fail_name BEFORE INSERT ON names BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END;").unwrap();
     let (events, mut received) = broadcast::channel(32);
+    let store = StoreWorker::new(store);
+    let media_downloads = MediaDownloadQueue::start(Arc::default(), store.clone(), events.clone());
     let inbound = Inbound {
-        store: StoreWorker::new(store), events, connected: Arc::default(), client_for_events: Arc::default(),
+        store, events, connected: Arc::default(), client_for_events: Arc::default(),
         disk_retention: Arc::new(DiskRetentionManager::new(DiskRetention::unlimited())),
         media_dir: None, group_cache: Arc::default(), groups_cache: Arc::default(),
-        older_waits: Arc::default(), downloads: Arc::new(tokio::sync::Semaphore::new(1)),
+        older_waits: Arc::default(), media_downloads,
         message_capping_check: Arc::default(),
         sync_progress: Arc::default(), media_auto_download: Arc::default(),
         keep_archived: Arc::default(), keep_view_once: Arc::default(),
@@ -57,6 +59,7 @@ async fn storage_failures_are_logged_and_event_processing_continues() {
     assert_eq!(inbound.store.name_for("1@g.us").await.unwrap().as_deref(), Some("accepted"));
     assert!(std::iter::from_fn(|| received.try_recv().ok()).any(|event| matches!(event, ServiceEvent::GroupChanged { .. })));
     assert!(stored_message(&wa::Message::default(), MessageHeader::default(), None, None, false).await.is_none());
+    inbound.media_downloads.close().await;
     drop(inbound);
     drop(conn);
     std::fs::remove_dir_all(dir).unwrap();
@@ -127,8 +130,10 @@ async fn group_changes_invalidate_fetched_metadata_and_overviews() {
         types::events::GroupUpdate,
     };
     let (events, mut received) = broadcast::channel(32);
+    let store = StoreWorker::open(Path::new(":memory:")).await.unwrap();
+    let media_downloads = MediaDownloadQueue::start(Arc::default(), store.clone(), events.clone());
     let inbound = Inbound {
-        store: StoreWorker::open(Path::new(":memory:")).await.unwrap(),
+        store,
         disk_retention: Arc::new(DiskRetentionManager::new(DiskRetention::unlimited())),
         events,
         connected: Arc::default(),
@@ -138,7 +143,7 @@ async fn group_changes_invalidate_fetched_metadata_and_overviews() {
         groups_cache: Arc::default(),
         older_waits: Arc::default(),
         message_capping_check: Arc::default(),
-        downloads: Arc::new(tokio::sync::Semaphore::new(1)),
+        media_downloads,
         sync_progress: Arc::default(),
         media_auto_download: Arc::default(),
         keep_archived: Arc::default(),

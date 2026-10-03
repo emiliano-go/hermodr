@@ -2,6 +2,46 @@
 
 use super::*;
 use crate::message_ref::MessageRef;
+use std::{collections::VecDeque, future::Future};
+
+const PRESENCE_CAP: usize = 8;
+
+#[derive(Default)]
+pub(super) struct PresenceWatches {
+    recent: VecDeque<Jid>,
+    active: Option<Jid>,
+}
+
+async fn watch_presence_lru<S, U, SF, UF>(tracked: &tokio::sync::Mutex<PresenceWatches>, jid: Option<Jid>, active: bool, mut subscribe: S, mut unsubscribe: U) -> Result<()>
+where S: FnMut(Jid) -> SF, U: FnMut(Jid) -> UF,
+    SF: Future<Output = Result<()>>, UF: Future<Output = Result<()>>,
+{
+    let mut tracked = tracked.lock().await;
+    if active && tracked.active.as_ref() != jid.as_ref() {
+        if let Some(previous) = tracked.active.clone() {
+            unsubscribe(previous.clone()).await?;
+            tracked.recent.retain(|saved| saved != &previous);
+            tracked.active = None;
+        }
+    }
+    let Some(jid) = jid else { return Ok(()); };
+    if let Some(index) = tracked.recent.iter().position(|saved| *saved == jid) {
+        let saved = tracked.recent.remove(index).unwrap();
+        tracked.recent.push_back(saved);
+        if active { tracked.active = Some(jid); }
+        return Ok(());
+    }
+    if tracked.recent.len() == PRESENCE_CAP {
+        let index = tracked.recent.iter().position(|saved| tracked.active.as_ref() != Some(saved)).unwrap();
+        let oldest = tracked.recent[index].clone();
+        unsubscribe(oldest).await?;
+        tracked.recent.remove(index);
+    }
+    subscribe(jid.clone()).await?;
+    tracked.recent.push_back(jid.clone());
+    if active { tracked.active = Some(jid); }
+    Ok(())
+}
 
 impl WhatsAppService {
     /// Tells the chat we are typing, or that we stopped.
@@ -29,13 +69,12 @@ impl WhatsAppService {
     }
 
     /// Subscribes to a contact's presence, which one-to-one typing needs.
-    pub async fn watch_presence(&self, jid: &str) -> Result<()> {
-        let jid: Jid = jid.parse()?;
-        self.client
-            .presence()
-            .subscribe(jid)
-            .await
-            .map_err(anyhow::Error::from)
+    pub async fn watch_presence(&self, jid: Option<&str>, active: bool) -> Result<()> {
+        let jid = jid.map(|jid| jid.parse::<Jid>().map(|parsed| parsed.to_non_ad())).transpose()?;
+        watch_presence_lru(&self.presence_watches, jid, active,
+            |jid| async move { self.client.presence().subscribe(jid).await.map_err(anyhow::Error::from) },
+            |jid| async move { self.client.presence().unsubscribe(&jid).await.map_err(anyhow::Error::from) },
+        ).await
     }
 
     /// Our own name, about text and privacy settings.
@@ -156,10 +195,7 @@ impl WhatsAppService {
             return Ok(None);
         };
         let url = picture.url;
-        let bytes = tokio::task::spawn_blocking(move || {
-            let mut response = ureq::get(&url).call().ok()?;
-            response.body_mut().read_to_vec().ok()
-        })
+        let bytes = tokio::task::spawn_blocking(move || links::fetch_public_avatar(&url))
         .await
         .ok()
         .flatten()
@@ -167,5 +203,47 @@ impl WhatsAppService {
         std::fs::write(&path, bytes)?;
         remove_cached_file(&none);
         Ok(Some(path.to_string_lossy().into_owned()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn fake_watch(tracked: &tokio::sync::Mutex<PresenceWatches>, calls: &Arc<Mutex<Vec<(bool, String)>>>, jid: Option<Jid>, active: bool) {
+        let (subscribed, unsubscribed) = (calls.clone(), calls.clone());
+        watch_presence_lru(tracked, jid, active,
+            move |jid| { let calls = subscribed.clone(); async move { calls.lock().unwrap().push((true, jid.to_string())); Ok(()) } },
+            move |jid| { let calls = unsubscribed.clone(); async move { calls.lock().unwrap().push((false, jid.to_string())); Ok(()) } },
+        ).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn fifty_chats_and_profile_watches_keep_the_open_chat_pinned() {
+        let tracked = tokio::sync::Mutex::new(PresenceWatches::default());
+        let calls = Arc::new(Mutex::new(Vec::<(bool, String)>::new()));
+        for index in 0..50 {
+            let jid = format!("{index}@s.whatsapp.net").parse().unwrap();
+            fake_watch(&tracked, &calls, Some(jid), true).await;
+        }
+        let active: Jid = "49@s.whatsapp.net".parse().unwrap();
+        for index in 0..16 {
+            let jid = format!("{}@s.whatsapp.net", index + 100).parse().unwrap();
+            fake_watch(&tracked, &calls, Some(jid), false).await;
+        }
+        let state = tracked.lock().await;
+        assert_eq!(state.recent.len(), PRESENCE_CAP);
+        assert_eq!(state.active.as_ref(), Some(&active));
+        assert!(state.recent.contains(&active));
+        drop(state);
+        let observed = calls.lock().unwrap();
+        assert_eq!(observed.iter().filter(|(subscribe, _)| *subscribe).count(), 66);
+        assert!(!observed.iter().any(|(subscribe, jid)| !subscribe && jid == &active.to_string()));
+        drop(observed);
+        fake_watch(&tracked, &calls, None, true).await;
+        let state = tracked.lock().await;
+        assert!(state.active.is_none() && !state.recent.contains(&active));
+        assert_eq!(state.recent.len(), PRESENCE_CAP - 1);
+        assert_eq!(calls.lock().unwrap().last(), Some(&(false, active.to_string())));
     }
 }

@@ -3,7 +3,7 @@
 // members, composer, ui) visibly cover the stream. View callbacks the
 // dispatcher cannot own (scrolling, reconnecting) arrive via host.
 import { tick } from "svelte";
-import { invoke } from "$lib/utils/ipc";
+import { invoke, log } from "$lib/utils/ipc";
 import { bare, isUnavailable } from "$lib/utils/message";
 import type { MessagePage } from "$lib/utils/message-window";
 import type { ServiceEvent, StoredMessage } from "$lib/utils/models";
@@ -44,28 +44,64 @@ export type EventHost = {
  * Burst protocol: arrivals come as `messageHint` (routing only, ~90 B vs
  * ~500 B full payload, 5.6x smaller in the serialization test). While the
  * loading gate is closed, a drain is running, or a history answer is in
- * flight, hints only set the dirty flags below; `initialSyncComplete`,
- * `synced` or `historyLoaded` flush once (1 `chats` + 1 `messages` invoke).
+ * flight, hints set dirty flags; completion or the watchdog flushes them.
  * A 500-msg batch inserts + both queries in ~53 ms (store regression test).
  * Live messages outside a burst still refresh immediately through the
- * 200/100 ms coalescing queues.
+ * 500/100 ms coalescing queues.
  */
 let chatsDirty = false;
 let messagesDirty = false;
 let dirtyMarkRead = false;
+let deferredTimer: ReturnType<typeof setTimeout> | null = null;
+let deferredAccount: string | null = null;
+let deferredGeneration = -1;
+
+function resetDeferred() {
+  if (deferredTimer !== null) clearTimeout(deferredTimer);
+  deferredTimer = null;
+  chatsDirty = messagesDirty = dirtyMarkRead = false;
+}
+
+function flushDeferred(host: EventHost) {
+  if (deferredAccount !== session.activeAccount || deferredGeneration !== messages.accountGeneration) { resetDeferred(); return; }
+  if (deferredTimer !== null) clearTimeout(deferredTimer);
+  deferredTimer = null;
+  if (!session.uiUnlocked) { watchDeferred(host); return; }
+  if (chatsDirty) queueRefreshChats();
+  if (messagesDirty) queueReloadMessages(host, chats.selectedChat, !ui.scrolledUp, dirtyMarkRead);
+  chatsDirty = messagesDirty = dirtyMarkRead = false;
+}
+
+function watchDeferred(host: EventHost) {
+  if (deferredTimer !== null || !chatsDirty && !messagesDirty) return;
+  const account = session.activeAccount, generation = messages.accountGeneration;
+  deferredAccount = account;
+  deferredGeneration = generation;
+  deferredTimer = setTimeout(() => {
+    deferredTimer = null;
+    if (account !== session.activeAccount || generation !== messages.accountGeneration) { resetDeferred(); return; }
+    if (!session.uiUnlocked) { watchDeferred(host); return; }
+    log("warn", `event watchdog flush: syncPending=${session.syncPending} historyActive=${messages.historyActive} chatsDirty=${chatsDirty} messagesDirty=${messagesDirty}`);
+    flushDeferred(host);
+  }, 3_000);
+}
 
 /**
  * Marks what a change touched when fetching right away would be wasteful or
  * invisible: the gate is closed, a drain is running, or a history answer is
  * in flight. Returns false when the caller should refresh immediately.
  */
-function deferRefresh(chat: string | null, markRead = false) {
+function deferRefresh(host: EventHost, chat: string | null, markRead = false) {
+  if (deferredAccount !== session.activeAccount || deferredGeneration !== messages.accountGeneration) {
+    resetDeferred();
+  }
   if (session.uiUnlocked && session.syncPending === 0 && !messages.historyActive) return false;
   chatsDirty = true;
   if (chat && chat === chats.selectedChat) {
     messagesDirty = true;
     dirtyMarkRead ||= markRead;
   }
+  watchDeferred(host);
   return true;
 }
 
@@ -262,6 +298,7 @@ async function notifyForHint(chat: string, id: string, fresh: boolean) {
 const askedSubjects = new Map<string, number>();
 
 export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHost) {
+  log("debug", `event ${payload.kind}: uiUnlocked=${session.uiUnlocked} syncPending=${session.syncPending} historyActive=${messages.historyActive} chatsDirty=${chatsDirty} messagesDirty=${messagesDirty}`);
   switch (payload.kind) {
     case "qrCode":
       await session.showQr(payload.code);
@@ -294,6 +331,7 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       break;
     case "connected":
       session.connected = true;
+      session.syncPending = session.syncApplied = 0;
       session.clearPairCode();
       void favorites.refresh();
       // A code was on screen, so this is a fresh link: the phone's history sync starts now.
@@ -306,9 +344,11 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       } else {
         session.startGateTimeout();
       }
+      flushDeferred(host);
       break;
     case "disconnected":
       session.connected = false;
+      session.syncPending = session.syncApplied = 0;
       // A dropped connection spends any code in flight.
       session.clearPairCode();
       break;
@@ -333,7 +373,10 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       const fresh = payload.kind === "message" ? true : payload.fresh;
       // A burst, a closed gate or an in-flight history answer: mark what
       // changed and let the completion event flush once.
-      if (deferRefresh(chat, !fromMe)) {
+      if (payload.kind === "message" && chat === chats.selectedChat) messages.append(payload.message);
+      if (session.uiUnlocked && fresh) queueRefreshChats();
+      if (deferRefresh(host, chat, !fromMe)) {
+        if (payload.kind === "message" && session.uiUnlocked && !ui.scrolledUp && messages.atLatest) host.scrollToBottom();
         if (!fromMe) members.setTyping(chat, bare(sender), "paused");
         break;
       }
@@ -348,10 +391,9 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
           // rebuilds every row object and re-renders every bubble, which a
           // busy account otherwise pays for on each message. Bursts above
           // still take one deferred full reload.
-          if (payload.kind === "message") messages.append(payload.message);
-          else if (!fresh && !messages.messages.some((message) => message.chat === chat && message.id === payload.id)) {
+          if (payload.kind === "messageHint" && !fresh && !messages.messages.some((message) => message.chat === chat && message.id === payload.id)) {
             queueReloadMessages(host, chat, false, false);
-          } else void messages.refreshRow(chat, payload.id, fresh);
+          } else if (payload.kind === "messageHint") void messages.refreshRow(chat, payload.id, fresh);
           // Follow the stream when already at the bottom, but never yank
           // the view down while reading older messages. Status-only
           // updates never follow or mark.
@@ -383,17 +425,17 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       break;
     }
     case "retentionApplied":
-      if (payload.removed > 0 && !deferRefresh(null)) {
+      if (payload.removed > 0 && !deferRefresh(host, null)) {
         queueRefreshChats();
         queueReloadMessages(host, chats.selectedChat, false, false);
       }
       break;
     case "chatStateChanged":
-      if (!deferRefresh(null)) queueRefreshChats();
+      if (!deferRefresh(host, null)) queueRefreshChats();
       break;
     case "chatPinRemoved":
       ui.notify(uiMessage("state.pin_removed"));
-      if (!deferRefresh(null)) queueRefreshChats();
+      if (!deferRefresh(host, null)) queueRefreshChats();
       break;
     case "namesUpdated":
       ++session.profileVersion;
@@ -401,19 +443,15 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       // Address-book names arrived after the initial fetch, so the cached
       // display names are stale until both lists reload.
       members.forgetUnresolvedNames();
-      if (!deferRefresh(null)) {
+      if (!deferRefresh(host, null)) {
         queueRefreshChats();
         queueReloadMessages(host, chats.selectedChat, false, false);
       }
       break;
     case "syncing":
-      // The core counts what it stored, so the bar cannot run ahead of
-      // the rows. Starting a new drain clears the previous dirty marks.
+      // A new drain must not discard refreshes from an unfinished one.
       session.syncPending = payload.pending;
       session.syncApplied = payload.applied;
-      chatsDirty = false;
-      messagesDirty = false;
-      dirtyMarkRead = false;
       break;
     case "historyProgress":
       session.historyPercent = payload.percent < 100 ? payload.percent : null;
@@ -421,75 +459,61 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
     case "backfill":
       session.backfill = payload.done < payload.total ? { done: payload.done, total: payload.total } : null;
       break;
-    case "initialSyncComplete":
+    case "initialSyncComplete": {
+      const account = session.activeAccount, generation = messages.accountGeneration;
       // The backlog is in: paint it before the loading screen lifts, so
       // the first thing seen is the account as it now stands.
       session.finalizing = true;
       session.syncPending = 0;
       session.syncApplied = 0;
+      resetDeferred();
       try {
         await chats.refreshChats();
+        if (account !== session.activeAccount || generation !== messages.accountGeneration) break;
         await messages.reloadMessages(chats.selectedChat);
         await tick();
       } finally {
-        chatsDirty = false;
-        messagesDirty = false;
-        dirtyMarkRead = false;
-        session.gateDone = true;
-        session.finalizing = false;
+        if (account === session.activeAccount && generation === messages.accountGeneration) {
+          session.gateDone = true;
+          session.finalizing = false;
+          flushDeferred(host);
+        }
       }
       break;
+    }
     case "synced": {
       // The backlog is in; flush once so the burst's queued refreshes land together.
       session.syncPending = 0;
       session.syncApplied = 0;
-      if (chatsDirty) {
-        chatsDirty = false;
-        queueRefreshChats();
-      }
-      if (messagesDirty) {
-        messagesDirty = false;
-        const markRead = dirtyMarkRead;
-        dirtyMarkRead = false;
-        // Decide follow at flush time: a flag set mid-burst would use stale scroll state.
-        queueReloadMessages(host, chats.selectedChat, !ui.scrolledUp, markRead);
-      }
+      flushDeferred(host);
       break;
     }
     case "historyLoaded":
+      session.syncPending = session.syncApplied = 0;
       messages.historyActive = false;
       if (!session.uiUnlocked) {
-        // The gate is still closed; the initial paint will pick this up.
-        chatsDirty = true;
-        if (chats.selectedChat && payload.chats.includes(chats.selectedChat)) messagesDirty = true;
+        deferRefresh(host, chats.selectedChat && payload.chats.includes(chats.selectedChat) ? chats.selectedChat : null);
         break;
       }
-      await chats.refreshChats();
-      chatsDirty = false;
-      if (chats.selectedChat && payload.chats.includes(chats.selectedChat)) {
-        const requestedOlder = messages.loadingOlder && messages.recall !== null;
-        // The full reload covers any hints that landed while loading.
-        messagesDirty = false;
-        dirtyMarkRead = false;
-        if (requestedOlder) await messages.finishOlder(chats.selectedChat);
-        else {
-          const anchor = host.anchor();
-          await messages.reloadMessages(chats.selectedChat);
-          if (anchor) host.reveal(anchor);
+      {
+        const account = session.activeAccount, generation = messages.accountGeneration, chat = chats.selectedChat;
+        const reload = messagesDirty, markRead = dirtyMarkRead;
+        resetDeferred();
+        try {
+          await chats.refreshChats();
+          if (account !== session.activeAccount || generation !== messages.accountGeneration || chat !== chats.selectedChat) break;
+          if (chat && payload.chats.includes(chat)) {
+            const requestedOlder = messages.loadingOlder && messages.recall !== null;
+            if (requestedOlder) await messages.finishOlder(chat);
+            else {
+              const anchor = host.anchor();
+              await messages.reloadMessages(chat);
+              if (anchor && chat === chats.selectedChat && generation === messages.accountGeneration) host.reveal(anchor);
+            }
+          } else if (reload && chat) queueReloadMessages(host, chat, false, markRead);
+        } finally {
+          flushDeferred(host);
         }
-      } else if (messagesDirty && chats.selectedChat) {
-        // Burst hints that landed while older history was loading.
-        messagesDirty = false;
-        const markRead = dirtyMarkRead;
-        dirtyMarkRead = false;
-        queueReloadMessages(host, chats.selectedChat, false, markRead);
-        if (chatsDirty) {
-          chatsDirty = false;
-          queueRefreshChats();
-        }
-      } else if (chatsDirty) {
-        chatsDirty = false;
-        queueRefreshChats();
       }
       break;
     case "avatarChanged":
@@ -505,7 +529,7 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       memberSheet.presence(payload.jid, payload.online, payload.last_seen);
       break;
     case "marks":
-      if (!deferRefresh(payload.chat)) queueRefreshChats();
+      if (!deferRefresh(host, payload.chat)) queueRefreshChats();
       if (payload.chat === chats.selectedChat) {
         await messages.loadMarks(payload.chat);
         // A kept one-time media arrives as a mark change: the row is ordinary
@@ -518,7 +542,7 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       memberSheet.queueRefresh(null);
       // A listener lagged and missed store changes with no chat to name them;
       // reload everything the open view could be showing.
-      if (!deferRefresh(chats.selectedChat)) {
+      if (!deferRefresh(host, chats.selectedChat)) {
         queueRefreshChats();
         queueReloadMessages(host, chats.selectedChat, false, false);
         if (chats.selectedChat) await messages.loadMarks(chats.selectedChat);
@@ -561,7 +585,7 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       break;
     case "labelsChanged":
       labels.queueRefresh();
-      if (!deferRefresh(null)) queueRefreshChats();
+      if (!deferRefresh(host, null)) queueRefreshChats();
       break;
     case "quickRepliesChanged":
       quickReplies.queueRefresh();

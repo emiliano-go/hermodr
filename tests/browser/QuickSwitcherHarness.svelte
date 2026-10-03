@@ -2,6 +2,7 @@
   import { onMount, tick } from "svelte";
   import QuickSwitcher from "$lib/chat/QuickSwitcher.svelte";
   import { session } from "$lib/state/session.svelte";
+  import { t } from "$lib/i18n/localizer";
   import { previewFixture } from "./ipc";
   import type { ChatSummary, SearchResult, StoredMessage } from "$lib/utils/wire";
   import type { QuickSwitchTarget } from "$lib/utils/quick-switcher";
@@ -28,8 +29,8 @@
     { jid: "500@s.whatsapp.net", name: "Carol Current", number: "500", kind: "contact", saved: true, has_messages: false, aliases: ["maintainer"] }];
   const message = (id: string, text: string): StoredMessage => ({ chat: "200@s.whatsapp.net", id, text,
     timestamp: 100, sender: "200@s.whatsapp.net", from_me: false, spoiler: false } as StoredMessage);
-  async function load() {
-    calls.push("catalog");
+  async function load(query: string) {
+    calls.push(`catalog:${query}`);
     if (catalogFails) throw new Error("synthetic catalog failure");
     return directory;
   }
@@ -73,7 +74,7 @@
     void (async () => {
       await show();
       assert(options().length === 4 && options()[0].textContent?.includes("Áda"), "recents must use activity order");
-      assert(selections.length === 0 && calls.every((call) => call === "catalog"), "opening must not search bodies or navigate");
+      assert(selections.length === 0 && calls.length === 0, "opening must not search catalog, bodies or navigate");
       key("ArrowDown"); await tick();
       assert(options()[1].getAttribute("aria-selected") === "true", "ArrowDown must select second result");
       key("Enter"); await until(closed);
@@ -85,7 +86,8 @@
       await until(() => options().some((row) => row.textContent?.includes("Carol Current")));
       key("Enter"); await until(closed);
       assert(selections[1]?.chat === "500@s.whatsapp.net", "fuzzy alias must open contact without chat history");
-      checks.push("Fuzzy contact aliases from complete local catalog");
+      assert(calls.includes("catalog:mntnr"), "typed query must search the contact catalog");
+      checks.push("Fuzzy contact alias from bounded query catalog");
 
       await show(); query("needle");
       await until(() => options().some((row) => row.textContent?.includes("NEEDLE body hit")));
@@ -122,17 +124,17 @@
       checks.push("Account switch closes palette and suppresses old response");
 
       await show(); query("fail");
-      await until(() => document.querySelector('[role="alert"]')?.textContent?.includes("synthetic body failure"));
+      await until(() => document.querySelector('[role="alert"]')?.textContent?.includes(t("error.quick_search")));
       key("Escape"); await until(closed);
       await show(); chooseFails = true; key("Enter");
-      await until(() => document.querySelector('[role="alert"]')?.textContent?.includes("synthetic navigation failure"));
+      await until(() => document.querySelector('[role="alert"]')?.textContent?.includes(t("error.operation_failed")));
       assert(!!document.querySelector("dialog") && selections.length === 3, "navigation failure must stay visible");
       chooseFails = false; key("Escape"); await until(closed);
       checks.push("Search and navigation failures stay visible");
 
-      catalogFails = true; await show();
-      await until(() => document.querySelector('[role="alert"]')?.textContent?.includes("synthetic catalog failure"));
-      assert(options().length === 4, "catalog failure must preserve known recent chats");
+      catalogFails = true; await show(); query("ada");
+      await until(() => document.querySelector('[role="alert"]')?.textContent?.includes(t("nav.contacts_load_error", { error: t("error.operation_failed") })));
+      assert(options().some((row) => row.textContent?.includes("Áda")), "catalog failure must preserve known recent chats");
       catalogFails = false; key("Escape"); await until(closed);
       assert(!previewFixture.calls.some((command) => /mark_read|send_read|send_chat_read/.test(command)), "no synthetic native read or receipt operation is allowed");
       checks.push("Catalog failure preserves recents, no read/receipt operations");

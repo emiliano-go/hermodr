@@ -5,6 +5,10 @@ use std::sync::atomic::AtomicUsize;
 use whatsapp_rust::wacore::types::events as wa_events;
 use whatsapp_rust::wacore::types::events::{BatchOrigin, MessageBatch};
 
+pub(super) const AUTO_DOWNLOAD_CONCURRENCY: usize = 4;
+const HISTORY_DOWNLOAD_QUEUE: usize = 24;
+const LIVE_DOWNLOAD_QUEUE: usize = 8;
+
 /// What the protocol event handler shares with the service, cloned per event.
 #[derive(Clone)]
 pub(super) struct Inbound {
@@ -17,8 +21,8 @@ pub(super) struct Inbound {
     pub(super) group_cache: Arc<Mutex<std::collections::HashMap<String, GroupInfo>>>,
     pub(super) groups_cache: Arc<Mutex<Option<Vec<whatsapp_rust::GroupOverview>>>>,
     pub(super) older_waits: Arc<Mutex<OlderWaits>>,
-    pub(super) message_capping_check: Arc<Mutex<Option<std::time::Instant>>>,
-    pub(super) downloads: Arc<tokio::sync::Semaphore>,
+    pub(super) message_capping_check: Arc<Mutex<std::collections::HashMap<String, std::time::Instant>>>,
+    pub(super) media_downloads: MediaDownloadQueue,
     pub(super) sync_progress: Arc<Mutex<SyncProgress>>,
     pub(super) media_auto_download: Arc<RwLock<crate::store::media_policy::MediaAutoDownload>>,
     /// Whether a new message keeps an archived chat archived. Off moves it back
@@ -84,6 +88,119 @@ struct BatchCtx<'a> {
     /// The batch arrived live rather than from the offline drain, so an
     /// arrival goes out with its full row instead of a hint.
     live: bool,
+}
+
+struct PendingMediaFetch {
+    dir: PathBuf,
+    chat: String,
+    id: String,
+    keep_once: bool,
+    live: bool,
+}
+
+#[derive(Clone)]
+pub(super) struct MediaDownloadQueue {
+    live: tokio::sync::mpsc::Sender<PendingMediaFetch>,
+    history: tokio::sync::mpsc::Sender<PendingMediaFetch>,
+    cancel: tokio::sync::watch::Sender<bool>,
+    worker: Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
+}
+
+impl MediaDownloadQueue {
+    pub(super) fn start(
+        client_slot: Arc<std::sync::OnceLock<Arc<Client>>>,
+        store: StoreWorker,
+        events: broadcast::Sender<ServiceEvent>,
+    ) -> Self {
+        let (live, live_rx) = tokio::sync::mpsc::channel(LIVE_DOWNLOAD_QUEUE);
+        let (history, history_rx) = tokio::sync::mpsc::channel(HISTORY_DOWNLOAD_QUEUE);
+        let (cancel, cancelled) = tokio::sync::watch::channel(false);
+        let worker = tokio::spawn(run_media_download_queue(live_rx, history_rx, cancelled, move |fetch| {
+            download_queued_media(fetch, client_slot.clone(), store.clone(), events.clone())
+        }));
+        Self { live, history, cancel, worker: Arc::new(tokio::sync::Mutex::new(Some(worker))) }
+    }
+
+    async fn enqueue(&self, fetch: PendingMediaFetch) {
+        let sender = if fetch.live { &self.live } else { &self.history };
+        let mut cancelled = self.cancel.subscribe();
+        if *cancelled.borrow() { return; }
+        tokio::select! {
+            result = sender.send(fetch) => {
+                if result.is_err() { log::warn!("media download queue closed before shutdown completed"); }
+            }
+            _ = cancelled.changed() => {}
+        }
+    }
+
+    pub(super) fn cancel(&self) {
+        self.cancel.send_replace(true);
+    }
+
+    pub(super) async fn close(&self) {
+        self.cancel();
+        if let Some(worker) = self.worker.lock().await.take() {
+            let _ = worker.await;
+        }
+    }
+}
+
+async fn run_media_download_queue<F, Fut>(
+    mut live_rx: tokio::sync::mpsc::Receiver<PendingMediaFetch>,
+    mut history_rx: tokio::sync::mpsc::Receiver<PendingMediaFetch>,
+    mut cancelled: tokio::sync::watch::Receiver<bool>,
+    run: F,
+) where
+    F: Fn(PendingMediaFetch) -> Fut + Send + Sync + 'static,
+    Fut: std::future::Future<Output = ()> + Send + 'static,
+{
+    let mut tasks = tokio::task::JoinSet::new();
+    let (mut live_open, mut history_open) = (true, true);
+    while live_open || history_open || !tasks.is_empty() {
+        tokio::select! {
+            biased;
+            _ = cancelled.changed() => {
+                tasks.abort_all();
+                while tasks.join_next().await.is_some() {}
+                return;
+            }
+            fetch = live_rx.recv(), if live_open && tasks.len() < AUTO_DOWNLOAD_CONCURRENCY => {
+                if let Some(fetch) = fetch { tasks.spawn(run(fetch)); } else { live_open = false; }
+            }
+            fetch = history_rx.recv(), if history_open && tasks.len() < AUTO_DOWNLOAD_CONCURRENCY => {
+                if let Some(fetch) = fetch { tasks.spawn(run(fetch)); } else { history_open = false; }
+            }
+            result = tasks.join_next(), if !tasks.is_empty() => {
+                if let Some(Err(error)) = result { log::error!("media download task failed: {error}"); }
+            }
+        }
+    }
+}
+
+async fn download_queued_media(
+    fetch: PendingMediaFetch,
+    client_slot: Arc<std::sync::OnceLock<Arc<Client>>>,
+    store: StoreWorker,
+    events: broadcast::Sender<ServiceEvent>,
+) {
+    let PendingMediaFetch { dir, chat, id, keep_once, .. } = fetch;
+    let Some(client) = client_slot.get().cloned() else { return };
+    match fetch_media(&client, &store, &dir, &chat, &id).await {
+        Ok(updated) => {
+            if keep_once {
+                if let Err(e) = store.keep_view_once(&chat, &id).await {
+                    log::warn!("could not keep view-once {id}: {e}");
+                } else if let Some(kept) = store.message(&chat, &id).await.observed() {
+                    log::info!("kept one-time {id} in {chat}");
+                    let _ = events.send(ServiceEvent::hint(&kept, false));
+                    let _ = events.send(ServiceEvent::Marks { chat: chat.clone() });
+                    return;
+                }
+            }
+            let _ = events.send(ServiceEvent::hint(&updated, false));
+        }
+        Err(e) => log::warn!("failed to download {id} media: {e}"),
+    }
 }
 
 /// One inbound message's resolved identity, shared by every step below.
@@ -473,51 +590,7 @@ impl Inbound {
             live: batch.origin == BatchOrigin::Live,
         };
         for inbound in batch.messages.iter() {
-            // A companion keeps view-once media only; everything else belongs to
-            // the main link, which stored it when it arrived.
-            if self.one_time_only {
-                if !decoded_message(&inbound.message).view_once {
-                    continue;
-                }
-                ingested += 1;
-            }
-            let Some(incoming) = self.resolve_incoming(inbound, &ctx).await else {
-                continue;
-            };
-            match self.secret_edits.apply(ctx.store, inbound, &incoming.chat, &ctx.own).await {
-                Ok(secret_edits::Outcome::Continue) => {},
-                Ok(secret_edits::Outcome::Applied { id }) => {
-                    if let Some(updated) = ctx.store.message(&incoming.chat, &id).await.observed() {
-                        let _ = self.events.send(ServiceEvent::hint(&updated, false));
-                        if updated.media.kind.as_deref() == Some("event") {
-                            if let Some(notice) = ctx.store.message(&incoming.chat, &incoming.id).await.observed() {
-                                event_notices.push(ServiceEvent::hint(&notice, false));
-                            }
-                        }
-                    }
-                    let _ = self.events.send(ServiceEvent::Marks { chat: incoming.chat.clone() });
-                    ctx.touched.push(incoming.chat.clone());
-                    self.retire_unavailable(ctx.store, &incoming.chat, &incoming.id).await;
-                    continue;
-                },
-                Ok(secret_edits::Outcome::Drop) => {
-                    self.retire_unavailable(ctx.store, &incoming.chat, &incoming.id).await;
-                    continue;
-                },
-                Err(error) => { log::warn!("secret edit rejected: {error}"); continue; },
-            }
-            ctx.touched.push(incoming.chat.clone());
-            let author = if incoming.from_me {
-                ctx.own.first().cloned().unwrap_or_else(|| incoming.sender.clone())
-            } else {
-                inbound.info.source.sender.to_non_ad().to_string()
-            };
-            remember_structures(ctx.store, &incoming.chat, &incoming.id, &author, &inbound.message).await;
-            if self.apply_control(&mut ctx, inbound, &incoming).await {
-                self.retire_control_source(&ctx, inbound, &incoming, &mut event_notices).await;
-                continue;
-            }
-            self.store_incoming(&ctx, inbound, &incoming).await;
+            self.process_inbound_message(&mut ctx, inbound, &mut ingested, &mut event_notices).await;
         }
         self.flush_event_responses(&ctx).await;
         let (removed, pruning) = self.enforce_retention(&mut ctx).await;
@@ -526,6 +599,7 @@ impl Inbound {
         let (audit_chats, mark_chats, broadcast_chats) = (ctx.audit_chats, ctx.mark_chats.into_inner().unwrap(), ctx.broadcast_chats.into_inner().unwrap());
         if batch_guard.finish().await.observed().is_some() {
             self.emit_batch_changes(event_notices, audit_chats, mark_chats, broadcast_chats, sticker_changes);
+            self.dispatch_media_fetches(batch).await;
         }
         log::debug!(
             "{} live message(s) in {:?} (retention {:?}, pruned {removed})",
@@ -533,9 +607,57 @@ impl Inbound {
         );
     }
 
+    async fn process_inbound_message(
+        &self,
+        ctx: &mut BatchCtx<'_>,
+        inbound: &InboundMessage,
+        ingested: &mut usize,
+        event_notices: &mut Vec<ServiceEvent>,
+    ) {
+        if self.one_time_only {
+            if !decoded_message(&inbound.message).view_once { return; }
+            *ingested += 1;
+        }
+        let Some(incoming) = self.resolve_incoming(inbound, ctx, true).await else { return };
+        match self.secret_edits.apply(ctx.store, inbound, &incoming.chat, &ctx.own).await {
+            Ok(secret_edits::Outcome::Continue) => {}
+            Ok(secret_edits::Outcome::Applied { id }) => {
+                if let Some(updated) = ctx.store.message(&incoming.chat, &id).await.observed() {
+                    let _ = self.events.send(ServiceEvent::hint(&updated, false));
+                    if updated.media.kind.as_deref() == Some("event") {
+                        if let Some(notice) = ctx.store.message(&incoming.chat, &incoming.id).await.observed() {
+                            event_notices.push(ServiceEvent::hint(&notice, false));
+                        }
+                    }
+                }
+                let _ = self.events.send(ServiceEvent::Marks { chat: incoming.chat.clone() });
+                ctx.touched.push(incoming.chat.clone());
+                self.retire_unavailable(ctx.store, &incoming.chat, &incoming.id).await;
+                return;
+            }
+            Ok(secret_edits::Outcome::Drop) => {
+                self.retire_unavailable(ctx.store, &incoming.chat, &incoming.id).await;
+                return;
+            }
+            Err(error) => { log::warn!("secret edit rejected: {error}"); return; }
+        }
+        ctx.touched.push(incoming.chat.clone());
+        let author = if incoming.from_me {
+            ctx.own.first().cloned().unwrap_or_else(|| incoming.sender.clone())
+        } else {
+            inbound.info.source.sender.to_non_ad().to_string()
+        };
+        remember_structures(ctx.store, &incoming.chat, &incoming.id, &author, &inbound.message).await;
+        if self.apply_control(ctx, inbound, &incoming).await {
+            self.retire_control_source(ctx, inbound, &incoming, event_notices).await;
+            return;
+        }
+        self.store_incoming(ctx, inbound, &incoming).await;
+    }
+
     /// Resolves a stanza's chat, sender and flags, recording the names it
     /// carries. `None` for a broadcast status, which is not a conversation.
-    async fn resolve_incoming(&self, inbound: &InboundMessage, ctx: &BatchCtx<'_>) -> Option<Incoming> {
+    async fn resolve_incoming(&self, inbound: &InboundMessage, ctx: &BatchCtx<'_>, remember: bool) -> Option<Incoming> {
         let push_name = inbound.info.push_name.to_string();
         let sender = inbound.info.source.sender.to_string();
         // The batch holds the store's write lease, so LIDs resolve from what is
@@ -552,7 +674,7 @@ impl Inbound {
         if chat == "status@broadcast" {
             return None;
         }
-        if chat.ends_with("@lid") {
+        if remember && chat.ends_with("@lid") {
             spawn_lid_lookup(ctx.client.clone(), ctx.store, &chat);
         }
         let is_group = inbound.info.source.is_group || chat.ends_with("@g.us") || inbound.info.source.chat.is_broadcast_list();
@@ -561,12 +683,14 @@ impl Inbound {
         // chat names its sender with a LID, so the two never match on their
         // own. The source carries the other form; copy the name across so the
         // saved one is what gets shown.
-        remember_lid_pn(ctx.store, &inbound.info.source.sender, inbound.info.source.sender_alt.as_ref()).await;
-        if let Some(alt) = inbound.info.source.sender_alt.as_ref().map(|j| j.to_string()) {
-            self.remember_alt_name(ctx, &sender, &chat, is_group, from_me, &alt).await;
-        }
-        if !push_name.is_empty() {
-            self.remember_push_name(ctx, &sender, &chat, is_group, from_me, &push_name).await;
+        if remember {
+            remember_lid_pn(ctx.store, &inbound.info.source.sender, inbound.info.source.sender_alt.as_ref()).await;
+            if let Some(alt) = inbound.info.source.sender_alt.as_ref().map(|j| j.to_string()) {
+                self.remember_alt_name(ctx, &sender, &chat, is_group, from_me, &alt).await;
+            }
+            if !push_name.is_empty() {
+                self.remember_push_name(ctx, &sender, &chat, is_group, from_me, &push_name).await;
+            }
         }
         Some(Incoming {
             chat,
@@ -941,7 +1065,7 @@ impl Inbound {
     }
 
     /// Decodes and stores one ordinary message, then starts any media fetch.
-    async fn store_incoming(&self, ctx: &BatchCtx<'_>, inbound: &InboundMessage, incoming: &Incoming) {
+    async fn store_incoming(&self, ctx: &mut BatchCtx<'_>, inbound: &InboundMessage, incoming: &Incoming) {
         let Some(mut message) = incoming_message(
             &incoming.chat, inbound, ctx.client.as_deref(), ctx.media_dir.as_deref(), false,
         )
@@ -971,8 +1095,12 @@ impl Inbound {
             ctx.mark_chats.lock().unwrap().insert(incoming.chat.clone());
         }
         member_profiles::record_member_message_context(ctx.store, &message, &inbound.message).await.logged();
-        let auto_download = self.auto_download_for(ctx.store, &incoming.chat, message.media.kind.as_deref().unwrap_or("")).await;
-        self.spawn_media_fetch(ctx, &incoming.chat, &message, auto_download, !inbound.info.is_offline);
+        let event = if ctx.live && !inbound.info.is_offline {
+            ServiceEvent::arrival(&message)
+        } else {
+            ServiceEvent::hint(&message, true)
+        };
+        let _ = self.events.send(event);
     }
 
     pub(super) async fn auto_download_for(&self, store: &StoreWorker, chat: &str, kind: &str) -> bool {
@@ -1060,14 +1188,14 @@ impl Inbound {
     /// Fetches the file for an ordinary message, keeping a view-once as
     /// ordinary media when this link can receive it. That overrides the
     /// auto-download setting: the view-once setting decides.
-    fn spawn_media_fetch(
+    fn pending_media_fetch(
         &self,
         ctx: &BatchCtx<'_>,
         chat: &str,
         message: &StoredMessage,
         auto_download: bool,
         live: bool,
-    ) {
+    ) -> Option<PendingMediaFetch> {
         if message.media.kind.as_deref() == Some("view_once") {
             log::debug!(
                 "view-once in {chat}: arrived with fetchable media: {}",
@@ -1077,46 +1205,36 @@ impl Inbound {
         let keep_once = message.media.kind.as_deref() == Some("view_once")
             && message.media.locator.is_some()
             && self.keep_view_once.load(Ordering::SeqCst);
-        let fetch = match ((auto_download || keep_once) && message.media.locator.is_some()
-            && message.media.kind.as_deref() != Some("group_invite"), &ctx.client, &ctx.media_dir) {
-            (true, Some(client), Some(dir)) => {
-                Some((client.clone(), dir.clone(), message.header.id.clone(), keep_once))
-            }
-            _ => None,
+        let dir = ctx.media_dir.as_ref()?;
+        if ctx.client.is_none() || !(auto_download || keep_once) || message.media.locator.is_none()
+            || message.media.kind.as_deref() == Some("group_invite") { return None; }
+        Some(PendingMediaFetch {
+            dir: dir.clone(), chat: chat.to_string(), id: message.header.id.clone(), keep_once,
+            live: ctx.live && live,
+        })
+    }
+
+    async fn dispatch_media_fetches(&self, batch: &MessageBatch) {
+        let client = self.client_for_events.get().cloned();
+        let ctx = BatchCtx {
+            store: &self.store, own: own_addresses(client.as_deref()), client,
+            media_dir: self.media_dir.clone(), touched: Vec::new(), audit_chats: Default::default(),
+            mark_chats: Mutex::new(Default::default()), broadcast_chats: Mutex::new(Default::default()),
+            sticker_changes: AtomicBool::new(false), live: batch.origin == BatchOrigin::Live,
         };
-        // A live arrival carries its row, so the UI appends and notifies
-        // without a fetch; drains replay in bulk and keep the hint.
-        let event = if ctx.live && live {
-            ServiceEvent::arrival(message)
-        } else {
-            ServiceEvent::hint(message, true)
-        };
-        let _ = self.events.send(event);
-        let Some((client, dir, id, keep_once)) = fetch else { return };
-        let (store, events, downloads) = (ctx.store.clone(), self.events.clone(), self.downloads.clone());
-        let chat = chat.to_string();
-        tokio::spawn(async move {
-            let Ok(_permit) = downloads.acquire().await else { return };
-            match fetch_media(&client, &store, &dir, &chat, &id).await {
-                Ok(updated) => {
-                    if keep_once {
-                        if let Err(e) = store.keep_view_once(&chat, &id).await {
-                            log::warn!("could not keep view-once {id}: {e}");
-                        } else if let Some(kept) = store.message(&chat, &id).await.observed() {
-                            log::info!("kept one-time {id} in {chat}");
-                            // The mark is gone, so the row reloads as ordinary
-                            // media already holding the file.
-                            let _ = events.send(ServiceEvent::hint(&kept, false));
-                            let _ = events.send(ServiceEvent::Marks { chat: chat.clone() });
-                            return;
-                        }
-                    }
-                    // Non-fresh: the row refetches coalesced, no follow or lookup.
-                    let _ = events.send(ServiceEvent::hint(&updated, false));
-                }
-                Err(e) => log::warn!("failed to download {id} media: {e}"),
+        for inbound in batch.messages.iter() {
+            if self.one_time_only && !decoded_message(&inbound.message).view_once { continue; }
+            let Some(incoming) = self.resolve_incoming(inbound, &ctx, false).await else { continue };
+            let Some(message) = ctx.store.message(&incoming.chat, &incoming.id).await.observed() else { continue };
+            let auto_download = self.auto_download_for(
+                ctx.store, &incoming.chat, message.media.kind.as_deref().unwrap_or(""),
+            ).await;
+            if let Some(fetch) = self.pending_media_fetch(
+                &ctx, &incoming.chat, &message, auto_download, !inbound.info.is_offline,
+            ) {
+                self.media_downloads.enqueue(fetch).await;
             }
-        });
+        }
     }
 
     /// Bounds the store right after writes so the limit holds even if the
@@ -1159,11 +1277,12 @@ mod contact_identity_tests {
         let store = StoreWorker::open(Path::new(":memory:")).await.unwrap();
         let (events, mut notices) = broadcast::channel(16);
         let inbound = Inbound {
-            store: store.clone(), events, connected: Arc::default(), client_for_events: Arc::default(),
+            store: store.clone(), events: events.clone(), connected: Arc::default(), client_for_events: Arc::default(),
             disk_retention: Arc::new(DiskRetentionManager::new(DiskRetention::unlimited())),
             media_dir: None, group_cache: Arc::default(), groups_cache: Arc::default(), older_waits: Arc::default(),
             message_capping_check: Arc::default(),
-            downloads: Arc::new(tokio::sync::Semaphore::new(1)), sync_progress: Arc::default(), media_auto_download: Arc::default(),
+            media_downloads: MediaDownloadQueue::start(Arc::default(), store.clone(), events),
+            sync_progress: Arc::default(), media_auto_download: Arc::default(),
             keep_archived: Arc::default(), keep_view_once: Arc::default(), one_time_only: false, tally: Arc::default(), secret_edits: Default::default(),
         };
         let ctx = BatchCtx { store: &store, client: None, own: vec![], media_dir: None, touched: vec![], audit_chats: std::collections::HashSet::new(), mark_chats: Mutex::new(std::collections::HashSet::new()), broadcast_chats: Mutex::new(std::collections::HashSet::new()), sticker_changes: AtomicBool::new(false), live: true };
@@ -1184,5 +1303,76 @@ mod contact_identity_tests {
         inbound.handle(&Event::SelfPushNameUpdated(wa_events::SelfPushNameUpdated::builder()
             .from_server(true).old_name("Old own name".into()).new_name("New own name".into()).build())).await;
         assert!(matches!(notices.recv().await.unwrap(), ServiceEvent::NamesUpdated { count: 1 }));
+    }
+}
+
+#[cfg(test)]
+mod media_admission_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn five_thousand_item_backlog_stays_bounded_and_drains_in_order() {
+        let (live, live_rx) = tokio::sync::mpsc::channel(LIVE_DOWNLOAD_QUEUE);
+        let (history, history_rx) = tokio::sync::mpsc::channel(HISTORY_DOWNLOAD_QUEUE);
+        let active = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let completed = Arc::new(Mutex::new(Vec::with_capacity(5_000)));
+        let dispatched = Arc::new(Mutex::new(Vec::with_capacity(5_000)));
+        let released = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let release_gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let worker_released = released.clone();
+        let worker_release_gate = release_gate.clone();
+        let worker_active = active.clone();
+        let worker_peak = peak.clone();
+        let worker_completed = completed.clone();
+        let worker_dispatched = dispatched.clone();
+        let (_cancel, cancelled) = tokio::sync::watch::channel(false);
+        let worker = tokio::spawn(run_media_download_queue(live_rx, history_rx, cancelled, move |fetch| {
+            let id = fetch.id.parse::<usize>().unwrap();
+            worker_dispatched.lock().unwrap().push(id);
+            let (active, peak, completed, released, release_gate) = (
+                worker_active.clone(), worker_peak.clone(), worker_completed.clone(),
+                worker_released.clone(), worker_release_gate.clone(),
+            );
+            async move {
+                let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(now, Ordering::SeqCst);
+                if !released.load(Ordering::SeqCst) { release_gate.acquire().await.unwrap().forget(); }
+                active.fetch_sub(1, Ordering::SeqCst);
+                completed.lock().unwrap().push(id);
+            }
+        }));
+
+        let queue = history.clone();
+        let producer = tokio::spawn(async move {
+            for id in 0..5_000 {
+                history.send(PendingMediaFetch {
+                    dir: PathBuf::new(), chat: String::new(), id: id.to_string(), keep_once: false, live: false,
+                }).await.unwrap();
+            }
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while queue.capacity() != 0 || dispatched.lock().unwrap().len() != AUTO_DOWNLOAD_CONCURRENCY {
+                tokio::task::yield_now().await;
+            }
+        }).await.unwrap();
+        assert_eq!(active.load(Ordering::SeqCst), AUTO_DOWNLOAD_CONCURRENCY);
+        assert_eq!(queue.capacity(), 0);
+        released.store(true, Ordering::SeqCst);
+        release_gate.add_permits(AUTO_DOWNLOAD_CONCURRENCY);
+        tokio::time::timeout(std::time::Duration::from_secs(20), producer).await.unwrap().unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(20), async {
+            while completed.lock().unwrap().len() != 5_000 {
+                tokio::task::yield_now().await;
+            }
+        }).await.unwrap();
+        drop(queue);
+        drop(live);
+        worker.await.unwrap();
+        assert_eq!(*dispatched.lock().unwrap(), (0..5_000).collect::<Vec<_>>());
+        let mut completed = completed.lock().unwrap().clone();
+        completed.sort_unstable();
+        assert_eq!(completed, (0..5_000).collect::<Vec<_>>());
+        assert!(peak.load(Ordering::SeqCst) <= AUTO_DOWNLOAD_CONCURRENCY);
     }
 }

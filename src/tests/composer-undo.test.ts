@@ -44,6 +44,7 @@ test("composer shortcuts undo typing, paste, mention and emoji edits within curr
     const calls: string[] = [];
     setHandler((command: string) => { calls.push(command); });
     chats.selectedChat = "synthetic-a@s";
+    session.activeAccount = "composer-undo-fixture";
     session.settings.send_typing = false;
     const composer = new ComposerState();
     const input = { value: "", selectionStart: 0, selectionEnd: 0, focus() {},
@@ -91,6 +92,19 @@ test("composer shortcuts undo typing, paste, mention and emoji edits within curr
     key(); await settle(); assert.equal(composer.draft, "word");
     assert.deepEqual([input.selectionStart, input.selectionEnd], [1, 3]);
 
+    composer.draft = "hello"; input.value = composer.draft; input.setSelectionRange(0, 5); composer.resetUndo();
+    assert.equal(key(false, false, "b").prevented, true); await settle();
+    assert.equal(composer.draft, "*hello*");
+    assert.deepEqual([input.selectionStart, input.selectionEnd], [1, 6]);
+    key(); await settle(); assert.equal(composer.draft, "hello");
+    assert.deepEqual([input.selectionStart, input.selectionEnd], [0, 5]);
+    assert.equal(key(true, false, "i").prevented, true); await settle();
+    assert.equal(composer.draft, "_hello_");
+    key(); await settle(); assert.equal(composer.draft, "hello");
+    assert.equal(key(false, true, "m").prevented, true); await settle();
+    assert.equal(composer.draft, "```hello```");
+    key(); await settle();
+
     composer.draft = ":ok"; input.value = composer.draft; input.setSelectionRange(3, 3); composer.resetUndo();
     composer.emojiTable = [{ emoji: "👌", shortcodes: ["ok"], label: "ok", tags: [], hexcode: "1F44C", group: 1, order: 1 }];
     edit(":ok:"); await settle(); assert.equal(composer.draft, "👌");
@@ -107,7 +121,7 @@ test("composer shortcuts undo typing, paste, mention and emoji edits within curr
     chats.selectedChat = "synthetic-b@s"; composer.draft = "other draft"; composer.resetUndo();
     key(); await settle(); assert.equal(composer.draft, "other draft");
     edit("other draft!", "insertFromPaste"); key(); await settle(); assert.equal(composer.draft, "other draft");
-    chats.selectedChat = "synthetic-a@s"; composer.draft = composer.drafts[chats.selectedChat]; composer.resetUndo();
+    chats.selectedChat = "synthetic-a@s"; composer.draft = composer.draftFor(session.activeAccount, chats.selectedChat); composer.resetUndo();
     key(); await settle(); assert.equal(composer.draft, saved);
     composer.resetAccount(); key(); await settle(); assert.equal(composer.draft, "");
 

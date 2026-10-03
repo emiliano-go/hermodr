@@ -4,17 +4,18 @@ use whatsapp_rust::{CappingStatus, NewChatMessageCapping};
 use whatsapp_rust::wacore::types::events::ServerAck;
 
 const NOTICE_KIND: &str = "NEW_CHAT_MESSAGE_CAPPED";
-// ponytail: one check per account/minute; cache results if concurrent chats need notices.
 const CHECK_INTERVAL: Duration = Duration::from_secs(60);
 
 impl Inbound {
     pub(super) fn on_message_capping_ack(&self, ack: &ServerAck) {
         if self.one_time_only || !rejected_message(ack) { return; }
         let Some(client) = self.client_for_events.get().cloned() else { return };
-        if !self.connected.load(Ordering::SeqCst) || !claim_check(&self.message_capping_check, Instant::now()) { return; }
+        if !self.connected.load(Ordering::SeqCst) { return; }
         let handler = self.clone();
         let ack = ack.clone();
         tokio::spawn(async move {
+            let Some(chat) = capping_chat(&handler.store, &ack).await else { return };
+            if !handler.same_capping_client(&client) || !claim_check(&handler.message_capping_check, &chat, Instant::now()) { return; }
             let mex = client.mex();
             let info = match tokio::time::timeout(Duration::from_secs(15), mex.fetch_new_chat_message_capping_info()).await {
                 Ok(Ok(info)) => info,
@@ -22,7 +23,6 @@ impl Inbound {
             };
             if !handler.same_capping_client(&client) { return; }
             let Some((id, params)) = capping_notice(&info, unix_now(), &ack.id) else { return };
-            let Some(chat) = capping_chat(&handler.store, &ack).await else { return };
             if !handler.same_capping_client(&client) { return; }
             let timestamp = ack.timestamp.map(|at| at.timestamp()).unwrap_or_else(unix_now);
             handler.store_notice(&chat, id, timestamp, NOTICE_KIND, params, String::new()).await;
@@ -40,10 +40,11 @@ fn rejected_message(ack: &ServerAck) -> bool {
         !ack.from.as_ref().is_some_and(|jid| jid.is_group())
 }
 
-fn claim_check(check: &Mutex<Option<Instant>>, now: Instant) -> bool {
+fn claim_check(check: &Mutex<std::collections::HashMap<String, Instant>>, chat: &str, now: Instant) -> bool {
     let mut checked = check.lock().unwrap();
-    if checked.is_some_and(|at| now.saturating_duration_since(at) < CHECK_INTERVAL) { return false; }
-    *checked = Some(now);
+    checked.retain(|_, at| now.saturating_duration_since(*at) < CHECK_INTERVAL);
+    if checked.contains_key(chat) { return false; }
+    checked.insert(chat.to_owned(), now);
     true
 }
 
@@ -79,7 +80,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_rejected_direct_message_acks_claim_one_bounded_check_per_minute() {
+    fn only_rejected_direct_message_acks_claim_one_bounded_check_per_chat_per_minute() {
         let ack = |class: Option<&str>, error: Option<&str>, from: Option<&str>| ServerAck::builder()
             .id("synthetic".to_owned()).maybe_class(class.map(str::to_owned)).maybe_error(error.map(str::to_owned))
             .maybe_from(from.map(|chat| chat.parse().unwrap())).build();
@@ -88,11 +89,14 @@ mod tests {
             ack(None, Some("479"), None), ack(Some("message"), Some("479"), Some("10@g.us"))] {
             assert!(!rejected_message(&event));
         }
-        let check = Mutex::new(None);
+        let check = Mutex::new(std::collections::HashMap::new());
         let now = Instant::now();
-        assert!(claim_check(&check, now));
-        assert!(!claim_check(&check, now + Duration::from_secs(59)));
-        assert!(claim_check(&check, now + CHECK_INTERVAL));
+        assert!(claim_check(&check, "10@s.whatsapp.net", now));
+        assert!(claim_check(&check, "20@s.whatsapp.net", now));
+        assert!(!claim_check(&check, "10@s.whatsapp.net", now + Duration::from_secs(59)));
+        assert!(!claim_check(&check, "20@s.whatsapp.net", now + Duration::from_secs(59)));
+        assert!(claim_check(&check, "10@s.whatsapp.net", now + CHECK_INTERVAL));
+        assert!(claim_check(&check, "20@s.whatsapp.net", now + CHECK_INTERVAL));
     }
 
     #[test]

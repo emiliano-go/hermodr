@@ -9,13 +9,15 @@ mod event_rsvp_integration;
 
 pub(super) async fn inbound() -> (Inbound, broadcast::Receiver<ServiceEvent>) {
     let (events, received) = broadcast::channel(32);
+    let store = StoreWorker::open(Path::new(":memory:")).await.unwrap();
+    let media_downloads = MediaDownloadQueue::start(Arc::default(), store.clone(), events.clone());
     (Inbound {
-        store: StoreWorker::open(Path::new(":memory:")).await.unwrap(),
+        store,
         disk_retention: Arc::new(DiskRetentionManager::new(DiskRetention::unlimited())),
         events, connected: Arc::default(), client_for_events: Arc::default(), media_dir: None,
         group_cache: Arc::default(), groups_cache: Arc::default(), older_waits: Arc::default(),
         message_capping_check: Arc::default(),
-        downloads: Arc::new(tokio::sync::Semaphore::new(1)), sync_progress: Arc::default(),
+        media_downloads, sync_progress: Arc::default(),
         media_auto_download: Arc::default(), keep_archived: Arc::default(), keep_view_once: Arc::default(),
         one_time_only: false, tally: Arc::default(), secret_edits: Default::default(),
     }, received)
@@ -85,6 +87,7 @@ async fn retention_keeps_unowned_and_inflight_files_in_shared_media_directory() 
     for name in ["other-account.jpg", "active-download.part", "notes.txt", "favorite.webp"] {
         assert_eq!(std::fs::read(root.join(name)).unwrap(), b"preserve", "retention removed {name}");
     }
+    inbound.media_downloads.close().await;
     drop(inbound);
     std::fs::remove_dir_all(root).unwrap();
 }

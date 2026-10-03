@@ -29,6 +29,7 @@
   let metrics = $state({ offset: 0, distance: 0, viewport: 0 });
   let revealed = $state<Record<string, true>>({}), actions = $state<string[]>([]);
   let checks = $state<string[]>([]), complete = $state(false), failed = $state(""), readyKeyboard = $state(false);
+  let frameHeight = $state(3000);
   const dayKey = (timestamp: number) => String(Math.floor(timestamp / 86400));
   const noop = () => {};
   const record = (kind: string, message: StoredMessage) => actions.push(`${kind}:${message.id}:${message.reply_to_id || ""}`);
@@ -95,6 +96,7 @@
     void (async () => {
       try {
         await tick();
+        await until(() => grids().length === 1 && ids().join() === "child-0,child-1", "initial virtual rows did not mount");
         const raw = JSON.stringify(rows), childStatus = rows.map((message) => [message.id, message.read, message.status]);
         assert(grids().length === 1 && ids().join() === "child-0,child-1", "real list folds parent and preserves child IDs/order");
         assert(scroller!.querySelectorAll('[data-id="parent"]').length === 1 && scroller!.querySelector('[data-id="parent"]')?.classList.contains("album-anchor"), "parent has one separate jump anchor");
@@ -190,6 +192,7 @@
         const lateRaw = JSON.stringify(rows), anchor = scroller!.querySelector<HTMLElement>('.album-anchor[data-id="parent"]')!;
         assert(grids().length === 1 && (grids()[0].compareDocumentPosition(anchor) & Node.DOCUMENT_POSITION_FOLLOWING), "late envelope marker follows continuous child grid");
         assert(grids()[0].querySelectorAll("time").length === 1 && ids().join() === lateChildren.map((message) => message.id).join(), "late parent keeps one time and raw child markers");
+        frameHeight = 380; await tick(); await wait();
         viewport().scrollTop = 0; await tick(); await wait();
         assert(anchor.getBoundingClientRect().top >= viewport().getBoundingClientRect().bottom && frontier() !== "parent", "late parent cannot become frontier before its chronological marker is visible");
         const markers = [...scroller!.querySelectorAll<HTMLElement>(".bubble[data-id], .album-anchor[data-id]")];
@@ -211,6 +214,7 @@
         checks.push("late/interleaved envelope chronology, non-monotone column raw frontier, partial paging and no synthetic mark-read success");
 
         const ordinary = Array.from({ length: 90 }, (_, index) => row(`rail-${index}`, null, { media_kind: null, timestamp: 20 + index, text: `Synthetic rail ${index}. ${"bodyword".repeat(8)}` }));
+        frameHeight = 380;
         const virtualParent = { ...parent, timestamp: 1000 };
         const virtualChildren = children.map((message, index) => ({ ...message, timestamp: 1001 + index }));
         await replace([...ordinary, virtualParent, ...virtualChildren]);
@@ -237,6 +241,7 @@
         await replace(virtualChildren.slice(0, 2));
         assert(!rail!.hasMessage("parent"), "missing envelope is not fabricated by child association lookup");
         checks.push("actual VList unmounting, every child/parent lookup, offscreen and tall-group reveals, visible anchor, metrics and unread split");
+        frameHeight = 3000;
 
         for (const count of [1, 2, 3, 4, 6]) for (const size of [400, 320]) for (const zoom of [100, 200]) {
           await replace([parent, ...children.slice(0, count)]); width = size; document.documentElement.style.zoom = `${zoom}%`; await tick(); await wait();
@@ -259,7 +264,7 @@
 <main>
   <h1>Production album timeline with synthetic data</h1>
   {#if readyKeyboard}<p>Press Enter to open focused synthetic child.</p>{/if}
-  <div class="frame" style:width="{width}px"><MessageList {...props} messages={rows} bind:scroller bind:this={rail} /></div>
+  <div class="frame" style:width="{width}px" style:height="{frameHeight}px"><MessageList {...props} messages={rows} bind:scroller bind:this={rail} /></div>
   <div id="album-list-result" data-complete={complete} data-pass={complete && !failed} data-keyboard={readyKeyboard} data-viewport={innerWidth}>
     {#if failed}<p role="alert">{failed}</p>{/if}<ul>{#each checks as check}<li>{check}</li>{/each}</ul>
   </div>

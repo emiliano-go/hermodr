@@ -41,7 +41,7 @@ forwarded: Array<string>,
 /**
  * Ids of messages their sender edited.
  */
-edited: Array<string>, };
+edited: Array<string>, download_failures?: { [key in string]: MessageFailure }, };
 export type ChatRetention = { max_age_hours: RetentionLimit, max_messages: RetentionLimit,
 /**
  * Whether scrolling to the top asks the phone for older messages.

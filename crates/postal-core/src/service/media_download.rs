@@ -1,5 +1,7 @@
 use super::*;
 use super::media_files::TemporaryFile;
+use anyhow::Context as _;
+use crate::message_ref::{MessageFailure, MessageRef};
 
 #[cfg(test)]
 #[path = "media_download_tests.rs"]
@@ -70,30 +72,55 @@ where
     R: FnOnce(wa::Message) -> RF,
     RF: std::future::Future<Output = Result<String>>,
 {
-    let media = detect_media(decoded_message(&message).message).ok_or_else(|| anyhow::anyhow!("message carries no media"))?;
-    let kind = media.kind;
-    let extension = media.extension();
-    let path = media_path(dir, id, &extension)?;
-    let (temporary, writer) = download_target(dir).await?;
-    let started = std::time::Instant::now();
-    let data = match download(media, writer).await {
-        Ok(data) => data,
-        Err(first) => {
-            log::info!("download of {id} failed ({first:#}); asking the sender to upload it again");
-            let path = reupload(message.clone()).await.map_err(|e| first.context(e))?;
-            set_direct_path(&mut message, &path);
-            store.set_media_ref(chat, id, &buffa::Message::encode_to_vec(&message)).await?;
-            let media = detect_media(decoded_message(&message).message).ok_or_else(|| anyhow::anyhow!("message carries no media"))?;
-            let writer = tokio::fs::OpenOptions::new().write(true).truncate(true).open(&temporary.path).await?.into_std().await;
-            download(media, writer).await?
+    let result: Result<StoredMessage> = async {
+        let media = detect_media(decoded_message(&message).message).ok_or_else(|| anyhow::anyhow!("message carries no media"))?;
+        let kind = media.kind;
+        let extension = media.extension();
+        let path = media_path(dir, id, &extension)?;
+        let (temporary, writer) = download_target(dir).await?;
+        let started = std::time::Instant::now();
+        let data = match download(media, writer).await {
+            Ok(data) => data,
+            Err(first) => {
+                log::warn!("media {id} attempt 1 failed: {first:#}; requesting reupload");
+                let path = reupload(message.clone()).await.map_err(|retry| {
+                    log::warn!("media {id} reupload failed: {retry:#}");
+                    let reason = retry.downcast_ref::<MessageRef>().cloned()
+                        .unwrap_or_else(|| MessageRef::new("error.media_reupload_unavailable"));
+                    anyhow::anyhow!("first attempt: {first:#}; reupload: {retry:#}").context(reason)
+                })?;
+                log::info!("media {id} reupload supplied a fresh reference; starting attempt 2");
+                set_direct_path(&mut message, &path);
+                store.set_media_ref(chat, id, &buffa::Message::encode_to_vec(&message)).await?;
+                let media = detect_media(decoded_message(&message).message).ok_or_else(|| anyhow::anyhow!("message carries no media"))?;
+                let writer = tokio::fs::OpenOptions::new().write(true).truncate(true).open(&temporary.path).await?.into_std().await;
+                download(media, writer).await.map_err(|second| {
+                    log::warn!("media {id} attempt 2 failed after successful reupload: {second:#}");
+                    let reason = if second.downcast_ref::<whatsapp_rust::download::MediaDownloadError>()
+                        .is_some_and(|error| matches!(error, whatsapp_rust::download::MediaDownloadError::ReferenceRejected(_))) {
+                        "error.media_fresh_reference_rejected"
+                    } else { "error.media_retry_download_failed" };
+                    anyhow::anyhow!("first attempt: {first:#}; fresh-reference attempt: {second:#}").context(MessageRef::new(reason))
+                })?
+            }
+        };
+        log::debug!("downloaded {id} {kind} ({} KB) in {:?}", data.metadata()?.len() / 1024, started.elapsed());
+        drop(data);
+        tokio::fs::rename(&temporary.path, &path).await?;
+        store.set_media_path(chat, id, &path.to_string_lossy()).await?;
+        record_thumb(store, chat, id, kind, &path).await?;
+        store.message(chat, id).await
+    }.await;
+    if let Err(error) = &result {
+        if let Err(save_error) = store.set_media_download_error(chat, id, Some(MessageFailure::from(error))).await {
+            log::error!("could not save media {id} failure: {save_error:#}; download failed: {error:#}");
+            return Err(save_error.context("could not save media download failure"));
         }
-    };
-    log::debug!("downloaded {id} {kind} ({} KB) in {:?}", data.metadata()?.len() / 1024, started.elapsed());
-    drop(data);
-    tokio::fs::rename(&temporary.path, &path).await?;
-    store.set_media_path(chat, id, &path.to_string_lossy()).await?;
-    record_thumb(store, chat, id, kind, &path).await?;
-    store.message(chat, id).await
+    } else {
+        store.set_media_download_error(chat, id, None).await
+            .context("could not clear media download failure")?;
+    }
+    result
 }
 
 /// Generates and records a preview when the stored row has none.
@@ -143,7 +170,7 @@ async fn reupload(client: &Client, store: &StoreWorker, chat: &str, id: &str, me
     };
     match client.media_reupload().request(&request).await? {
         whatsapp_rust::MediaRetryResult::Success { direct_path } => Ok(direct_path),
-        other => anyhow::bail!("the sender could not upload it again: {other:?}"),
+        other => Err(anyhow::anyhow!("sender reupload response: {other:?}").context(MessageRef::new("error.media_reupload_refused"))),
     }
 }
 

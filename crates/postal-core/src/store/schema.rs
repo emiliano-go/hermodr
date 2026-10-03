@@ -150,6 +150,28 @@ mod tests {
     }
 
     #[test]
+    fn generated_origin_migration_leaves_legacy_ids_unknown() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_to(&conn, 40).unwrap();
+        assert!(!table_columns(&conn, "messages").unwrap().contains(&"generated_system".to_owned()));
+        conn.execute("INSERT INTO messages(chat,id,sender,timestamp,from_me,text,system_kind) VALUES ('1@g.us','group-wire','',100,0,'','GROUP_CREATE')", []).unwrap();
+        migrate(&conn).unwrap();
+        let generated: Option<bool> = conn.query_row("SELECT generated_system FROM messages WHERE id='group-wire'", [], |row| row.get(0)).unwrap();
+        assert_eq!(generated, None);
+    }
+
+    #[test]
+    fn download_error_migration_preserves_existing_messages() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_to(&conn, MIGRATIONS.len() - 1).unwrap();
+        conn.execute("INSERT INTO messages(chat,id,sender,timestamp,from_me,text) VALUES ('1@s','old','',1,0,'kept')", []).unwrap();
+        migrate(&conn).unwrap();
+        let row: (String, Option<String>) = conn.query_row("SELECT text,download_error FROM messages WHERE id='old'", [],
+            |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+        assert_eq!(row, ("kept".into(), None));
+    }
+
+    #[test]
     fn a_v10_database_gains_the_soft_delete_column_on_open() {
         use crate::store::MessageStore;
         let path = std::env::temp_dir().join(format!(
@@ -395,7 +417,24 @@ pub(super) const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
     super::event_rsvps::migrate,
     super::event_rsvp_pending::migrate,
     super::call_history::migrate,
+    migrate_generated_system,
+    migrate_download_error,
 ];
+
+fn migrate_generated_system(conn: &Connection) -> Result<()> {
+    if !table_columns(conn, "messages")?.iter().any(|column| column == "generated_system") {
+        conn.execute_batch("ALTER TABLE messages ADD COLUMN generated_system INTEGER CHECK(generated_system IN (0,1));")?;
+    }
+
+    Ok(())
+}
+
+fn migrate_download_error(conn: &Connection) -> Result<()> {
+    if !table_columns(conn, "messages")?.iter().any(|column| column == "download_error") {
+        conn.execute_batch("ALTER TABLE messages ADD COLUMN download_error TEXT;")?;
+    }
+    Ok(())
+}
 
 pub(super) fn migrate(conn: &Connection) -> Result<()> {
     migrate_to(conn, MIGRATIONS.len())
@@ -417,6 +456,8 @@ pub(super) fn ensure_optional_columns(conn: &Connection) -> Result<()> {
             ("mentioned_all_only", "INTEGER NOT NULL DEFAULT 0 CHECK(mentioned_all_only IN (0,1))"),
             ("album", "TEXT"),
             ("album_request_written", "INTEGER NOT NULL DEFAULT 0 CHECK(album_request_written IN (0,1))"),
+            ("generated_system", "INTEGER CHECK(generated_system IN (0,1))"),
+            ("download_error", "TEXT"),
         ] {
             if !messages.iter().any(|c| c == name) {
                 conn.execute_batch(&format!("ALTER TABLE messages ADD COLUMN {name} {declaration};"))?;

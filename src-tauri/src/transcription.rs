@@ -9,8 +9,8 @@ use postal_plugins::{
 };
 use serde::Serialize;
 use std::{
-    collections::BTreeMap,
-    path::PathBuf,
+    collections::{BTreeMap, VecDeque},
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -20,12 +20,164 @@ use crate::plugins::{compatibility, failure, PluginRuntimeView};
 use postal_core::message_ref::{MessageFailure, MessageRef};
 
 type RequestKey = (String, String, String);
+const TRANSCRIPTION_CONCURRENCY: usize = 2;
+const MAX_AUTO_WAITING: usize = 24;
+const MAX_WAITING: usize = 32;
+
 pub(crate) struct TranscriptionState {
     path: PathBuf,
     config: Mutex<Configuration>,
     active: Mutex<BTreeMap<RequestKey, watch::Sender<bool>>>,
+    gate: Arc<PriorityGate>,
     error: Option<String>,
     failure: Option<MessageFailure>,
+}
+
+#[derive(Default)]
+struct GateState {
+    running: usize,
+    next_ticket: u64,
+    manual: VecDeque<u64>,
+    automatic: VecDeque<u64>,
+}
+
+struct PriorityGate {
+    state: Mutex<GateState>,
+    changed: watch::Sender<u64>,
+}
+
+struct GatePermit(Arc<PriorityGate>);
+
+struct GateWaiter {
+    gate: Arc<PriorityGate>,
+    ticket: u64,
+    automatic: bool,
+    queued: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum GateError {
+    Full,
+    Cancelled,
+}
+
+impl Default for PriorityGate {
+    fn default() -> Self {
+        let (changed, _) = watch::channel(0);
+        Self {
+            state: Mutex::default(),
+            changed,
+        }
+    }
+}
+
+impl PriorityGate {
+    async fn acquire(
+        self: &Arc<Self>,
+        automatic: bool,
+        cancelled: &mut watch::Receiver<bool>,
+        on_queued: impl FnOnce(),
+    ) -> Result<GatePermit, GateError> {
+        let mut changed = self.changed.subscribe();
+        if *cancelled.borrow() {
+            return Err(GateError::Cancelled);
+        }
+
+        let ticket = {
+            let mut state = self.state.lock().unwrap();
+            let waiters = state.manual.len() + state.automatic.len();
+            if waiters >= MAX_WAITING || (automatic && state.automatic.len() >= MAX_AUTO_WAITING) {
+                return Err(GateError::Full);
+            }
+            let can_start = state.running < TRANSCRIPTION_CONCURRENCY
+                && state.manual.is_empty()
+                && (!automatic || state.automatic.is_empty());
+            if can_start {
+                state.running += 1;
+                return Ok(GatePermit(self.clone()));
+            }
+            let ticket = state.next_ticket;
+            state.next_ticket = state.next_ticket.wrapping_add(1);
+            if automatic {
+                state.automatic.push_back(ticket);
+            } else {
+                state.manual.push_back(ticket);
+            }
+            ticket
+        };
+        let mut waiter = GateWaiter { gate: self.clone(), ticket, automatic, queued: true };
+        self.wake();
+        on_queued();
+
+        loop {
+            if *cancelled.borrow() {
+                return Err(GateError::Cancelled);
+            }
+            let acquired = {
+                let mut state = self.state.lock().unwrap();
+                let is_next = if let Some(manual) = state.manual.front() {
+                    !automatic && *manual == ticket
+                } else {
+                    automatic && state.automatic.front() == Some(&ticket)
+                };
+                if state.running < TRANSCRIPTION_CONCURRENCY && is_next {
+                    if automatic {
+                        state.automatic.pop_front();
+                    } else {
+                        state.manual.pop_front();
+                    }
+                    state.running += 1;
+                    true
+                } else {
+                    false
+                }
+            };
+            if acquired {
+                waiter.queued = false;
+                self.wake();
+                return Ok(GatePermit(self.clone()));
+            }
+            tokio::select! {
+                _ = changed.changed() => {},
+                result = cancelled.changed() => {
+                    if result.is_err() || *cancelled.borrow() {
+                        return Err(GateError::Cancelled);
+                    }
+                }
+            }
+        }
+    }
+
+    fn remove(&self, ticket: u64, automatic: bool) {
+        let mut state = self.state.lock().unwrap();
+        let queue = if automatic {
+            &mut state.automatic
+        } else {
+            &mut state.manual
+        };
+        queue.retain(|queued| *queued != ticket);
+        drop(state);
+        self.wake();
+    }
+
+    fn wake(&self) {
+        self.changed.send_modify(|revision| *revision = revision.wrapping_add(1));
+    }
+}
+
+impl Drop for GateWaiter {
+    fn drop(&mut self) {
+        if self.queued {
+            self.gate.remove(self.ticket, self.automatic);
+        }
+    }
+}
+
+impl Drop for GatePermit {
+    fn drop(&mut self) {
+        self.0.state.lock().unwrap().running -= 1;
+        self.0.wake();
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -68,6 +220,7 @@ impl TranscriptionState {
     pub(crate) fn load(app: &AppHandle) -> Result<Self, Box<dyn std::error::Error>> {
         use std::io::Read;
         let path = app.path().app_config_dir()?.join("transcription.json");
+        let _ = remove_staging_file(&path);
         let loaded = (|| -> Result<Configuration, Box<dyn std::error::Error>> {
             let mut bytes = Vec::new();
             std::fs::File::open(&path)?
@@ -99,6 +252,7 @@ impl TranscriptionState {
             path,
             config: Mutex::new(config),
             active: Mutex::default(),
+            gate: Arc::default(),
             error,
             failure,
         })
@@ -108,6 +262,7 @@ impl TranscriptionState {
         use std::io::Write;
         let parent = self.path.parent().ok_or_else(|| CommandError::code("error.transcription_config_path_unavailable"))?;
         std::fs::create_dir_all(parent).map_err(CommandError::from)?;
+        remove_staging_file(&self.path).map_err(CommandError::from)?;
         let temporary = self.path.with_extension("json.tmp");
         let mut file = std::fs::File::create(&temporary).map_err(CommandError::from)?;
         serde_json::to_writer(&mut file, config).map_err(CommandError::operation_failed)?;
@@ -121,6 +276,14 @@ impl TranscriptionState {
         for cancel in self.active.lock().unwrap().values() {
             let _ = cancel.send(true);
         }
+    }
+}
+
+fn remove_staging_file(path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(path.with_extension("json.tmp")) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
     }
 }
 
@@ -367,13 +530,13 @@ pub(crate) async fn install_transcription_model(
         .map_err(CommandError::from)
 }
 
-struct Active<'a> {
-    active: &'a Mutex<BTreeMap<RequestKey, watch::Sender<bool>>>,
+struct Active {
+    app: AppHandle,
     key: RequestKey,
 }
-impl Drop for Active<'_> {
+impl Drop for Active {
     fn drop(&mut self) {
-        self.active.lock().unwrap().remove(&self.key);
+        self.app.state::<TranscriptionState>().active.lock().unwrap().remove(&self.key);
     }
 }
 
@@ -499,6 +662,19 @@ async fn prepare(
     Ok((plugin_id, request))
 }
 
+async fn cancellable_prepare<T>(
+    cancelled: &mut watch::Receiver<bool>,
+    prepare: impl std::future::Future<Output = CommandResult<T>>,
+) -> CommandResult<T> {
+    if *cancelled.borrow() {
+        return Err(CommandError::code("error.transcription_cancelled"));
+    }
+    tokio::select! {
+        result = prepare => result,
+        _ = cancelled.changed() => Err(CommandError::code("error.transcription_cancelled")),
+    }
+}
+
 async fn run(
     app: &AppHandle,
     account_id: String,
@@ -507,61 +683,82 @@ async fn run(
     force: bool,
     automatic: bool,
 ) -> CommandResult<StoredTranscript> {
-    if account_id.is_empty()
-        || account_id.len() > 200
-        || chat.is_empty()
-        || chat.len() > 300
-        || id.is_empty()
-        || id.len() > 300
-    {
-        return Err(CommandError::code("error.transcription_target_invalid"));
-    }
-    let state = app.state::<AppState>();
-    let service = bound_service(&state, &account_id)?;
-    if !force {
-        if let Some(cached) = service
-            .message_transcript(&chat, &id)
-            .await
-            .map_err(CommandError::from)?
-        {
-            current(&state, &account_id, &service)?;
-            return Ok(cached);
-        }
-    }
-    let stt = app.state::<TranscriptionState>();
     let key = (account_id.clone(), chat.clone(), id.clone());
-    let (cancel, mut cancelled) = watch::channel(false);
-    {
-        let mut active = stt.active.lock().unwrap();
-        if active.contains_key(&key) {
-            return Err(CommandError::code("error.transcription_already_running"));
+    let valid_target = !account_id.is_empty()
+        && account_id.len() <= 200
+        && !chat.is_empty()
+        && chat.len() <= 300
+        && !id.is_empty()
+        && id.len() <= 300;
+    let mut notify_terminal = false;
+    let mut active_guard = None;
+    let result = async {
+        if !valid_target {
+            return Err(CommandError::code("error.transcription_target_invalid"));
         }
-        if active.len() >= 64 {
-            return Err(CommandError::new(MessageRef::new("error.transcription_queue_full").with_param("max", serde_json::Number::from(64))));
-        }
-        active.insert(key.clone(), cancel);
-    }
-    let _active = Active {
-        active: &stt.active,
-        key: key.clone(),
-    };
-    let (plugin_id, request) =
-        prepare(app, &state, &service, &account_id, &chat, &id, automatic).await?;
-    if *cancelled.borrow() {
-        return Err(CommandError::code("error.transcription_cancelled"));
-    }
-    let canonical = request.chat.clone();
-    notify(app, &key, "started", None, None);
-    let result = tokio::select! {
-        _=cancelled.changed()=>Err(CommandError::code("error.transcription_cancelled")),
-        result=state.plugins.host.as_ref().ok_or_else(|| CommandError::code("error.plugin_host_unavailable"))?.transcribe(&plugin_id,request)=>result.map_err(CommandError::from),
-    };
-    let result = match result {
-        Ok(transcript) => {
-            if let Err(error) = current(&state, &account_id, &service) {
-                notify(app, &key, "cancelled", None, Some(error.clone()));
-                return Err(error);
+        let state = app.state::<AppState>();
+        let service = bound_service(&state, &account_id)?;
+        if !force {
+            if let Some(cached) = service
+                .message_transcript(&chat, &id)
+                .await
+                .map_err(CommandError::from)?
+            {
+                current(&state, &account_id, &service)?;
+                return Ok(cached);
             }
+        }
+        let stt = app.state::<TranscriptionState>();
+        let (cancel, mut cancelled) = watch::channel(false);
+        {
+            let mut active = stt.active.lock().unwrap();
+            if active.contains_key(&key) {
+                return Err(CommandError::code("error.transcription_already_running"));
+            }
+            active.insert(key.clone(), cancel);
+        }
+        notify_terminal = true;
+        active_guard = Some(Active { app: app.clone(), key: key.clone() });
+        let permit = match stt.gate.acquire(automatic, &mut cancelled, || {
+            notify(app, &key, "queued", None, None)
+        }).await {
+            Ok(permit) => permit,
+            Err(GateError::Full) => {
+                return Err(CommandError::new(
+                    MessageRef::new("error.transcription_queue_full")
+                        .with_param(
+                            "max",
+                            serde_json::Number::from(if automatic { MAX_AUTO_WAITING } else { MAX_WAITING }),
+                        ),
+                ));
+            }
+            Err(GateError::Cancelled) => {
+                return Err(CommandError::code("error.transcription_cancelled"));
+            }
+        };
+        if *cancelled.borrow() {
+            return Err(CommandError::code("error.transcription_cancelled"));
+        }
+        notify(app, &key, "started", None, None);
+        let result = async {
+            let (plugin_id, request) = cancellable_prepare(
+                &mut cancelled,
+                prepare(app, &state, &service, &account_id, &chat, &id, automatic),
+            ).await?;
+            if *cancelled.borrow() {
+                return Err(CommandError::code("error.transcription_cancelled"));
+            }
+            let canonical = request.chat.clone();
+            let host = state
+                .plugins
+                .host
+                .as_ref()
+                .ok_or_else(|| CommandError::code("error.plugin_host_unavailable"))?;
+            let transcript = tokio::select! {
+                _ = cancelled.changed() => return Err(CommandError::code("error.transcription_cancelled")),
+                result = host.transcribe(&plugin_id, request) => result.map_err(CommandError::from)?,
+            };
+            current(&state, &account_id, &service)?;
             let transcript = StoredTranscript {
                 chat: canonical,
                 id: id.clone(),
@@ -570,7 +767,7 @@ async fn run(
                 provider: transcript.provider,
                 created_at: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .map_or(0, |d| d.as_secs() as i64),
+                    .map_or(0, |duration| duration.as_secs() as i64),
             };
             service
                 .save_transcript(transcript.clone())
@@ -578,22 +775,37 @@ async fn run(
                 .map(|_| transcript)
                 .map_err(CommandError::from)
         }
-        Err(error) => Err(error),
-    };
-    match &result {
-        Ok(t) => notify(app, &key, "completed", Some(t.clone()), None),
-        Err(error) => notify(
-            app,
-            &key,
-            if *cancelled.borrow() {
-                "cancelled"
-            } else {
-                "failed"
-            },
-            None,
-            Some(error.clone()),
-        ),
-    };
+        .await;
+        drop(permit);
+        result
+    }
+    .await;
+    if valid_target
+        && notify_terminal
+        && result
+            .as_ref()
+            .err()
+            .is_none_or(|error| error.message.code != "error.transcription_already_running")
+    {
+        match &result {
+            Ok(transcript) => notify(app, &key, "completed", Some(transcript.clone()), None),
+            Err(error) => notify(
+                app,
+                &key,
+                if matches!(
+                    error.message.code.as_str(),
+                    "error.transcription_cancelled" | "error.account_changed"
+                ) {
+                    "cancelled"
+                } else {
+                    "failed"
+                },
+                None,
+                Some(error.clone()),
+            ),
+        }
+    }
+    drop(active_guard);
     result
 }
 
@@ -694,6 +906,187 @@ fn transcription_target(event: &postal_core::ServiceEvent) -> Option<(&String, &
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn removes_only_its_interrupted_settings_write() {
+        let dir = std::env::temp_dir().join(format!(
+            "postal-transcription-staging-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed),
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("transcription.json");
+        let temporary = path.with_extension("json.tmp");
+        let unrelated = dir.join("other.json.tmp");
+        std::fs::write(&temporary, b"interrupted").unwrap();
+        std::fs::write(&unrelated, b"keep").unwrap();
+
+        remove_staging_file(&path).unwrap();
+
+        assert!(!temporary.exists());
+        assert_eq!(std::fs::read(unrelated).unwrap(), b"keep");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    async fn wait_for_waiters(gate: &PriorityGate, manual: usize, automatic: usize) {
+        for _ in 0..1000 {
+            let state = gate.state.lock().unwrap();
+            if state.manual.len() == manual && state.automatic.len() == automatic {
+                return;
+            }
+            drop(state);
+            tokio::task::yield_now().await;
+        }
+        panic!("transcription waiters did not reach expected counts");
+    }
+
+    #[tokio::test]
+    async fn aborting_gate_acquire_removes_its_waiter() {
+        let gate = Arc::new(PriorityGate::default());
+        let (_cancel1, mut cancelled1) = watch::channel(false);
+        let (_cancel2, mut cancelled2) = watch::channel(false);
+        let first = gate.acquire(false, &mut cancelled1, || {}).await.unwrap();
+        let second = gate.acquire(false, &mut cancelled2, || {}).await.unwrap();
+        let queued_gate = gate.clone();
+        let queued = tokio::spawn(async move {
+            let (_cancel, mut cancelled) = watch::channel(false);
+            queued_gate.acquire(true, &mut cancelled, || {}).await
+        });
+        wait_for_waiters(&gate, 0, 1).await;
+        queued.abort();
+        assert!(matches!(queued.await, Err(error) if error.is_cancelled()));
+        assert!(gate.state.lock().unwrap().automatic.is_empty());
+        drop((first, second));
+
+        let (_cancel, mut cancelled) = watch::channel(false);
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            gate.acquire(true, &mut cancelled, || {}),
+        ).await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancellation_during_stalled_prepare_releases_gate_slot() {
+        let gate = Arc::new(PriorityGate::default());
+        let (_keep_first, mut first_cancelled) = watch::channel(false);
+        let first = gate.acquire(false, &mut first_cancelled, || {}).await.unwrap();
+        let (cancel, mut cancelled) = watch::channel(false);
+        let (started, reached_prepare) = tokio::sync::oneshot::channel();
+        let queued_gate = gate.clone();
+        let task = tokio::spawn(async move {
+            let permit = queued_gate.acquire(false, &mut cancelled, || {}).await.unwrap();
+            let result = cancellable_prepare(&mut cancelled, async move {
+                started.send(()).unwrap();
+                std::future::pending::<CommandResult<()>>().await
+            }).await;
+            drop(permit);
+            result
+        });
+        reached_prepare.await.unwrap();
+        cancel.send(true).unwrap();
+        assert_eq!(task.await.unwrap().unwrap_err().message.code, "error.transcription_cancelled");
+        drop(first);
+
+        let (_cancel, mut cancelled) = watch::channel(false);
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            gate.acquire(false, &mut cancelled, || {}),
+        ).await.unwrap().unwrap();
+    }
+
+    async fn fake_plugin_call(active: &AtomicUsize, peak: &AtomicUsize) {
+        let running = active.fetch_add(1, Ordering::SeqCst) + 1;
+        peak.fetch_max(running, Ordering::SeqCst);
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        active.fetch_sub(1, Ordering::SeqCst);
+    }
+
+    #[tokio::test]
+    async fn auto_transcription_burst_never_exceeds_two_fake_plugin_calls() {
+        let gate = Arc::new(PriorityGate::default());
+        let active = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let mut jobs = Vec::new();
+        for _ in 0..20 {
+            let gate = gate.clone();
+            let active = active.clone();
+            let peak = peak.clone();
+            jobs.push(tokio::spawn(async move {
+                let (_cancel, mut cancelled) = watch::channel(false);
+                let _permit = gate
+                    .acquire(true, &mut cancelled, || {})
+                    .await
+                    .unwrap();
+                fake_plugin_call(&active, &peak).await;
+            }));
+        }
+        for job in jobs {
+            job.await.unwrap();
+        }
+        assert_eq!(peak.load(Ordering::SeqCst), TRANSCRIPTION_CONCURRENCY);
+    }
+
+    #[tokio::test]
+    async fn manual_work_uses_reserved_capacity_and_precedes_auto_waiters() {
+        let gate = Arc::new(PriorityGate::default());
+        let (_cancel1, mut cancelled1) = watch::channel(false);
+        let (_cancel2, mut cancelled2) = watch::channel(false);
+        let first = gate.acquire(true, &mut cancelled1, || {}).await.unwrap();
+        let second = gate.acquire(true, &mut cancelled2, || {}).await.unwrap();
+        let (started_tx, mut started_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut autos = Vec::new();
+        for index in 0..MAX_AUTO_WAITING {
+            let gate = gate.clone();
+            let started = started_tx.clone();
+            autos.push(tokio::spawn(async move {
+                let (_cancel, mut cancelled) = watch::channel(false);
+                let _permit = gate.acquire(true, &mut cancelled, || {}).await.unwrap();
+                started.send(format!("auto-{index}")).unwrap();
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }));
+        }
+        wait_for_waiters(&gate, 0, MAX_AUTO_WAITING).await;
+
+        let mut manuals = Vec::new();
+        for index in 0..(MAX_WAITING - MAX_AUTO_WAITING) {
+            let gate = gate.clone();
+            let started = started_tx.clone();
+            manuals.push(tokio::spawn(async move {
+                let (_cancel, mut cancelled) = watch::channel(false);
+                let _permit = gate.acquire(false, &mut cancelled, || {}).await.unwrap();
+                started.send(format!("manual-{index}")).unwrap();
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }));
+        }
+        wait_for_waiters(&gate, MAX_WAITING - MAX_AUTO_WAITING, MAX_AUTO_WAITING).await;
+        let (_cancel, mut cancelled) = watch::channel(false);
+        assert!(matches!(
+            gate.acquire(false, &mut cancelled, || {}).await,
+            Err(GateError::Full)
+        ));
+        let (_cancel, mut cancelled) = watch::channel(false);
+        assert!(matches!(
+            gate.acquire(true, &mut cancelled, || {}).await,
+            Err(GateError::Full)
+        ));
+
+        drop(first);
+        drop(second);
+        for index in 0..(MAX_WAITING - MAX_AUTO_WAITING) {
+            let expected = format!("manual-{index}");
+            assert_eq!(started_rx.recv().await.as_deref(), Some(expected.as_str()));
+        }
+        for manual in manuals {
+            manual.await.unwrap();
+        }
+        assert_eq!(started_rx.recv().await.as_deref(), Some("auto-0"));
+        for job in autos {
+            job.await.unwrap();
+        }
+    }
 
     #[test]
     fn auto_transcription_targets_live_rows_and_content_hints_not_receipts() {

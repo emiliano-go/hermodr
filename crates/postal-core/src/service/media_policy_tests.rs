@@ -2,10 +2,12 @@ use super::*;
 use buffa::MessageField;
 
 async fn handler() -> Inbound {
+    let store = StoreWorker::open(Path::new(":memory:")).await.unwrap();
+    let events = broadcast::channel(8).0;
     Inbound {
-        store: StoreWorker::open(Path::new(":memory:")).await.unwrap(),
+        store: store.clone(),
         disk_retention: Arc::new(DiskRetentionManager::new(DiskRetention::unlimited())),
-        events: broadcast::channel(8).0,
+        events: events.clone(),
         connected: Arc::default(),
         client_for_events: Arc::default(),
         media_dir: None,
@@ -13,7 +15,7 @@ async fn handler() -> Inbound {
         groups_cache: Arc::default(),
         older_waits: Arc::default(),
         message_capping_check: Arc::default(),
-        downloads: Arc::new(tokio::sync::Semaphore::new(1)),
+        media_downloads: MediaDownloadQueue::start(Arc::default(), store, events),
         sync_progress: Arc::default(),
         media_auto_download: Arc::default(),
         keep_archived: Arc::default(),

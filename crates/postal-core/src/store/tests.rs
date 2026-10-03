@@ -73,11 +73,21 @@ fn retention_handles_a_large_backlog_across_many_chats() {
             }
         }
     }
+    assert!(!store.conn.lock().unwrap().query_row("SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name='sqlite_stat1')", [],
+        |row| row.get::<_, bool>(0)).unwrap());
+    let before = std::time::Instant::now();
+    assert_eq!(store.messages_for("0@s.whatsapp.net", 50).unwrap().len(), 50);
+    let before_query = before.elapsed();
     let started = std::time::Instant::now();
     let removed = store.enforce_retention_for(&["0@s.whatsapp.net".into()]).unwrap();
-    eprintln!("retention: {removed} rows in {:?}", started.elapsed());
+    let prune_elapsed = started.elapsed();
+    let after = std::time::Instant::now();
+    assert!(store.messages_for("0@s.whatsapp.net", 50).unwrap().is_empty());
+    eprintln!("retention: {removed} rows in {prune_elapsed:?}; query before {before_query:?}, after {:?}", after.elapsed());
     assert_eq!(removed, 150_000);
     assert_eq!(store.chats().unwrap().len(), 1000);
+    assert!(store.conn.lock().unwrap().query_row("SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name='sqlite_stat1')", [],
+        |row| row.get::<_, bool>(0)).unwrap());
 }
 
 #[test]
@@ -863,6 +873,57 @@ fn system_rows_round_trip_and_stay_out_of_the_preview() {
     let chat = &s.chats().unwrap()[0];
     assert_eq!(chat.last_text, "hello");
     assert_eq!(chat.unread_count, 1);
+}
+
+#[test]
+fn system_origin_survives_reopen_even_when_wire_id_uses_generated_prefix() {
+    let dir = std::env::temp_dir().join(format!("postal-origin-{}-{}", std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir(&dir).unwrap();
+    let path = dir.join("messages.db");
+    {
+        let store = MessageStore::open(&path).unwrap();
+        let mut wire = msg("a@s", "group-wire", 100, "");
+        wire.header.timestamp = 100;
+        wire.system.kind = Some("GROUP_CREATE".into());
+        store.insert_message(&wire).unwrap();
+        let mut generated = msg("a@s", "local-origin", 200, "");
+        generated.header.timestamp = 200;
+        generated.system.kind = Some("GROUP_CREATE".into());
+        store.insert_generated_system(&generated).unwrap();
+    }
+    let store = MessageStore::open(&path).unwrap();
+    assert!(store.has_system_near("a@s", "GROUP_CREATE", &[], 100, true).unwrap());
+    assert!(!store.has_system_near("a@s", "GROUP_CREATE", &[], 100, false).unwrap());
+    assert!(store.has_system_near("a@s", "GROUP_CREATE", &[], 200, false).unwrap());
+    assert!(!store.has_system_near("a@s", "GROUP_CREATE", &[], 200, true).unwrap());
+    drop(store);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn media_download_failure_survives_reopen_and_marks_stay_scoped() {
+    let dir = std::env::temp_dir().join(format!("postal-download-failure-{}-{}", std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir(&dir).unwrap();
+    let path = dir.join("messages.db");
+    let failure = MessageFailure { message: crate::message_ref::MessageRef::new("error.media_fresh_reference_rejected"),
+        diagnostic: Some("synthetic 403".into()) };
+    {
+        let store = MessageStore::open(&path).unwrap();
+        for (chat, id) in [("a@s", "failed"), ("a@s", "other"), ("b@s", "failed")] {
+            store.insert_message(&msg(chat, id, 0, "media")).unwrap();
+        }
+        store.set_media_download_error("a@s", "failed", Some(failure.clone())).unwrap();
+        assert!(store.marks_for("a@s", Some(&["other".into()])).unwrap().download_failures.is_none());
+        assert!(store.marks("b@s").unwrap().download_failures.is_none());
+    }
+    let store = MessageStore::open(&path).unwrap();
+    assert_eq!(store.marks_for("a@s", Some(&["failed".into()])).unwrap().download_failures.unwrap()["failed"], failure);
+    store.set_media_download_error("a@s", "failed", None).unwrap();
+    assert!(store.marks("a@s").unwrap().download_failures.is_none());
+    drop(store);
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]

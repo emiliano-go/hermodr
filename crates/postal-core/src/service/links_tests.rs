@@ -5,6 +5,30 @@ use ureq::{Error, config::Config, http::Uri, unversioned::{
     transport::{Buffers, ConnectionDetails, Connector, LazyBuffers, NextTimeout, Transport},
 }};
 
+#[test]
+fn repeated_url_reuses_preview_until_ttl_or_eviction() {
+    let mut cache = PreviewCache::default();
+    let now = std::time::Instant::now();
+    let fetched = AtomicUsize::new(0);
+    let fetch = |url: &str| {
+        fetched.fetch_add(1, Ordering::SeqCst);
+        Some(LinkPreview { url: url.into(), title: Some("Synthetic".into()), description: None,
+            thumbnail: None, site: None, color: None })
+    };
+    cache.get_or_fetch("https://EXAMPLE.com:443/a#one", now, fetch).unwrap();
+    let reused = cache.get_or_fetch("https://example.com/a#two", now, fetch).unwrap();
+    assert_eq!(fetched.load(Ordering::SeqCst), 1);
+    assert_eq!(reused.url, "https://example.com/a#two");
+    for index in 0..PREVIEW_CACHE_SIZE {
+        cache.get_or_fetch(&format!("https://example.com/{index}"), now, fetch).unwrap();
+    }
+    assert_eq!(cache.0.len(), PREVIEW_CACHE_SIZE);
+    cache.get_or_fetch("https://example.com/a", now, fetch).unwrap();
+    assert_eq!(fetched.load(Ordering::SeqCst), PREVIEW_CACHE_SIZE + 2);
+    cache.get_or_fetch("https://example.com/a", now + PREVIEW_TTL, fetch).unwrap();
+    assert_eq!(fetched.load(Ordering::SeqCst), PREVIEW_CACHE_SIZE + 3);
+}
+
 #[derive(Debug, Default)]
 struct Dns(AtomicUsize);
 
@@ -23,6 +47,7 @@ impl Resolver for Dns {
 struct Wire {
     replies: HashMap<String, Vec<u8>>,
     requested: Arc<Mutex<Vec<String>>>,
+    delay: Duration,
 }
 
 impl Connector for Wire {
@@ -34,25 +59,26 @@ impl Connector for Wire {
         let url = details.uri.to_string();
         self.requested.lock().unwrap().push(url.clone());
         Ok(Some(Reply { bytes: self.replies.get(&url).unwrap_or_else(|| panic!("unexpected request {url}")).clone(),
-            buffers: LazyBuffers::new(4096, 4096) }))
+            offset: 0, delay: self.delay, buffers: LazyBuffers::new(4096, 4096) }))
     }
 }
 
 #[derive(Debug)]
-struct Reply { bytes: Vec<u8>, buffers: LazyBuffers }
+struct Reply { bytes: Vec<u8>, offset: usize, delay: Duration, buffers: LazyBuffers }
 
 impl Transport for Reply {
     fn buffers(&mut self) -> &mut dyn Buffers { &mut self.buffers }
     fn transmit_output(&mut self, _: usize, _: NextTimeout) -> Result<(), Error> { Ok(()) }
-    fn await_input(&mut self, _: NextTimeout) -> Result<bool, Error> {
-        if self.bytes.is_empty() { return Ok(false); }
-        let size = self.bytes.len();
-        self.buffers.input_append_buf()[..size].copy_from_slice(&self.bytes);
+    fn await_input(&mut self, timeout: NextTimeout) -> Result<bool, Error> {
+        if timeout.not_zero().is_some_and(|limit| self.delay > *limit) { return Err(Error::Timeout(timeout.reason)); }
+        if self.offset == self.bytes.len() { return Ok(false); }
+        let size = self.buffers.input_append_buf().len().min(self.bytes.len() - self.offset);
+        self.buffers.input_append_buf()[..size].copy_from_slice(&self.bytes[self.offset..self.offset + size]);
         self.buffers.input_appended(size);
-        self.bytes.clear();
+        self.offset += size;
         Ok(true)
     }
-    fn is_open(&mut self) -> bool { !self.bytes.is_empty() }
+    fn is_open(&mut self) -> bool { self.offset < self.bytes.len() }
 }
 
 fn agent(replies: Vec<(&str, String)>, proxy: Option<ureq::Proxy>) -> (ureq::Agent, Arc<Mutex<Vec<String>>>) {
@@ -65,6 +91,7 @@ fn agent_bytes(replies: Vec<(&str, Vec<u8>)>, proxy: Option<ureq::Proxy>) -> (ur
     (ureq::Agent::with_parts(config, Wire {
         replies: replies.into_iter().map(|(url, reply)| (url.to_owned(), reply)).collect(),
         requested: Arc::clone(&requested),
+        delay: Duration::ZERO,
     }, PublicResolver(Dns::default())), requested)
 }
 
@@ -176,4 +203,32 @@ fn artwork_fetch_refuses_private_redirects_proxies_and_non_images() {
     let (proxy, requested) = agent(vec![], Some(ureq::Proxy::new("http://proxy.test:8080").unwrap()));
     assert!(fetch_thumbnail_with(&proxy, "http://public.test/artwork").is_none());
     assert!(requested.lock().unwrap().is_empty());
+}
+
+#[test]
+fn avatar_fetch_rejects_private_redirects_and_large_bodies() {
+    let (agent, requested) = agent(vec![("http://public.test/avatar", redirect("http://private.test/avatar"))], None);
+    assert!(fetch_public_bytes_with(&agent, "http://public.test/avatar", 8 << 20).is_none());
+    assert_eq!(*requested.lock().unwrap(), ["http://public.test/avatar"]);
+
+    let body = vec![b'x'; (8 << 20) + 1];
+    let mut response = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).into_bytes();
+    response.extend(body);
+    let (agent, _) = agent_bytes(vec![("http://public.test/avatar", response)], None);
+    assert!(fetch_public_bytes_with(&agent, "http://public.test/avatar", 8 << 20).is_none());
+}
+
+#[test]
+fn avatar_fetch_aborts_a_slow_response() {
+    let production = public_agent();
+    assert_eq!(production.config().timeouts().global, Some(Duration::from_secs(10)));
+    assert_eq!(production.config().max_redirects(), 5);
+    let requested = Arc::new(Mutex::new(Vec::new()));
+    let config = ureq::Agent::config_builder().timeout_global(Some(Duration::from_millis(5))).build();
+    let agent = ureq::Agent::with_parts(config, Wire {
+        replies: HashMap::from([("http://public.test/avatar".into(), page("picture").into_bytes())]),
+        requested: Arc::clone(&requested), delay: Duration::from_secs(1),
+    }, PublicResolver(Dns::default()));
+    assert!(fetch_public_bytes_with(&agent, "http://public.test/avatar", 8 << 20).is_none());
+    assert_eq!(*requested.lock().unwrap(), ["http://public.test/avatar"]);
 }

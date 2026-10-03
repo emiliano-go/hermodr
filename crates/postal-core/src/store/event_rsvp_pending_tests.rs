@@ -158,6 +158,29 @@ fn queue_is_globally_bounded_and_rejects_definitely_invalid_cipher() {
 }
 
 #[test]
+fn configurable_budget_preserves_burst_through_reopen() {
+    assert_eq!(parse_limit(None).unwrap(), 512);
+    assert!(parse_limit(Some("0")).is_err());
+    assert!(parse_limit(Some("invalid")).is_err());
+    let path = std::env::temp_dir().join(format!("postal-rsvp-budget-{}-{}.sqlite", std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    {
+        let mut store = MessageStore::open(&path).unwrap();
+        store.pending_rsvp_limit = parse_limit(Some("600")).unwrap();
+        for index in 0..600 {
+            assert!(store.queue_event_rsvp(CHAT, &record(&format!("source-{index}"))).unwrap());
+        }
+        assert_eq!(store.pending_event_rsvps(CHAT, None).unwrap().len(), 600);
+    }
+    let reopened = MessageStore::open(&path).unwrap();
+    let pending = reopened.pending_event_rsvps(CHAT, None).unwrap();
+    assert_eq!(pending.len(), 600);
+    assert_eq!(pending.first().unwrap().source_id, "source-0");
+    drop(reopened);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn pending_cipher_survives_multi_day_restart_without_invented_expiry() {
     let path = std::env::temp_dir().join(format!(
         "postal-rsvp-pending-{}-{}.sqlite",

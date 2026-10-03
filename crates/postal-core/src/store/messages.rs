@@ -13,10 +13,10 @@ const INSERT_MESSAGE_SQL: &str = "INSERT INTO messages
       preview_site, preview_color, media_duration, system_kind, system_params,
       reply_to_view_once, reply_to_recoverable, reply_to_path, reply_to_locator,
       media_once_kind, sort_order, live_location, history_shareable, spoiler, deleted,
-      mentioned_all_only, album)
+      mentioned_all_only, album, generated_system)
  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
          ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?29, ?30,
-         ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?42, ?43)
+         ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?42, ?43, ?44)
  ON CONFLICT(chat, id) DO UPDATE SET
      sort_order = CASE WHEN excluded.sort_order > 0 THEN MIN(messages.sort_order, excluded.sort_order) ELSE messages.sort_order END,
      sender = excluded.sender,
@@ -63,7 +63,9 @@ const INSERT_MESSAGE_SQL: &str = "INSERT INTO messages
       album = COALESCE(album, excluded.album),
       history_shareable = MIN(history_shareable, excluded.history_shareable),
       spoiler = MAX(spoiler, excluded.spoiler),
-      deleted = MAX(deleted, excluded.deleted)
+      deleted = MAX(deleted, excluded.deleted),
+      generated_system = CASE WHEN messages.generated_system IS NULL THEN excluded.generated_system
+                              ELSE MAX(messages.generated_system, excluded.generated_system) END
   WHERE revoked = 0 AND (?41 = 0 OR messages.system_kind = 'UNAVAILABLE_MESSAGE')";
 
 impl MessageStore {
@@ -74,6 +76,14 @@ impl MessageStore {
     /// State changes have their own methods (`set_delivery_state`, `mark_read`,
     /// `revoke_message`, `update_message_content`, `set_media_path`).
     pub fn insert_message(&self, message: &StoredMessage) -> Result<()> {
+        self.insert_message_with_origin(message, false)
+    }
+
+    pub(crate) fn insert_generated_system(&self, message: &StoredMessage) -> Result<()> {
+        self.insert_message_with_origin(message, true)
+    }
+
+    fn insert_message_with_origin(&self, message: &StoredMessage, generated: bool) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let chat = names::canonical_chat(&conn, &message.header.chat)?;
         let mut canonical;
@@ -82,7 +92,7 @@ impl MessageStore {
             canonical.header.chat = chat.into_owned();
             &canonical
         } else { message };
-        Self::insert_row(&conn, message)?;
+        Self::insert_row_with_origin(&conn, message, generated)?;
         self.revive_chat(&conn, &message.header.chat)?;
         Ok(())
     }
@@ -117,6 +127,10 @@ impl MessageStore {
     /// The upsert behind every insert; see `insert_message` for the
     /// state rules it enforces.
     pub(super) fn insert_row(conn: &Connection, message: &StoredMessage) -> Result<()> {
+        Self::insert_row_with_origin(conn, message, false)
+    }
+
+    fn insert_row_with_origin(conn: &Connection, message: &StoredMessage, generated: bool) -> Result<()> {
         conn.execute(
             INSERT_MESSAGE_SQL,
             params![
@@ -163,6 +177,7 @@ impl MessageStore {
                 message.is_unavailable() || message.is_hidden_tombstone(),
                 message.local.mentioned_all_only as i32,
                 message.album.as_ref().map(serde_json::to_string).transpose()?,
+                generated,
             ],
         )?;
         if message.is_unavailable() || message.is_hidden_tombstone() {
@@ -277,11 +292,10 @@ impl MessageStore {
     pub fn has_system_near(&self, chat: &str, kind: &str, notice_params: &[String], timestamp: i64, generated: bool) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let chat = &*names::canonical_chat(&conn, chat)?;
-        // ponytail: generated ID prefixes mark origin; persist origin if wire IDs overlap them.
         let found = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM messages
              WHERE chat = ?1 AND system_kind = ?2 AND ABS(timestamp - ?3) <= 5 AND COALESCE(system_params, '[]') = ?4
-             AND (id LIKE 'group-%' OR id LIKE 'notice-%' OR id LIKE 'call-%' OR id LIKE 'owner-%') != ?5)",
+             AND generated_system != ?5)",
             params![chat, kind, timestamp, serde_json::to_string(notice_params)?, generated],
             |r| r.get::<_, bool>(0),
         )?;
@@ -471,6 +485,11 @@ impl StoreWorker {
     pub(crate) async fn insert_message(&self, message: &StoredMessage) -> Result<()> {
         let message = message.clone();
         self.run(move |store| store.insert_message(&message)).await
+    }
+
+    pub(crate) async fn insert_generated_system(&self, message: &StoredMessage) -> Result<()> {
+        let message = message.clone();
+        self.run(move |store| store.insert_generated_system(&message)).await
     }
 
     pub(crate) async fn messages_for(&self, chat: &str, limit: u32) -> Result<Vec<StoredMessage>> {

@@ -2,7 +2,7 @@ use super::*;
 use crate::store::{EditRevision, EventEdit, PollEdit, PollOption, SecretEdit};
 use buffa::Message as _;
 use sha2::{Digest, Sha256};
-use std::{collections::HashMap, sync::Weak, time::Instant};
+use std::{cmp::Reverse, collections::{BinaryHeap, HashMap}, sync::Weak, time::Instant};
 use whatsapp_rust::wacore::types::{
     events::{EventHandler, EventInterest, EventKind, InboundMessage},
     message::MessageInfo,
@@ -12,7 +12,6 @@ use whatsapp_rust::{
     DecryptedPayloadLease,
 };
 
-const CAPACITY: usize = 1024;
 const MAX_AGE: Duration = Duration::from_secs(300);
 
 #[derive(Clone)]
@@ -26,29 +25,25 @@ struct Capture {
     info: Weak<MessageInfo>,
     digest: [u8; 32],
     candidate: Candidate,
-    received: Instant,
 }
 
 #[derive(Default)]
 struct Captures {
     entries: HashMap<usize, Capture>,
+    expiry: BinaryHeap<Reverse<(Instant, usize)>>,
     forwarding: Option<DecryptedPayloadLease>,
     degraded: bool,
 }
 
 impl Captures {
     fn prune(&mut self, now: Instant) {
-        // ponytail: scans at most 1024 captures; use an expiry queue if profiling requires it.
-        self.entries.retain(|_, capture| {
-            if capture.info.strong_count() == 0 {
-                return false;
-            }
-            if now.duration_since(capture.received) >= MAX_AGE {
+        while let Some(Reverse((received, key))) = self.expiry.peek().copied() {
+            if now.saturating_duration_since(received) < MAX_AGE { break; }
+            self.expiry.pop();
+            if self.entries.remove(&key).is_some_and(|capture| capture.info.strong_count() > 0) {
                 self.degraded = true;
-                return false;
             }
-            true
-        });
+        }
     }
 
     fn record(&mut self, info: &Arc<MessageInfo>, payload: &[u8], now: Instant) {
@@ -60,12 +55,6 @@ impl Captures {
                 capture.candidate = Candidate::Rejected;
             }
             return;
-        }
-        if self.entries.len() == CAPACITY {
-            if let Some(oldest) = self.entries.iter().min_by_key(|(_, c)| c.received).map(|(key, _)| *key) {
-                self.entries.remove(&oldest);
-                self.degraded = true;
-            }
         }
         let candidate = match wa::Message::decode_from_slice(payload) {
             Ok(message) => {
@@ -90,9 +79,9 @@ impl Captures {
                 info: Arc::downgrade(info),
                 digest,
                 candidate,
-                received: now,
             },
         );
+        self.expiry.push(Reverse((now, key)));
     }
 
     fn candidate(&mut self, info: &Arc<MessageInfo>, now: Instant) -> Option<Candidate> {

@@ -31,6 +31,7 @@ async function withApp(run: (app: {
     reactorsFor: Map<string, { emoji: string; senders: string[] }[]>;
     acceptMessages: (rows: StoredMessage[]) => void;
     atLatest: boolean;
+    historyActive: boolean;
     setStatus: (chat: string, id: string, status: string) => void;
     append: (row: StoredMessage) => void;
     patch: (row: StoredMessage) => void;
@@ -56,7 +57,7 @@ async function withApp(run: (app: {
     participants: { jid: string; name: string; admin: boolean; owner: boolean; number: string | null; username: string | null; label: string | null }[];
     chatGroup: { admin: boolean } | null;
   };
-  session: { me: string | null; activeAccount: string | null; gateDone: boolean; syncPending: number; settings: { notifications_enabled: boolean } };
+  session: { me: string | null; activeAccount: string | null; gateDone: boolean; syncPending: number; stopGateTimeout(): void; settings: { notifications_enabled: boolean } };
   composer: { editing: { chat: string; id: string; original: string } | null; startEditing: (m?: StoredMessage) => void; resetAccount: () => void };
   chats: {
     selectedChat: string | null;
@@ -166,6 +167,138 @@ test("unavailable rows reject content actions and recovered rows regain normal e
       if (previous) Object.defineProperty(globalThis, "navigator", previous); else Reflect.deleteProperty(globalThis, "navigator");
     }
   });
+});
+
+test("live updates survive a lost sync completion and flush deferred hints", async () => {
+  const chat = "watchdog@s", row = { chat, id: "live", sender: "1@s", timestamp: 100,
+    from_me: false, read: true, system_kind: null, text: "Live message" } as StoredMessage;
+  let archive = [row];
+  await withApp(async ({ loadEvents, messages, chats, session, ui, calls }) => {
+    const { dispatchServiceEvent } = await loadEvents();
+    Object.defineProperty(globalThis, "document", { configurable: true, value: { addEventListener() {}, hasFocus: () => false } });
+    const host: EventHost = { scrollToBottom() {}, anchor: () => null, reveal() {}, reconnect: async () => {} };
+    session.activeAccount = "watchdog-fixture";
+    session.settings.notifications_enabled = false;
+    chats.selectedChat = chat;
+    messages.prepareChat(chat, 50);
+    ui.scrolledUp = false;
+    for (const gate of [false, true]) {
+      session.gateDone = gate;
+      messages.historyActive = !gate;
+      await dispatchServiceEvent({ kind: "syncing", pending: 10, applied: 1 }, host);
+      await dispatchServiceEvent({ kind: "message", message: row }, host);
+      assert.equal(messages.messages[0]?.id, row.id, "full payload appends despite sync, history or loading gate");
+    }
+    messages.historyActive = false;
+    archive = [row, { ...row, id: "hint", timestamp: 101, text: "Hint message" }];
+    await dispatchServiceEvent({ kind: "messageHint", chat, id: "hint", sender: row.sender, from_me: false,
+      fresh: true, change: "content", status: null }, host);
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    assert.ok(calls.some((call) => call.command === "chats"), "live chat list refresh ignores pending sync");
+    assert.equal(messages.messages.some((item) => item.id === "hint"), false);
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    assert.equal(messages.messages[0]?.id, "hint", "watchdog flushes without synced event");
+    assert.ok(calls.some((call) => call.command === "frontend_log" && JSON.stringify(call.args).includes("watchdog flush")));
+    await dispatchServiceEvent({ kind: "historyLoaded", chats: [] }, host);
+    assert.equal(session.syncPending, 0);
+    session.syncPending = 10;
+    await dispatchServiceEvent({ kind: "disconnected" }, host);
+    assert.equal(session.syncPending, 0);
+    session.syncPending = 10;
+    await dispatchServiceEvent({ kind: "connected" }, host);
+    assert.equal(session.syncPending, 0);
+    session.stopGateTimeout();
+    messages.resetAccount();
+  }, (command) => {
+    if (command === "message_page") return { messages: archive.toReversed(), has_more: false };
+    if (command === "chats") return [];
+    if (command === "marks") return { reactions: [], starred: [], edited: [], forwarded: [], view_once: [] };
+  });
+});
+
+test("sync completion flushes a burst once and watchdog never crosses accounts", async () => {
+  await withApp(async ({ loadEvents, messages, chats, session, ui, calls }) => {
+    const { dispatchServiceEvent } = await loadEvents();
+    const host: EventHost = { scrollToBottom() {}, anchor: () => null, reveal() {}, reconnect: async () => {} };
+    session.activeAccount = "burst-fixture";
+    session.gateDone = true;
+    session.settings.notifications_enabled = false;
+    chats.selectedChat = "burst@s";
+    messages.prepareChat(chats.selectedChat);
+    ui.scrolledUp = true;
+    const hint = { kind: "messageHint", chat: chats.selectedChat, id: "hint", sender: "1@s", from_me: true,
+      fresh: false, change: "content", status: null } as ServiceEvent;
+    await dispatchServiceEvent({ kind: "syncing", pending: 100, applied: 1 }, host);
+    for (let n = 0; n < 20; n++) await dispatchServiceEvent(hint, host);
+    await dispatchServiceEvent({ kind: "syncing", pending: 100, applied: 20 }, host);
+    await dispatchServiceEvent({ kind: "synced" }, host);
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    assert.equal(calls.filter((call) => call.command === "chats").length, 1);
+    assert.equal(calls.filter((call) => call.command === "message_page").length, 1);
+    await dispatchServiceEvent({ kind: "syncing", pending: 1, applied: 0 }, host);
+    await dispatchServiceEvent(hint, host);
+    session.activeAccount = "next-account";
+    messages.resetAccount();
+    await dispatchServiceEvent({ kind: "synced" }, host);
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    assert.equal(calls.filter((call) => call.command === "chats").length, 1);
+    assert.equal(calls.filter((call) => call.command === "message_page").length, 1);
+    await new Promise((resolve) => setTimeout(resolve, 3_100));
+    assert.equal(calls.filter((call) => call.command === "message_page").length, 1);
+  }, (command) => {
+    if (command === "message_page") return { messages: [], has_more: false };
+    if (command === "chats") return [];
+    if (command === "marks") return { reactions: [], starred: [], edited: [], forwarded: [], view_once: [] };
+  });
+});
+
+test("history completion preserves dirty flags raised while its chat query is pending", async () => {
+  let resolveChat!: () => void;
+  let block = true;
+  await withApp(async ({ loadEvents, session, chats, calls }) => {
+    const { dispatchServiceEvent } = await loadEvents();
+    session.activeAccount = "history-race-fixture";
+    session.gateDone = true;
+    session.settings.notifications_enabled = false;
+    chats.selectedChat = null;
+    const host: EventHost = { scrollToBottom() {}, anchor: () => null, reveal() {}, reconnect: async () => {} };
+    const history = dispatchServiceEvent({ kind: "historyLoaded", chats: ["old@s"] }, host);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(resolveChat);
+    await dispatchServiceEvent({ kind: "syncing", pending: 10, applied: 1 }, host);
+    await dispatchServiceEvent({ kind: "messageHint", chat: "new@s", id: "new", sender: "1@s", from_me: true,
+      fresh: false, change: "content", status: null }, host);
+    resolveChat();
+    await history;
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    assert.equal(calls.filter((call) => call.command === "chats").length, 2);
+    assert.equal(session.syncPending, 10, "history completion cannot reset a drain that began while awaiting its query");
+  }, (command) => {
+    if (command === "chats" && block) {
+      block = false;
+      return new Promise<unknown[]>((resolve) => { resolveChat = () => resolve([]); });
+    }
+    if (command === "chats") return [];
+  });
+});
+
+test("old initial-sync completion cannot unlock the next account", async () => {
+  let resolveChat!: () => void;
+  await withApp(async ({ loadEvents, session, messages, calls }) => {
+    const { dispatchServiceEvent } = await loadEvents();
+    session.activeAccount = "old-sync-fixture";
+    session.gateDone = false;
+    const host: EventHost = { scrollToBottom() {}, anchor: () => null, reveal() {}, reconnect: async () => {} };
+    const pending = dispatchServiceEvent({ kind: "initialSyncComplete", messages: 0, chats: 0 }, host);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(resolveChat);
+    session.activeAccount = "new-sync-fixture";
+    messages.resetAccount();
+    resolveChat();
+    await pending;
+    assert.equal(session.gateDone, false);
+    assert.equal(calls.some((call) => call.command === "message_page"), false);
+  }, (command) => command === "chats" ? new Promise<unknown[]>((resolve) => { resolveChat = () => resolve([]); }) : undefined);
 });
 
 test("unavailable hints stay within the local window, read no placeholders, and reconcile healed badges", async () => {

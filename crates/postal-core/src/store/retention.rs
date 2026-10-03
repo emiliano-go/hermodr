@@ -344,6 +344,7 @@ impl DiskRetentionManager {
         if removed > 0 {
             // State attached to messages only goes stale when messages go.
             purge_orphan_state(&conn)?;
+            optimize_after_delete(&conn, removed);
             reclaim(&conn, 2_000)?;
         }
         Ok(removed)
@@ -369,6 +370,7 @@ impl MessageStore {
              DELETE FROM cleared_chats; DELETE FROM chat_history_floor;",
         )?;
         reclaim(&conn, 0)?;
+        optimize_after_delete(&conn, removed);
         Ok(removed)
     }
 
@@ -376,6 +378,20 @@ impl MessageStore {
     pub fn count(&self) -> Result<i64> {
         let conn = self.conn.lock().unwrap();
         Ok(conn.query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0))?)
+    }
+}
+
+fn optimize_after_delete(conn: &Connection, removed: usize) {
+    if removed < 1_000 { return; }
+    let started = std::time::Instant::now();
+    let result = (|| -> Result<()> {
+        if removed >= 10_000 { conn.execute_batch("ANALYZE;")?; }
+        conn.execute_batch("PRAGMA optimize;")?;
+        Ok(())
+    })();
+    match result {
+        Ok(()) => log::info!("retention planner maintenance after {removed} deleted rows in {:?}", started.elapsed()),
+        Err(error) => log::warn!("retention planner maintenance after {removed} deleted rows failed in {:?}: {error:#}", started.elapsed()),
     }
 }
 

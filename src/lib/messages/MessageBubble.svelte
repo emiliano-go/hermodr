@@ -379,6 +379,7 @@
           <Icon name="repeat" size={14} />
           {t("content.couldn_t_download_retry")}{/if}
       </button>
+      <p class="download-reason" role="alert">{vm.downloadError}</p>
       {#if vm.downloadDiagnostic}
         <details class="download-diagnostic"><summary>{t("content.technical_details")}</summary><pre dir="ltr">{vm.downloadDiagnostic}</pre></details>
       {/if}

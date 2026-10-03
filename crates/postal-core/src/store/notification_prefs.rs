@@ -130,7 +130,7 @@ mod tests {
             INSERT INTO chat_settings VALUES ('100@s.whatsapp.net',0,1);
             INSERT INTO lid_pn VALUES ('300','100');").unwrap();
         migrate(&conn).unwrap();
-        MessageStore { conn: Mutex::new(conn) }
+        MessageStore { conn: Mutex::new(conn), pending_rsvp_limit: 512 }
     }
 
     #[test]

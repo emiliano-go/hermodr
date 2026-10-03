@@ -6,13 +6,15 @@
 import { tick } from "svelte";
 import { invoke } from "$lib/utils/ipc";
 import { broadcastSendError, guardBroadcastSend } from "$lib/utils/broadcast";
-import { loadEmojis, rememberEmoji, searchEmojis, type Emoji } from "$lib/utils/emoji";
+import { emojiTokenAt, exactEmojiForToken, loadEmojis, recentEmojis, rememberEmoji, replaceEmojiToken, searchEmojis, type Emoji, type EmojiToken } from "$lib/utils/emoji";
 import type { PickerTab } from "$lib/composer/ExpressionPicker.svelte";
 import { base64Of, imagePreview, rasterizeSvg } from "$lib/utils/files";
 import { cancelStagedAttachment, isAlbumMedia, isAlbumSelection, sendAttachment, stageAttachment } from "$lib/utils/upload";
 import { canChooseMediaQuality } from "$lib/utils/media-quality";
-import { keybinds, matches, matchesDraftHistory } from "$lib/utils/keybinds.svelte";
+import { keybinds, matches, matchesDraftHistory, matchesPortable } from "$lib/utils/keybinds.svelte";
 import { ComposerHistory, type DraftSnapshot } from "$lib/utils/composer-history";
+import { formatDraft, type ComposerFormat } from "$lib/utils/composer-format";
+import { readDrafts, writeDrafts } from "$lib/utils/drafts";
 import type { Recording } from "$lib/composer/VoiceRecorder.svelte";
 import type { AttachmentRecovery, AttachmentRetryContext, ChatPrivacy, Outgoing, PendingMedia, StoredMessage } from "$lib/utils/models";
 import type { AlbumSendResult } from "$lib/utils/wire";
@@ -31,6 +33,47 @@ export class ComposerState {
   private draftUndo = new ComposerHistory();
   private undoChat: string | null = null;
   private beforeInput: { snapshot: DraftSnapshot; kind: string } | null = null;
+  private accountDrafts = new Map<string, Map<string, string>>();
+  private draftVersion = $state(0);
+  private storageFailed = new Set<string>();
+
+  private draftsForAccount(account: string): Map<string, string> {
+    let drafts = this.accountDrafts.get(account);
+    if (!drafts) {
+      try {
+        drafts = typeof localStorage === "undefined" ? new Map() : readDrafts(localStorage, account);
+      } catch (error) {
+        drafts = new Map();
+        if (!this.storageFailed.has(account)) { this.storageFailed.add(account); ui.fail(error); }
+      }
+      this.accountDrafts.set(account, drafts);
+    }
+    return drafts;
+  }
+
+  draftFor(account: string | null, chat: string): string {
+    this.draftVersion;
+    return account ? this.draftsForAccount(account).get(chat) ?? "" : "";
+  }
+
+  private setDraft(account: string | null, chat: string | null, text: string) {
+    if (!account || !chat) return;
+    const drafts = this.draftsForAccount(account);
+    if ((drafts.get(chat) ?? "") === text) return;
+    if (text) drafts.set(chat, text); else drafts.delete(chat);
+    this.draftVersion++;
+    if (typeof localStorage === "undefined") return;
+    try {
+      writeDrafts(localStorage, account, drafts);
+    } catch (error) {
+      if (!this.storageFailed.has(account)) { this.storageFailed.add(account); ui.fail(error); }
+    }
+  }
+
+  clearDraft(chat: string, account = session.activeAccount) {
+    this.setDraft(account, chat, "");
+    if (account === session.activeAccount && chat === chats.selectedChat) this.draftText = "";
+  }
 
   get draft() { return this.draftText; }
   set draft(text: string) {
@@ -38,12 +81,10 @@ export class ComposerState {
     const kind = this.beforeInput?.kind ?? "";
     this.beforeInput = null;
     this.draftText = text;
-    if (chats.selectedChat) this.drafts[chats.selectedChat] = text;
+    this.setDraft(session.activeAccount, chats.selectedChat, text);
     if (this.undoChat !== chats.selectedChat) this.resetUndo();
     else this.draftUndo.record(before, this.draftSnapshot(), kind);
   }
-  /** Per-chat composer text, so switching chats does not lose what was typed. */
-  drafts: Record<string, string> = $state({});
   replyingTo = $state<StoredMessage | null>(null);
   /** Our own message being edited in the composer, if any. */
   editing = $state<{ chat: string; id: string; original: string } | null>(null);
@@ -84,6 +125,7 @@ export class ComposerState {
   emojiTable = $state.raw<Emoji[]>([]);
   emojiToken = $state<{ query: string; start: number } | null>(null);
   emojiIndex = $state(0);
+  private emojiLoading = false;
   pickerTab = $state<PickerTab | null>(null);
 
   chatPrivacy = $state<ChatPrivacy>({ send_typing: null, send_receipts: null });
@@ -133,7 +175,7 @@ export class ComposerState {
     this.beforeInput = null;
     this.draftText = snapshot.text;
     this.chosenMentions = snapshot.mentions;
-    if (chat) this.drafts[chat] = snapshot.text;
+    this.setDraft(session.activeAccount, chat, snapshot.text);
     this.mentionQuery = null;
     this.emojiToken = null;
     this.resetHistory();
@@ -192,7 +234,7 @@ export class ComposerState {
   });
 
   emojiMatches = $derived(
-    this.emojiToken ? searchEmojis(this.emojiTable, this.emojiToken.query, 12) : [],
+    this.emojiToken ? searchEmojis(this.emojiTable, this.emojiToken.query, 12, recentEmojis()) : [],
   );
 
   chatSendsTyping = $derived(this.chatPrivacy.send_typing ?? session.settings.send_typing);
@@ -283,8 +325,8 @@ export class ComposerState {
   /** A `:word` right before the caret, at least two letters long. */
   currentEmojiQuery() {
     const caret = this.inputEl?.selectionStart ?? this.draft.length;
-    const match = /(?:^|\s)(:([a-z0-9_+-]{2,}))$/i.exec(this.draft.slice(0, caret));
-    return match ? { query: match[2], start: caret - match[1].length } : null;
+    const token = emojiTokenAt(this.draft, caret, this.inputEl?.selectionEnd ?? caret);
+    return token && !token.closed ? token : null;
   }
 
   /** Puts text at the caret, or in place of the characters from `start` to it. */
@@ -299,11 +341,36 @@ export class ComposerState {
     input?.setSelectionRange(position, position);
   }
 
-  selectEmoji(emoji: string) {
-    const token = this.emojiToken;
+  private useEmojiToken(token: EmojiToken, emoji: string): boolean {
+    const input = this.inputEl;
+    if (!input || input.selectionStart !== token.end || input.selectionEnd !== token.end) return false;
+    const replacement = replaceEmojiToken(this.draft, token, emoji);
+    if (!replacement) return false;
+    const chat = chats.selectedChat, account = session.activeAccount;
     this.emojiToken = null;
+    this.mentionQuery = null;
+    this.draft = replacement.text;
     rememberEmoji(emoji);
-    void this.insertAtCaret(emoji, token?.start);
+    void tick().then(() => {
+      if (chat !== chats.selectedChat || account !== session.activeAccount || this.draft !== replacement.text) return;
+      input.focus();
+      input.setSelectionRange(replacement.caret, replacement.caret);
+    });
+    return true;
+  }
+
+  selectEmoji(emoji: string) {
+    const current = this.currentEmojiQuery();
+    if (!current || current.start !== this.emojiToken?.start || current.query !== this.emojiToken.query) return;
+    this.useEmojiToken(current, emoji);
+  }
+
+  private completeClosedEmoji() {
+    const caret = this.inputEl?.selectionStart ?? this.draft.length;
+    const token = emojiTokenAt(this.draft, caret, this.inputEl?.selectionEnd ?? caret);
+    if (!token?.closed) return false;
+    const exact = exactEmojiForToken(this.emojiTable, token);
+    return exact ? this.useEmojiToken(token, exact) : false;
   }
 
   onComposerInput(event: Event) {
@@ -313,20 +380,13 @@ export class ComposerState {
     if (this.draft.trim()) this.reportTyping();
     else this.stopTyping();
     // A complete `:shortcode:` turns into its emoji the moment it is closed.
-    const caret = this.inputEl?.selectionStart ?? this.draft.length;
-    const closed = /(?:^|\s)(:([a-z0-9_+-]+):)$/i.exec(this.draft.slice(0, caret));
-    const exact =
-      closed && this.emojiTable.find((e) => e.shortcodes.includes(closed[2].toLowerCase()));
-    if (closed && exact) {
-      this.emojiToken = null;
-      rememberEmoji(exact.emoji);
-      void this.insertAtCaret(exact.emoji, caret - closed[1].length);
-      return;
-    }
+    if (this.completeClosedEmoji()) return;
     this.emojiToken = this.currentEmojiQuery();
     this.emojiIndex = 0;
-    if ((this.emojiToken || this.draft.includes(":")) && this.emojiTable.length === 0) {
-      loadEmojis().then((list) => (this.emojiTable = list));
+    if ((this.emojiToken || this.draft.includes(":")) && this.emojiTable.length === 0 && !this.emojiLoading) {
+      this.emojiLoading = true;
+      loadEmojis().then((list) => { this.emojiTable = list; this.completeClosedEmoji(); })
+        .catch((error) => ui.fail(error)).finally(() => { this.emojiLoading = false; });
     }
     const token = this.currentMentionQuery();
     if (token && members.participants.length > 0) {
@@ -413,6 +473,31 @@ export class ComposerState {
     return true;
   }
 
+  private formatShortcut(event: KeyboardEvent): boolean {
+    const formats = ["bold", "italic", "strike", "mono"] as const;
+    const action = ["formatBold", "formatItalic", "formatStrike", "formatMono"] as const;
+    const index = action.findIndex((name) => matchesPortable(event, name));
+    if (index < 0) return false;
+    event.preventDefault();
+    void this.formatSelection(formats[index]);
+    return true;
+  }
+
+  async formatSelection(kind: ComposerFormat) {
+    const input = this.inputEl;
+    if (!input) return;
+    const value = formatDraft(this.draft, input.selectionStart, input.selectionEnd, kind);
+    if (!value) return;
+    const chat = chats.selectedChat, account = session.activeAccount;
+    this.draft = value.text;
+    this.emojiToken = null;
+    this.mentionQuery = null;
+    await tick();
+    if (chat !== chats.selectedChat || account !== session.activeAccount || this.draft !== value.text) return;
+    input.focus();
+    input.setSelectionRange(value.start, value.end);
+  }
+
   onComposerKey(event: KeyboardEvent) {
     if (event.isComposing || event.keyCode === 229) return;
     if (matchesDraftHistory(event, "undoDraft") || matchesDraftHistory(event, "redoDraft")) {
@@ -420,6 +505,7 @@ export class ComposerState {
       void this.undoDraft(matchesDraftHistory(event, "redoDraft"));
       return;
     }
+    if (this.formatShortcut(event)) return;
     if (this.emojiToken && this.emojiMatches.length > 0) {
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
@@ -543,7 +629,6 @@ export class ComposerState {
       if (sequence !== this.accountSeq) return true;
       if (chat === chats.selectedChat && typed === this.draft) {
         this.draft = "";
-        delete this.drafts[chat];
         this.chosenMentions = [];
         this.mentionQuery = null;
         this.resetUndo();
@@ -569,7 +654,6 @@ export class ComposerState {
       const text = this.draft.trim();
       if (!text) return;
       this.draft = "";
-      delete this.drafts[selectedChat];
       this.editing = null;
       this.resetUndo();
       this.stopTyping();
@@ -596,7 +680,6 @@ export class ComposerState {
       // Mentions in a caption go out as `@<number>` with their JIDs, as in text.
       const { text: caption, jids } = this.mentionPayload();
       this.draft = "";
-      delete this.drafts[selectedChat];
       this.chosenMentions = [];
       this.mentionQuery = null;
       this.resetUndo();
@@ -611,7 +694,6 @@ export class ComposerState {
     const { text, jids } = this.mentionPayload();
     const reply = this.replyingTo;
     this.draft = "";
-    delete this.drafts[chat];
     this.replyingTo = null;
     this.chosenMentions = [];
     this.mentionQuery = null;
@@ -1011,8 +1093,7 @@ export class ComposerState {
       if (item.url.startsWith("blob:")) URL.revokeObjectURL(item.url);
     }
     this.outgoing = [];
-    this.draft = "";
-    this.drafts = {};
+    this.draftText = "";
     this.pending = [];
     this.replyingTo = null;
     this.editing = null;

@@ -53,6 +53,17 @@ test("media retries stop at the cap, refresh successful downloads and ignore the
     assert.equal(messages.downloadErrors[row.id], "Operation failed.");
     assert.match(messages.downloadDiagnostics[row.id], /sender unavailable/);
     assert.equal(windowFixture.archive.length, 350);
+    messages.resetAccount();
+    messages.prepareChat(row.chat, 100);
+    await messages.reloadMessages(row.chat);
+    messages.marks.download_failures = { [row.id]: { code: "error.media_fresh_reference_rejected", params: {},
+      diagnostic: "first attempt: 403; fresh-reference attempt: 403" } };
+    assert.match(messages.downloadErrors[row.id], /fresh media link was rejected again/);
+    assert.match(messages.downloadDiagnostics[row.id], /fresh-reference attempt: 403/);
+    fixture.failure = false;
+    await messages.downloadMedia(row.chat, row, true);
+    assert.equal(messages.downloadErrors[row.id], undefined, "successful retry clears restored failure");
+    assert.equal(messages.marks.download_failures?.[row.id], undefined);
   } finally {
     state?.resetAccount();
     await server.close();

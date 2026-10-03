@@ -10,11 +10,12 @@
   } = $props();
   let transcript = $state<StoredTranscript | null>(null);
   let busy = $state(false);
+  let queued = $state(false);
   let error = $state<LocalizedError | null>(null);
   let generation = 0;
   $effect(() => {
     const token = ++generation;
-    transcript = null; busy = false; error = null;
+    transcript = null; busy = false; queued = false; error = null;
     if (!accountId || !enabled || hidden) return;
     void invoke<StoredTranscript | null>("message_transcript", { accountId, chat, id }).then(
       (value) => { if (token === generation) transcript = value; },
@@ -26,7 +27,8 @@
     let off: (() => void) | undefined;
     void listen<TranscriptionEvent>("transcription-event", ({ payload }) => {
       if (!alive || hidden || payload.account_id !== accountId || payload.chat !== chat || payload.id !== id) return;
-      busy = payload.status === "started";
+      queued = payload.status === "queued";
+      busy = queued || payload.status === "started";
       if (payload.transcript) transcript = payload.transcript;
       error = payload.error_message || payload.error ? normalizeError({ kind: "postal_error",
         ...(payload.error_message ?? { code: "error.operation_failed", params: {} }),
@@ -37,7 +39,7 @@
   async function transcribe(force = false) {
     if (busy || !enabled || hidden) return;
     const token = generation;
-    busy = true; error = null;
+    busy = true; queued = false; error = null;
     try {
       const value = await invoke<StoredTranscript>("transcribe_message", { accountId, chat, id, force, automatic: false });
       if (token === generation) transcript = value;
@@ -54,7 +56,7 @@
 {#if enabled && !hidden}
   <div class="transcription" aria-label={t("content.voice_note_transcription")}>
     {#if busy}
-      <span role="status">{t("content.transcribing")}</span>
+      <span role="status">{queued ? t("content.transcription_queued") : t("content.transcribing")}</span>
       <button onclick={cancel}>{t("content.cancel")}</button>
     {:else if transcript}
       <p>{transcript.text || t("content.no_speech_detected")}</p>

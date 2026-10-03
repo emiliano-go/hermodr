@@ -415,8 +415,11 @@ impl SessionState {
         disk_retention: &Arc<DiskRetentionManager>,
         events: &broadcast::Sender<ServiceEvent>,
         config: &ServiceConfig,
-    ) -> Inbound {
-        Inbound {
+    ) -> (Inbound, super::inbound::MediaDownloadQueue) {
+        let media_downloads = super::inbound::MediaDownloadQueue::start(
+            self.client_slot.clone(), store.clone(), events.clone(),
+        );
+        (Inbound {
             store: store.clone(),
             disk_retention: disk_retention.clone(),
             events: events.clone(),
@@ -427,9 +430,8 @@ impl SessionState {
             groups_cache: self.groups_cache.clone(),
             older_waits: self.older_waits.clone(),
             message_capping_check: Arc::default(),
-            // Auto-downloads run beside the event handler, so a long backlog of
-            // media never holds up the messages behind it.
-            downloads: Arc::new(tokio::sync::Semaphore::new(4)),
+            // A bounded queue feeds four workers; history cannot fill live slots.
+            media_downloads: media_downloads.clone(),
             sync_progress: self.sync_progress.clone(),
             media_auto_download: self.media_auto_download.clone(),
             keep_archived: self.keep_archived.clone(),
@@ -437,7 +439,7 @@ impl SessionState {
             one_time_only: config.one_time_only,
             tally: Arc::new(CompanionTally::default()),
             secret_edits: self.secret_edits.clone(),
-        }
+        }, media_downloads)
     }
 
     /// The client with its callbacks, wired to this session's state.
@@ -764,7 +766,7 @@ impl WhatsAppService {
         reclaim_secrets(&store, &config).await;
 
         let states = SessionState::new(&config);
-        let inbound = states.inbound(&store, &disk_retention, &events, &config);
+        let (inbound, media_downloads) = states.inbound(&store, &disk_retention, &events, &config);
         let bot = states.build_bot(&config, &store, &events, inbound, &favorites, &pins).await?;
         let client = bot.client();
         states.secret_edits.activate(&client);
@@ -800,6 +802,7 @@ impl WhatsAppService {
                 disk_retention,
                 aliases,
                 events,
+                media_downloads,
                 shutdown: Mutex::new(Some(shutdown_tx)),
                 media_dir: config.media_dir,
                 qr: states.qr,
@@ -814,6 +817,8 @@ impl WhatsAppService {
                 group_cache: states.group_cache,
                 groups_cache: states.groups_cache,
                 older_waits: states.older_waits,
+                presence_watches: tokio::sync::Mutex::default(),
+                link_previews: Arc::default(),
             },
             initial_rx,
         ))
@@ -896,6 +901,7 @@ impl WhatsAppService {
     /// phone keeps this device linked, and the session file stays usable for
     /// the next start. Used to hot-swap between linked sessions.
     pub async fn shutdown_and_disconnect(&self) {
+        self.media_downloads.close().await;
         self.client.disconnect().await;
         if let Some(tx) = self.shutdown.lock().unwrap().take() {
             let _ = tx.send(());
@@ -905,10 +911,12 @@ impl WhatsAppService {
     /// Stops the background task.
     /// Unlinks this device from the account on WhatsApp's side.
     pub async fn logout(&self) {
+        self.media_downloads.close().await;
         self.client.logout().await;
     }
 
     pub fn shutdown(&self) {
+        self.media_downloads.cancel();
         if let Some(tx) = self.shutdown.lock().unwrap().take() {
             let _ = tx.send(());
         }

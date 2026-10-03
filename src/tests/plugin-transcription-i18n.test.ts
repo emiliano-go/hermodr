@@ -162,7 +162,7 @@ function listener() {
   assert.ok(mount && ts.isExpressionStatement(mount) && ts.isCallExpression(mount.expression));
   let handler!: (event: { payload: Record<string, unknown> }) => void;
   let stopped = 0;
-  const context = { accountId: "a", chat: "peer@lid", id: "voice", hidden: false, busy: false,
+  const context = { accountId: "a", chat: "peer@lid", id: "voice", hidden: false, busy: false, queued: false,
     transcript: null as unknown, error: null as LocalizedError | null, generation: 1, normalizeError,
     listen(channel: string, callback: typeof handler) {
       assert.equal(channel, "transcription-event"); handler = callback;
@@ -199,11 +199,15 @@ test("transcription events retain descriptors across locale changes and reject u
     event.emit({ ...payload, status: "started", error_message: undefined, error: null });
     assert.equal(event.context.error, failure); assert.equal(event.context.busy, false);
     event.context.hidden = false;
+    event.emit({ ...payload, status: "queued", error_message: undefined, error: null });
+    assert.equal(event.context.busy, true); assert.equal(event.context.queued, true);
+    event.emit({ ...payload, status: "cancelled", error_message: undefined, error: null });
+    assert.equal(event.context.busy, false); assert.equal(event.context.queued, false);
     event.emit({ ...payload, error_message: undefined, diagnostic: undefined, error: raw });
     assert.equal(event.context.error?.code, "error.operation_failed");
     assert.equal(event.context.error?.diagnostic, raw);
     event.emit({ ...payload, status: "started", error_message: undefined, diagnostic: undefined, error: null });
-    assert.equal(event.context.busy, true); assert.equal(event.context.error, null);
+    assert.equal(event.context.busy, true); assert.equal(event.context.queued, false); assert.equal(event.context.error, null);
     const transcript = { text: "Actual <speech>", provider: "Peer provider" };
     event.emit({ ...payload, status: "complete", transcript, error_message: undefined, diagnostic: undefined, error: null });
     assert.equal(event.context.busy, false); assert.equal(event.context.transcript, transcript); assert.equal(event.context.error, null);

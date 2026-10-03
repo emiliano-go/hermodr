@@ -6,6 +6,10 @@ import { fileURLToPath } from "node:url";
 test("unavailable rows keep identity, sender and time without content actions, then render recovered content", async () => {
   const server = await createServer({
     configFile: fileURLToPath(new URL("../../tests/browser/vite.config.ts", import.meta.url)),
+    plugins: [{ name: "ssr-fixture-rows", enforce: "pre", transform(source, id, options) {
+      // SSR content checks need rows; SPA mounting has separate browser coverage.
+      if (options?.ssr && id.endsWith("/MessageList.svelte")) return source.replace("bufferSize={0}", "bufferSize={0} ssrCount={30}");
+    } }],
     cacheDir: fileURLToPath(new URL("../../node_modules/.vite-tests/unavailable", import.meta.url)),
     ssr: { optimizeDeps: { noDiscovery: true, include: [] } }, server: { middlewareMode: true, ws: false, watch: null },
   });

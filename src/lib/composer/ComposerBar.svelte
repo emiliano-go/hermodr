@@ -399,6 +399,7 @@
         class:active={i === emojiIndex}
         role="option"
         aria-selected={i === emojiIndex}
+        onmousedown={(event) => event.preventDefault()}
         onmouseenter={() => (emojiIndex = i)}
         onclick={() => onselectemoji(e.emoji)}>
         <span class="suggest-emoji">{e.emoji}</span>

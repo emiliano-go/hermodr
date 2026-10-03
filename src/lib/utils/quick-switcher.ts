@@ -2,6 +2,8 @@ import type { SearchResult } from "./wire.ts";
 
 export type QuickChat = Pick<SearchResult, "jid" | "name" | "number" | "kind" | "aliases">;
 export type QuickSwitchTarget = { chat: string; label: string; messageId?: string };
+export const QUICK_RECENT_LIMIT = 20;
+export const QUICK_SEARCH_LIMIT = 30;
 
 export function messageSnippet(text: string, query: string): string {
   const at = text.toLowerCase().indexOf(query.trim().toLowerCase());
@@ -28,7 +30,7 @@ export function fuzzyScore(query: string, value: string): number | null {
 }
 
 export function quickChats(recent: QuickChat[], directory: QuickChat[], query: string): QuickChat[] {
-  if (!query.trim()) return recent.slice(0, 20);
+  if (!query.trim()) return recent.slice(0, QUICK_RECENT_LIMIT);
   const known = new Map(recent.map((row) => [row.jid, row]));
   for (const row of directory) known.set(row.jid, row);
   return [...known.values()].map((row, order) => {
@@ -37,7 +39,7 @@ export function quickChats(recent: QuickChat[], directory: QuickChat[], query: s
       .filter((score): score is number => score !== null);
     return { row, order, score: scores.length ? Math.max(...scores) : null };
   }).filter((match): match is { row: QuickChat; order: number; score: number } => match.score !== null)
-    .sort((a, b) => b.score - a.score || a.order - b.order).slice(0, 30).map(({ row }) => row);
+    .sort((a, b) => b.score - a.score || a.order - b.order).slice(0, QUICK_SEARCH_LIMIT).map(({ row }) => row);
 }
 
 export function quickSwitcherKey(key: string, selected: number, count: number): number | "choose" | "close" | null {

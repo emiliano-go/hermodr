@@ -37,6 +37,15 @@ fn transcribe(value: &Value, mode: &str) {
     }
 }
 
+fn handshake_delay(mode: &str) {
+    let delay = match mode {
+        "slow" => Duration::from_millis(250),
+        "stall-handshake" => Duration::from_secs(60),
+        _ => return,
+    };
+    std::thread::sleep(delay);
+}
+
 fn main() {
     let mode = std::fs::read_to_string("mode").unwrap_or_default();
     trace("start");
@@ -57,9 +66,7 @@ fn main() {
                 if mode == "crash" {
                     std::process::exit(7);
                 }
-                if mode == "slow" {
-                    std::thread::sleep(Duration::from_millis(250));
-                }
+                handshake_delay(&mode);
                 if mode == "malformed" {
                     println!("not JSON");
                     println!("{}", "x".repeat(1024 * 1024 + 16));
