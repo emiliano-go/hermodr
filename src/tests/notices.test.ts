@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { noticeText } from "../lib/utils/notices.ts";
+import { formatDate } from "../lib/i18n/localizer.ts";
 
 test("unavailable notices explain the current limit without claiming retry or permanent failure", () => {
   const text = noticeText("UNAVAILABLE_MESSAGE", ["PRIVATE PAYLOAD"], () => { throw new Error("Unavailable notice must not resolve payload contacts"); })!;
@@ -16,7 +17,7 @@ test("new-chat caps explain authoritative quotas and reset times without guessin
   const text = noticeText("NEW_CHAT_MESSAGE_CAPPED", ["100", "100", String(reset)], name)!;
   assert.match(text, /limit for starting new one-to-one chats/);
   assert.match(text, /Quota this cycle: 100 new chats, 100 used/);
-  assert.ok(text.includes(new Date(reset * 1000).toLocaleString()));
+  assert.ok(text.includes(formatDate(reset, { dateStyle: "medium", timeStyle: "medium" })));
   const unknown = noticeText("NEW_CHAT_MESSAGE_CAPPED", [], name)!;
   assert.match(unknown, /did not provide this cycle's quota/);
   assert.match(unknown, /did not provide a reset time/);
@@ -40,11 +41,13 @@ test("identity and device notices resolve contact names", () => {
 });
 
 test("membership and metadata notices retain actor, target and saved names", () => {
-  const name = (jid: string) => ({ "1@lid": "Alice", "2@s.whatsapp.net": "Bob", "3@lid": "You" })[jid] ?? jid;
+  const name = (jid: string) => ({ "1@lid": "Alice", "2@s.whatsapp.net": "Bob", "3@lid": "You", "4@lid": "You" })[jid] ?? jid;
+  const isSelf = (jid: string) => jid === "3@lid";
   assert.equal(noticeText("GROUP_PARTICIPANT_ADD", ["2@s.whatsapp.net"], name, "1@lid"), "Alice added Bob.");
   assert.equal(noticeText("GROUP_PARTICIPANT_REMOVE", ["2@s.whatsapp.net"], name, "1@lid"), "Alice removed Bob.");
   assert.equal(noticeText("GROUP_PARTICIPANT_LEAVE", ["3@lid"], name, "3@lid"), "You left.");
-  assert.equal(noticeText("GROUP_PARTICIPANT_PROMOTE", ["3@lid"], name), "You are now an admin.");
+  assert.equal(noticeText("GROUP_PARTICIPANT_PROMOTE", ["3@lid"], name, "", isSelf), "You are now an admin.");
+  assert.equal(noticeText("GROUP_PARTICIPANT_PROMOTE", ["4@lid"], name, "", isSelf), "You is now an admin.");
   assert.equal(noticeText("GROUP_PARTICIPANT_DEMOTE", ["1@lid", "2@s.whatsapp.net"], name), "Alice, Bob are no longer admins.");
   assert.equal(noticeText("GROUP_CHANGE_SUBJECT", ["New name"], name, "1@lid"), 'Alice changed the group name to "New name".');
   assert.equal(noticeText("GROUP_CHANGE_ICON", [], name, "1@lid"), "Alice changed the group icon.");

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { LocalizedError, normalizeError } from "$lib/i18n/errors";
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
   import { t } from "$lib/i18n/localizer";
   import { onMount } from "svelte";
   import { listen } from "@tauri-apps/api/event";
@@ -10,11 +10,11 @@
   } = $props();
   let transcript = $state<StoredTranscript | null>(null);
   let busy = $state(false);
-  let error = $state<LocalizedError | string | null>("");
+  let error = $state<LocalizedError | null>(null);
   let generation = 0;
   $effect(() => {
     const token = ++generation;
-    transcript = null; busy = false; error = "";
+    transcript = null; busy = false; error = null;
     if (!accountId || !enabled || hidden) return;
     void invoke<StoredTranscript | null>("message_transcript", { accountId, chat, id }).then(
       (value) => { if (token === generation) transcript = value; },
@@ -28,14 +28,16 @@
       if (!alive || hidden || payload.account_id !== accountId || payload.chat !== chat || payload.id !== id) return;
       busy = payload.status === "started";
       if (payload.transcript) transcript = payload.transcript;
-      error = payload.error ?? "";
+      error = payload.error_message || payload.error ? normalizeError({ kind: "postal_error",
+        ...(payload.error_message ?? { code: "error.operation_failed", params: {} }),
+        diagnostic: payload.diagnostic ?? payload.error ?? undefined }) : null;
     }).then((stop) => { if (alive) off = stop; else stop(); }, (failure) => { if (alive) error = normalizeError(failure); });
     return () => { alive = false; off?.(); generation++; };
   });
   async function transcribe(force = false) {
     if (busy || !enabled || hidden) return;
     const token = generation;
-    busy = true; error = "";
+    busy = true; error = null;
     try {
       const value = await invoke<StoredTranscript>("transcribe_message", { accountId, chat, id, force, automatic: false });
       if (token === generation) transcript = value;
@@ -61,11 +63,12 @@
     {:else}
       <button onclick={() => transcribe()}>{t("content.transcribe")}</button>
     {/if}
-    {#if error}<p role="alert">{error}</p>{/if}
+    {#if error}<p role="alert">{error.message}</p>{#if error.diagnostic}<details><summary>{t("error.technical_details")}</summary><pre dir="ltr">{error.diagnostic}</pre></details>{/if}{/if}
   </div>
 {/if}
 
 <style>
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   .transcription { margin-top: .5rem; font-size: .85rem; }
   p { white-space: pre-wrap; overflow-wrap: anywhere; margin: .4rem 0; }
   small, [role="status"] { color: var(--muted); }

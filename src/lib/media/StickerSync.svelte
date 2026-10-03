@@ -98,10 +98,11 @@
   {#if report}
     <p role="status">{stickerResyncText(report)}</p>
     <p class="muted">{report.mirror_verified === true ? t("content.phone_mirror_verified") : t("content.phone_mirror_unverified")} {report.catalog_complete === true ? t("content.full_catalog_reported") : t("content.known_shared_packs_only_full_installed_catalog_unverified")}</p>
-    {#if report.app_state_error}<p class="error" role="alert">{report.app_state_error}</p>{/if}
-    {#if report.pack_failures?.length}<ul class="error" aria-label={t("content.pack_refresh_failures")}>{#each report.pack_failures as failed (failed.pack_id)}<li>{failed.pack_id}: {failed.error}</li>{/each}</ul>{/if}
+    {#if report.app_state_error}<p class="error" role="alert">{t("error.operation_failed")}</p><details><summary>{t("error.technical_details")}</summary><pre dir="ltr">{report.app_state_error}</pre></details>{/if}
+    {#if report.pack_failures?.length}<ul class="error" aria-label={t("content.pack_refresh_failures")}>{#each report.pack_failures as failed (failed.pack_id)}<li><bdi>{failed.pack_id}</bdi>: {t("error.operation_failed")}<details><summary>{t("error.technical_details")}</summary><pre dir="ltr">{failed.error}</pre></details></li>{/each}</ul>{/if}
   {/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
+  {#if error instanceof LocalizedError && error.diagnostic}<details><summary>{t("error.technical_details")}</summary><pre dir="ltr">{error.diagnostic}</pre></details>{/if}
   {#if showPacks && library}
     {#if library.catalog_complete !== true}<p class="muted">{t("content.this_cache_contains_known_shared_packs_it_does_not_verify_the_phone_s_fu")}</p>{/if}
     {#if library.packs.length === 0}<p class="muted">{t("content.no_known_shared_packs_in_this_account_s_cache")}</p>
@@ -110,6 +111,7 @@
 </section>
 
 <style>
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   .sticker-sync { padding: .5rem 0; overflow-wrap: anywhere; }
   p { margin: .4rem 0; font-size: .85rem; }
   .muted { color: var(--muted); }

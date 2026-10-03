@@ -3,15 +3,18 @@
   import { t } from "$lib/i18n/localizer";
   import { onMount } from "svelte";
   import { invoke } from "$lib/utils/ipc";
-  import type { PluginInfo as Plugin, PluginsView as View } from "$lib/utils/wire";
-  let view = $state<View>({ plugins: [], directory: "", errors: [] });
-  let error = $state<LocalizedError | string>("");
-  let loadError = $state<LocalizedError | string>("");
+  import type { PluginRuntimeView as Plugin, PluginsView as View } from "$lib/utils/wire";
+  let view = $state<View>({ plugins: [], directory: "", errors: [], failures: [] });
+  let error = $state<LocalizedError | null>(null);
+  let loadError = $state<LocalizedError | null>(null);
+  const failures = $derived(view.failures?.length
+    ? view.failures.map((failure) => normalizeError({ kind: "postal_error", ...failure }))
+    : view.errors.map((failure) => normalizeError(failure)));
   let busy = $state(false);
   let selected = $state<Plugin | null>(null);
   let consent = $state(false);
   async function refresh() {
-    try { view = await invoke<View>("list_plugins"); loadError = ""; }
+    try { view = await invoke<View>("list_plugins"); loadError = null; }
     catch (failure) { loadError = normalizeError(failure); }
   }
   onMount(() => {
@@ -22,7 +25,7 @@
   async function change(plugin: Plugin, enabled: boolean) {
     if (busy || (enabled && !consent)) return;
     busy = true;
-    error = "";
+    error = null;
     try {
       await invoke("set_plugin_enabled", { id: plugin.id, enabled, capabilities: enabled ? plugin.capabilities : [] });
       selected = null;
@@ -37,12 +40,15 @@
   {#if view.directory}<p class="path">{t("settings.plugin_directory")} <bdi>{view.directory}</bdi></p>{/if}
   {#if !view.plugins.length}<p>{t("settings.plugins_empty")}</p>{/if}
   {#each view.plugins as plugin (plugin.id)}
+    {@const failure = plugin.error_message || plugin.error ? normalizeError({ kind: "postal_error",
+      ...(plugin.error_message ?? { code: "error.operation_failed", params: {} }),
+      diagnostic: plugin.diagnostic ?? plugin.error ?? undefined }) : null}
     <article>
       <h3><bdi>{plugin.name}</bdi> <small>{plugin.version}</small></h3>
       <p>{plugin.id} · {plugin.activation} · {plugin.enabled ? plugin.state : "disabled"}</p>
       <p>{t("settings.plugin_capabilities")} <bdi>{plugin.capabilities.join(", ")}</bdi></p>
       {#if plugin.activation === "lazy"}<p>{t("settings.plugin_unload")}{plugin.idle_timeout_secs ? t("settings.plugin_idle", { count: plugin.idle_timeout_secs }) : ""}.</p>{/if}
-      {#if plugin.error}<p role="alert">{plugin.error}</p>{/if}
+      {#if failure}<p role="alert">{failure.message}</p>{#if failure.diagnostic}<details><summary>{t("error.technical_details")}</summary><pre dir="ltr">{failure.diagnostic}</pre></details>{/if}{/if}
       {#if plugin.enabled}
         <button class="button" disabled={busy} onclick={() => change(plugin, false)}>{t("settings.plugin_disable", { name: plugin.name })}</button>
       {:else}
@@ -66,12 +72,13 @@
       </div>
     </section>
   {/if}
-  {#each view.errors as failure}<p role="alert">{failure}</p>{/each}
-  {#if error}<p role="alert">{error}</p>{/if}
-  {#if loadError}<p role="alert">{loadError}</p>{/if}
+  {#each failures as failure}<p role="alert">{failure.message}</p>{#if failure.diagnostic}<details><summary>{t("error.technical_details")}</summary><pre dir="ltr">{failure.diagnostic}</pre></details>{/if}{/each}
+  {#if error}<p role="alert">{error.message}</p>{#if error.diagnostic}<details><summary>{t("error.technical_details")}</summary><pre dir="ltr">{error.diagnostic}</pre></details>{/if}{/if}
+  {#if loadError}<p role="alert">{loadError.message}</p>{#if loadError.diagnostic}<details><summary>{t("error.technical_details")}</summary><pre dir="ltr">{loadError.diagnostic}</pre></details>{/if}{/if}
 </div>
 
 <style>
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   p { color: var(--muted); font-size: .85rem; overflow-wrap: anywhere; }
   article, section { border: 1px solid var(--line-strong); padding: 1rem; margin: 1rem 0; border-radius: 6px; }
   h3 { margin: 0; font-size: 1rem; }

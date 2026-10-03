@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { isPollNotice, structuredNoticeText } from "../lib/utils/structured-notices.ts";
+import { formatDate } from "../lib/i18n/localizer.ts";
 
 const message = { media_kind: null as string | null, system_kind: null as string | null, system_params: [] as string[], text: "", sender: "100@lid", from_me: false };
 const name = (jid: string) => jid === "100@lid" ? "Alice" : jid;
@@ -32,7 +33,7 @@ test("event update and cancellation lines retain author and raw event title", ()
 test("scheduled call lines show only valid timestamps and known call type", () => {
   const at = 2_000_000_000;
   const call = { ...message, system_kind: "SCHEDULED_CALL_CREATED", system_params: ["Sync", String(at), "video"] };
-  assert.equal(structuredNoticeText(call, name), `Alice scheduled a video call "Sync" for ${new Date(at * 1000).toLocaleString()}.`);
+  assert.equal(structuredNoticeText(call, name), `Alice scheduled a video call "Sync" for ${formatDate(at, { dateStyle: "medium", timeStyle: "short" })}.`);
   assert.equal(structuredNoticeText({ ...call, from_me: true, system_params: ["", "", "voice"] }, name), "You scheduled a voice call.");
   for (const timestamp of ["", "bad", "0", "-1", "9999999999999999"]) {
     assert.equal(structuredNoticeText({ ...call, sender: "", system_params: ["", timestamp, "unknown"] }, name), "A call was scheduled.");

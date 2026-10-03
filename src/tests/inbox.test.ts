@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import { appliableLabels, inboxCategories, inboxChats } from "../lib/utils/inbox.ts";
+import { normalizeError } from "../lib/i18n/errors.ts";
+import { t } from "../lib/i18n/localizer.ts";
 import type { InboxFilters } from "../lib/utils/inbox.ts";
 import type { ChatSummary } from "../lib/utils/wire";
 
@@ -53,7 +55,7 @@ function actionFunction(file: string, name: string, context: Record<string, any>
   const dependencies = name === "save" ? tree.statements.filter((item) => ts.isVariableStatement(item)
     && item.declarationList.declarations.some((declaration) => declaration.name.getText(tree) === "validColor")) : [];
   const compiled = ts.transpileModule([...dependencies, declaration].map((item) => item.getText(tree)).join("\n"), { compilerOptions: { target: ts.ScriptTarget.ES2022 } });
-  runInNewContext(compiled.outputText, context);
+  runInNewContext(compiled.outputText, Object.assign(context, { normalizeError }));
   return context[name];
 }
 
@@ -81,7 +83,8 @@ test("inbox current failures stay visible and request invalidation rejects same-
   const act = actionFunction("../lib/chat/UnifiedInbox.svelte", "act", context);
   let pending = act(rows[0], { kind: "mute", seconds: 0 });
   reject(new Error("current refusal")); await pending;
-  assert.match(context.failures[rows[0].chat], /current refusal/);
+  assert.equal(context.failures[rows[0].chat].message, t("error.operation_failed"));
+  assert.match(context.failures[rows[0].chat].diagnostic, /current refusal/);
   assert.equal(context.busy[rows[0].chat], false);
   pending = act(rows[0], { kind: "mute", seconds: -1 });
   context.generation++; context.busy = {}; context.failures = {};

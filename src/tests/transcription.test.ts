@@ -5,6 +5,8 @@ import { compileModule } from "svelte/compiler";
 import ts from "typescript";
 import type { TranscriptionState } from "../lib/state/transcription.svelte";
 import type { TranscriptionView } from "../lib/utils/wire";
+import { normalizeError } from "../lib/i18n/errors.ts";
+import { t } from "../lib/i18n/localizer.ts";
 
 function view(enabled: boolean, provider = "local") {
   return { settings: { plugin_id: "org.postal.test", provider }, plugins: [{ id: "org.postal.test", enabled, contributes: { transcription: { providers: [{ id: "local" }] } } }] } as TranscriptionView;
@@ -16,7 +18,7 @@ test("Transcription controls reject stale settings, disabled plugins and undecla
   const source = readFileSync(new URL("../lib/state/transcription.svelte.ts", import.meta.url), "utf8");
   const js = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
   const compiled = compileModule(js, { generate: "server", filename: "transcription.svelte.js" }).js.code.replace(/^import .*;$/gm, "").replace(/^export /gm, "");
-  const State = new Function("invoke", "listen", `${compiled}\nreturn TranscriptionState;`)(invoke, () => Promise.resolve(() => {})) as new () => TranscriptionState;
+  const State = new Function("invoke", "listen", "normalizeError", `${compiled}\nreturn TranscriptionState;`)(invoke, () => Promise.resolve(() => {}), normalizeError) as new () => TranscriptionState;
   const state = new State();
   assert.equal(state.enabled, false);
   const old = state.load();
@@ -30,5 +32,7 @@ test("Transcription controls reject stale settings, disabled plugins and undecla
   assert.equal(state.enabled, false); assert.equal(state.error, "");
   state.configure(view(true, "undeclared")); assert.equal(state.enabled, false);
   const failed = state.load(); pending[3].reject(new Error("offline")); await failed;
-  assert.equal(state.error, "Error: offline"); assert.equal(state.enabled, false);
+  assert.equal(state.error, t("error.operation_failed"));
+  assert.match(state.diagnostic ?? "", /offline/);
+  assert.equal(state.enabled, false);
 });

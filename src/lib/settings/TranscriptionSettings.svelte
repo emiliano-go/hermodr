@@ -9,7 +9,10 @@
   let view = $state<TranscriptionView | null>(null);
   let draft = $state<Settings | null>(null);
   let busy = $state(false);
-  let error = $state<LocalizedError | string>("");
+  let error = $state<LocalizedError | null>(null);
+  const failures = $derived(view?.failures?.length
+    ? view.failures.map((failure) => normalizeError({ kind: "postal_error", ...failure }))
+    : view?.errors.map((failure) => normalizeError(failure)) ?? []);
   let trust = $state(false);
   let modelUrl = $state("");
   let plugin = $derived(view?.plugins.find((p) => p.id === draft?.plugin_id));
@@ -23,7 +26,7 @@
   }
   async function perform(work: () => Promise<void>, reload = false) {
     if (busy) return;
-    busy = true; error = "";
+    busy = true; error = null;
     try { await work(); if (reload) await refresh(); }
     catch (failure) { error = normalizeError(failure); }
     finally { busy = false; }
@@ -131,13 +134,14 @@
       </div>
       <input class="switch" type="checkbox" checked={autoTranscribe} disabled={busy} onchange={(event) => perform(() => onAutoTranscribe(event.currentTarget.checked))} />
     </label>
-    {#each view.errors as failure}<p role="alert">{failure}</p>{/each}
+    {#each failures as failure}<p role="alert">{failure.message}</p>{#if failure.diagnostic}<details><summary>{t("error.technical_details")}</summary><pre dir="ltr">{failure.diagnostic}</pre></details>{/if}{/each}
   {/if}
   {#if busy}<p role="status">{t("ui.working")}</p>{/if}
-  {#if error}<p role="alert">{error}</p>{/if}
+  {#if error}<p role="alert">{error.message}</p>{#if error.diagnostic}<details><summary>{t("error.technical_details")}</summary><pre dir="ltr">{error.diagnostic}</pre></details>{/if}{/if}
 </section>
 
 <style>
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   section { padding: 1rem 0; }
   h3 { margin: 0 0 .8rem; }
   label:not(.setting) { display: flex; flex-direction: column; gap: .4rem; margin: .7rem 0; }

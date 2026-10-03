@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
+import { normalizeError } from "../lib/i18n/errors.ts";
+import { t } from "../lib/i18n/localizer.ts";
+import { uiError } from "../lib/state/localized.ts";
 
 const source = readFileSync(new URL("../routes/+page.svelte", import.meta.url), "utf8").match(/<script[^>]*>([\s\S]*?)<\/script>/)![1];
 const parsed = ts.createSourceFile("page.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -23,12 +26,12 @@ function fixture() {
   const chats = { selectedChat: "room@g.us" };
   const calls: string[] = [], visible = new Set<string>(), hidden = new Set<string>();
   const ui = { pendingJump: null as { chat: string; id: string } | null, seeking: false, errors: [] as string[],
-    fail(error: unknown) { this.errors.push(String(error)); } };
+    fail(error: unknown) { this.errors.push(normalizeError(error).message); } };
   const hooks = { open: async () => {}, tick: async () => {}, stored: async () => false, recall: async () => false };
   const messages = { accountGeneration: 1, messages: [{ id: "before" }],
     showStoredMessage: async (_chat: string, id: string) => { calls.push(`stored:${id}`); return hooks.stored(); },
     recallDay: async () => { calls.push("recall"); await hooks.recall(); } };
-  const bindings = { session, chats, messages, ui, keywords: { hidden: (row: { id: string }) => hidden.has(row.id) },
+  const bindings = { session, chats, messages, ui, uiError, keywords: { hidden: (row: { id: string }) => hidden.has(row.id) },
     openChat: async (chat: string) => { calls.push(`open:${chat}`); chats.selectedChat = chat; await hooks.open(); },
     tick: async () => { calls.push("tick"); await hooks.tick(); },
     messageList: { hasMessage: (id: string) => visible.has(id), revealMessage: () => true, anchorId: () => null },
@@ -83,7 +86,7 @@ test("a newer jump can finish while an older lookup remains pending", async () =
 test("a stored keyword-hidden jump target reports why it cannot be shown without phone recall", async () => {
   const f = fixture(); f.hidden.add("hidden"); f.messages.messages = [{ id: "hidden" }]; f.hooks.stored = async () => true;
   await f.jumpTo("room@g.us", "hidden");
-  assert.deepEqual(f.ui.errors, ["This message is hidden by your keyword rules."]);
+  assert.deepEqual(f.ui.errors, [t("error.page.keyword_hidden")]);
   assert.equal(f.calls.includes("recall"), false); assert.equal(f.calls.some((call) => call.startsWith("scroll:")), false);
   assert.equal(f.ui.pendingJump, null); assert.equal(f.ui.seeking, false);
 });

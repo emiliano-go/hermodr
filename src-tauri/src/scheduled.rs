@@ -19,13 +19,13 @@ impl From<ScheduledMessage> for ScheduledMessageView {
 }
 
 impl AppState {
-    pub(crate) fn account_service(&self, account: &str) -> Result<Arc<WhatsAppService>, String> {
+    pub(crate) fn account_service(&self, account: &str) -> CommandResult<Arc<WhatsAppService>> {
         let binding = self.account_service.lock().unwrap();
         let service = binding.as_ref().filter(|(id, _)| id == account)
-            .and_then(|(_, service)| service.upgrade()).ok_or("account changed before operation")?;
+            .and_then(|(_, service)| service.upgrade()).ok_or_else(|| CommandError::code("error.account_changed"))?;
         let current = self.service()?;
         if self.accounts.lock().unwrap().active.as_deref() != Some(account) || !Arc::ptr_eq(&service, &current) {
-            return Err("account changed before operation".into());
+            return Err(CommandError::code("error.account_changed"));
         }
         Ok(service)
     }

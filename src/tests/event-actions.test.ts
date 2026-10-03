@@ -3,7 +3,8 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
-import { broadcastSendReason, guardBroadcastSend } from "../lib/utils/broadcast.ts";
+import { broadcastSendReason, broadcastSendError, guardBroadcastSend } from "../lib/utils/broadcast.ts";
+import { uiError } from "../lib/state/localized.ts";
 
 function fixture() {
   const calls: { command: string; args: any }[] = [], refreshes: string[] = [], failures: unknown[] = [];
@@ -11,7 +12,7 @@ function fixture() {
     reloadMessages: async (chat: string) => { refreshes.push(`messages:${chat}`); },
     loadMarks: async (chat: string) => { refreshes.push(`marks:${chat}`); } },
     chats: { selectedChat: "actual@g.us" }, ui: { fail: (error: unknown) => failures.push(error) },
-    structuredClone, guardBroadcastSend, broadcastSendReason,
+    structuredClone, guardBroadcastSend, broadcastSendReason, broadcastSendError, uiError,
     invoke: async (command: string, args: any) => { calls.push({ command, args }); },
     composer: { enqueue: async (task: any) => task(new AbortController().signal) } };
   for (const [path, names] of [["../lib/state/message-actions.ts", ["saveEvent", "eventFields"]],

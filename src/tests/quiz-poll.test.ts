@@ -4,8 +4,11 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import { prepareQuiz, quizFeedback, quizScopeMatches, type QuizScope } from "../lib/utils/quiz-poll.ts";
+import { LocalizedError, normalizeError } from "../lib/i18n/errors.ts";
+import { t } from "../lib/i18n/localizer.ts";
 
 function functions(file: string, context: Record<string, any>) {
+  Object.assign(context, { normalizeError, t });
   Object.defineProperty(context, "liveScope", { get: () => context.scope ?? null });
   const source = readFileSync(new URL(file, import.meta.url), "utf8").match(/<script lang="ts">([\s\S]*?)<\/script>/)![1];
   const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -72,7 +75,10 @@ test("creator shows rejection and retains quiz draft; ordinary poll payload stay
     quiz: true, quizDraft: prepareQuiz("Question", rows, 2), quizScopeMatches, onclose: () => assert.fail("Rejected create must remain open"),
     oncreate: async () => { throw new Error("Synthetic quiz refusal"); } });
   await context.submit();
-  assert.match(context.failed, /Synthetic quiz refusal/);
+  assert.ok(context.failed instanceof LocalizedError);
+  assert.equal(context.failed.code, "error.operation_failed");
+  assert.equal(context.failed.message, t("error.operation_failed"));
+  assert.match(context.failed.diagnostic ?? "", /Synthetic quiz refusal/);
   assert.equal(context.quizDraft.correctIndex, 1);
   assert.equal(context.busy, false);
   context.quiz = false; context.question = "Question"; context.filled = ["Alpha", "Beta"]; context.multi = true;
@@ -87,7 +93,10 @@ test("quiz vote rejects visibly without optimism and stale vote cannot alter ano
   const context = functions("../lib/messages/cards/PollCard.svelte", { poll, scope: scope(), generation: 1, canVote: true, multi: false, mine: [], busy: false,
     failed: "", quizScopeMatches, onvote: async () => { throw new Error("Synthetic vote refusal"); } });
   await context.toggle("Beta");
-  assert.match(context.failed, /Synthetic vote refusal/);
+  assert.ok(context.failed instanceof LocalizedError);
+  assert.equal(context.failed.code, "error.operation_failed");
+  assert.equal(context.failed.message, t("error.operation_failed"));
+  assert.match(context.failed.diagnostic ?? "", /Synthetic vote refusal/);
   assert.equal(context.poll.quiz.my_correct, null);
   let reject!: (error: Error) => void;
   context.onvote = () => new Promise((_, no) => { reject = no; });

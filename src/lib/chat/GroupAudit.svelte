@@ -85,8 +85,8 @@
         <li>
           <div class="row-head"><time>{entry.timestamp !== null ? formatTime(entry.timestamp) : t("group.audit_observed", { time: formatTime(entry.observed_at) })}</time><span>{entry.actor ? namer(entry.actor) : t("group.audit_actor_missing")}</span></div>
           <p>{auditEntryLabel(entry)}{entry.target ? ` · ${entry.target.includes("@") ? namer(entry.target) : entry.target}` : ""}</p>
-          <dl><dt>{t("group.audit_before")}</dt><dd dir="auto">{entry.old_value === null ? t("ui.not_recorded") : entry.old_value || "(empty)"}</dd>
-            <dt>{auditEntryRequested(entry) ? t("group.audit_requested") : t("group.audit_after")}</dt><dd>{entry.new_value === null ? t("ui.not_recorded") : entry.new_value || "(empty)"}</dd></dl>
+          <dl><dt>{t("group.audit_before")}</dt><dd dir="auto">{entry.old_value === null ? t("ui.not_recorded") : entry.old_value || t("ui.empty_value")}</dd>
+            <dt>{auditEntryRequested(entry) ? t("group.audit_requested") : t("group.audit_after")}</dt><dd>{entry.new_value === null ? t("ui.not_recorded") : entry.new_value || t("ui.empty_value")}</dd></dl>
           <small>{t("group.audit_source_label", { source: t(({ stored: "group.audit_source_stored", notification: "group.audit_source_notification", message: "group.audit_source_message", history: "group.audit_source_history", local: "group.audit_source_local" } as Record<string, string>)[entry.source] ?? "group.audit_source_unknown") })}{entry.old_source ? t("group.audit_previous_source", { source: t(entry.old_source === "cached" ? "group.audit_previous_cached" : "group.audit_previous_protocol") }) : ""}{entry.timestamp === null ? t("group.audit_time_missing") : ""}</small>
           {#if entry.jump_available && entry.message_id}<button onclick={() => onjump(group, entry.message_id!)}>{t("chat.open_message")}</button>
           {:else if entry.message_id}<small>{t("group.audit_message_unavailable")}</small>{/if}

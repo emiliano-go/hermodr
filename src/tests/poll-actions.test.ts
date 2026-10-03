@@ -3,7 +3,9 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
-import { broadcastSendReason } from "../lib/utils/broadcast.ts";
+import { broadcastSendError } from "../lib/utils/broadcast.ts";
+import { uiError } from "../lib/state/localized.ts";
+import { normalizeError, type LocalizedError } from "../lib/i18n/errors.ts";
 
 const page = readFileSync(new URL("../routes/+page.svelte", import.meta.url), "utf8");
 const source = page.match(/<script[^>]*>([\s\S]*?)<\/script>/)![1];
@@ -20,7 +22,7 @@ function fixture(vote = false) {
   const calls: { command: string; args: any }[] = [], refreshes: string[] = [], errors: unknown[] = [];
   const controller = new AbortController();
   const context = {
-    broadcastSendReason,
+    broadcastSendError, uiError,
     session: { activeAccount: "poll-account" as string | null },
     chats: { selectedChat: "poll-chat" as string | null, refreshChats: async () => { refreshes.push("chats"); } },
     messages: { accountGeneration: 1, reloadMessages: async (chat: string) => { refreshes.push(`messages:${chat}`); },
@@ -47,10 +49,10 @@ function metadataFixture() {
   const requests: { resolve: (value: unknown) => void; reject: (error: Error) => void }[] = [];
   const context = {
     broadcastFor: { account: "a", chat: "12345@broadcast", generation: 1 } as any,
-    broadcastInfo: null as any, broadcastLoading: false, broadcastError: null as string | null,
+    broadcastInfo: null as any, broadcastLoading: false, broadcastError: null as LocalizedError | null,
     session: { activeAccount: "a" }, chats: { selectedChat: "12345@broadcast", chats: [] },
     messages: { accountGeneration: 1, messages: [], marks: {} },
-    untrack: (run: () => unknown) => run(),
+    untrack: (run: () => unknown) => run(), normalizeError,
     invoke: (command: string, args: any) => {
       assert.equal(command, "broadcast_list"); assert.equal(args.accountId, "a");
       assert.equal(args.chat, "12345@broadcast");
@@ -108,7 +110,7 @@ test("broadcast creation and voting reject before queue or native dispatch", asy
     f.context.composer.enqueue = () => { queued = true; return Promise.resolve(); };
     const work = vote ? f.actions.votePoll({ chat: "12345@broadcast", id: "poll-id" }, ["First"])
       : f.actions.create(poll);
-    await assert.rejects(work, /Sending to broadcast lists is not supported/);
+    await assert.rejects(work, { code: "error.state.broadcast_send" });
     assert.equal(queued, false);
     assert.equal(f.calls.length, 0);
     assert.equal(f.refreshes.length, 0);
@@ -146,7 +148,7 @@ test("creation rejects missing or stale queued scope before native dispatch", as
   for (const change of changes) {
     const f = fixture(), work = f.actions.create(poll);
     change(f);
-    await assert.rejects(work, /Conversation changed/);
+    await assert.rejects(work, { code: "error.page.create_scope" });
     assert.equal(f.calls.length, 0);
     assert.equal(f.refreshes.length, 0);
   }
@@ -155,7 +157,7 @@ test("creation rejects missing or stale queued scope before native dispatch", as
     if (field === "account") f.context.session.activeAccount = null;
     else if (field === "chat") f.context.chats.selectedChat = null;
     else f.context.ui.creating = null;
-    await assert.rejects(f.actions.create(poll), /Conversation changed/);
+    await assert.rejects(f.actions.create(poll), { code: "error.page.create_scope" });
     assert.equal(f.calls.length, 0);
   }
 });
@@ -213,7 +215,7 @@ test("quiz dispatch captures own answer index and immutable payload before queue
 test("invalid own quiz answer cannot silently create an ordinary poll", async () => {
   for (const correctIndex of [-1, 2, 0.5, "0", NaN]) {
     const f = fixture();
-    await assert.rejects(f.actions.create({ question: "Synthetic", options: ["First", "Second"], correctIndex }), /Invalid quiz correct answer/);
+    await assert.rejects(f.actions.create({ question: "Synthetic", options: ["First", "Second"], correctIndex }), { code: "error.page.quiz_answer" });
     assert.equal(f.calls.length, 0);
   }
 });
@@ -235,7 +237,7 @@ test("queued vote rejects stale or aborted scope before dispatch", async () => {
   for (const change of changes) {
     const f = fixture(true), work = f.actions.votePoll({ chat: "poll-chat", id: "poll-id" }, ["First"]);
     change(f);
-    await assert.rejects(work, /Conversation changed/);
+    await assert.rejects(work, { code: "error.page.vote_scope" });
     assert.equal(f.calls.length, 0);
   }
   const f = fixture(true);

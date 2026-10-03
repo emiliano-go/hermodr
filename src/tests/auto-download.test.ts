@@ -5,6 +5,8 @@ import { compileModule } from "svelte/compiler";
 import ts from "typescript";
 import { MEDIA_TYPES, emptyMediaOverrides } from "../lib/utils/auto-download.ts";
 import type { MediaPolicyState } from "../lib/state/media-policy.svelte";
+import { normalizeError } from "../lib/i18n/errors.ts";
+import { t } from "../lib/i18n/localizer.ts";
 
 test("Media overrides save true/false/null independently and reject old account completions", async () => {
   const pending: { cmd: string; args: Record<string, unknown>; resolve: (v: unknown) => void; reject: (e: Error) => void }[] = [];
@@ -12,7 +14,7 @@ test("Media overrides save true/false/null independently and reject old account 
   const source = readFileSync(new URL("../lib/state/media-policy.svelte.ts", import.meta.url), "utf8");
   const js = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
   const compiled = compileModule(js, { generate: "server", filename: "media-policy.svelte.js" }).js.code.replace(/^import .*;$/gm, "").replace(/^export /gm, "");
-  const State = new Function("invoke", "emptyMediaOverrides", `${compiled}\nreturn MediaPolicyState;`)(invoke, emptyMediaOverrides) as new () => MediaPolicyState;
+  const State = new Function("invoke", "emptyMediaOverrides", "normalizeError", `${compiled}\nreturn MediaPolicyState;`)(invoke, emptyMediaOverrides, normalizeError) as new () => MediaPolicyState;
   const policy = new State();
   const old = policy.load("old", "first");
   const current = policy.load("new", "second");
@@ -32,8 +34,8 @@ test("Media overrides save true/false/null independently and reject old account 
   const switched = policy.load("third", "other");
   pending.at(-1)!.resolve(emptyMediaOverrides()); await switched;
   saveRequest.reject(new Error("old account gone")); await lateSave;
-  assert.equal(policy.error, ""); assert.equal(policy.value.sticker, null); assert.equal(policy.busy, false);
+  assert.equal(policy.error, ""); assert.equal(policy.diagnostic, undefined); assert.equal(policy.value.sticker, null); assert.equal(policy.busy, false);
   const failed = policy.change("gif", true); pending.at(-1)!.reject(new Error("cannot save")); await failed;
-  assert.match(policy.error, /cannot save/); assert.equal(policy.value.gif, null);
+  assert.equal(policy.error, t("error.operation_failed")); assert.equal(JSON.parse(policy.diagnostic!).message, "cannot save"); assert.equal(policy.value.gif, null);
   assert.deepEqual(MEDIA_TYPES.map(([kind]) => kind), ["image", "video", "audio", "document", "sticker", "gif"]);
 });

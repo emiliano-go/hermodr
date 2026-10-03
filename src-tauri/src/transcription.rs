@@ -15,6 +15,9 @@ use std::{
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::watch;
+use crate::command_error::{CommandError, CommandResult};
+use crate::plugins::{compatibility, failure, PluginRuntimeView};
+use postal_core::message_ref::{MessageFailure, MessageRef};
 
 type RequestKey = (String, String, String);
 pub(crate) struct TranscriptionState {
@@ -22,6 +25,7 @@ pub(crate) struct TranscriptionState {
     config: Mutex<Configuration>,
     active: Mutex<BTreeMap<RequestKey, watch::Sender<bool>>>,
     error: Option<String>,
+    failure: Option<MessageFailure>,
 }
 
 #[derive(Clone, Serialize)]
@@ -35,11 +39,12 @@ pub(crate) struct ProviderConsent {
 #[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
 pub(crate) struct TranscriptionView {
     settings: TranscriptionSettings,
-    plugins: Vec<PluginInfo>,
+    plugins: Vec<PluginRuntimeView>,
     cloud_consents: Vec<ProviderConsent>,
     key_configured: bool,
     data_directory: Option<String>,
     errors: Vec<String>,
+    failures: Vec<MessageFailure>,
 }
 
 #[derive(Clone, Serialize)]
@@ -51,6 +56,12 @@ pub(crate) struct TranscriptionEvent {
     status: String,
     transcript: Option<StoredTranscript>,
     error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "wire-types", ts(optional))]
+    error_message: Option<MessageRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "wire-types", ts(optional))]
+    diagnostic: Option<String>,
 }
 
 impl TranscriptionState {
@@ -63,43 +74,47 @@ impl TranscriptionState {
                 .take(65537)
                 .read_to_end(&mut bytes)?;
             if bytes.len() > 65536 {
-                return Err("transcription settings exceed size limit".into());
+                return Err(MessageRef::new("error.transcription_settings_size_limit")
+                    .with_param("max_bytes", serde_json::Number::from(65536)).into());
             }
             Ok(serde_json::from_slice(&bytes)?)
         })();
-        let (config, error) = match loaded {
-            Ok(config) => (config, None),
+        let (config, error, failure) = match loaded {
+            Ok(config) => (config, None, None),
             Err(error)
                 if error
                     .downcast_ref::<std::io::Error>()
                     .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) =>
             {
-                (Configuration::default(), None)
+                (Configuration::default(), None, None)
             }
-            Err(error) => (
-                Configuration::default(),
-                Some(format!("cannot load transcription settings: {error}")),
-            ),
+            Err(error) => {
+                let message = error.downcast_ref::<MessageRef>().cloned()
+                    .unwrap_or_else(|| MessageRef::new("error.transcription_settings_load_failed"));
+                let diagnostic = format!("cannot load transcription settings: {error}");
+                (Configuration::default(), Some(diagnostic.clone()), Some(MessageFailure { message, diagnostic: Some(diagnostic) }))
+            },
         };
         Ok(Self {
             path,
             config: Mutex::new(config),
             active: Mutex::default(),
             error,
+            failure,
         })
     }
 
-    fn save(&self, config: &Configuration) -> Result<(), String> {
+    fn save(&self, config: &Configuration) -> CommandResult<()> {
         use std::io::Write;
-        let parent = self.path.parent().ok_or("configuration path unavailable")?;
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        let parent = self.path.parent().ok_or_else(|| CommandError::code("error.transcription_config_path_unavailable"))?;
+        std::fs::create_dir_all(parent).map_err(CommandError::from)?;
         let temporary = self.path.with_extension("json.tmp");
-        let mut file = std::fs::File::create(&temporary).map_err(|e| e.to_string())?;
-        serde_json::to_writer(&mut file, config).map_err(|e| e.to_string())?;
+        let mut file = std::fs::File::create(&temporary).map_err(CommandError::from)?;
+        serde_json::to_writer(&mut file, config).map_err(CommandError::operation_failed)?;
         file.flush()
             .and_then(|_| file.sync_all())
-            .map_err(|e| e.to_string())?;
-        std::fs::rename(temporary, &self.path).map_err(|e| e.to_string())
+            .map_err(CommandError::from)?;
+        std::fs::rename(temporary, &self.path).map_err(CommandError::from)
     }
 
     pub(crate) fn cancel_all(&self) {
@@ -113,16 +128,16 @@ fn provider(
     state: &AppState,
     plugin_id: &str,
     provider: &str,
-) -> Result<(PluginInfo, TranscriptionProvider), String> {
+) -> CommandResult<(PluginInfo, TranscriptionProvider)> {
     let plugin = state
         .plugins
         .host
         .as_ref()
-        .ok_or("plugin host unavailable")?
+        .ok_or_else(|| CommandError::code("error.plugin_host_unavailable"))?
         .list()
         .into_iter()
         .find(|p| p.manifest.id == plugin_id && p.manifest.capabilities == ["transcribe"])
-        .ok_or("transcription plugin unavailable")?;
+        .ok_or_else(|| CommandError::code("error.transcription_plugin_unavailable"))?;
     let selected = plugin
         .manifest
         .contributes
@@ -130,11 +145,11 @@ fn provider(
         .as_ref()
         .and_then(|c| c.providers.iter().find(|p| p.id == provider))
         .cloned()
-        .ok_or("provider not declared by plugin")?;
+        .ok_or_else(|| CommandError::code("error.transcription_provider_undeclared"))?;
     Ok((plugin, selected))
 }
 
-fn bound_service(state: &AppState, account_id: &str) -> Result<Arc<WhatsAppService>, String> {
+fn bound_service(state: &AppState, account_id: &str) -> CommandResult<Arc<WhatsAppService>> {
     state.service_for_account(account_id)
 }
 
@@ -142,9 +157,9 @@ fn current(
     state: &AppState,
     account_id: &str,
     service: &Arc<WhatsAppService>,
-) -> Result<(), String> {
+) -> CommandResult<()> {
     if !Arc::ptr_eq(service, &bound_service(state, account_id)?) {
-        return Err("account changed".into());
+        return Err(CommandError::code("error.account_changed"));
     }
     Ok(())
 }
@@ -153,16 +168,18 @@ fn current(
 pub(crate) async fn transcription_settings(
     app: AppHandle,
     state: State<'_, AppState>,
-) -> Result<TranscriptionView, String> {
+) -> CommandResult<TranscriptionView> {
     let stt = app.state::<TranscriptionState>();
     let config = stt.config.lock().unwrap().clone();
     let plugins = state.plugins.host.as_ref().map_or_else(Vec::new, |h| {
         h.list()
             .into_iter()
             .filter(|p| p.manifest.capabilities == ["transcribe"])
+            .map(PluginRuntimeView::from)
             .collect()
     });
     let mut errors: Vec<_> = stt.error.iter().cloned().collect();
+    let mut failures: Vec<_> = stt.failure.iter().cloned().collect();
     let mut key_configured = false;
     let mut data_directory = None;
     if let Some(id) = &config.settings.plugin_id {
@@ -177,13 +194,16 @@ pub(crate) async fn transcription_settings(
                 let id = id.clone();
                 let p = selected.id;
                 match tokio::task::spawn_blocking(move || {
-                    credentials::get(&id, &p).map(|k| k.is_some())
+                    credentials::get_typed(&id, &p).map(|k| k.is_some())
                 })
                 .await
-                .map_err(|e| e.to_string())?
+                .map_err(CommandError::operation_failed)?
                 {
                     Ok(value) => key_configured = value,
-                    Err(error) => errors.push(error),
+                    Err(error) => {
+                        let error = CommandError::from(error);
+                        errors.push(compatibility(&error)); failures.push(failure(error));
+                    },
                 }
             }
         }
@@ -202,6 +222,7 @@ pub(crate) async fn transcription_settings(
         key_configured,
         data_directory,
         errors,
+        failures,
     })
 }
 
@@ -210,7 +231,7 @@ pub(crate) fn set_transcription_settings(
     app: AppHandle,
     state: State<'_, AppState>,
     settings: TranscriptionSettings,
-) -> Result<(), String> {
+) -> CommandResult<()> {
     settings.validate()?;
     if let Some(id) = &settings.plugin_id {
         provider(&state, id, &settings.provider)?;
@@ -233,10 +254,10 @@ pub(crate) fn grant_transcription_cloud_consent(
     plugin_id: String,
     provider_id: String,
     approved: bool,
-) -> Result<(), String> {
+) -> CommandResult<()> {
     let (_, selected) = provider(&state, &plugin_id, &provider_id)?;
     if !selected.transmits_audio {
-        return Err("local provider needs no cloud consent".into());
+        return Err(CommandError::code("error.transcription_local_consent_unnecessary"));
     }
     let stt = app.state::<TranscriptionState>();
     let mut config = stt.config.lock().unwrap();
@@ -259,12 +280,12 @@ pub(crate) async fn configure_transcription_key(
     state: State<'_, AppState>,
     plugin_id: String,
     provider_id: String,
-) -> Result<(), String> {
+) -> CommandResult<()> {
     let (_, selected) = provider(&state, &plugin_id, &provider_id)?;
     if !selected.requires_key {
-        return Err("provider does not use an API key".into());
+        return Err(CommandError::code("error.transcription_key_unused"));
     }
-    let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+    let executable = std::env::current_exe().map_err(CommandError::from)?;
     let name = if cfg!(windows) {
         "postal-transcription-key.exe"
     } else {
@@ -272,20 +293,20 @@ pub(crate) async fn configure_transcription_key(
     };
     let sibling = executable
         .parent()
-        .ok_or("application directory unavailable")?
+        .ok_or_else(|| CommandError::code("error.transcription_application_directory_unavailable"))?
         .join(name);
     let helper = if sibling.is_file() {
         sibling
     } else {
         app.path()
             .resource_dir()
-            .map_err(|e| e.to_string())?
+            .map_err(CommandError::operation_failed)?
             .join(name)
     };
     if !helper.is_file() {
-        return Err("native credential helper missing from installation".into());
+        return Err(CommandError::code("error.transcription_credential_helper_missing"));
     }
-    tokio::task::spawn_blocking(move || -> Result<(),String> {
+    tokio::task::spawn_blocking(move || -> CommandResult<()> {
         #[cfg(windows)] let mut command={
             use std::os::windows::process::CommandExt;
             let mut c=std::process::Command::new(&helper); c.creation_flags(0x00000010); c
@@ -298,19 +319,19 @@ pub(crate) async fn configure_transcription_key(
             for (terminal,args) in [("x-terminal-emulator",&["-e"][..]),("gnome-terminal",&["--wait","--"][..]),("konsole",&["-e"][..]),("xterm",&["-e"][..])] {
                 match std::process::Command::new(terminal).args(args).arg(&helper).arg(&plugin_id).arg(&provider_id).status() {
                     Err(error) if error.kind()==std::io::ErrorKind::NotFound=>continue,
-                    Ok(status) if status.success()=>return if credentials::get(&plugin_id,&provider_id)?.is_some(){Ok(())}else{Err("API key was not saved".into())},
-                    _=>return Err("credential entry cancelled or failed".into()),
+                    Ok(status) if status.success()=>return if credentials::get_typed(&plugin_id,&provider_id)?.is_some(){Ok(())}else{Err(CommandError::code("error.transcription_key_not_saved"))},
+                    _=>return Err(CommandError::code("error.transcription_credential_entry_failed")),
                 }
             }
-            return Err("no supported terminal found; run postal-transcription-key PLUGIN PROVIDER in a terminal".into());
+            return Err(CommandError::code("error.transcription_terminal_unavailable"));
         }
         #[cfg(any(windows,target_os="macos"))] {
         command.arg(&plugin_id).arg(&provider_id);
-        if !command.status().map_err(|_|"cannot open native credential prompt".to_string())?.success(){return Err("credential entry cancelled or failed".into());}
-        if credentials::get(&plugin_id,&provider_id)?.is_none(){return Err("API key was not saved".into());}
+        if !command.status().map_err(|error| CommandError::code("error.transcription_credential_prompt_unavailable").with_diagnostic(error))?.success(){return Err(CommandError::code("error.transcription_credential_entry_failed"));}
+        if credentials::get_typed(&plugin_id,&provider_id)?.is_none(){return Err(CommandError::code("error.transcription_key_not_saved"));}
         Ok(())
         }
-    }).await.map_err(|e|e.to_string())?
+    }).await.map_err(CommandError::operation_failed)?
 }
 
 #[tauri::command]
@@ -319,12 +340,13 @@ pub(crate) async fn forget_transcription_key(
     state: State<'_, AppState>,
     plugin_id: String,
     provider_id: String,
-) -> Result<(), String> {
+) -> CommandResult<()> {
     provider(&state, &plugin_id, &provider_id)?;
     app.state::<TranscriptionState>().cancel_all();
-    tokio::task::spawn_blocking(move || credentials::delete(&plugin_id, &provider_id))
+    tokio::task::spawn_blocking(move || credentials::delete_typed(&plugin_id, &provider_id))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(CommandError::operation_failed)?
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -334,15 +356,15 @@ pub(crate) async fn install_transcription_model(
     url: String,
     sha256: String,
     filename: String,
-) -> Result<(), String> {
+) -> CommandResult<()> {
     state
         .plugins
         .host
         .as_ref()
-        .ok_or("plugin host unavailable")?
+        .ok_or_else(|| CommandError::code("error.plugin_host_unavailable"))?
         .install_model(&plugin_id, url, sha256, filename)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(CommandError::from)
 }
 
 struct Active<'a> {
@@ -360,8 +382,11 @@ fn notify(
     key: &RequestKey,
     status: &str,
     transcript: Option<StoredTranscript>,
-    error: Option<String>,
+    error: Option<CommandError>,
 ) {
+    let error_message = error.as_ref().map(|error| error.message.clone());
+    let diagnostic = error.as_ref().and_then(|error| error.diagnostic.clone());
+    let error = error.as_ref().map(compatibility);
     let _ = app.emit_to(
         "main",
         "transcription-event",
@@ -372,6 +397,8 @@ fn notify(
             status: status.into(),
             transcript,
             error,
+            error_message,
+            diagnostic,
         },
     );
 }
@@ -384,23 +411,23 @@ async fn prepare(
     chat: &str,
     id: &str,
     automatic: bool,
-) -> Result<(String, TranscriptionRequest), String> {
+) -> CommandResult<(String, TranscriptionRequest)> {
     let stt = app.state::<TranscriptionState>();
     let config = stt.config.lock().unwrap().clone();
     let plugin_id = config
         .settings
         .plugin_id
         .as_ref()
-        .ok_or("no transcription plugin selected")?
+        .ok_or_else(|| CommandError::code("error.transcription_plugin_required"))?
         .clone();
     let (plugin, selected) = provider(state, &plugin_id, &config.settings.provider)?;
     if !plugin.enabled {
-        return Err("transcription plugin disabled".into());
+        return Err(CommandError::code("error.transcription_plugin_disabled"));
     }
     let global_auto = state.settings.lock().unwrap().auto_transcribe;
     let audio_download = if automatic {
         service.effective_media_auto_download(chat, "audio", service.media_auto_download())
-            .await.map_err(|e| e.to_string())?
+            .await.map_err(CommandError::from)?
     } else { true };
     if automatic
         && (!audio_download || !effective_auto(
@@ -408,16 +435,16 @@ async fn prepare(
             service
                 .chat_auto_transcribe(chat)
                 .await
-                .map_err(|e| e.to_string())?,
+                .map_err(CommandError::from)?,
         ))
     {
-        return Err("automatic transcription disabled".into());
+        return Err(CommandError::code("error.transcription_auto_disabled"));
     }
     let cloud_consent = config
         .cloud_consents
         .contains(&(plugin_id.clone(), selected.id.clone()));
     if selected.transmits_audio && !cloud_consent {
-        return Err("explicit cloud provider consent required".into());
+        return Err(CommandError::code("error.transcription_cloud_consent_required"));
     }
     current(state, account_id, service)?;
     let audio = service
@@ -428,16 +455,16 @@ async fn prepare(
             postal_plugins::transcription::MAX_AUDIO_BYTES,
         )
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(CommandError::from)?;
     current(state, account_id, service)?;
     let api_key = if selected.requires_key {
         let plugin = plugin_id.clone();
         let p = selected.id.clone();
         Some(
-            tokio::task::spawn_blocking(move || credentials::get(&plugin, &p))
+            tokio::task::spawn_blocking(move || credentials::get_typed(&plugin, &p))
                 .await
-                .map_err(|e| e.to_string())??
-                .ok_or("cloud provider key required")?,
+                .map_err(CommandError::operation_failed)??
+                .ok_or_else(|| CommandError::code("error.transcription_cloud_key_required"))?,
         )
     } else {
         None
@@ -446,9 +473,9 @@ async fn prepare(
         .plugins
         .host
         .as_ref()
-        .ok_or("plugin host unavailable")?
+        .ok_or_else(|| CommandError::code("error.plugin_host_unavailable"))?
         .transcription_data_directory(&plugin_id)
-        .map_err(|e| e.to_string())?;
+        .map_err(CommandError::from)?;
     let mut provider_config = TranscriptionConfig::default();
     provider_config.data_directory = Some(data_directory);
     provider_config.whisper_executable = config.settings.whisper_executable;
@@ -468,7 +495,7 @@ async fn prepare(
         audio: STANDARD.encode(audio.bytes),
         config: provider_config,
     };
-    request.validate().map_err(|e| e.to_string())?;
+    request.validate().map_err(CommandError::from)?;
     Ok((plugin_id, request))
 }
 
@@ -479,7 +506,7 @@ async fn run(
     id: String,
     force: bool,
     automatic: bool,
-) -> Result<StoredTranscript, String> {
+) -> CommandResult<StoredTranscript> {
     if account_id.is_empty()
         || account_id.len() > 200
         || chat.is_empty()
@@ -487,7 +514,7 @@ async fn run(
         || id.is_empty()
         || id.len() > 300
     {
-        return Err("invalid transcription target".into());
+        return Err(CommandError::code("error.transcription_target_invalid"));
     }
     let state = app.state::<AppState>();
     let service = bound_service(&state, &account_id)?;
@@ -495,7 +522,7 @@ async fn run(
         if let Some(cached) = service
             .message_transcript(&chat, &id)
             .await
-            .map_err(|e| e.to_string())?
+            .map_err(CommandError::from)?
         {
             current(&state, &account_id, &service)?;
             return Ok(cached);
@@ -507,10 +534,10 @@ async fn run(
     {
         let mut active = stt.active.lock().unwrap();
         if active.contains_key(&key) {
-            return Err("transcription already running".into());
+            return Err(CommandError::code("error.transcription_already_running"));
         }
         if active.len() >= 64 {
-            return Err("transcription queue full".into());
+            return Err(CommandError::new(MessageRef::new("error.transcription_queue_full").with_param("max", serde_json::Number::from(64))));
         }
         active.insert(key.clone(), cancel);
     }
@@ -521,13 +548,13 @@ async fn run(
     let (plugin_id, request) =
         prepare(app, &state, &service, &account_id, &chat, &id, automatic).await?;
     if *cancelled.borrow() {
-        return Err("transcription cancelled".into());
+        return Err(CommandError::code("error.transcription_cancelled"));
     }
     let canonical = request.chat.clone();
     notify(app, &key, "started", None, None);
     let result = tokio::select! {
-        _=cancelled.changed()=>Err("transcription cancelled".into()),
-        result=state.plugins.host.as_ref().ok_or("plugin host unavailable")?.transcribe(&plugin_id,request)=>result.map_err(|e|e.to_string()),
+        _=cancelled.changed()=>Err(CommandError::code("error.transcription_cancelled")),
+        result=state.plugins.host.as_ref().ok_or_else(|| CommandError::code("error.plugin_host_unavailable"))?.transcribe(&plugin_id,request)=>result.map_err(CommandError::from),
     };
     let result = match result {
         Ok(transcript) => {
@@ -549,7 +576,7 @@ async fn run(
                 .save_transcript(transcript.clone())
                 .await
                 .map(|_| transcript)
-                .map_err(|e| e.to_string())
+                .map_err(CommandError::from)
         }
         Err(error) => Err(error),
     };
@@ -578,7 +605,7 @@ pub(crate) async fn transcribe_message(
     id: String,
     force: bool,
     automatic: bool,
-) -> Result<StoredTranscript, String> {
+) -> CommandResult<StoredTranscript> {
     run(&app, account_id, chat, id, force, automatic).await
 }
 
@@ -601,12 +628,12 @@ pub(crate) async fn message_transcript(
     account_id: String,
     chat: String,
     id: String,
-) -> Result<Option<StoredTranscript>, String> {
+) -> CommandResult<Option<StoredTranscript>> {
     let service = bound_service(&state, &account_id)?;
     let result = service
         .message_transcript(&chat, &id)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(CommandError::from)?;
     current(&state, &account_id, &service)?;
     Ok(result)
 }
@@ -616,11 +643,11 @@ pub(crate) async fn chat_auto_transcribe(
     state: State<'_, AppState>,
     account_id: String,
     chat: String,
-) -> Result<Option<bool>, String> {
+) -> CommandResult<Option<bool>> {
     bound_service(&state, &account_id)?
         .chat_auto_transcribe(&chat)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -629,11 +656,11 @@ pub(crate) async fn set_chat_auto_transcribe(
     account_id: String,
     chat: String,
     enabled: Option<bool>,
-) -> Result<(), String> {
+) -> CommandResult<()> {
     bound_service(&state, &account_id)?
         .set_chat_auto_transcribe(&chat, enabled)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(CommandError::from)
 }
 
 pub(crate) fn schedule_auto(app: &AppHandle, account_id: &str, event: &postal_core::ServiceEvent) {
@@ -683,5 +710,20 @@ mod tests {
         assert_eq!(transcription_target(&hint).map(|(chat,id)| (chat.as_str(),id.as_str())), expected);
         if let postal_core::ServiceEvent::MessageHint { change, .. } = &mut hint { *change = postal_core::HintChange::Status; }
         assert!(transcription_target(&hint).is_none());
+    }
+
+    #[test]
+    fn runtime_transcription_event_keeps_status_target_and_additive_failure_fields() {
+        let event = TranscriptionEvent { account_id: "synthetic-account".into(), chat: "synthetic-chat".into(), id: "synthetic-id".into(),
+            status: "failed".into(), transcript: None, error: Some("synthetic raw error".into()),
+            error_message: Some(MessageRef::new("error.transcription_cancelled")), diagnostic: Some("synthetic diagnostic".into()) };
+        let value = serde_json::to_value(&event).unwrap();
+        assert_eq!(value["account_id"], "synthetic-account");
+        assert_eq!(value["status"], "failed");
+        assert_eq!(value["error"], "synthetic raw error");
+        assert_eq!(value["error_message"]["code"], "error.transcription_cancelled");
+        assert_eq!(value["diagnostic"], "synthetic diagnostic");
+        let clean = serde_json::to_value(TranscriptionEvent { status: "completed".into(), error: None, error_message: None, diagnostic: None, ..event }).unwrap();
+        assert!(clean.get("error_message").is_none() && clean.get("diagnostic").is_none());
     }
 }

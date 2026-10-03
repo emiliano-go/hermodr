@@ -10,7 +10,7 @@ const plugin = { id: "org.postal.test-stt", name: "Synthetic STT", version: "1",
 export const fixture = {
   view: { settings: { plugin_id: plugin.id, provider: "local-whisper", whisper_executable: null, decoder_executable: null,
     model: "tiny.bin", model_sha256: "0".repeat(64), language: null, idle_timeout_secs: null }, plugins: [plugin], cloud_consents: [],
-    key_configured: false, data_directory: "SYNTHETIC-DATA-NO-FILES", errors: [] } as TranscriptionView,
+    key_configured: false, data_directory: "SYNTHETIC-DATA-NO-FILES", errors: [], failures: [] } as TranscriptionView,
   hold: false, failure: false, calls: [] as { command: string; args: unknown }[],
   cache: new Map<string, StoredTranscript>(), overrides: new Map<string, boolean | null>(),
   pending: new Map<string, { finish: () => void; cancel: () => void }>(),

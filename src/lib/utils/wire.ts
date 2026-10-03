@@ -337,7 +337,8 @@ error: string | null,
 pending: boolean, };
 export type PluginInfo = { enabled: boolean, state: string, error: string | null, id: string, name: string, version: string, api_version: number, entrypoint: string, activation: Activation, idle_timeout_secs: number | null, capabilities: Array<string>, contributes: Contributions, };
 export type PluginReply = { "type": "ready", name: string, } | { "type": "ack", seq: number, } | { "type": "log", level: string, message: string, } | { "type": "call", id: JsonValue, } | { "type": "event", } | { "type": "transcript", id: number, provider: string, text: string, language: string | null, } | { "type": "transcribe_error", id: number, message: string, } | { "type": "model_installed", id: number, filename: string, } | { "type": "model_error", id: number, message: string, };
-export type PluginsView = { plugins: Array<PluginInfo>, directory: string, errors: Array<string>, };
+export type PluginRuntimeView = { error_message?: MessageRef, diagnostic?: string, enabled: boolean, state: string, error: string | null, id: string, name: string, version: string, api_version: number, entrypoint: string, activation: Activation, idle_timeout_secs: number | null, capabilities: Array<string>, contributes: Contributions, };
+export type PluginsView = { plugins: Array<PluginRuntimeView>, directory: string, errors: Array<string>, failures: Array<MessageFailure>, };
 export type Poll = { id: string, name: string, options: Array<string>,
 /**
  * More than one option may be chosen.
@@ -547,10 +548,10 @@ export type StoredTranscript = { chat: string, id: string, text: string, languag
 export type Target = { chat: string, id: string, sender: string, fromMe: boolean, };
 export type TranscriptionConfig = { data_directory: string | null, whisper_executable: string | null, decoder_executable: string | null, model: string | null, model_sha256: string | null, language: string | null, cloud_consent: boolean, api_key: string | null, timeout_secs: number | null, idle_timeout_secs: number | null, };
 export type TranscriptionContribution = { id: string, providers: Array<TranscriptionProvider>, };
-export type TranscriptionEvent = { account_id: string, chat: string, id: string, status: string, transcript: StoredTranscript | null, error: string | null, };
+export type TranscriptionEvent = { account_id: string, chat: string, id: string, status: string, transcript: StoredTranscript | null, error: string | null, error_message?: MessageRef, diagnostic?: string, };
 export type TranscriptionProvider = { id: string, name: string, kind: ProviderKind, transmits_audio: boolean, requires_key: boolean, };
 export type TranscriptionSettings = { plugin_id: string | null, provider: string, whisper_executable: string | null, decoder_executable: string | null, model: string | null, model_sha256: string | null, language: string | null, idle_timeout_secs: number | null, };
-export type TranscriptionView = { settings: TranscriptionSettings, plugins: Array<PluginInfo>, cloud_consents: Array<ProviderConsent>, key_configured: boolean, data_directory: string | null, errors: Array<string>, };
+export type TranscriptionView = { settings: TranscriptionSettings, plugins: Array<PluginRuntimeView>, cloud_consents: Array<ProviderConsent>, key_configured: boolean, data_directory: string | null, errors: Array<string>, failures: Array<MessageFailure>, };
 export type UiSettings = { retention: DiskRetention, message_window_size: number,
 /**
  * Requests deep history during pairing, independently of disk retention.

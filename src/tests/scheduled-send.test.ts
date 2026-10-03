@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createServer } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { fileURLToPath } from "node:url";
+import type { ScheduledMessageView } from "../lib/utils/wire.ts";
 
 function gate() {
   let release!: () => void;
@@ -26,8 +27,10 @@ test("scheduled sends persist draft payload, wait until due, share send order, a
     const { chats } = await load("../lib/state/chats.svelte.ts");
     const { messages } = await load("../lib/state/messages.svelte.ts");
     const { ui } = await load("../lib/state/ui.svelte.ts");
+    const { normalizeError } = await load("../lib/i18n/errors.ts");
+    const { t } = await load("../lib/i18n/localizer.ts");
     const { setHandler } = await load("../../tests/scheduled/ipc.ts");
-    const rows: { id: string; chat: string; text: string; mentions: string[]; due_at: number; status: string; error: string | null; attempted: boolean }[] = [];
+    const rows: ScheduledMessageView[] = [];
     const sends: string[] = [];
     const calls: { command: string; args?: Record<string, unknown> }[] = [];
     let fail = false;
@@ -40,19 +43,25 @@ test("scheduled sends persist draft payload, wait until due, share send order, a
         if (schedulingFails) throw new Error("synthetic persistence failure");
         const id = `stable-${rows.length}`;
         rows.push({ id, chat: String(args.chat), text: String(args.text), mentions: args.mentions as string[],
-          due_at: Number(args.dueAt), status: "pending", error: null, attempted: false });
+          due_at: Number(args.dueAt), status: "pending", error: null, failure: null, attempted: false });
         return id;
       }
       if (command === "scheduled_messages") return rows.map((row) => ({ ...row }));
       const row = rows.find((row) => row.id === args?.id)!;
       if (command === "send_scheduled_message") {
         row.attempted = true;
-        if (fail) { row.status = "uncertain"; row.error = "synthetic send failure"; throw new Error(row.error); }
+        if (fail) {
+          row.status = "uncertain";
+          row.failure = { kind: "postal_error", code: "error.scheduled_delivery_uncertain", params: {}, diagnostic: "synthetic send failure" };
+          const { kind: _kind, ...failure } = row.failure;
+          row.error = JSON.stringify({ format: "postal_scheduled_failure_v1", failure });
+          throw row.failure;
+        }
         sends.push(row.id);
         rows.splice(rows.indexOf(row), 1);
         return true;
       }
-      if (command === "retry_scheduled_message") { row.status = "pending"; row.error = null; return; }
+      if (command === "retry_scheduled_message") { row.status = "pending"; row.error = null; row.failure = null; return; }
       if (command === "cancel_scheduled_message") { rows.splice(rows.indexOf(row), 1); return; }
       if (command === "update_scheduled_message") { row.text = String(args?.text); row.due_at = Number(args?.dueAt); return; }
       throw new Error(`Unexpected synthetic command ${command}`);
@@ -60,7 +69,7 @@ test("scheduled sends persist draft payload, wait until due, share send order, a
     session.activeAccount = "account-a"; session.connected = true;
     chats.selectedChat = "1@s.whatsapp.net";
     chats.refreshChats = async () => {}; messages.reloadMessages = async () => {};
-    const errors: string[] = []; ui.fail = (error: unknown) => errors.push(String(error));
+    const errors: { message: string; diagnostic?: string }[] = []; ui.fail = (error: unknown) => errors.push(normalizeError(error));
     const composer = new ComposerState();
     const scheduler = new ScheduledState(); scheduler.selectAccount("account-a");
     const enqueue = <T>(task: (signal: AbortSignal) => Promise<T>) => composer.enqueue(task);
@@ -84,7 +93,8 @@ test("scheduled sends persist draft payload, wait until due, share send order, a
     assert.equal(await composer.schedule(due), false); assert.equal(composer.draft, "kept on failure");
     schedulingFails = false; assert.equal(await composer.schedule(due), true);
     fail = true; await scheduler.tick(enqueue, () => due);
-    assert.equal(scheduler.items[0].status, "uncertain"); assert.ok(errors.some((error) => error.includes("synthetic send failure")));
+    assert.equal(scheduler.items[0].status, "uncertain");
+    assert.ok(errors.some((error) => error.message === t("error.scheduled_delivery_uncertain") && error.diagnostic?.includes("synthetic send failure")));
     const attempted = calls.filter((call) => call.command === "send_scheduled_message").length;
     await scheduler.tick(enqueue, () => due + 1);
     assert.equal(calls.filter((call) => call.command === "send_scheduled_message").length, attempted);
@@ -112,14 +122,18 @@ test("scheduled sends persist draft payload, wait until due, share send order, a
     const form = render(ScheduleDialog, { props: { text: "Synthetic scheduled text", dueAt: due,
       onsave: async () => true, onclose: () => {} } }).body;
     assert.ok(form.includes('type="datetime-local"')); assert.ok(form.includes("Synthetic scheduled text"));
-    assert.ok(form.includes('aria-label="Schedule message"'));
+    assert.ok(form.includes(`aria-label="${t("content.schedule_message")}"`));
     const { scheduled } = await load("../lib/state/scheduled.svelte.ts");
     scheduled.items = [
-      { id: "pending", chat: "1@s.whatsapp.net", text: "Synthetic pending", mentions: [], due_at: due, status: "pending", attempted: false, error: null },
-      { id: "uncertain", chat: "1@s.whatsapp.net", text: "Synthetic uncertain", mentions: [], due_at: due, status: "uncertain", attempted: true, error: "Synthetic interrupted send" },
+      { id: "pending", chat: "1@s.whatsapp.net", text: "Synthetic pending", mentions: [], due_at: due, status: "pending", attempted: false, error: null, failure: null },
+      { id: "uncertain", chat: "1@s.whatsapp.net", text: "Synthetic uncertain", mentions: [], due_at: due, status: "uncertain", attempted: true,
+        error: JSON.stringify({ format: "postal_scheduled_failure_v1", failure: { code: "error.scheduled_interrupted", params: {}, diagnostic: "Synthetic interrupted send" } }),
+        failure: { kind: "postal_error", code: "error.scheduled_interrupted", params: {}, diagnostic: "Synthetic interrupted send" } },
     ];
     const { default: ScheduledOutbox } = await load("../lib/composer/ScheduledOutbox.svelte");
     const list = render(ScheduledOutbox, { props: { enqueue } }).body;
-    for (const text of ["Synthetic pending", "Synthetic interrupted send", "Delivery unconfirmed", "Edit", "Cancel", "Retry"]) assert.ok(list.includes(text));
+    for (const text of ["Synthetic pending", "Synthetic interrupted send", t("error.scheduled_interrupted"),
+      t("content.delivery_unconfirmed"), t("content.edit"), t("content.cancel"), t("content.retry")]) assert.ok(list.includes(text));
+    assert.ok(!list.includes("postal_scheduled_failure_v1"));
   } finally { await server.close(); }
 });

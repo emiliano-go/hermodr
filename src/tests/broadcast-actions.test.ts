@@ -6,7 +6,11 @@ import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
-import { broadcastSendReason, guardBroadcastSend, BROADCAST_SEND_REASON } from "../lib/utils/broadcast.ts";
+import { broadcastSendReason, broadcastSendError, guardBroadcastSend } from "../lib/utils/broadcast.ts";
+import { normalizeError } from "../lib/i18n/errors.ts";
+import { t } from "../lib/i18n/localizer.ts";
+
+const BROADCAST_SEND_REASON = t("error.state.broadcast_send");
 
 function extract(path: string, names: string[], context: Record<string, any>) {
   const text = readFileSync(new URL(path, import.meta.url), "utf8").match(/<script(?![^>]*\bmodule\b)[^>]*>([\s\S]*?)<\/script>/)![1];
@@ -131,7 +135,7 @@ test("expression, contact and forward pickers guard before reply/selection consu
   const calls: string[] = [];
   const list = "123@broadcast", ordinary = "12025550101@s.whatsapp.net";
   const context = extract("../lib/composer/ExpressionPicker.svelte", ["canSendTo", "send", "sendFromLibrary", "uploadFile", "sendMade", "clickSticker"], {
-    chat: list, disabled: false, tab: "gif", making: "preserved", broadcastSendReason, guardBroadcastSend,
+    chat: list, disabled: false, tab: "gif", making: "preserved", broadcastSendReason, broadcastSendError, guardBroadcastSend, normalizeError, t,
     pickerScope: () => ({ account: "synthetic" }), pickerCurrent: () => true, packRequest: 1,
     onerror: () => calls.push("error"), onclose: () => calls.push("close"), onsent: () => calls.push("sent"),
     takereply: () => { calls.push("reply"); return {}; }, enqueue: () => { calls.push("queue"); },
@@ -148,7 +152,7 @@ test("expression, contact and forward pickers guard before reply/selection consu
   assert.ok([...calls].every((call) => call === "error"));
 
   const picker = extract("../lib/chat/ChatPicker.svelte", ["toggle", "forward"], {
-    busy: false, chosen: {}, picked: [list], failed: null, broadcastSendReason, guardBroadcastSend,
+    busy: false, chosen: {}, picked: [list], failed: null, broadcastSendReason, broadcastSendError, guardBroadcastSend, normalizeError, t,
     onforward: () => calls.push("forward"), onclose: () => calls.push("close"),
   });
   picker.toggle(list); assert.equal(Object.keys(picker.chosen).length, 0);
@@ -157,7 +161,7 @@ test("expression, contact and forward pickers guard before reply/selection consu
 
   const sharing = extract("../lib/contacts/ContactSharing.svelte", ["send"], {
     account: "synthetic", chat: list, connected: true, canSend: true, busy: false, revision: 1, generation: 1,
-    broadcastSendReason, guardBroadcastSend, error: "", result: "preserved", selected: ["12025550101"],
+    broadcastSendReason, broadcastSendError, guardBroadcastSend, normalizeError, t, error: null, result: "preserved", selected: ["12025550101"],
     contacts: [{ name: "Synthetic", phone: "12025550101" }], onshare: () => calls.push("share"),
     shareContacts: () => calls.push("share"),
   });

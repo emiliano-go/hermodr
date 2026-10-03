@@ -6,8 +6,11 @@ import ts from "typescript";
 import { memberActionReason, memberNoteError } from "../lib/utils/member-sheet.ts";
 import { mergeAuditEntries } from "../lib/utils/group-audit.ts";
 import { changeText } from "../lib/utils/group-actions.ts";
+import { LocalizedError, normalizeError } from "../lib/i18n/errors.ts";
+import { t } from "../lib/i18n/localizer.ts";
 
 function functions(file: string, context: Record<string, any>) {
+  Object.assign(context, { normalizeError, t });
   const source = readFileSync(new URL(file, import.meta.url), "utf8").match(/<script[^>]*lang="ts"[^>]*>([\s\S]*?)<\/script>/)![1];
   const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const body = tree.statements.filter(ts.isFunctionDeclaration).map((item) => item.getText(tree)).join("\n");
@@ -19,7 +22,7 @@ test("member action needs confirmation and permissions, captures owner, rejects 
   let release!: () => void;
   const calls: unknown[] = [];
   const context = functions("../lib/contacts/MemberSheet.svelte", { account: "alpha", group: "group@g.us", jid: "member@lid", requestKey: 1,
-    generation: 1, busy: false, localLoading: false, liveLoading: false, failure: "", saved: "", confirmation: null,
+    generation: 1, busy: false, localLoading: false, liveLoading: false, failure: "", saved: "", refusedChanges: [], confirmation: null,
     permissions: { admin: true, connected: true, self: false, member: { admin: false, owner: false }, blocked: false, supported: ["remove"] },
     memberActionReason, changeText, onaction: (...args: unknown[]) => { calls.push(args); return new Promise<void>((yes) => (release = yes)); } });
   await context.act("remove"); assert.equal(calls.length, 0);
@@ -37,11 +40,14 @@ test("member action needs confirmation and permissions, captures owner, rejects 
 test("member refusals stay visible and local notes save offline only to captured member", async () => {
   const calls: unknown[] = [];
   const context = functions("../lib/contacts/MemberSheet.svelte", { account: "alpha", group: "group@g.us", jid: "member@lid", requestKey: 1,
-    generation: 1, busy: false, failure: "", saved: "", confirmation: "remove", local: {}, localLoading: false, liveLoading: false, warnings: 2, notes: "Local notes",
+    generation: 1, busy: false, failure: "", saved: "", refusedChanges: [], confirmation: "remove", local: {}, localLoading: false, liveLoading: false, warnings: 2, notes: "Local notes",
     permissions: { admin: true, connected: true, self: false, member: { admin: false, owner: false }, blocked: false, supported: ["remove"] },
     memberActionReason, memberNoteError, changeText, onaction: async () => [{ jid: "member@lid", ok: false, pending: false, code: "403", error: null }],
     onsavelocal: async (...args: unknown[]) => calls.push(args) });
-  await context.act("remove"); assert.match(context.failure, /Not allowed/); assert.equal(context.confirmation, "remove");
+  await context.act("remove");
+  assert.deepEqual(context.refusedChanges, [{ jid: "member@lid", ok: false, pending: false, code: "403", error: null }]);
+  assert.equal(context.refusedChanges.map(changeText).join(""), t("group_action.forbidden"));
+  assert.equal(context.failure, ""); assert.equal(context.confirmation, "remove");
   context.permissions.connected = false;
   await context.saveLocal(); assert.equal(calls.length, 1); assert.equal((calls[0] as any)[0].group, "group@g.us");
   assert.deepEqual((calls[0] as any).slice(1), ["Local notes", 2]);
@@ -63,5 +69,9 @@ test("audit ignores stale pages and retains loaded rows after older-page failure
   assert.deepEqual(context.rows, []); assert.equal(context.cursor, null); assert.equal(context.error, "");
   context.rows = existing; context.cursor = "next"; context.onload = async () => { throw new Error("Synthetic page failure"); };
   await context.load(true);
-  assert.equal(context.rows, existing); assert.equal(context.cursor, "next"); assert.match(context.error, /Synthetic page failure/);
+  assert.equal(context.rows, existing); assert.equal(context.cursor, "next");
+  const failure: unknown = context.error;
+  assert.ok(failure instanceof LocalizedError);
+  assert.equal(failure.message, t("error.operation_failed"));
+  assert.match(failure.diagnostic!, /Synthetic page failure/);
 });

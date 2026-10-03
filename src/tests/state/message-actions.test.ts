@@ -5,6 +5,8 @@ import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { fileURLToPath } from "node:url";
 import type { ChatSummary, ServiceEvent, StoredMessage } from "../../lib/utils/models.ts";
 import type { EventHost } from "../../lib/state/events.ts";
+import type { LocalizedError } from "../../lib/i18n/errors.ts";
+import type { MessageParams } from "../../lib/i18n/localizer.ts";
 
 type Item = { label: string; separated?: boolean; action: () => unknown };
 
@@ -47,7 +49,7 @@ async function withApp(run: (app: {
     bulkDelete: string[] | null;
     forwarding: StoredMessage[] | null;
     labelTargets: { chat: string; id?: string }[] | null;
-    error: string | null;
+    error: LocalizedError | string | null;
     scrolledUp: boolean;
   };
   members: {
@@ -65,6 +67,8 @@ async function withApp(run: (app: {
     chats: ChatSummary[];
   };
   calls: { command: string; args: unknown }[];
+  normalizeError: (value: unknown) => LocalizedError;
+  t: (code: string, params?: MessageParams) => string;
 }) => Promise<void>, beforeInvoke?: (command: string, args: unknown) => unknown) {
   const calls: { command: string; args: unknown }[] = [];
   Object.defineProperty(globalThis, "window", { configurable: true, value: {
@@ -90,6 +94,8 @@ async function withApp(run: (app: {
     const { session } = await server.ssrLoadModule("/src/lib/state/session.svelte.ts");
     const { composer } = await server.ssrLoadModule("/src/lib/state/composer.svelte.ts");
     const { chats } = await server.ssrLoadModule("/src/lib/state/chats.svelte.ts");
+    const { normalizeError } = await server.ssrLoadModule("/src/lib/i18n/errors.ts");
+    const { t } = await server.ssrLoadModule("/src/lib/i18n/localizer.ts");
     await run({
       menuItems,
       deleteSelected: messageActions.deleteSelected,
@@ -104,7 +110,7 @@ async function withApp(run: (app: {
         const events = await server.ssrLoadModule("/src/lib/state/events.ts");
         return { dispatchServiceEvent: events.dispatchServiceEvent };
       },
-      messages, ui, members, session, composer, chats, calls,
+      messages, ui, members, session, composer, chats, calls, normalizeError, t,
     });
   } finally {
     await server.close();
@@ -115,6 +121,15 @@ async function withApp(run: (app: {
 
 /** Menu labels in sorted order, so assertions never pin down the sequence. */
 const labels = (items: Item[]) => items.map((item) => item.label).sort();
+
+function expectFailure(value: LocalizedError | string | null, detail: RegExp,
+  normalize: (value: unknown) => LocalizedError, translate: (code: string, params?: MessageParams) => string) {
+  const failure = normalize(value);
+  assert.equal(failure, value);
+  assert.equal(failure.code, "error.operation_failed");
+  assert.equal(failure.message, translate(failure.code, failure.params));
+  assert.match(failure.diagnostic ?? "", detail);
+}
 
 test("unavailable rows reject content actions and recovered rows regain normal eligibility", async () => {
   await withApp(async ({ menuItems, pickedInOrder, copyMessages, starMessages, reactMessages, forwardMessages, viewableMessages, messages, composer, chats, calls }) => {
@@ -593,7 +608,7 @@ test("the message menu forwards one message, and Select starts picking", async (
 });
 
 test("bulk copy, star and reactions target every selected message without copying revoked text", async () => {
-  await withApp(async ({ copyMessages, starMessages, reactMessages, ui, calls }) => {
+  await withApp(async ({ copyMessages, starMessages, reactMessages, ui, calls, normalizeError, t }) => {
     const batch = ["first", "second"].map((text, index) => ({ chat: "99@g.us", id: String(index), sender: "1@s", from_me: false, text }) as StoredMessage);
     ui.picking = Object.fromEntries(batch.map((message) => [message.id, message]));
     const previous = Object.getOwnPropertyDescriptor(globalThis, "navigator");
@@ -615,7 +630,7 @@ test("bulk copy, star and reactions target every selected message without copyin
       assert.equal(Object.keys(ui.picking ?? {}).length, 2);
       rejectCopy = true;
       await copyMessages(batch);
-      assert.match(ui.error ?? "", /Synthetic clipboard failure/);
+      expectFailure(ui.error, /Synthetic clipboard failure/, normalizeError, t);
     } finally {
       if (previous) Object.defineProperty(globalThis, "navigator", previous);
       else Reflect.deleteProperty(globalThis, "navigator");
@@ -625,13 +640,13 @@ test("bulk copy, star and reactions target every selected message without copyin
 
 test("bulk sends stop when account changes, including an in-flight forward batch", async () => {
   let switchAccount = () => {};
-  await withApp(async ({ starMessages, reactMessages, forwardMessages, composer, ui, calls }) => {
+  await withApp(async ({ starMessages, reactMessages, forwardMessages, composer, ui, calls, normalizeError, t }) => {
     const batch = ["a", "b"].map((id) => ({ chat: "99@g.us", id, sender: "1@s", from_me: false }) as StoredMessage);
     ui.picking = { a: batch[0], b: batch[1] };
     switchAccount = () => composer.resetAccount();
     await starMessages(batch, true);
     assert.equal(calls.filter((call) => call.command === "star").length, 1);
-    assert.match(ui.error ?? "", /abort/i);
+    expectFailure(ui.error, /abort/i, normalizeError, t);
     await reactMessages(batch, "👍");
     assert.equal(calls.filter((call) => call.command === "react").length, 1);
     await assert.rejects(forwardMessages(batch, ["x@s", "y@s"]), /abort/i);
@@ -642,11 +657,11 @@ test("bulk sends stop when account changes, including an in-flight forward batch
 
 test("a failed bulk command stops the batch, keeps selection and exposes the failure", async () => {
   let sent = 0;
-  await withApp(async ({ reactMessages, ui, calls }) => {
+  await withApp(async ({ reactMessages, ui, calls, normalizeError, t }) => {
     const batch = ["a", "b", "c"].map((id) => ({ chat: "99@g.us", id, sender: "1@s", from_me: false }) as StoredMessage);
     ui.picking = Object.fromEntries(batch.map((message) => [message.id, message]));
     await reactMessages(batch, "❤️");
-    assert.match(ui.error ?? "", /Synthetic reaction failure/);
+    expectFailure(ui.error, /Synthetic reaction failure/, normalizeError, t);
     assert.equal(calls.filter((call) => call.command === "react").length, 2);
     assert.equal(Object.keys(ui.picking ?? {}).length, 3);
   }, (command) => { if (command === "react" && ++sent === 2) throw new Error("Synthetic reaction failure"); });

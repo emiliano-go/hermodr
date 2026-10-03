@@ -4,14 +4,24 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import { stickerResyncText, stickerScopeMatches } from "../lib/utils/sticker-sync.ts";
+import { LocalizedError, normalizeError } from "../lib/i18n/errors.ts";
+import { englishCatalog, installLocaleProvider, loadCatalog, t, type Catalog } from "../lib/i18n/localizer.ts";
 import type { StickerResyncReport } from "../lib/utils/wire";
 
 function functions(context: Record<string, any>, file = "../lib/media/StickerSync.svelte") {
+  Object.assign(context, { LocalizedError, normalizeError, t });
   const source = readFileSync(new URL(file, import.meta.url), "utf8").match(/<script lang="ts">([\s\S]*?)<\/script>/)![1];
   const tree = ts.createSourceFile("StickerSync.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const body = tree.statements.filter(ts.isFunctionDeclaration).map((item) => item.getText(tree)).join("\n");
   runInNewContext(ts.transpileModule(body, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
   return context;
+}
+
+function expectFailure(value: unknown, detail: RegExp) {
+  assert.ok(value instanceof LocalizedError);
+  assert.equal(value.code, "error.operation_failed");
+  assert.equal(value.message, t(value.code, value.params));
+  assert.match(value.diagnostic ?? "", detail);
 }
 
 function picker(overrides: Record<string, any> = {}) {
@@ -49,7 +59,7 @@ test("failed library refresh preserves cached packs and rejects stale reads", as
   const context = functions({ ...base(), onload: async () => { throw new Error("offline cache read failed"); } });
   await context.refresh();
   assert.equal(context.library, cached);
-  assert.match(context.error, /offline cache read failed/);
+  expectFailure(context.error, /offline cache read failed/);
   assert.equal(context.loading, false);
   let release!: (value: typeof cached) => void;
   context.onload = () => new Promise((yes) => { release = yes; });
@@ -66,7 +76,7 @@ test("resync failure and post-resync cache failure stay visible without clearing
   await context.resync();
   assert.equal(starts, 1);
   assert.equal(context.library, cached);
-  assert.match(context.error, /snapshot unavailable/);
+  expectFailure(context.error, /snapshot unavailable/);
   assert.equal(context.report, null);
   context.connected = false;
   await context.resync();
@@ -76,7 +86,7 @@ test("resync failure and post-resync cache failure stay visible without clearing
   context.onload = async () => { throw new Error("cache refresh failed"); };
   await context.resync();
   assert.equal(context.library, cached);
-  assert.match(context.error, /cache refresh failed/);
+  expectFailure(context.error, /cache refresh failed/);
   assert.deepEqual(context.report, reported);
   assert.equal(context.busy, false);
   assert.match(stickerResyncText(reported), /Partial resync result\. Snapshot request returned\. Refetched 1\/2 known packs/);
@@ -90,6 +100,47 @@ test("partial report describes request phase and real counts without claiming mi
   assert.match(stickerResyncText({ ...reported, app_state_fatal: true }), /request failed/);
   assert.match(stickerResyncText({ packs: 1, stickers: 3 } as StickerResyncReport), /unconfirmed.*1\/unknown.*changed unknown/);
 });
+
+test("sticker report follows live locale, formats every count and preserves all phase and partial flags", async () => {
+  const arabic = await loadCatalog("ar");
+  let snapshot: { locale: string; catalog: Catalog } = { locale: "en", catalog: englishCatalog };
+  const restore = installLocaleProvider(() => snapshot);
+  const full: StickerResyncReport = { ...reported, mirror_verified: true, catalog_complete: true, pack_failures: [], skipped_stickers: 0 };
+  try {
+    const before = JSON.stringify(full);
+    for (const language of ["en", "ar"]) {
+      snapshot = { locale: language, catalog: language === "ar" ? arabic : englishCatalog };
+      const complete = stickerResyncText(full);
+      assert.ok(complete.startsWith(t("sticker_sync.phase_returned")));
+      assert.ok(!complete.includes(t("sticker_sync.partial")));
+      for (const [flags, phase] of [
+        [{ app_state_fatal: true, app_state_retryable: true }, "sticker_sync.phase_failed"],
+        [{ app_state_retryable: true }, "sticker_sync.phase_retry"],
+        [{ app_state_synced: false }, "sticker_sync.phase_unconfirmed"],
+      ] as const) {
+        const text = stickerResyncText({ ...full, ...flags });
+        assert.ok(text.startsWith(`${t("sticker_sync.partial")} ${t(phase)}`));
+      }
+      for (const flags of [{ mirror_verified: false }, { catalog_complete: false }, { app_state_error: "synthetic" },
+        { pack_failures: reported.pack_failures }, { skipped_stickers: 1 }])
+        assert.ok(stickerResyncText({ ...full, ...flags }).startsWith(`${t("sticker_sync.partial")} ${t("sticker_sync.phase_returned")}`));
+      const counts = [1234, 2345, 3456, 4567, 5678, 6789];
+      const text = stickerResyncText({ ...full, packs: counts[0], known_packs: counts[1], stickers: counts[2],
+        packs_changed: counts[3], stickers_changed: counts[4], skipped_stickers: counts[5] });
+      for (const count of counts) assert.ok(text.includes(new Intl.NumberFormat(language).format(count)));
+      const missing = stickerResyncText({ packs: 1, stickers: 3 } as StickerResyncReport);
+      assert.ok(missing.startsWith(`${t("sticker_sync.partial")} ${t("sticker_sync.phase_unconfirmed")}`));
+      assert.equal(missing.split(t("sticker_sync.unknown")).length - 1, 4);
+    }
+    assert.notEqual(stickerResyncText(full), completeEnglish(full));
+    assert.equal(JSON.stringify(full), before);
+  } finally { restore(); }
+});
+
+function completeEnglish(report: StickerResyncReport) {
+  const restore = installLocaleProvider(() => ({ locale: "en", catalog: englishCatalog }));
+  try { return stickerResyncText(report); } finally { restore(); }
+}
 
 test("picker opens cached pack before refresh and retains it when network refresh fails", async () => {
   const calls: string[] = [];
@@ -105,7 +156,7 @@ test("picker opens cached pack before refresh and retains it when network refres
   await context.openPackView({ pack_id: "known" });
   assert.deepEqual(calls, ["sticker_pack", "fetch_sticker_pack"]);
   assert.equal(context.openPack.stickers, stickers);
-  assert.match(context.packError, /Synthetic pack refresh failure/);
+  expectFailure(context.packError, /Synthetic pack refresh failure/);
   assert.equal(context.packLoading, false);
 });
 
@@ -164,9 +215,9 @@ test("favorite failures remain visible and preserve local cached favorite", asyn
   } });
   await context.toggleFavourite("cached.webp");
   assert.equal(context.favourites[0], "cached.webp");
-  assert.match(context.packError, /local favorite kept.*Synthetic phone request failure/);
+  expectFailure(context.packError, /Synthetic phone request failure/);
   await context.toggleSyncedFavorite({ filehash: "hash", favorite: false });
-  assert.match(context.packError, /Favorite request failed.*Synthetic phone request failure/);
+  expectFailure(context.packError, /Synthetic phone request failure/);
   assert.equal(touched, 2);
 });
 
@@ -190,7 +241,7 @@ test("bulk downloads stop on cache failure and on scope change during rate-limit
   const stickers = [{ filehash: "one", path: null }, { filehash: "two", path: null }];
   await context.fetchAll("pack", stickers);
   assert.equal(calls, 1);
-  assert.match(context.packError, /Synthetic download failure/);
+  expectFailure(context.packError, /Synthetic download failure/);
   let release!: () => void;
   context.invoke = async () => { calls++; throw new Error("429 rate limit"); };
   context.sleep = () => new Promise<void>((yes) => { release = yes; });

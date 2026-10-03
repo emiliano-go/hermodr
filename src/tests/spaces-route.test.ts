@@ -9,6 +9,8 @@ import { createServer } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { targetKey, emptyInboxFilters } from "../lib/spaces/spaces.ts";
 import { labelSearch } from "../lib/utils/label-search.ts";
+import { t } from "../lib/i18n/localizer.ts";
+import { normalizeError } from "../lib/i18n/errors.ts";
 
 const source = readFileSync(new URL("../routes/+page.svelte", import.meta.url), "utf8");
 const script = source.match(/<script[^>]*>([\s\S]*?)<\/script>/)![1];
@@ -66,7 +68,7 @@ function fixture() {
     ui: { finder: null, showInbox: false }, spaceCatalog: [], spaceGroups: [], spaceSaved: [], spaceCatalogRequest: 0,
     spaceCatalogLoading: false, spaceCatalogError: null, spacePickerFor: null, spaceCommunityFor: null,
     switcherQuery: "", quickSwitcher: false, spaceFinderKey: 0, spaceOpenSeq: 0, chatOpenSeq: 0,
-    inboxSeed: undefined, inboxSeedKey: 0, currentInboxFilters: emptyInboxFilters(), targetKey, labelSearch,
+    inboxSeed: undefined, inboxSeedKey: 0, currentInboxFilters: emptyInboxFilters(), targetKey, labelSearch, t, normalizeError,
     plain: (text: string) => text, untrack: (run: () => unknown) => run(),
     invoke: async (command: string, args?: any) => { calls.push({ command, args }); return []; },
     openChat: async (jid: string) => { opened.push({ jid }); c.chatOpenSeq++; },

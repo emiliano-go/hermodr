@@ -98,15 +98,15 @@ struct AppState {
 }
 
 impl AppState {
-    fn service(&self) -> Result<Arc<WhatsAppService>, String> {
+    fn service(&self) -> command_error::CommandResult<Arc<WhatsAppService>> {
         self.service
             .lock()
             .unwrap()
             .clone()
-            .ok_or_else(|| "not connected yet".to_string())
+            .ok_or_else(|| command_error::CommandError::code("error.not_connected"))
     }
 
-    fn service_for_account(&self, account_id: &str) -> Result<Arc<WhatsAppService>, String> {
+    fn service_for_account(&self, account_id: &str) -> command_error::CommandResult<Arc<WhatsAppService>> {
         self.account_service(account_id)
     }
 }

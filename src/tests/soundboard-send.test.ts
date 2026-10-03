@@ -3,6 +3,9 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { guardBroadcastSend } from "../lib/utils/broadcast.ts";
+import { LocalizedError, normalizeError } from "../lib/i18n/errors.ts";
+import { t } from "../lib/i18n/localizer.ts";
+import { uiError } from "../lib/state/localized.ts";
 
 const source = readFileSync(new URL("../lib/state/composer.svelte.ts", import.meta.url), "utf8");
 const tree = ts.createSourceFile("composer.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -21,13 +24,13 @@ function gate() {
 function fixture() {
   const session = { activeAccount: "account-a", connected: true };
   const uploads: { file: File; args: Record<string, unknown>; signal: AbortSignal }[] = [];
-  const errors: string[] = [], reloads: string[] = [];
+  const errors: LocalizedError[] = [], reloads: string[] = [];
   let sent = 0, refreshes = 0, scrolled = 0;
   const hooks = { upload: async (signal: AbortSignal) => { signal.throwIfAborted(); }, reload: async () => {} };
   const chats = { selectedChat: "room@g.us", refreshChats: async () => { refreshes++; } };
   const messages = { accountGeneration: 1, reloadMessages: async (chat: string) => { reloads.push(chat); await hooks.reload(); } };
   const members = { chatGroup: { can_send: true } };
-  const bindings = { session, chats, messages, members, guardBroadcastSend, ui: { fail: (error: unknown) => errors.push(String(error)) },
+  const bindings = { session, chats, messages, members, guardBroadcastSend, uiError, ui: { fail: (error: unknown) => errors.push(normalizeError(error)) },
     sendAttachment: async (file: File, args: Record<string, unknown>, signal: AbortSignal) => {
       uploads.push({ file, args, signal }); await hooks.upload(signal); sent++;
     } };
@@ -71,7 +74,8 @@ test("soundboard rejects stale account, same-JID generation and queued conversat
         else f.members.chatGroup.can_send = false;
       };
       if (!queued) mutate();
-      const failed = assert.rejects(f.composer.sendSoundClip(f.clip, f.scope), /Conversation changed/);
+      const failed = assert.rejects(f.composer.sendSoundClip(f.clip, f.scope), (error) => error instanceof LocalizedError
+        && error.code === (queued ? "error.state.audio_scope" : "error.state.audio_unavailable"));
       if (queued) mutate();
       blocked.release(); await Promise.all([ahead, failed]);
       assert.equal(f.uploads.length, 0, `${change}, queued=${queued}`);
@@ -85,7 +89,7 @@ test("real account reset aborts the active clip upload and cancels queued old-ac
   f.hooks.upload = async (signal) => { started.release(); await blocked.promise; signal.throwIfAborted(); };
   const upload = assert.rejects(f.composer.sendSoundClip(f.clip, f.scope), { name: "AbortError" });
   await started.promise;
-  const queued = assert.rejects(f.composer.sendSoundClip(f.clip, f.scope), /Account changed before sending/);
+  const queued = assert.rejects(f.composer.sendSoundClip(f.clip, f.scope), (error) => error instanceof LocalizedError && error.code === "error.state.send_scope");
   f.composer.resetAccount(); f.session.activeAccount = "account-b"; f.messages.accountGeneration++;
   blocked.release(); await Promise.all([upload, queued]);
   assert.equal(f.uploads.length, 1); assert.equal(f.uploads[0].signal.aborted, true); assert.equal(f.sent(), 0);
@@ -96,6 +100,8 @@ test("a completed clip send stays successful when the subsequent UI reload fails
   const f = fixture(); f.hooks.reload = async () => { throw new Error("synthetic reload failed"); };
   await assert.doesNotReject(f.composer.sendSoundClip(f.clip, f.scope));
   assert.equal(f.sent(), 1); assert.equal(f.uploads.length, 1);
-  assert.deepEqual(f.errors, ["Error: synthetic reload failed"]); assert.equal(f.refreshes(), 1);
+  assert.equal(f.errors.length, 1); assert.equal(f.errors[0].code, "error.operation_failed");
+  assert.equal(f.errors[0].message, t(f.errors[0].code, f.errors[0].params));
+  assert.match(f.errors[0].diagnostic ?? "", /synthetic reload failed/); assert.equal(f.refreshes(), 1);
   assert.equal(f.composer.draft, "draft stays"); assert.equal(f.composer.pending, f.pending); assert.equal(f.composer.replyingTo, f.reply);
 });

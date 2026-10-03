@@ -6,7 +6,12 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import { parse } from "svelte/compiler";
-import { BROADCAST_SEND_REASON, broadcastSendReason, guardBroadcastSend, isBroadcastList } from "../lib/utils/broadcast.ts";
+import { broadcastSendReason, broadcastSendError, guardBroadcastSend, isBroadcastList } from "../lib/utils/broadcast.ts";
+import { LocalizedError, normalizeError } from "../lib/i18n/errors.ts";
+import { uiError } from "../lib/state/localized.ts";
+import { t as translate } from "../lib/i18n/localizer.ts";
+
+const BROADCAST_SEND_REASON = translate("error.state.broadcast_send");
 
 function methods(path: string, names: string[], context: Record<string, unknown>) {
   const text = readFileSync(new URL(path, import.meta.url), "utf8");
@@ -17,6 +22,7 @@ function methods(path: string, names: string[], context: Record<string, unknown>
     assert.ok(node, name);
     return node.getText(tree);
   }).join("\n");
+  Object.assign(context, { broadcastSendError, uiError, LocalizedError, normalizeError, t: translate });
   runInNewContext(ts.transpileModule(body, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
   return context as Record<string, any>;
 }
@@ -72,7 +78,8 @@ test("broadcast UI shows cached evidence, contact naming and disabled send contr
     await t.test("loading, missing and error metadata cannot invent recipients", () => {
       for (const [loading, error, data, expected] of [
         [true, null, info, "Loading recipient details"], [false, null, null, "Recipient details unavailable"],
-        [false, "Synthetic failure", info, "Synthetic failure"], [false, null, { ...info, recipients: [] }, "Recipient details unavailable"],
+        [false, normalizeError(new Error("Synthetic failure")), info, translate("error.operation_failed")],
+        [false, null, { ...info, recipients: [] }, "Recipient details unavailable"],
       ]) {
         const body = render(BroadcastInfo, { props: { info: data, loading, error, nameOf } }).body;
         assert.ok(body.includes(expected) && !body.includes("<li") && !body.includes("0 recipients"));
@@ -125,7 +132,7 @@ test("broadcast UI shows cached evidence, contact naming and disabled send contr
       const eventBody = render(EventCard, { props: { event, title: "Event", chat: target, onrespond: async () => {},
         onedit: () => {}, oncancel: async () => {}, onopenurl: () => {} } }).body;
       const eventText = eventBody.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
-      assert.ok(eventText.includes(BROADCAST_SEND_REASON) && eventText.includes("1 going") && eventText.includes("Join call"), eventText);
+      assert.ok(eventText.includes(BROADCAST_SEND_REASON) && eventText.includes(`1 ${translate("content.going")}`) && eventText.includes("Join call"), eventText);
       assert.ok(eventBody.match(/<button\b[^>]*>\s*Edit<\/button>/)?.[0].includes("disabled"));
       assert.ok(eventBody.match(/<button\b[^>]*>\s*Cancel event<\/button>/)?.[0].includes("disabled"));
       assert.ok(!eventBody.match(/<button\b[^>]*>[^]*?Join call<\/button>/)?.[0].includes("disabled"));
@@ -143,12 +150,12 @@ test("actual composer callbacks reject disabled sending before mutation and queu
   const input = { files: [new File(["synthetic"], "x.png")], value: "picked" };
   f.attach({ currentTarget: input });
   assert.equal(input.value, "");
-  await assert.rejects(f.enqueuePicker(async () => calls.push("picker")), /not supported/);
+  await assert.rejects(f.enqueuePicker(async () => calls.push("picker")), { code: "error.content.message_sending_is_disabled_here" });
   assert.equal(calls.length, 0);
   f.disabled = false;
   const queued = f.enqueuePicker(async () => calls.push("picker"));
   f.disabled = true;
-  await assert.rejects(queued, /not supported/);
+  await assert.rejects(queued, { code: "error.content.message_sending_is_disabled_here" });
   assert.equal(calls.length, 0);
 
   const text = readFileSync(new URL("../lib/composer/ComposerBar.svelte", import.meta.url), "utf8");
@@ -167,12 +174,17 @@ test("actual composer callbacks reject disabled sending before mutation and queu
   walk(ast.fragment);
   assert.ok(callbacks.length >= 10);
   for (const callback of callbacks) {
-    const context: Record<string, any> = { disabled: true, selectedChat: "123@broadcast", broadcastSendReason,
+    const context: Record<string, any> = { disabled: true, selectedChat: "123@broadcast", broadcastSendReason, LocalizedError,
       filePicker: { click: () => calls.push("file") }, attachMenu: true, dismissedSlash: null, updateCaret: () => {},
       ...Object.fromEntries(["oncreatekind", "onsendvoice", "onquickreply", "onschedule", "oninput", "onkey", "onbeforeinput", "onsoundclip", "onstage"].map((key) => [key, () => calls.push(key)])) };
     const body = ts.transpileModule(`var callback = ${callback};`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
     runInNewContext(body, context);
-    try { await context.callback({}, { chat: "123@broadcast" }); } catch (error) { assert.ok(/disabled|not supported|target changed/.test(String(error))); }
+    try { await context.callback({}, { chat: "123@broadcast" }); } catch (error) {
+      assert.ok(error instanceof LocalizedError, String(error));
+      assert.ok(["error.content.message_sending_is_disabled_here", "error.content.message_scheduling_is_disabled_here",
+        "error.content.camera_attachment_target_changed"].includes(error.code), error.code);
+      assert.equal(error.message, translate(error.code));
+    }
   }
   assert.equal(calls.length, 0);
 });
@@ -188,8 +200,12 @@ test("disabled sending preserves access to local receipt and typing controls thr
   const controls: any[] = [];
   const walk = (node: any) => {
     if (!node || typeof node !== "object") return;
-    if (node.attributes?.some((attribute: any) => attribute.name === "aria-label"
-      && ["Hide read receipts here", "Stop sending typing here"].includes(attribute.value?.[0]?.data))) controls.push(node);
+    if (node.attributes?.some((attribute: any) => {
+      const value = Array.isArray(attribute.value) ? attribute.value[0] : attribute.value;
+      const expression = value?.expression;
+      return attribute.name === "aria-label" && expression?.type === "CallExpression" && expression.callee.name === "t"
+        && ["content.hide_read_receipts_here", "content.stop_sending_typing_here"].includes(expression.arguments[0]?.value);
+    })) controls.push(node);
     for (const value of Object.values(node)) if (Array.isArray(value)) value.forEach(walk); else if (value && typeof value === "object") walk(value);
   };
   walk((parse(source, { modern: true }) as any).fragment);

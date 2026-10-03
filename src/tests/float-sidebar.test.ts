@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
+import { normalizeError, LocalizedError } from "../lib/i18n/errors.ts";
+import { t } from "../lib/i18n/localizer.ts";
 
 const source = readFileSync(new URL("../lib/chat/ChatSidebar.svelte", import.meta.url), "utf8");
 const script = source.match(/<script[^>]*>([\s\S]*?)<\/script>/)![1];
@@ -16,16 +18,16 @@ function fixture() {
   const response = new Promise<void>((resolve, reject) => { finish = resolve; fail = reject; });
   const calls: unknown[] = [];
   let closed = 0;
-  const controller = new Function("invoke", "closeChatMenu", `
+  const controller = new Function("invoke", "closeChatMenu", "normalizeError", `
     let activeAccount = "a", menuRequest = 1, floatBusy = false, floatError = null;
     ${code}
     return { floatChat, switchAccount: () => { activeAccount = "b"; },
       reopen: () => { menuRequest++; floatBusy = false; floatError = null; },
       state: () => ({ floatBusy, floatError }) };
   `)((command: string, args: unknown) => { calls.push({ command, args }); return response; },
-    () => { closed++; }) as {
+    () => { closed++; }, normalizeError) as {
       floatChat(chat: string): Promise<void>; switchAccount(): void; reopen(): void;
-      state(): { floatBusy: boolean; floatError: string | null };
+      state(): { floatBusy: boolean; floatError: LocalizedError | null };
     };
   return { controller, calls, finish, fail, closed: () => closed };
 }
@@ -50,7 +52,11 @@ test("late opener success cannot close another account menu", async () => {
 test("current opener error remains visible and permits retry", async () => {
   const f = fixture(), opening = f.controller.floatChat("room@g.us");
   f.fail("window limit reached"); await opening;
-  assert.deepEqual(f.controller.state(), { floatBusy: false, floatError: "window limit reached" });
+  const state = f.controller.state();
+  assert.equal(state.floatBusy, false);
+  assert.ok(state.floatError instanceof LocalizedError);
+  assert.equal(state.floatError.message, t("error.operation_failed"));
+  assert.equal(state.floatError.diagnostic, "window limit reached");
   assert.equal(f.closed(), 0);
 });
 

@@ -4,12 +4,7 @@ use super::*;
 use whatsapp_rust::wacore::iq::keepalive::KeepaliveSpec;
 use whatsapp_rust::wacore::iq::spec::IqSpec;
 
-/// What this device asks for when it links. `android` links as an Android
-/// tablet, which is what makes WhatsApp send view-once media here; external
-/// keeps the UWP companion identity, named Postal on the phone's linked
-/// devices. Both are only read at pairing, so switching modes links a new
-/// device; an existing link keeps what it was paired with. With full history,
-/// a backfill of everything the phone has.
+/// Builds the registration identity and optional full-history request.
 pub(super) fn pairing_props(
     full_history: bool,
     android: bool,
@@ -27,6 +22,7 @@ pub(super) fn pairing_props(
                 ..Default::default()
             })
     } else {
+        // Keep the External link's UWP protocol identity across hosts; this is not the host OS.
         whatsapp_rust::wacore::store::DevicePropsOverride::new()
             .with_os("Postal")
             .with_platform_type(PlatformType::UWP)
@@ -39,20 +35,8 @@ pub(super) fn pairing_props(
         full_sync_days_limit: Some(10_000),
         on_demand_ready: Some(true),
         complete_on_demand_ready: Some(true),
-        // WhatsApp Web's own claims, which the library's default also makes.
-        inline_initial_payload_in_e2_ee_msg: Some(true),
-        support_bot_user_agent_chat_history: Some(true),
-        support_cag_reactions_and_polls: Some(true),
-        support_recent_sync_chunk_message_count_tuning: Some(true),
-        support_hosted_group_msg: Some(true),
-        support_biz_hosted_msg: Some(true),
-        support_fbid_bot_chat_history: Some(true),
-        support_message_association: Some(true),
-        support_call_log_history: Some(true),
-        support_group_history: Some(true),
-        support_manus_history: Some(true),
-        support_hatch_history: Some(true),
-        ..Default::default()
+        // Keep SDK's WA Web mirrors for pairing compatibility; minimum server flags are unverified.
+        ..whatsapp_rust::wacore::store::device::default_history_sync_config()
     })
 }
 
@@ -103,6 +87,49 @@ mod pairing_tests {
         assert_eq!(props.platform_type, Some(wa::device_props::PlatformType::UWP));
         assert_eq!(props.version, None);
         assert_eq!(props.require_full_sync, None);
+    }
+
+    #[test]
+    fn pairing_capability_mirrors_preserve_registration_bytes() {
+        use whatsapp_rust::wacore::store::Device;
+        use wa::device_props::{AppVersion, HistorySyncConfig, PlatformType};
+        for android in [false, true] {
+            for full_history in [false, true] {
+                let mut device = Device::new();
+                device.set_device_props(pairing_props(full_history, android));
+                let actual = device.get_client_payload().device_pairing_data.into_option()
+                    .unwrap().device_props.unwrap();
+                let expected = wa::DeviceProps {
+                    os: Some(if android { "Android" } else { "Postal" }.into()),
+                    platform_type: Some(if android { PlatformType::ANDROID_TABLET } else { PlatformType::UWP }),
+                    version: buffa::MessageField::some(if android {
+                        AppVersion { primary: Some(2), secondary: Some(26), tertiary: Some(32),
+                            quaternary: Some(84), ..Default::default() }
+                    } else { Device::default_device_props_version() }),
+                    require_full_sync: Some(full_history),
+                    history_sync_config: buffa::MessageField::some(HistorySyncConfig {
+                        full_sync_days_limit: full_history.then_some(10_000),
+                        on_demand_ready: full_history.then_some(true),
+                        complete_on_demand_ready: full_history.then_some(true),
+                        inline_initial_payload_in_e2_ee_msg: Some(true),
+                        support_bot_user_agent_chat_history: Some(true),
+                        support_cag_reactions_and_polls: Some(true),
+                        support_recent_sync_chunk_message_count_tuning: Some(true),
+                        support_hosted_group_msg: Some(true),
+                        support_biz_hosted_msg: Some(true),
+                        support_fbid_bot_chat_history: Some(true),
+                        support_message_association: Some(true),
+                        support_call_log_history: Some(true),
+                        support_group_history: Some(true),
+                        support_manus_history: Some(true),
+                        support_hatch_history: Some(true),
+                        ..Default::default()
+                    }),
+                };
+                assert_eq!(actual, whatsapp_rust::waproto::codec::device_props_to_vec(&expected),
+                    "android={android}, full_history={full_history}");
+            }
+        }
     }
 }
 
