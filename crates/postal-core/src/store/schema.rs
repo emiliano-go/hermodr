@@ -394,6 +394,7 @@ pub(super) const MIGRATIONS: &[fn(&Connection) -> Result<()>] = &[
     super::spaces::migrate,
     super::event_rsvps::migrate,
     super::event_rsvp_pending::migrate,
+    super::call_history::migrate,
 ];
 
 pub(super) fn migrate(conn: &Connection) -> Result<()> {
@@ -450,6 +451,7 @@ pub(super) fn ensure_optional_columns(conn: &Connection) -> Result<()> {
                 WHERE recent_at IS NOT NULL AND recent_sent_ms=0 AND recent_updated_ms=0 AND recent_removed_ms=0", [])?;
         }
     }
+    super::call_history::migrate(conn)?;
     Ok(())
 }
 

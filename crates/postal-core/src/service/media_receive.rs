@@ -4,6 +4,10 @@ use super::*;
 #[path = "media_receive_tests.rs"]
 mod tests;
 
+#[cfg(test)]
+#[path = "media_receive_hash_tests.rs"]
+mod hash_tests;
+
 pub(super) async fn receive_media(
     client: &Client,
     media: &MediaInfo,

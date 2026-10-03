@@ -2882,5 +2882,10 @@
   "error.transcription_target_invalid": "معرّف الحساب أو المحادثة أو الرسالة المراد تفريغها غير صالح.",
   "error.transcription_already_running": "يجري تفريغ الصوت لهذه الرسالة بالفعل.",
   "error.transcription_queue_full": "قائمة انتظار تفريغ الصوت ممتلئة؛ يمكن تشغيل {max} طلبًا على الأكثر في الوقت نفسه.",
-  "error.transcription_cancelled": "أُلغي تفريغ الصوت."
+  "error.transcription_cancelled": "أُلغي تفريغ الصوت.",
+  "error.calls_address_invalid": "يحتوي سجل المكالمة على عنوان جهة اتصال غير صالح.",
+  "error.calls_identifier_invalid": "يحتوي سجل المكالمة على معرّف أو عنوان فارغ أو أكبر من الحد المسموح، أو على محارف تحكم.",
+  "error.calls_identity_conflict": "يتعارض سجل المكالمة مع هوية المتصل أو اتجاه المكالمة المسجّل. تم الاحتفاظ بالسجل الحالي.",
+  "error.calls_participants_limit": "يحتوي سجل المكالمة على عدد أكبر من المسموح من المشاركين.",
+  "error.calls_revision_invalid": "يحتوي سجل المكالمة على طابع زمني غير صالح للتعديل."
 }

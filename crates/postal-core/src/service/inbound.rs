@@ -137,6 +137,13 @@ impl Inbound {
                     let _ = self.events.send(ServiceEvent::QuickRepliesChanged);
                 }
             }
+            Event::CallLogSync(update) => {
+                let own = own_addresses(self.client_for_events.get().map(Arc::as_ref));
+                if call_history::apply_call_log_event(&self.store, update,
+                    |jid| own.contains(&jid.to_non_ad().to_string())).await.observed() == Some(true) {
+                    let _ = self.events.send(ServiceEvent::CallHistoryChanged);
+                }
+            }
             Event::OfflineSyncPreview(preview) => self.on_sync_preview(preview),
             Event::OfflineSyncCompleted(_) => self.on_sync_completed(),
             Event::OfflineSyncInterrupted(interrupted) => self.on_sync_interrupted(interrupted),

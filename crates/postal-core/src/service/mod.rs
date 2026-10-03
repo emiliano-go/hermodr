@@ -51,6 +51,8 @@ mod labels;
 mod group_audit;
 mod member_profiles;
 mod quick_replies;
+mod call_history;
+pub use crate::store::call_history::{CallOutcome, CallRecord};
 pub use member_profiles::{MemberProfile, MemberProfileLive, MemberProfileLiveView};
 mod diagnostics;
 mod storage;
@@ -117,6 +119,8 @@ mod tests;
 mod history_floor_tests;
 #[cfg(test)]
 mod protocol_tests;
+#[cfg(test)]
+mod inbound_lifecycle_tests;
 
 use connection::*;
 use contacts::*;
@@ -294,6 +298,7 @@ pub enum ServiceEvent {
     FavoritesChanged,
     LabelsChanged,
     QuickRepliesChanged,
+    CallHistoryChanged,
     /// Reactions, stars or the pinned message of a chat changed.
     Marks { chat: String },
     /// Store changes were missed (a lagging listener skipped events), so the

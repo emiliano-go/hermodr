@@ -24,6 +24,7 @@ pub fn visit_wire_types(visitor: &mut impl TypeVisitor) {
         crate::store::MessageCursor, crate::store::MessagePage, crate::store::MessagePageDirection,
         crate::store::ChatMarks, crate::store::archive::ArchiveReport,
         crate::store::BroadcastList,
+        crate::service::CallRecord,
         crate::service::UsernameLookupResult,
         crate::service::SpaceSnapshot, crate::service::SpaceAction, crate::service::SpaceResolution,
         crate::service::SpaceSelection, crate::service::SpaceArchive, crate::service::CachedSpaceGroup,
