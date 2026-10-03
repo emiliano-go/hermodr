@@ -364,7 +364,16 @@
     chatMenu = null;
     muteMenu = false;
     clearTimeout(muteTimer);
-    if (restoreFocus) menuOwner?.focus();
+    if (restoreFocus) {
+      // Returning focus to the row would otherwise fire its focus handler
+      // and pop the hover preview open (e.g. after toggling Mute @all).
+      const owner = menuOwner;
+      if (owner?.isConnected) {
+        restoringPreviewFocus = true;
+        owner.focus({ preventScroll: true });
+        restoringPreviewFocus = false;
+      }
+    }
   }
 
   let muteRow: HTMLDivElement | null = $state(null);
