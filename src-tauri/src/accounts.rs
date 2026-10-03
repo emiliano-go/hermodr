@@ -1,6 +1,6 @@
 use tauri::{AppHandle, State};
 use crate::command_error::{CommandError, CommandResult};
-use crate::{AppState, account_store::{Account, AccountsView, DEFAULT_ACCOUNT_LABEL, SESSION_POINTER, SESSION_POINTER_ANDROID, account_base, active_account, is_stale_session, now_millis, save_accounts}, connection::start_service};
+use crate::{AppState, account_store::{Account, AccountsFile, AccountsView, DEFAULT_ACCOUNT_LABEL, SESSION_POINTER, SESSION_POINTER_ANDROID, account_base, active_account, is_stale_session, now_millis, save_accounts}, connection::start_service};
 
 /// The accounts and which one is active.
 #[tauri::command(async)]
@@ -19,6 +19,7 @@ pub(crate) async fn add_account(
     state: State<'_, AppState>,
     label: Option<String>,
 ) -> CommandResult<()> {
+    let _transition = state.account_transition.lock().await;
     let id = format!("acct-{}", now_millis());
     {
         let mut file = state.accounts.lock().unwrap();
@@ -42,6 +43,7 @@ pub(crate) async fn switch_account(
     state: State<'_, AppState>,
     id: String,
 ) -> CommandResult<()> {
+    let _transition = state.account_transition.lock().await;
     {
         let mut file = state.accounts.lock().unwrap();
         if !file.accounts.iter().any(|a| a.id == id) {
@@ -76,31 +78,39 @@ pub(crate) fn rename_account(
     Ok(())
 }
 
+fn select_account_removal(file: &mut AccountsFile, id: &str) -> CommandResult<bool> {
+    if id.is_empty() || id == "." || id == ".." || id.contains(['/', '\\', ':', '\0']) || id.ends_with(['.', ' '])
+        || !file.accounts.iter().any(|account| account.id == id) {
+        return Err(CommandError::code("error.unknown_account"));
+    }
+    let was_active = file.active.as_deref() == Some(id);
+    file.accounts.retain(|account| account.id != id);
+    if was_active { file.active = file.accounts.first().map(|account| account.id.clone()); }
+    Ok(was_active)
+}
+
 /// Removes an account and its data, switching to another if it was active.
 #[tauri::command]
 pub(crate) async fn remove_account(app: AppHandle, state: State<'_, AppState>, id: String) -> CommandResult<()> {
-    crate::floating::invalidate_all(&app);
-    log::info!("removing account {id}");
-    let was_active = active_account(&state).as_deref() == Some(id.as_str());
-    {
+    let _transition = state.account_transition.lock().await;
+    let was_active = {
         let mut file = state.accounts.lock().unwrap();
-        file.accounts.retain(|a| a.id != id);
-        if was_active {
-            file.active = file.accounts.first().map(|a| a.id.clone());
-        }
-    }
-    save_accounts(&app, &state.accounts.lock().unwrap());
-    crate::connection::stop_once(&app, &state).await?;
-    let running = state.service.lock().unwrap().take();
-    if let Some(existing) = running {
-        // Only the running account can reach WhatsApp to unlink itself.
-        if was_active {
+        let was_active = select_account_removal(&mut file, &id)?;
+        save_accounts(&app, &file);
+        was_active
+    };
+    log::info!("removing account {id}");
+    if was_active {
+        crate::floating::invalidate_all(&app);
+        crate::connection::stop_once(&app, &state).await?;
+        let running = state.service.lock().unwrap().take();
+        if let Some(existing) = running {
             for path in existing.media_paths().await.unwrap_or_default() {
                 let _ = std::fs::remove_file(path);
             }
             existing.logout().await;
+            existing.shutdown();
         }
-        existing.shutdown();
     }
     let base = account_base(&app, &id);
     crate::account_store::remove_history(&app, &state.settings.lock().unwrap().clone(), &id);
@@ -121,11 +131,17 @@ pub(crate) async fn remove_account(app: AppHandle, state: State<'_, AppState>, i
     } else {
         let _ = std::fs::remove_dir_all(base);
     }
-    if let Some(next) = active_account(&state) {
-        start_service(&app, &state, &next).await?;
+    if was_active {
+        if let Some(next) = active_account(&state) {
+            start_service(&app, &state, &next).await?;
+        }
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "account_cleanup_tests.rs"]
+mod account_cleanup_tests;
 
 /// The signed-in account's own JID, once connected. Also recorded on the
 /// account, so the switcher can show every account's picture, and used to name

@@ -164,8 +164,13 @@ export class SessionState {
     clearTimeout(this.gateTimer);
   }
 
-  async showQr(code: string | null) {
-    this.qrSvg = code ? await invoke<string>("qr_svg", { value: code }) : null;
+  private qrRequest = 0;
+  private accountsRequest = 0;
+
+  async showQr(code: string | null, current: () => boolean = () => true) {
+    const request = ++this.qrRequest;
+    const svg = code ? await invoke<string>("qr_svg", { value: code }) : null;
+    if (request === this.qrRequest && current()) this.qrSvg = svg;
   }
 
   /** Asks WhatsApp to mint a phone-number pairing code for `phone` (E.164 digits). */
@@ -208,10 +213,14 @@ export class SessionState {
     this.pairingPhone = null;
   }
 
-  async loadAccounts() {
+  async loadAccounts(current: () => boolean = () => true, beforeActiveChange?: () => void) {
+    const request = ++this.accountsRequest;
     const view = await invoke<import("$lib/utils/wire").AccountsView>("accounts");
+    if (request !== this.accountsRequest || !current()) return view;
+    if (view.active !== this.activeAccount) beforeActiveChange?.();
     this.accountList = view.accounts;
     this.activeAccount = view.active;
+    return view;
   }
 
   async renameAccount(id: string, label: string) {
@@ -261,6 +270,8 @@ export class SessionState {
 
   /** Mirrors resetUi: the session-owned share of an account switch. */
   resetAccount() {
+    ++this.qrRequest;
+    ++this.accountsRequest;
     this.me = null;
     // A switch starts a fresh catch-up, so the loading gate applies again.
     clearTimeout(this.gateTimer);

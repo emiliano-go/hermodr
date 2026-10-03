@@ -78,6 +78,7 @@ const SERVICE_EVENT: &str = "service-event";
 const ONCE_EVENT: &str = "once-event";
 
 struct AppState {
+    account_transition: tokio::sync::Mutex<()>,
     account_service: Mutex<Option<(String, std::sync::Weak<WhatsAppService>)>>,
     service: Mutex<Option<Arc<WhatsAppService>>>,
     /// The optional Android instance, running beside the main service.
@@ -430,6 +431,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     app.manage(native_locale::NativeLocale::default());
 
     app.manage(AppState {
+        account_transition: tokio::sync::Mutex::new(()),
         account_service: Mutex::new(None),
         service: Mutex::new(None),
         once_service: Mutex::new(None),

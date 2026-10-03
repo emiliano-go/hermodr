@@ -700,6 +700,7 @@ pub(crate) async fn cancel_pair_code(state: State<'_, AppState>, companion: bool
 /// Connects the active account, pairing by QR the first time.
 #[tauri::command]
 pub(crate) async fn connect(app: AppHandle, state: State<'_, AppState>) -> CommandResult<()> {
+    let _transition = state.account_transition.lock().await;
     if state.service.lock().unwrap().is_some() {
         return Ok(());
     }
