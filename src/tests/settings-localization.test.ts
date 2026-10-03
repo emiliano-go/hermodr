@@ -97,6 +97,8 @@ test("Settings preserves locale/encryption controls and command contracts with l
   assert.deepEqual(commands, ["backfill_history", "database_encryption_status", "get_desktop_status", "open_log", "profile", "resync_stickers", "set_about", "set_privacy", "set_profile_picture", "set_push_name", "sticker_library"].sort());
   assert.ok(source.includes('<bdi dir="auto">{account.label}</bdi>'));
   assert.ok(source.includes('<bdi dir="ltr">{number}</bdi>'));
-  assert.ok(source.includes('dir="ltr"\n              placeholder={t("settings.main.app_data_folder")}'));
+  for (const text of [source, source.replace(/\r?\n/g, "\r\n")]) {
+    assert.match(text, /dir="ltr"\s+placeholder=\{t\("settings\.main\.app_data_folder"\)\}/);
+  }
   assert.doesNotMatch(source.slice(source.indexOf("<style>")), /(?:^|\n)\s*(?:left|right|padding-left|padding-right|margin-left|margin-right):/);
 });
