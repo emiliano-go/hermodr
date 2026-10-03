@@ -45,7 +45,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
 # cannot open.
 dunce = "1"
 # Resolves the pre-rename bundle directories for the one-time data migration.
-dirs = "6"
+dirs = "7"
 # A second launch exits and focuses the running window, so only one process
 # owns the WhatsApp session. Pinned to 2.4: 2.5 wants tauri 2.12.
 tauri-plugin-single-instance = "=2.4.1"
