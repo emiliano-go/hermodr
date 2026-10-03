@@ -1,4 +1,5 @@
 use super::*;
+use crate::message_ref::MessageRef;
 use crate::store::group_audit::GroupAuditKind as AuditKind;
 use serde::{Deserialize, Serialize};
 use whatsapp_rust::wacore::iq::groups::{GroupDescription, GroupMetadataOutcome, GroupQueryIq, GroupSubject, MembershipApprovalMode};
@@ -33,11 +34,11 @@ pub enum GroupSettingChange {
 impl WhatsAppService {
     async fn read_group_settings(&self, group: &Jid) -> Result<GroupSettings> {
         let mut metadata = match self.client.execute(GroupQueryIq::new(group)).await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))? {
+            .map_err(anyhow::Error::from)? {
             GroupMetadataOutcome::Full(metadata) => whatsapp_rust::GroupMetadata::from(*metadata),
-            GroupMetadataOutcome::NotModified => anyhow::bail!("current group settings could not be verified"),
+            GroupMetadataOutcome::NotModified => anyhow::bail!(MessageRef::new("error.group_settings_unverified")),
         };
-        anyhow::ensure!(metadata.id.to_non_ad() == group.to_non_ad(), "the server returned another group");
+        anyhow::ensure!(metadata.id.to_non_ad() == group.to_non_ad(), MessageRef::new("error.group_settings_mismatch"));
         self.client.groups().resolve_participant_addresses(&mut metadata).await;
         let own: Vec<Jid> = [self.client.pn(), self.client.lid()].into_iter().flatten().map(|jid| jid.to_non_ad()).collect();
         let member = metadata.participants.iter().any(|participant|
@@ -77,7 +78,7 @@ impl WhatsAppService {
                 if *enabled { MembershipApprovalMode::On } else { MembershipApprovalMode::Off }).await,
         };
         current()?;
-        response.map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        response.map_err(anyhow::Error::from)?;
         let chat = group.to_string();
         let (kind, old, new) = match &change {
             GroupSettingChange::Subject { text } => (AuditKind::Subject, settings.subject.clone(), text.clone()),
@@ -98,12 +99,12 @@ impl WhatsAppService {
         let picture = tokio::task::spawn_blocking(move || picture_value(&bytes)).await??;
         let removed = picture.is_none();
         let settings = self.read_group_settings(&group).await?;
-        anyhow::ensure!(settings.member && settings.admin, "only group admins can change the picture");
+        anyhow::ensure!(settings.member && settings.admin, MessageRef::new("error.group_picture_admin"));
         current()?;
         let response = if let Some(picture) = picture { self.client.groups().set_profile_picture(group.clone(), picture).await }
             else { self.client.groups().remove_profile_picture(group.clone()).await };
         current()?;
-        response.map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        response.map_err(anyhow::Error::from)?;
         let jid = group.to_string();
         self.audit_local_group_change(&jid, AuditKind::Picture, None, None, None, None,
             Some(if removed { "removed" } else { "set" })).await.logged();
@@ -114,8 +115,8 @@ impl WhatsAppService {
 }
 
 fn settings_group(chat: &str) -> Result<Jid> {
-    let group: Jid = chat.parse()?;
-    anyhow::ensure!(group.is_group() && !group.user.is_empty(), "choose a group");
+    let group: Jid = chat.parse::<Jid>().map_err(|error| anyhow::Error::new(MessageRef::new("error.group_required")).context(error.to_string()))?;
+    anyhow::ensure!(group.is_group() && !group.user.is_empty(), MessageRef::new("error.group_required"));
     Ok(group.to_non_ad())
 }
 
@@ -125,28 +126,29 @@ fn matches_own(own: &[Jid], jid: &Jid, phone: Option<&Jid>, lid: Option<&Jid>) -
 }
 
 fn validate_change(settings: &GroupSettings, change: &GroupSettingChange) -> Result<()> {
-    anyhow::ensure!(settings.member, "you are no longer a member of this group");
+    anyhow::ensure!(settings.member, MessageRef::new("error.group_not_member"));
     if matches!(change, GroupSettingChange::Subject { .. } | GroupSettingChange::Description { .. }) {
-        anyhow::ensure!(!settings.locked || settings.admin, "only group admins can edit this group's info");
-    } else { anyhow::ensure!(settings.admin, "only group admins can change this setting"); }
+        anyhow::ensure!(!settings.locked || settings.admin, MessageRef::new("error.group_info_admin"));
+    } else { anyhow::ensure!(settings.admin, MessageRef::new("error.group_setting_admin")); }
     if let GroupSettingChange::Description { previous_id, .. } = change {
-        anyhow::ensure!(previous_id == &settings.description_id, "the group description changed; refresh it before saving");
+        anyhow::ensure!(previous_id == &settings.description_id, MessageRef::new("error.group_description_changed"));
     }
     Ok(())
 }
 
 fn subject_value(text: &str) -> Result<GroupSubject> {
-    anyhow::ensure!(!text.trim().is_empty(), "enter a group name");
-    GroupSubject::new(text.to_owned())
+    anyhow::ensure!(!text.trim().is_empty(), MessageRef::new("error.group_name_required"));
+    GroupSubject::new(text.to_owned()).map_err(|error| anyhow::Error::new(MessageRef::new("error.group_subject_invalid")).context(error.to_string()))
 }
 
 fn description_value(text: Option<String>) -> Result<Option<GroupDescription>> {
     text.filter(|text| !text.is_empty()).map(GroupDescription::new).transpose()
+        .map_err(|error| anyhow::Error::new(MessageRef::new("error.group_description_invalid")).context(error.to_string()))
 }
 
 fn picture_value(bytes: &[u8]) -> Result<Option<Vec<u8>>> {
     if bytes.is_empty() { return Ok(None); }
-    square_jpeg(bytes, 640).map(Some).ok_or_else(|| anyhow::anyhow!("that file is not an image we can read"))
+    square_jpeg(bytes, 640).map(Some).ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.group_picture_invalid")))
 }
 
 #[cfg(test)]

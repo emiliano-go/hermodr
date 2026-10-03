@@ -1,11 +1,13 @@
 import { invoke } from "$lib/utils/ipc";
-import { memberActionReason, type MemberAction, type MemberScope } from "$lib/utils/member-sheet";
+import { memberActionError, type MemberAction, type MemberScope } from "$lib/utils/member-sheet";
 import type { AuditFilters, AuditPage } from "$lib/utils/group-audit";
 import type { BlockedContact, GroupAuditCursor, MemberNote, MemberProfile, Participant, ParticipantChange } from "$lib/utils/wire";
 import { session } from "./session.svelte";
 import { chats } from "./chats.svelte";
 import { messages } from "./messages.svelte";
 import { composer } from "./composer.svelte";
+import { LocalizedError, normalizeError } from "../i18n/errors.ts";
+import { uiError } from "./localized.ts";
 
 type SheetScope = MemberScope & { generation: number; title: string };
 const commands = { promote: "promote_group_participants", demote: "demote_group_participants", remove: "remove_group_participants" } as const;
@@ -15,8 +17,14 @@ export class MemberSheetState {
   profile = $state.raw<MemberProfile | null>(null);
   localLoading = $state(false);
   liveLoading = $state(false);
-  error = $state("");
-  liveError = $state("");
+  #error = $state<LocalizedError | null>(null);
+  get error(): string { return this.#error?.message ?? ""; }
+  set error(value: unknown) { this.#error = value == null || value === "" ? null : normalizeError(value); }
+  get diagnostic() { return this.#error?.diagnostic; }
+  #liveError = $state<LocalizedError | null>(null);
+  get liveError(): string { return this.#liveError?.message ?? ""; }
+  set liveError(value: unknown) { this.#liveError = value == null || value === "" ? null : normalizeError(value); }
+  get liveDiagnostic() { return this.#liveError?.diagnostic; }
   blocked = $state<boolean | null>(null);
   private serial = 0;
   private request = 0;
@@ -49,7 +57,7 @@ export class MemberSheetState {
     if (signal?.aborted || !owner || owner.account !== scope.account || owner.group !== scope.group || owner.jid !== scope.jid
       || owner.requestKey !== scope.requestKey || session.activeAccount !== owner.account
       || messages.accountGeneration !== owner.generation || chats.selectedChat !== owner.group) {
-      throw new Error("account, group or member changed during operation");
+      throw uiError("error.state.member_scope");
     }
   }
 
@@ -73,7 +81,7 @@ export class MemberSheetState {
     const signalsRevision = this.signalsRevision;
     this.localLoading = this.liveLoading = false;
     if (live) { this.liveLoading = true; this.liveError = ""; } else { this.localLoading = true; this.error = ""; }
-    const current = () => { this.current(scope); if (request !== this.request) throw new Error("member request superseded"); };
+    const current = () => { this.current(scope); if (request !== this.request) throw uiError("error.state.member_superseded"); };
     try {
       current();
       const profile = await invoke<MemberProfile>("user_profile", { accountId: scope.account, group: scope.group, jid: scope.jid, live, force });
@@ -83,7 +91,7 @@ export class MemberSheetState {
       if (live && !this.presenceRequested) {
         this.presenceRequested = true;
         void invoke<void>("watch_presence", { account: scope.account, jid: scope.jid }).catch((error) => {
-          try { current(); this.presenceRequested = false; this.liveError = `Presence subscription unavailable: ${error}`; } catch {}
+          try { current(); this.presenceRequested = false; this.liveError = uiError("error.state.presence_subscription", {}, error); } catch {}
         });
       }
       if (live && profile.moderation_admin_verified) {
@@ -91,11 +99,11 @@ export class MemberSheetState {
           const blocked = await invoke<BlockedContact[]>("blocked_contacts", { account: scope.account });
           current();
           this.blocked = blocked.some((item) => item.jids.some((jid) => profile.local.addresses.includes(jid)));
-        } catch (error) { current(); this.blocked = null; this.liveError = `Block status unavailable: ${error}`; }
+        } catch (error) { current(); this.blocked = null; this.liveError = uiError("error.state.block_status", {}, error); }
       }
     } catch (error) {
       try { current(); } catch { return; }
-      if (live) this.liveError = String(error); else this.error = String(error);
+      if (live) this.liveError = error; else this.error = error;
     } finally {
       if (request === this.request && this.scope === scope) {
         if (live) this.liveLoading = false; else this.localLoading = false;
@@ -151,9 +159,9 @@ export class MemberSheetState {
       const profile = await invoke<MemberProfile>("user_profile", { accountId: scope.account, group: scope.group, jid: scope.jid, live: true, force: false });
       this.current(scope, signal);
       this.profile = profile;
-      const reason = memberActionReason(action, { admin: this.admin(), connected: session.connected, self: profile.local.identity.own,
+      const failure = memberActionError(action, { admin: this.admin(), connected: session.connected, self: profile.local.identity.own,
         member: this.member(), blocked: this.blocked, supported: ["promote", "demote", "remove", "block", "unblock"] });
-      if (reason) throw new Error(reason);
+      if (failure) throw failure;
       const result = action in commands
         ? await invoke<ParticipantChange[]>(commands[action as keyof typeof commands], { account: scope.account, chat: scope.group, jids: [scope.jid] })
         : await invoke<void>("set_contact_blocked", { account: scope.account, jid: scope.jid, blocked: action === "block" });

@@ -4,12 +4,17 @@ import type { QuickReplyScope } from "$lib/utils/quick-replies";
 import { session } from "./session.svelte";
 import { messages } from "./messages.svelte";
 import { chats } from "./chats.svelte";
+import { LocalizedError, normalizeError } from "../i18n/errors.ts";
+import { uiError } from "./localized.ts";
 
 export class QuickRepliesState {
   replies = $state.raw<QuickReply[]>([]);
   loading = $state(false);
   syncing = $state(false);
-  error = $state("");
+  #error = $state<LocalizedError | null>(null);
+  get error(): string { return this.#error?.message ?? ""; }
+  set error(value: unknown) { this.#error = value == null || value === "" ? null : normalizeError(value); }
+  get diagnostic() { return this.#error?.diagnostic; }
   key = $state(0);
   private account: string | null = null;
   private generation = -1;
@@ -30,7 +35,7 @@ export class QuickRepliesState {
 
   current(scope: QuickReplyScope) {
     if (scope.account !== session.activeAccount || scope.generation !== messages.accountGeneration
-      || scope.chat !== chats.selectedChat || scope.requestKey !== this.key) throw new Error("account or chat changed before quick reply");
+      || scope.chat !== chats.selectedChat || scope.requestKey !== this.key) throw uiError("error.state.quick_reply_scope");
   }
 
   async refresh() {
@@ -44,7 +49,7 @@ export class QuickRepliesState {
       const view = await invoke<QuickRepliesView>("quick_replies_view", { accountId: account });
       if (!current()) return;
       this.account = account; this.generation = generation; this.replies = view.replies;
-    } catch (error) { if (current()) this.error = String(error); }
+    } catch (error) { if (current()) this.error = error; }
     finally { if (current()) this.loading = false; }
   }
 
@@ -62,7 +67,7 @@ export class QuickRepliesState {
       this.current(scope);
       await this.refresh();
     } catch (error) {
-      try { this.current(scope); this.error = String(error); } catch {}
+      try { this.current(scope); this.error = error; } catch {}
     } finally {
       if (scope.account === session.activeAccount && scope.generation === messages.accountGeneration
         && scope.requestKey === this.key) this.syncing = false;

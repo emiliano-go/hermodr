@@ -6,6 +6,7 @@
   let globalOpen = $state(false);
   let saved = $state("");
   let settings = $state<UiSettings>({
+    encrypt_databases: false,
     message_window_size: 500,
     retention: { max_age_hours: { kind: "limited", value: 24 }, max_messages_per_chat: { kind: "limited", value: 500 } },
     request_full_history: false, auto_download_media: false, auto_transcribe: false, warn_missing_video_preview: true, media_quality: "hd",

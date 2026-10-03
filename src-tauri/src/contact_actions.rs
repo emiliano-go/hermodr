@@ -1,4 +1,4 @@
-use crate::{AppState, connection::command_error};
+use crate::{AppState, command_error::{CommandError, CommandResult}};
 use std::sync::Arc;
 use tauri::State;
 
@@ -10,8 +10,8 @@ pub(crate) async fn save_contact(
     full_name: String,
     first_name: Option<String>,
     save_on_primary_addressbook: bool,
-) -> Result<(), String> {
-    let service = state.account_service(&account)?;
+) -> CommandResult<()> {
+    let service = state.account_service(&account).map_err(|error| CommandError::code("error.not_connected").with_diagnostic(error))?;
     service
         .save_contact(
             &jid,
@@ -25,10 +25,10 @@ pub(crate) async fn save_contact(
             },
         )
         .await
-        .map_err(|error| command_error(&service, error))?;
-    let current = state.account_service(&account)?;
+        .map_err(|error| { service.note_error(&error); CommandError::from(error) })?;
+    let current = state.account_service(&account).map_err(|error| CommandError::code("error.account_changed").with_diagnostic(error))?;
     if !Arc::ptr_eq(&service, &current) {
-        return Err("account changed during contact edit".into());
+        return Err(CommandError::code("error.account_changed"));
     }
     Ok(())
 }
@@ -38,8 +38,8 @@ pub(crate) async fn remove_contact(
     state: State<'_, AppState>,
     account: String,
     jid: String,
-) -> Result<(), String> {
-    let service = state.account_service(&account)?;
+) -> CommandResult<()> {
+    let service = state.account_service(&account).map_err(|error| CommandError::code("error.not_connected").with_diagnostic(error))?;
     service
         .remove_contact(&jid, || {
             state
@@ -47,10 +47,10 @@ pub(crate) async fn remove_contact(
                 .is_ok_and(|current| Arc::ptr_eq(&service, &current))
         })
         .await
-        .map_err(|error| command_error(&service, error))?;
-    let current = state.account_service(&account)?;
+        .map_err(|error| { service.note_error(&error); CommandError::from(error) })?;
+    let current = state.account_service(&account).map_err(|error| CommandError::code("error.account_changed").with_diagnostic(error))?;
     if !Arc::ptr_eq(&service, &current) {
-        return Err("account changed during contact edit".into());
+        return Err(CommandError::code("error.account_changed"));
     }
     Ok(())
 }

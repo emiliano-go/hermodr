@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { t, formatNumber } from "$lib/i18n/localizer";
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
   import { untrack } from "svelte";
   import type { GroupAuditCursor, Participant, ParticipantChange } from "$lib/utils/wire";
   import type { MemberAction, MemberLocalView, MemberLiveView, MemberScope } from "$lib/utils/member-sheet";
@@ -12,7 +14,7 @@
   import GroupAudit from "$lib/chat/GroupAudit.svelte";
 
   let { account, group, groupName, jid, requestKey, dataScope, title, connected, local: incomingLocal = null, member: incomingMember = null, memberSource = "cached",
-    live: incomingLive = null, picture: incomingPicture = null, localLoading = false, liveLoading = false, error = "", liveError = "", admin = false,
+    live: incomingLive = null, picture: incomingPicture = null, localLoading = false, liveLoading = false, error = "", liveError = "", liveDiagnostic = null, admin = false,
     blocked = null, supportedActions = [], liveCached = false, liveStale = false, moderationAdminVerified = false,
     moderationVerifiedAt = null, moderationError = "", community = false, auditRevision = 0, namer, formatTime, onaction, onsavelocal, onloadAudit,
     onmessage, ongroup, onrefresh, onclose }: {
@@ -20,10 +22,10 @@
     dataScope: MemberScope | null;
     connected: boolean; local?: MemberLocalView | null; member?: Participant | null; memberSource?: "cached" | "live";
     live?: MemberLiveView | null; picture?: string | null; localLoading?: boolean; liveLoading?: boolean;
-    error?: string | null; liveError?: string | null; admin?: boolean; blocked?: boolean | null;
+    error?: LocalizedError | string | null; liveError?: LocalizedError | string | null; liveDiagnostic?: string | null; admin?: boolean; blocked?: boolean | null;
     supportedActions?: readonly MemberAction[];
     liveCached?: boolean; liveStale?: boolean; moderationAdminVerified?: boolean; moderationVerifiedAt?: number | null;
-    moderationError?: string | null; community?: boolean; auditRevision?: number;
+    moderationError?: LocalizedError | string | null; community?: boolean; auditRevision?: number;
     namer: (jid: string) => string; formatTime: (timestamp: number) => string;
     onaction: (scope: MemberScope, action: MemberAction) => Promise<ParticipantChange[] | void>;
     onsavelocal: (scope: MemberScope, notes: string, warnings: number) => Promise<void>;
@@ -32,14 +34,16 @@
     onrefresh?: (scope: MemberScope) => void; onclose: () => void;
   } = $props();
 
-  const actions = [["promote", "Make admin"], ["demote", "Remove admin role"], ["remove", "Remove from group"],
-    ["block", "Block"], ["unblock", "Unblock"], ["report", "Report"]] as const;
+  const actions = [["promote", "group.make_admin"], ["demote", "group.remove_admin"], ["remove", "group.remove_member"],
+    ["block", "contact.block"], ["unblock", "contact.unblock"], ["report", "contact.report"]] as const;
   let dialog = $state<HTMLDialogElement>();
   let notes = $state("");
   let warnings = $state<number | undefined>(0);
   let notesLoaded = $state(false);
   let busy = $state(false);
-  let failure = $state("");
+  let failure = $state<LocalizedError | string>("");
+  let refusedChanges = $state<ParticipantChange[]>([]);
+  const refusal = $derived(refusedChanges.map(changeText).filter(Boolean).join(" "));
   let saved = $state("");
   let confirmation = $state<MemberAction | null>(null);
   let enlarged = $state(false);
@@ -50,7 +54,7 @@
   const member = $derived(ready && incomingMember && (incomingMember.jid === jid || local?.addresses.includes(incomingMember.jid)) && (incomingLocal === null || local !== null)
     && (memberSource === "live" || !local?.group || local.group.present) ? incomingMember : null);
   const role = $derived(member ?? (local?.group?.present ? local.group : null));
-  const roleName = $derived(role?.owner === true ? "Group owner" : role?.owner === false && role.admin !== null ? role.admin ? "Admin" : "Member" : null);
+  const roleName = $derived(role?.owner === true ? t("group.owner") : role?.owner === false && role.admin !== null ? role.admin ? t("group.admin") : t("group.member") : null);
   const live = $derived(ready ? incomingLive : null);
   const picture = $derived(ready ? incomingPicture : null);
   const shown = $derived(displayName(member?.name ?? title, jid, local?.identity ?? undefined));
@@ -65,7 +69,7 @@
   $effect(() => {
     account; group; jid; requestKey;
     ++generation;
-    busy = enlarged = notesLoaded = false; confirmation = null; failure = saved = "";
+    busy = enlarged = notesLoaded = false; confirmation = null; failure = saved = ""; refusedChanges = [];
     untrack(() => { notes = local?.note.text ?? ""; warnings = local?.note.warnings ?? 0; notesLoaded = local !== null; });
     return () => { ++generation; };
   });
@@ -81,110 +85,116 @@
     const owner = scope();
     if (!owner || busy || localLoading || liveLoading || confirmation !== action || memberActionReason(action, permissions)) return;
     const revision = generation;
-    busy = true; failure = saved = "";
+    busy = true; failure = saved = ""; refusedChanges = [];
     try {
       const result = await onaction(owner, action);
       if (!current(owner, revision)) return;
-      const refused = result?.map(changeText).filter(Boolean) ?? [];
-      if (refused.length) failure = refused.join(" "); else { confirmation = null; saved = "Action request accepted."; }
-    } catch (cause) { if (current(owner, revision)) failure = String(cause); }
+      refusedChanges = result ?? [];
+      const refused = refusedChanges.map(changeText).filter(Boolean);
+      if (!refused.length) { confirmation = null; saved = "contact.action_accepted"; }
+    } catch (cause) { if (current(owner, revision)) failure = normalizeError(cause); }
     finally { if (current(owner, revision)) busy = false; }
   }
   async function saveLocal() {
     const owner = scope(), count = warnings;
     if (!owner || !local || busy || localLoading || count === undefined || memberNoteError(notes, count)) return;
     const revision = generation, draft = notes;
-    busy = true; failure = saved = "";
-    try { await onsavelocal(owner, draft, count); if (current(owner, revision)) saved = "Notes and warning count saved on this device."; }
-    catch (cause) { if (current(owner, revision)) failure = String(cause); }
+    busy = true; failure = saved = ""; refusedChanges = [];
+    try { await onsavelocal(owner, draft, count); if (current(owner, revision)) saved = "contact.notes_saved"; }
+    catch (cause) { if (current(owner, revision)) failure = normalizeError(cause); }
     finally { if (current(owner, revision)) busy = false; }
   }
   function loadAudit(owner: AuditScope, filters: AuditFilters, cursor: GroupAuditCursor | null): Promise<AuditPage> {
-    if (!onloadAudit || !owner.member || owner.account !== account || owner.group !== group || owner.member !== jid || owner.requestKey !== auditKey) throw new Error("Member audit is unavailable.");
+    if (!onloadAudit || !owner.member || owner.account !== account || owner.group !== group || owner.member !== jid || owner.requestKey !== auditKey) throw normalizeError({ kind: "postal_error", code: "error.member_audit_unavailable", params: {} });
     return onloadAudit({ account: owner.account, group: owner.group, jid: owner.member, requestKey }, filters, cursor);
   }
 </script>
+
+{#snippet fieldDetails(key: "photo" | "about" | "username" | "business_name" | "business" | "device_count")}
+  {@const diagnostic = live?.field_failures?.[key]?.diagnostic ?? live?.[key].error}
+  {#if diagnostic}<details><summary>{t("error.technical_details")}</summary><pre dir="auto">{diagnostic}</pre></details>{/if}
+{/snippet}
 
 <svelte:window onkeydowncapture={(event) => {
   if (enlarged && event.key === "Escape") { event.preventDefault(); event.stopImmediatePropagation(); enlarged = false; }
 }} />
 
-<dialog bind:this={dialog} aria-label={`Member info: ${shown}`} oncancel={(event) => { event.preventDefault(); event.stopPropagation(); onclose(); }}
+<dialog bind:this={dialog} aria-label={t("contact.member_info", { name: shown })} oncancel={(event) => { event.preventDefault(); event.stopPropagation(); onclose(); }}
   onkeydown={(event) => { if (event.key === "Escape") event.stopPropagation(); }}>
-  <header><div><h2>{shown}</h2><span class="muted">{groupName}</span></div><button class="close" aria-label="Close member info" onclick={onclose}><Icon name="x" size={18} /></button></header>
-  <div class="identity-head"><button class="photo" disabled={!picture} aria-label="View member photo" onclick={() => (enlarged = true)}>
+  <header><div><h2><bdi>{shown}</bdi></h2><span class="muted">{groupName}</span></div><button class="close" aria-label={t("contact.member_close")} onclick={onclose}><Icon name="x" size={18} /></button></header>
+  <div class="identity-head"><button class="photo" disabled={!picture} aria-label={t("contact.member_photo")} onclick={() => (enlarged = true)}>
     <Avatar src={picture} label={shown} seed={jid} cls="member-sheet-avatar" /></button>
-    <div><p>{roleName ? `${member && memberSource === "live" ? "" : "Cached "}${roleName}` : local?.group?.present === false ? "Absent at last cached group update" : "Group role unavailable"}</p>
-      <p>Group tag: {role?.label || "Not recorded"}</p><button onclick={() => onmessage(jid)} disabled={!account}>Message</button></div></div>
-  {#if !account}<p role="status">Select an account to read member info.</p>{/if}
-  {#if localLoading}<p class="muted" role="status">Loading locally stored member info…</p>{/if}
+    <div><p>{roleName ? member && memberSource === "live" ? roleName : t("contact.cached_role", { role: roleName }) : local?.group?.present === false ? t("contact.member_absent") : t("contact.member_role_unavailable")}</p>
+      <p>{t("contact.group_tag")} {role?.label || t("ui.not_recorded")}</p><button onclick={() => onmessage(jid)} disabled={!account}>{t("chat.message")}</button></div></div>
+  {#if !account}<p role="status">{t("contact.member_select_account")}</p>{/if}
+  {#if localLoading}<p class="muted" role="status">{t("contact.member_loading")}</p>{/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
-  <section><h3>Identity stored on this device</h3><dl>
-    <dt>Saved name</dt><dd>{local?.identity?.saved_name ?? "Not recorded"}</dd>
-    <dt>Push name</dt><dd>{local?.identity?.push_name ?? "Not recorded"}</dd>
-    <dt>Phone</dt><dd>{local?.identity?.number ? phoneLabel(local.identity.number) ?? `+${local.identity.number}` : "Not recorded"}</dd>
-    <dt>Username</dt><dd>{local?.identity?.username ?? member?.username ?? "Not recorded"}</dd>
-    <dt>Phone address</dt><dd>{local?.pn_jid ?? "Not recorded"}</dd><dt>LID</dt><dd>{local?.lid_jid ?? "Not recorded"}</dd>
-    <dt>Addresses</dt><dd>{(local?.addresses.length ? local.addresses : [jid]).join(", ")}</dd>
+  <section><h3>{t("contact.local_identity")}</h3><dl>
+    <dt>{t("contact.saved_name")}</dt><dd dir="auto">{local?.identity?.saved_name ?? t("ui.not_recorded")}</dd>
+    <dt>{t("contact.push_name")}</dt><dd dir="auto">{local?.identity?.push_name ?? t("ui.not_recorded")}</dd>
+    <dt>{t("contact.phone")}</dt><dd dir="auto">{local?.identity?.number ? phoneLabel(local.identity.number) ?? `+${local.identity.number}` : t("ui.not_recorded")}</dd>
+    <dt>{t("contact.username")}</dt><dd dir="auto">{local?.identity?.username ?? member?.username ?? t("ui.not_recorded")}</dd>
+    <dt>{t("contact.phone_address")}</dt><dd dir="auto">{local?.pn_jid ?? t("ui.not_recorded")}</dd><dt>{t("contact.lid")}</dt><dd dir="auto">{local?.lid_jid ?? t("ui.not_recorded")}</dd>
+    <dt>{t("contact.addresses")}</dt><dd dir="auto">{(local?.addresses.length ? local.addresses : [jid]).join(", ")}</dd>
   </dl></section>
-  <section><h3>{local?.scope_chat ? "Messages stored for this group" : "Messages stored on this device"}</h3><dl>
-    <dt>First message</dt><dd>{local?.stats.first_at != null ? formatTime(local.stats.first_at) : "Not recorded"}</dd>
-    <dt>Last message</dt><dd>{local?.stats.last_at != null ? formatTime(local.stats.last_at) : "Not recorded"}</dd>
-    <dt>Messages</dt><dd>{local?.stats.total ?? "Unavailable"}</dd><dt>Media</dt><dd>{local?.stats.media_total ?? "Unavailable"}</dd>
-    <dt>Reactions sent</dt><dd>{local?.stats.reactions_sent ?? "Unavailable"}</dd><dt>Mentions</dt><dd>{local?.stats.times_mentioned ?? "Unavailable"}{#if local}<small>Across {local.stats.mention_contexts_recorded} locally recorded mention contexts; {local.stats.group_mention_contexts_recorded} in this group.</small>{/if}</dd>
+  <section><h3>{local?.scope_chat ? t("contact.group_messages") : t("contact.local_messages")}</h3><dl>
+    <dt>{t("contact.first_message")}</dt><dd dir="auto">{local?.stats.first_at != null ? formatTime(local.stats.first_at) : t("ui.not_recorded")}</dd>
+    <dt>{t("contact.last_message")}</dt><dd dir="auto">{local?.stats.last_at != null ? formatTime(local.stats.last_at) : t("ui.not_recorded")}</dd>
+    <dt>{t("chat.messages")}</dt><dd dir="auto">{local?.stats.total != null ? formatNumber(local?.stats.total) : t("ui.unavailable")}</dd><dt>{t("chat.media")}</dt><dd dir="auto">{local?.stats.media_total != null ? formatNumber(local?.stats.media_total) : t("ui.unavailable")}</dd>
+    <dt>{t("contact.reactions_sent")}</dt><dd dir="auto">{local?.stats.reactions_sent != null ? formatNumber(local?.stats.reactions_sent) : t("ui.unavailable")}</dd><dt>{t("chat.mentions")}</dt><dd dir="auto">{local?.stats.times_mentioned != null ? formatNumber(local?.stats.times_mentioned) : t("ui.unavailable")}{#if local}<small>{t("contact.mention_contexts", { contexts: local.stats.mention_contexts_recorded, mentions: local.stats.group_mention_contexts_recorded })}</small>{/if}</dd>
   </dl></section>
-  <section><h3>Local notes</h3><p class="muted">Notes and warning count stay on this device. Up to 4096 characters; warning count 0–100000.</p>
-    <label>Notes <textarea bind:value={notes} disabled={!local || busy || localLoading} rows="3"></textarea></label>
-    <label>Warning count <input type="number" min="0" max="100000" step="1" bind:value={warnings} disabled={!local || busy || localLoading} /></label>
+  <section><h3>{t("contact.local_notes")}</h3><p class="muted">{t("contact.notes_hint")}</p>
+    <label>{t("contact.notes")} <textarea dir="auto" bind:value={notes} disabled={!local || busy || localLoading} rows="3"></textarea></label>
+    <label>{t("contact.warning_count")} <input type="number" min="0" max="100000" step="1" bind:value={warnings} disabled={!local || busy || localLoading} /></label>
     {#if noteError}<p class="error" role="alert">{noteError}</p>{/if}
-    <button disabled={!account || !local || busy || localLoading || !!noteError} onclick={saveLocal}>Save local notes</button>
+    <button disabled={!account || !local || busy || localLoading || !!noteError} onclick={saveLocal}>{t("contact.notes_save")}</button>
   </section>
-  <section><header><h3>Live information</h3>{#if onrefresh}<button disabled={!connected || busy || liveLoading} onclick={() => { const owner = scope(); if (owner) onrefresh?.(owner); }}>Refresh live info</button>{/if}</header>
-    {#if !connected}<p class="muted" role="status">Offline. Previously fetched fields may be outdated.</p>{/if}
-    {#if liveLoading}<p class="muted" role="status">Fetching live info…</p>{/if}
-    {#if liveError}<p class="error" role="alert">{liveError}</p>{/if}
-    {#if liveCached || liveOutdated}<p class="muted">{liveCached ? "Cached live fields." : ""} {liveOutdated ? "These fields may be outdated." : ""}</p>{/if}
-    {#if live?.fetched_at}<p class="muted">Last fetched {formatTime(live.fetched_at)}</p>{/if}
-    <dl><dt>Photo</dt><dd>{memberFieldText(live?.photo ?? null, () => "Photo available")}</dd>
-      <dt>About</dt><dd class="about">{memberFieldText(live?.about ?? null)}</dd>
-      <dt>Live username</dt><dd>{memberFieldText(live?.username ?? null)}</dd>
-      <dt>Verified business name</dt><dd>{memberFieldText(live?.business_name ?? null)}</dd>
-      <dt>Business profile</dt><dd>{memberFieldText(live?.business ?? null, () => live?.business.value?.name || "Available")}</dd>
-      <dt>Device count</dt><dd>{memberFieldText(live?.device_count ?? null)}</dd>
-      <dt>Presence</dt><dd>{local?.signals.online != null ? local.signals.online ? "Online at last update" : "Offline at last update" : "Not recorded"}
-        {#if local?.signals.last_seen != null}<small>Last seen {formatTime(local.signals.last_seen)}</small>{/if}
-        {#if local?.signals.presence_at != null}<small>Observed {formatTime(local.signals.presence_at)}</small>{/if}</dd>
-      <dt>Typing</dt><dd>{typing ?? "No current typing update"}</dd></dl>
+  <section><header><h3>{t("contact.live_info")}</h3>{#if onrefresh}<button disabled={!connected || busy || liveLoading} onclick={() => { const owner = scope(); if (owner) onrefresh?.(owner); }}>{t("contact.live_refresh")}</button>{/if}</header>
+    {#if !connected}<p class="muted" role="status">{t("contact.live_offline")}</p>{/if}
+    {#if liveLoading}<p class="muted" role="status">{t("contact.live_loading")}</p>{/if}
+    {#if liveError}<p class="error" role="alert">{liveError}</p>{#if liveDiagnostic}<details><summary>{t("error.technical_details")}</summary><pre dir="auto">{liveDiagnostic}</pre></details>{/if}{/if}
+    {#if liveCached || liveOutdated}<p class="muted">{liveCached ? t("contact.live_cached") : ""} {liveOutdated ? t("contact.live_outdated") : ""}</p>{/if}
+    {#if live?.fetched_at}<p class="muted">{t("contact.last_fetched", { time: formatTime(live.fetched_at) })}</p>{/if}
+    <dl><dt>{t("contact.photo")}</dt><dd dir="auto">{memberFieldText(live?.photo ?? null, () => t("contact.photo_available"), live?.field_failures?.photo)}{@render fieldDetails("photo")}</dd>
+      <dt>{t("contact.about")}</dt><dd class="about">{memberFieldText(live?.about ?? null, undefined, live?.field_failures?.about)}{@render fieldDetails("about")}</dd>
+      <dt>{t("contact.live_username")}</dt><dd dir="auto">{memberFieldText(live?.username ?? null, undefined, live?.field_failures?.username)}{@render fieldDetails("username")}</dd>
+      <dt>{t("contact.business_verified")}</dt><dd dir="auto">{memberFieldText(live?.business_name ?? null, undefined, live?.field_failures?.business_name)}{@render fieldDetails("business_name")}</dd>
+      <dt>{t("contact.business_profile")}</dt><dd dir="auto">{memberFieldText(live?.business ?? null, () => live?.business.value?.name || t("ui.available"), live?.field_failures?.business)}{@render fieldDetails("business")}</dd>
+      <dt>{t("contact.device_count")}</dt><dd dir="auto">{memberFieldText(live?.device_count ?? null, undefined, live?.field_failures?.device_count)}{@render fieldDetails("device_count")}</dd>
+      <dt>{t("contact.presence")}</dt><dd dir="auto">{local?.signals.online != null ? local.signals.online ? t("contact.online_last") : t("contact.offline_last") : t("ui.not_recorded")}
+        {#if local?.signals.last_seen != null}<small>{t("contact.last_seen", { time: formatTime(local.signals.last_seen) })}</small>{/if}
+        {#if local?.signals.presence_at != null}<small>{t("contact.observed", { time: formatTime(local.signals.presence_at) })}</small>{/if}</dd>
+      <dt>{t("contact.typing")}</dt><dd dir="auto">{typing ?? t("contact.typing_empty")}</dd></dl>
     {#if live?.business.value && (live.business.state === "available" || live.business.state === "error" && live.business.stale)}
       {@const business = live.business.value}
-      <dl class="business"><dt>Description</dt><dd>{business.description || "Not provided"}</dd><dt>Address</dt><dd>{business.address ?? "Not provided"}</dd>
-        <dt>Email</dt><dd>{business.email ?? "Not provided"}</dd><dt>Websites</dt><dd>{business.websites.join(", ") || "Not provided"}</dd>
-        <dt>Categories</dt><dd>{business.categories.join(", ") || "Not provided"}</dd><dt>Time zone</dt><dd>{business.timezone ?? "Not provided"}</dd>
-        <dt>Hours</dt><dd>{business.hours === null ? "Not provided" : business.hours.length === 0 ? "No hours provided" : business.hours.map(memberBusinessHours).join("; ")}</dd></dl>
+      <dl class="business"><dt>{t("contact.description")}</dt><dd dir="auto">{business.description || t("ui.not_provided")}</dd><dt>{t("contact.address")}</dt><dd dir="auto">{business.address ?? t("ui.not_provided")}</dd>
+        <dt>{t("contact.email")}</dt><dd dir="auto">{business.email ?? t("ui.not_provided")}</dd><dt>{t("contact.websites")}</dt><dd dir="auto">{business.websites.join(", ") || t("ui.not_provided")}</dd>
+        <dt>{t("contact.categories")}</dt><dd dir="auto">{business.categories.join(", ") || t("ui.not_provided")}</dd><dt>{t("contact.time_zone")}</dt><dd dir="auto">{business.timezone ?? t("ui.not_provided")}</dd>
+        <dt>{t("contact.hours")}</dt><dd dir="auto">{business.hours === null ? t("ui.not_provided") : business.hours.length === 0 ? t("contact.no_hours") : business.hours.map(memberBusinessHours).join("; ")}</dd></dl>
     {/if}
   </section>
-  <section><h3>Group join recorded locally</h3><dl><dt>Joined</dt><dd>{local?.join ? formatTime(local.join.timestamp) : "Not recorded"}</dd>
-    <dt>Actor</dt><dd>{local?.join?.actor ? namer(local.join.actor) : "Not recorded"}</dd>
-    <dt>Join method</dt><dd>{local?.join?.kind ?? "Not recorded"}</dd></dl></section>
-  <section><h3>Cached mutual groups</h3>{#if local?.mutual_groups == null}<p class="muted">Unavailable in the local cache.</p>
-    {:else if local.mutual_groups.length === 0}<p class="muted">No mutual groups recorded in the local cache.</p>
-    {:else}<ul>{#each local.mutual_groups as cached (cached.chat)}<li><button onclick={() => ongroup(cached.chat)}>{cached.subject ?? cached.chat}</button><small>Observed {formatTime(cached.observed_at)}</small></li>{/each}</ul>{/if}</section>
-  <section><h3>Member actions</h3>{#if !admin || !moderationFresh}<p class="muted">Live group admin verification is required for member actions.</p>{/if}
-    {#if moderationVerifiedAt !== null}<p class="muted">Admin verification {formatTime(moderationVerifiedAt)}</p>{/if}
+  <section><h3>{t("contact.group_join_local")}</h3><dl><dt>{t("contact.joined")}</dt><dd dir="auto">{local?.join ? formatTime(local.join.timestamp) : t("ui.not_recorded")}</dd>
+    <dt>{t("contact.actor")}</dt><dd dir="auto">{local?.join?.actor ? namer(local.join.actor) : t("ui.not_recorded")}</dd>
+    <dt>{t("contact.join_method")}</dt><dd dir="auto">{local?.join?.kind ?? t("ui.not_recorded")}</dd></dl></section>
+  <section><h3>{t("contact.mutual_cached")}</h3>{#if local?.mutual_groups == null}<p class="muted">{t("contact.cache_unavailable")}</p>
+    {:else if local.mutual_groups.length === 0}<p class="muted">{t("contact.mutual_empty")}</p>
+    {:else}<ul>{#each local.mutual_groups as cached (cached.chat)}<li><button onclick={() => ongroup(cached.chat)}>{cached.subject ?? cached.chat}</button><small>{t("contact.observed", { time: formatTime(cached.observed_at) })}</small></li>{/each}</ul>{/if}</section>
+  <section><h3>{t("contact.member_actions")}</h3>{#if !admin || !moderationFresh}<p class="muted">{t("contact.admin_verification_required")}</p>{/if}
+    {#if moderationVerifiedAt !== null}<p class="muted">{t("contact.admin_verification", { time: formatTime(moderationVerifiedAt) })}</p>{/if}
     {#if moderationError}<p class="error" role="alert">{moderationError}</p>{/if}
     {#if ready && admin && moderationFresh}<div class="actions">{#each actions as [action, label]}
       {@const reason = memberActionReason(action, permissions)}
-      <button disabled={busy || localLoading || liveLoading || !!reason} title={reason ?? undefined} onclick={() => { confirmation = action; failure = saved = ""; }}>{label}</button>
+      <button disabled={busy || localLoading || liveLoading || !!reason} title={reason ?? undefined} onclick={() => { confirmation = action; failure = saved = ""; refusedChanges = []; }}>{t(label)}</button>
     {/each}</div>{/if}
-    {#if ready && confirmation && admin && moderationFresh}<div class="confirmation" aria-label="Confirm member action"><p>{actions.find(([action]) => action === confirmation)?.[1]} for {shown} in {groupName}?</p>
-      {#if community && confirmation === "remove"}<p class="error">This removes the member from the community and its linked groups.</p>{/if}
-      <button disabled={busy || localLoading || liveLoading || !!memberActionReason(confirmation, permissions)} onclick={() => act(confirmation!)}>Confirm action</button>
-      <button disabled={busy} onclick={() => (confirmation = null)}>Cancel action</button></div>{/if}
-    {#if busy}<p class="muted" role="status">Updating…</p>{/if}{#if failure}<p class="error" role="alert">{failure}</p>{/if}{#if saved}<p class="muted" role="status">{saved}</p>{/if}
+    {#if ready && confirmation && admin && moderationFresh}<div class="confirmation" aria-label={t("contact.member_confirm_title")}><p>{t("contact.member_confirm_action", { action: t(actions.find(([action]) => action === confirmation)?.[1] ?? "contact.member_actions") })} <bdi>{shown}</bdi> {t("contact.member_confirm_group")} <bdi>{groupName}</bdi>{t("ui.question_mark")}</p>
+      {#if community && confirmation === "remove"}<p class="error">{t("contact.community_remove_hint")}</p>{/if}
+      <button disabled={busy || localLoading || liveLoading || !!memberActionReason(confirmation, permissions)} onclick={() => act(confirmation!)}>{t("ui.confirm_action")}</button>
+      <button disabled={busy} onclick={() => (confirmation = null)}>{t("ui.cancel_action")}</button></div>{/if}
+    {#if busy}<p class="muted" role="status">{t("ui.updating")}</p>{/if}{#if failure || refusal}<p class="error" role="alert">{failure || refusal}</p>{/if}{#if saved}<p class="muted" role="status">{t(saved)}</p>{/if}
   </section>
-  <section>{#if onloadAudit}<GroupAudit {account} {group} requestKey={auditKey} member={jid} {namer} {formatTime} title="Member audit timeline"
+  <section>{#if onloadAudit}<GroupAudit {account} {group} requestKey={auditKey} member={jid} {namer} {formatTime} title={t("contact.member_audit")}
     onload={loadAudit}
-    onjump={(group, messageId) => ongroup(group, messageId)} />{:else}<h3>Member audit timeline</h3><p class="muted">Group audit is unavailable.</p>{/if}</section>
+    onjump={(group, messageId) => ongroup(group, messageId)} />{:else}<h3>{t("contact.member_audit")}</h3><p class="muted">{t("group.audit_unavailable")}</p>{/if}</section>
   {#if enlarged && picture}<Lightbox {jid} preview={picture} alt={shown} onclose={() => (enlarged = false)} />{/if}
 </dialog>
 
@@ -205,9 +215,10 @@
   textarea { resize: vertical; } button { padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--raised-2); color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
   button:disabled, input:disabled, textarea:disabled { opacity: 0.55; cursor: default; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; } .confirmation { margin-top: 14px; padding: 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); }
-  .confirmation button + button { margin-left: 8px; } .muted { color: var(--muted); font-size: 12px; } .error { color: var(--danger); overflow-wrap: anywhere; font-size: 13px; }
-  ul { padding-left: 20px; } li { margin-bottom: 6px; }
+  .confirmation button + button { margin-inline-start: 8px; } .muted { color: var(--muted); font-size: 12px; } .error { color: var(--danger); overflow-wrap: anywhere; font-size: 13px; }
+  ul { padding-inline-start: 20px; } li { margin-bottom: 6px; }
   small { display: block; color: var(--muted); font-size: 11px; margin-top: 5px; }
   .business { margin-top: 14px; }
   @media (max-width: 480px) { dialog { padding: 16px; } dl { grid-template-columns: 1fr; gap: 4px; } dd { margin-bottom: 8px; } }
+  details pre { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>

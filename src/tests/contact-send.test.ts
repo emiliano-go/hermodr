@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
-import { broadcastSendReason, isBroadcastList } from "../lib/utils/broadcast.ts";
+import { broadcastSendError, isBroadcastList } from "../lib/utils/broadcast.ts";
+import { uiError, uiMessage } from "../lib/state/localized.ts";
+import type { LocalizedError } from "../lib/i18n/errors.ts";
 
 const source = readFileSync(new URL("../routes/+page.svelte", import.meta.url), "utf8").split('<script lang="ts">')[1].split("</script>")[0];
 const tree = ts.createSourceFile("page.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -13,21 +15,21 @@ const compiled = ts.transpileModule(declaration.getText(tree), { compilerOptions
 
 function fixture() {
   const calls: { command: string; args: Record<string, unknown> }[] = [];
-  const warnings: unknown[] = [], failures: unknown[] = [];
+  const warnings: unknown[] = [], warningDiagnostics: (string | undefined)[] = [], failures: unknown[] = [];
   let queued!: (signal: AbortSignal) => Promise<unknown>;
   const context = {
-    broadcastSendReason, isBroadcastList,
+    broadcastSendError, isBroadcastList, uiError, uiMessage,
     session: { activeAccount: "alpha", connected: true },
     chats: { selectedChat: "chat", refreshChats: async () => {} },
     messages: { accountGeneration: 1, reloadMessages: async (_chat: string) => {} },
     members: { chatGroup: null as { can_send: boolean } | null },
     composer: { editing: null, recording: false, draft: "Keep draft", replyingTo: { id: "reply" }, pending: [{ id: 1 }],
       enqueue: (run: typeof queued) => { queued = run; return Promise.resolve().then(() => run(new AbortController().signal)); } },
-    ui: { notify: (message: unknown) => warnings.push(message), fail: (error: unknown) => failures.push(error) },
+    ui: { notify: (message: unknown, diagnostic?: string) => { warnings.push(message); warningDiagnostics.push(diagnostic); }, fail: (error: unknown) => failures.push(error) },
     invoke: async (command: string, args: Record<string, unknown>) => { calls.push({ command, args }); return { message_id: "sent-id", warning: null as string | null }; },
   };
   runInNewContext(compiled, context);
-  return { context, calls, warnings, failures, send: (context as unknown as { sendContacts: (contacts: [string, string][], scope: { account: string; chat: string; generation: number }) => Promise<string> }).sendContacts };
+  return { context, calls, warnings, warningDiagnostics, failures, send: (context as unknown as { sendContacts: (contacts: [string, string][], scope: { account: string; chat: string; generation: number }) => Promise<string> }).sendContacts };
 }
 const scope = { account: "alpha", chat: "chat", generation: 1 };
 const contacts: [string, string][] = [["Synthetic", "12025550101"]];
@@ -51,8 +53,10 @@ test("acknowledged contact sends retain ID despite local warning or UI reload fa
   const failure = new Error("Synthetic reload failure");
   f.context.messages.reloadMessages = async () => { throw failure; };
   assert.equal(await f.send(contacts, scope), "sent-id");
-  assert.deepEqual(f.warnings, ["Contact sent; local copy unavailable."]);
-  assert.deepEqual(f.failures, [failure]);
+  assert.deepEqual(f.warnings, [uiMessage("page.contact_send_warning")]);
+  assert.deepEqual(f.warningDiagnostics, ["Contact sent; local copy unavailable."]);
+  assert.equal((f.failures[0] as LocalizedError).code, "error.page.contact_refresh");
+  assert.match((f.failures[0] as LocalizedError).diagnostic ?? "", /Synthetic reload failure/);
   assert.equal(f.calls[0].args.account, "alpha");
   assert.equal(f.calls[0].args.chat, "chat");
   assert.equal(f.calls[0].args.contacts, contacts);

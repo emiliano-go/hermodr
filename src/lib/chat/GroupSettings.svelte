@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
+  import { t } from "$lib/i18n/localizer";
   import { onDestroy, untrack } from "svelte";
   import type { GroupSettingChange, GroupSettings as Settings } from "$lib/utils/wire";
   import ImageCropper from "$lib/composer/ImageCropper.svelte";
@@ -22,7 +24,7 @@
   let loading = $state(false);
   let busy = $state(false);
   let stale = $state(false);
-  let error = $state<string | null>(null);
+  let error = $state<LocalizedError | string | null>(null);
   let outcome = $state("");
   let generation = 0;
   const disabled = $derived(loading || busy || stale);
@@ -38,10 +40,10 @@
   async function refresh() {
     if (loading || busy) return;
     const target = scope();
-    if (!current(target)) { error = "Choose the active account before loading group settings."; return; }
+    if (!current(target)) { error = normalizeError({ kind: "postal_error", code: "error.group_settings_account", params: {} }); return; }
     loading = true; error = null;
     try { const snapshot = await onload(); if (current(target)) paint(snapshot); }
-    catch (failure) { if (current(target)) error = String(failure); }
+    catch (failure) { if (current(target)) error = normalizeError(failure); }
     finally { if (current(target)) loading = false; }
   }
 
@@ -60,12 +62,12 @@
     busy = true; onbusy(true); error = null; outcome = "";
     try {
       const result = await saveGroupMetadata(write, onload, () => current(target), () => {
-        acknowledged(); outcome = `${label} saved.`;
+        acknowledged(); outcome = label;
       });
       if (!current(target)) return;
       if (result.snapshot) paint(result.snapshot);
-      if (result.refreshError) { stale = true; error = `Saved, but refreshing the group failed: ${result.refreshError}`; }
-    } catch (failure) { if (current(target)) error = String(failure); }
+      if (result.refreshError) { stale = true; error = normalizeError({ kind: "postal_error", code: "error.group_settings_refresh", params: {}, diagnostic: result.refreshError.diagnostic }); }
+    } catch (failure) { if (current(target)) error = normalizeError(failure); }
     finally { if (current(target)) { busy = false; onbusy(false); } }
   }
 
@@ -88,7 +90,7 @@
     await save(async () => {
       const data = file ? await base64Of(file) : "";
       if (current(target)) await onpicture(data);
-    }, "Group picture", () => { picture = null; });
+    }, "group.picture", () => { picture = null; });
   }
 
   function toggle(kind: "announce" | "locked" | "approval", input: HTMLInputElement, label: string) {
@@ -100,49 +102,49 @@
 </script>
 
 <div class="group-settings" aria-busy={busy || loading}>
-  {#if (loading || !error) && !settings}<p>Loading group settings…</p>{/if}
+  {#if (loading || !error) && !settings}<p>{t("group.settings_loading")}</p>{/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
-  {#if outcome}<p role="status">{outcome}</p>{/if}
-  {#if error}<button disabled={loading || busy} onclick={refresh}>Reload saved settings</button>{/if}
+  {#if outcome}<p role="status">{t("group.setting_saved", { label: t(outcome) })}</p>{/if}
+  {#if error}<button disabled={loading || busy} onclick={refresh}>{t("group.settings_reload")}</button>{/if}
   {#if settings}
-    {#if !settings.member}<p>You are no longer a member of this group.</p>{/if}
-    <label>Name<input value={subject} disabled={!settings.can_edit_info || disabled} oninput={(event) => subject = event.currentTarget.value} /></label>
+    {#if !settings.member}<p>{t("group.not_member")}</p>{/if}
+    <label>{t("ui.name")}<input value={subject} disabled={!settings.can_edit_info || disabled} oninput={(event) => subject = event.currentTarget.value} /></label>
     {#if settings.can_edit_info}
       <div class="actions"><span>{Array.from(subject).length}/100</span>
         <button disabled={disabled || !subject.trim() || Array.from(subject).length > 100 || subject === (settings.subject ?? "")}
-          onclick={() => change({ kind: "subject", text: subject }, "Group name")}>Save name</button></div>
+          onclick={() => change({ kind: "subject", text: subject }, "group.name")}>{t("group.name_save")}</button></div>
     {/if}
-    <label>Description<textarea rows="4" value={description} disabled={!settings.can_edit_info || disabled}
+    <label>{t("group.description")}<textarea rows="4" value={description} disabled={!settings.can_edit_info || disabled}
       oninput={(event) => description = event.currentTarget.value}></textarea></label>
     {#if settings.can_edit_info}
       <div class="actions"><span>{Array.from(description).length}/2048</span>
         <button disabled={disabled || Array.from(description).length > 2048 || description === (settings.description ?? "")}
-          onclick={() => { if (settings) void change({ kind: "description", text: description || null, previous_id: settings.description_id }, "Description"); }}>Save description</button></div>
+          onclick={() => { if (settings) void change({ kind: "description", text: description || null, previous_id: settings.description_id }, "group.description"); }}>{t("group.description_save")}</button></div>
     {/if}
     {#if settings.can_edit_picture}
       <div class="picture">
-        <label>Group picture<input type="file" accept="image/*" disabled={disabled}
+        <label>{t("group.picture")}<input type="file" accept="image/*" disabled={disabled}
           onchange={(event) => { picture = event.currentTarget.files?.[0] ?? null; event.currentTarget.value = ""; }} /></label>
-        <button disabled={disabled} onclick={() => upload(null)}>Remove picture</button>
+        <button disabled={disabled} onclick={() => upload(null)}>{t("group.picture_remove")}</button>
       </div>
       {#if picture}
-        <ImageCropper file={picture} square sizes={false} applyLabel="Save group picture"
+        <ImageCropper file={picture} square sizes={false} applyLabel={t("group.picture_save")}
           onapply={(file) => { if (!disabled) void upload(file); }} oncancel={() => { if (!busy) picture = null; }} />
       {/if}
     {/if}
-    {#if settings.community}<p>The community itself has no conversation.</p>
-    {:else}<div class="setting"><span>Only admins can send messages</span>
-      {#if settings.admin}<input type="checkbox" aria-label="Only admins can send messages" checked={settings.announce} disabled={disabled}
-        onchange={(event) => toggle("announce", event.currentTarget, "Message permissions")} />
-      {:else}<span>{settings.announce ? "On" : "Off"}</span>{/if}</div>{/if}
-    <div class="setting"><span>Only admins can edit group info</span>
-      {#if settings.admin}<input type="checkbox" aria-label="Only admins can edit group info" checked={settings.locked} disabled={disabled}
-        onchange={(event) => toggle("locked", event.currentTarget, "Info permissions")} />
-      {:else}<span>{settings.locked ? "On" : "Off"}</span>{/if}</div>
-    <div class="setting"><span>Approve people before they join</span>
-      {#if settings.admin}<input type="checkbox" aria-label="Approve people before they join" checked={settings.approval} disabled={disabled}
-        onchange={(event) => toggle("approval", event.currentTarget, "Join approval")} />
-      {:else}<span>{settings.approval ? "On" : "Off"}</span>{/if}</div>
+    {#if settings.community}<p>{t("group.community_no_chat")}</p>
+    {:else}<div class="setting"><span>{t("group.send_admin_only")}</span>
+      {#if settings.admin}<input type="checkbox" aria-label={t("group.send_admin_only")} checked={settings.announce} disabled={disabled}
+        onchange={(event) => toggle("announce", event.currentTarget, "group.message_permissions")} />
+      {:else}<span>{settings.announce ? t("ui.on") : t("ui.off")}</span>{/if}</div>{/if}
+    <div class="setting"><span>{t("group.edit_admin_only")}</span>
+      {#if settings.admin}<input type="checkbox" aria-label={t("group.edit_admin_only")} checked={settings.locked} disabled={disabled}
+        onchange={(event) => toggle("locked", event.currentTarget, "group.info_permissions")} />
+      {:else}<span>{settings.locked ? t("ui.on") : t("ui.off")}</span>{/if}</div>
+    <div class="setting"><span>{t("group.approve_join")}</span>
+      {#if settings.admin}<input type="checkbox" aria-label={t("group.approve_join")} checked={settings.approval} disabled={disabled}
+        onchange={(event) => toggle("approval", event.currentTarget, "group.join_approval")} />
+      {:else}<span>{settings.approval ? t("ui.on") : t("ui.off")}</span>{/if}</div>
   {/if}
 </div>
 

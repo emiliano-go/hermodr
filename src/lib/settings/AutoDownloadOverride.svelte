@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from "$lib/i18n/localizer";
   import { MEDIA_TYPES } from "$lib/utils/auto-download";
   import { MediaPolicyState } from "$lib/state/media-policy.svelte";
   import type { MediaAutoDownload } from "$lib/utils/wire";
@@ -13,22 +14,22 @@
 </script>
 
 <div class="downloads">
-  <p>Auto-download for this chat</p>
-  {#each MEDIA_TYPES as [kind, label]}
+  <p>{t("settings.download_chat")}</p>
+  {#each MEDIA_TYPES as [kind]}
     <label>
-      <span>{label}</span>
+      <span>{t(`settings.media_${kind}`)}</span>
       <select value={policy.value[kind] === null ? "" : String(policy.value[kind])}
         disabled={policy.busy || !!policy.error}
         onchange={(event) => change(kind, event.currentTarget)}>
-        <option value="">Follow global setting</option>
-        <option value="true">On</option>
-        <option value="false">Off</option>
+        <option value="">{t("settings.follow_global")}</option>
+        <option value="true">{t("ui.on")}</option>
+        <option value="false">{t("ui.off")}</option>
       </select>
     </label>
   {/each}
   {#if policy.error}
     <p role="alert">{policy.error}</p>
-    <button type="button" disabled={policy.busy} onclick={() => policy.load(accountId, chat)}>Retry</button>
+    <button type="button" disabled={policy.busy} onclick={() => policy.load(accountId, chat)}>{t("ui.retry")}</button>
   {/if}
 </div>
 

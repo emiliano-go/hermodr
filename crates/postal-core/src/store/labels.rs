@@ -1,4 +1,5 @@
 use super::*;
+use crate::message_ref::MessageRef;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
@@ -83,7 +84,8 @@ impl MessageStore {
 
     pub fn labelled_messages(&self, label_ids: &[String], chat: Option<&str>, query: &str, limit: u32) -> Result<Vec<StoredMessage>> {
         anyhow::ensure!(!label_ids.is_empty() && label_ids.len() <= 50 && label_ids.iter().all(|id| !id.is_empty()),
-            "choose between 1 and 50 nonempty label ids");
+            MessageRef::new("error.label_selection_invalid").with_param("min", serde_json::Number::from(1))
+                .with_param("max", serde_json::Number::from(50)).with_param("actual", serde_json::Number::from(label_ids.len() as u64)));
         let ids = serde_json::to_string(label_ids)?;
         let escaped = query.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_").to_lowercase();
         let pattern = format!("%{escaped}%");
@@ -124,7 +126,7 @@ impl MessageStore {
     pub(crate) fn set_label(
         &self, id: &str, name: Option<&str>, color: Option<i32>, deleted: Option<bool>, timestamp: i64,
     ) -> Result<bool> {
-        anyhow::ensure!(!id.is_empty() && timestamp >= 0, "invalid label update");
+        anyhow::ensure!(!id.is_empty() && timestamp >= 0, MessageRef::new("error.label_update_invalid"));
         if name.is_none() && color.is_none() && deleted.is_none() { return Ok(false); }
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.savepoint()?;
@@ -163,7 +165,7 @@ impl MessageStore {
     pub(crate) fn set_message_label(
         &self, label_id: &str, chat: &str, message_id: &str, labeled: bool, timestamp: i64,
     ) -> Result<bool> {
-        anyhow::ensure!(!message_id.is_empty(), "message id cannot be empty");
+        anyhow::ensure!(!message_id.is_empty(), MessageRef::new("error.message_required"));
         let conn = self.conn.lock().unwrap();
         let chat = names::canonical_chat(&conn, chat)?;
         association(&conn, label_id, &chat, Some(message_id), labeled, timestamp)
@@ -171,7 +173,7 @@ impl MessageStore {
 }
 
 fn association(conn: &Connection, label: &str, chat: &str, message: Option<&str>, labeled: bool, timestamp: i64) -> Result<bool> {
-    anyhow::ensure!(!label.is_empty() && !chat.is_empty() && timestamp >= 0, "invalid label association");
+    anyhow::ensure!(!label.is_empty() && !chat.is_empty() && timestamp >= 0, MessageRef::new("error.label_association_invalid"));
     let deletion: Option<i64> = conn.query_row(
         "SELECT updated_at FROM labels_catalog WHERE id = ?1 AND deleted = 1", [label], |row| row.get(0),
     ).optional()?;

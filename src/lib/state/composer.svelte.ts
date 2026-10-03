@@ -5,7 +5,7 @@
 // host callbacks the route registers, so flows move verbatim.
 import { tick } from "svelte";
 import { invoke } from "$lib/utils/ipc";
-import { broadcastSendReason, guardBroadcastSend } from "$lib/utils/broadcast";
+import { broadcastSendError, guardBroadcastSend } from "$lib/utils/broadcast";
 import { loadEmojis, rememberEmoji, searchEmojis, type Emoji } from "$lib/utils/emoji";
 import type { PickerTab } from "$lib/composer/ExpressionPicker.svelte";
 import { base64Of, imagePreview, rasterizeSvg } from "$lib/utils/files";
@@ -23,6 +23,8 @@ import { messages } from "./messages.svelte";
 import { session } from "./session.svelte";
 import { ui } from "./ui.svelte";
 import { scheduled } from "./scheduled.svelte";
+import { normalizeError } from "../i18n/errors.ts";
+import { localizedFailure, uiError } from "./localized.ts";
 
 export class ComposerState {
   private draftText = $state("");
@@ -201,7 +203,7 @@ export class ComposerState {
   enqueue<T>(task: (signal: AbortSignal) => Promise<T>, account = this.accountSeq): Promise<T> {
     const signal = this.uploadsAbort.signal;
     const start = () => {
-      if (account !== this.accountSeq) throw new Error("Account changed before sending");
+      if (account !== this.accountSeq) throw uiError("error.state.send_scope");
       return task(signal);
     };
     const run = this.outbox.then(start, start);
@@ -247,7 +249,7 @@ export class ComposerState {
 
   reportTyping() {
     const chat = chats.selectedChat;
-    if (!chat || !this.chatSendsTyping || broadcastSendReason(chat)) return;
+    if (!chat || !this.chatSendsTyping || broadcastSendError(chat)) return;
     if (Date.now() - this.typingSentAt > 5000) {
       this.typingSentAt = Date.now();
       invoke("send_typing", { chat, typing: true }).catch(() => {});
@@ -260,7 +262,7 @@ export class ComposerState {
     clearTimeout(this.typingIdle);
     if (!chat || !this.typingSentAt) return;
     this.typingSentAt = 0;
-    if (broadcastSendReason(chat)) return;
+    if (broadcastSendError(chat)) return;
     invoke("send_typing", { chat, typing: false }).catch(() => {});
   }
 
@@ -369,7 +371,7 @@ export class ComposerState {
         (m) => m.from_me && !m.media_kind && !m.deleted && m.text.trim() && !m.revoked && !isUnavailable(m),
       );
     if (!candidate || isUnavailable(candidate)) return;
-    const reason = broadcastSendReason(chat) ?? broadcastSendReason(candidate.chat);
+    const reason = broadcastSendError(chat) ?? broadcastSendError(candidate.chat);
     if (reason) { ui.fail(reason); return; }
     this.editing = { chat, id: candidate.id, original: candidate.text };
     this.replyingTo = null;
@@ -559,7 +561,7 @@ export class ComposerState {
   async send() {
     const selectedChat = chats.selectedChat;
     if (!selectedChat) return;
-    const reason = broadcastSendReason(this.editing?.chat ?? selectedChat);
+    const reason = broadcastSendError(this.editing?.chat ?? selectedChat);
     if (reason) { ui.fail(reason); return; }
     // Editing replaces an existing message rather than sending a new one.
     if (this.editing) {
@@ -647,7 +649,7 @@ export class ComposerState {
     const account = this.accountSeq, owner = session.activeAccount;
     const chat = chats.selectedChat, generation = messages.accountGeneration;
     if (!owner || !chat) return;
-    const reason = broadcastSendReason(chat);
+    const reason = broadcastSendError(chat);
     if (reason) { ui.fail(reason); return; }
     const id = this.pendingSeq++, ticket = {};
     this.stagingTickets.set(id, ticket);
@@ -681,7 +683,7 @@ export class ComposerState {
       }
     } catch (e) {
       // Staging must never take the chat down with it.
-      if (current()) ui.fail(`Could not preview that file: ${e}`);
+      if (current()) ui.fail(uiError("error.state.file_preview", {}, e));
     } finally {
       if (this.stagingTickets.get(id) === ticket) this.stagingTickets.delete(id);
     }
@@ -694,14 +696,14 @@ export class ComposerState {
     guardBroadcastSend(chat);
     const retry = this.pending[0].retry;
     if (retry && (!this.attachmentScopeCurrent(retry) || retry.chat !== chat)) {
-      ui.fail("These attachments belong to another conversation or account.");
+      ui.fail(uiError("error.state.attachment_scope"));
       return;
     }
     const items = (retry ? this.pending.filter((item) => item.retry?.batch === retry.batch) : this.pending)
       .map((item) => ({ ...item }));
     const ordinary = items.every(isAlbumMedia);
     if (retry?.album && !ordinary) {
-      ui.fail("Album retries require ordinary photos and videos.");
+      ui.fail(uiError("error.state.album_retry_media"));
       return;
     }
     const album = !!owner && (retry ? retry.album && ordinary && items.length <= 8
@@ -767,13 +769,13 @@ export class ComposerState {
           for (const rest of batch.slice(i)) {
             finish(rest.token, !this.attachmentScopeCurrent(context));
           }
-          this.recoverAttachments(context, items.slice(i), [], String(e));
+          this.recoverAttachments(context, items.slice(i), [], e);
           break;
         }
       }
     }, account).catch((error) => {
       for (const item of batch) finish(item.token, !this.attachmentScopeCurrent(context));
-      this.recoverAttachments(context, items, [], String(error));
+      this.recoverAttachments(context, items, [], error);
     });
     if (this.attachmentScopeCurrent(context)) await chats.refreshChats();
   }
@@ -830,15 +832,18 @@ export class ComposerState {
   }
 
   private recoverAttachments(context: AttachmentRetryContext, retryable: PendingMedia[], uncertain: PendingMedia[],
-    error: string, result?: AlbumSendResult) {
+    error: unknown, result?: AlbumSendResult) {
     if (!this.attachmentScopeCurrent(context)) return;
+    const failure = normalizeError(error);
     this.attachmentRecoveries = [...this.attachmentRecoveries, {
       context, retryable: retryable.map((item) => ({ ...item, retry: context })), uncertain,
       sentIds: result?.sent_ids ?? [], uncertainId: result?.uncertain_id ?? null,
-      parentUncertain: result?.parent_uncertain ?? false, error,
+      parentUncertain: result?.parent_uncertain ?? false,
+      get error() { return failure.message; },
+      get diagnostic() { return failure.diagnostic; },
     }];
     this.restoreKnownUnsent(context.chat);
-    if (chats.selectedChat === context.chat) ui.fail(error);
+    if (chats.selectedChat === context.chat) ui.fail(failure);
   }
 
   private async sendPendingAlbum(items: PendingMedia[], batch: Outgoing[], context: AttachmentRetryContext,
@@ -848,12 +853,12 @@ export class ComposerState {
     try {
       for (const item of items) {
         guardBroadcastSend(context.chat);
-        if (!this.attachmentScopeCurrent(context) || chats.selectedChat !== context.chat) throw new Error("Conversation changed before album dispatch.");
+        if (!this.attachmentScopeCurrent(context) || chats.selectedChat !== context.chat) throw uiError("error.state.album_scope");
         uploads.push(await stageAttachment(item.file, signal, context.accountId));
       }
       signal.throwIfAborted();
       guardBroadcastSend(context.chat);
-      if (!this.attachmentScopeCurrent(context) || chats.selectedChat !== context.chat) throw new Error("Conversation changed before album dispatch.");
+      if (!this.attachmentScopeCurrent(context) || chats.selectedChat !== context.chat) throw uiError("error.state.album_scope");
       dispatched = true;
       const result = await invoke<AlbumSendResult>("send_album", {
         accountId: context.accountId, chat: context.chat, parentId: context.parentId,
@@ -867,8 +872,7 @@ export class ComposerState {
       if (!result || result.account_id !== context.accountId || result.chat !== context.chat
         || !Array.isArray(result.sent_ids) || !result.sent_ids.every((id) => typeof id === "string" && id.length > 0)
         || new Set(result.sent_ids).size !== result.sent_ids.length
-        || !Array.isArray(result.warnings) || !result.warnings.every((warning) => typeof warning === "string")
-        || typeof result.parent_uncertain !== "boolean" || (result.error !== null && typeof result.error !== "string")
+        || typeof result.parent_uncertain !== "boolean"
         || (result.uncertain_id !== null && (typeof result.uncertain_id !== "string" || !result.uncertain_id))
         || (uncertain === null && result.uncertain_id !== null)
         || !Number.isInteger(result.next_index) || result.next_index < 0 || result.next_index > items.length
@@ -879,7 +883,7 @@ export class ComposerState {
         || (result.parent_uncertain && (result.next_index !== 0 || uncertain !== null))
         || typeof result.parent_id !== "string" || (!preflight && !result.parent_id)
         || (context.parentId && !preflight && result.parent_id !== context.parentId)) {
-        throw new Error("Album response did not match the submitted batch; outcome unknown.");
+        throw uiError("error.state.album_response");
       }
       if (!this.attachmentScopeCurrent(context)) {
         for (const item of batch) finish(item.token);
@@ -891,16 +895,24 @@ export class ComposerState {
       const unknown = uncertain === null ? [] : [items[uncertain]];
       const held = new Set([...tail, ...unknown].map((item) => item.id));
       for (const [i, item] of batch.entries()) finish(item.token, !held.has(items[i].id));
+      const failureValue = result.failure ?? (result.error || null);
+      const failure = failureValue == null ? null : localizedFailure(failureValue, "error.state.album_details", result.error ?? undefined);
       if (tail.length || unknown.length || result.parent_uncertain) {
         this.recoverAttachments(nextContext, tail, unknown,
-          result.error ?? "Album outcome requires review before retrying.", result);
-      } else if (result.error && chats.selectedChat === context.chat) ui.fail(result.error);
-      if (result.warnings.length && chats.selectedChat === context.chat) ui.notify(result.warnings.join("\n"));
+          failure ?? uiError("error.state.album_review"), result);
+      } else if (failure && chats.selectedChat === context.chat) ui.fail(failure);
+      const warningSource = Array.isArray(result.warning_messages) && !result.warning_messages.length
+        ? result.warnings : result.warning_messages ?? result.warnings;
+      const warningValues = warningSource == null ? [] : Array.isArray(warningSource) ? warningSource : [warningSource];
+      const warnings = warningValues.map((warning, index) => localizedFailure(warning, "state.album_warning",
+        Array.isArray(result.warnings) && typeof result.warnings[index] === "string" ? result.warnings[index] : undefined));
+      if (warnings.length && chats.selectedChat === context.chat) ui.notify(warnings.map((warning) => warning.descriptor),
+        warnings.map((warning) => warning.diagnostic).filter(Boolean).join("\n") || undefined);
     } catch (error) {
       const keep = this.attachmentScopeCurrent(context);
       for (const item of batch) finish(item.token, !keep);
       this.recoverAttachments(context, dispatched ? [] : items, dispatched ? items : [],
-        dispatched ? `Album outcome unknown; review before retrying. ${error}` : String(error));
+        dispatched ? uiError("error.state.album_unknown", {}, error) : error);
     } finally {
       await Promise.all(uploads.map((token) => cancelStagedAttachment(token, context.accountId)));
     }
@@ -919,10 +931,10 @@ export class ComposerState {
       && scope.chat === chats.selectedChat && scope.generation === messages.accountGeneration;
     const allowed = () => current() && session.connected && !this.editing && !this.recording
       && (!members.chatGroup || members.chatGroup.can_send);
-    if (!allowed()) throw new Error("Conversation changed or cannot send audio clips.");
+    if (!allowed()) throw uiError("error.state.audio_unavailable");
     await this.enqueue(async (signal) => {
       guardBroadcastSend(scope.chat);
-      if (!allowed()) throw new Error("Conversation changed before sending the audio clip.");
+      if (!allowed()) throw uiError("error.state.audio_scope");
       await sendAttachment(file, { chat: scope.chat }, signal);
     }, account);
     if (!current()) return;

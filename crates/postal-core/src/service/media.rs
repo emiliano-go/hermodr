@@ -1,6 +1,7 @@
 //! Sending attachments, tracking uploads and managing the local media library.
 
 use super::*;
+use crate::message_ref::MessageRef;
 use whatsapp_rust::media::{self, AudioOptions, DocumentOptions, ImageOptions, VideoOptions};
 
 /// Encrypted media handed to the uploader, reporting how far it has been read.
@@ -56,7 +57,7 @@ impl WhatsAppService {
         let dir = self
             .media_dir
             .clone()
-            .ok_or_else(|| anyhow::anyhow!("no media folder configured"))?;
+            .ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.media_directory_missing")))?;
         let updated = fetch_media(&self.client, &self.store, &dir, chat, id).await?;
         let _ = self.events.send(ServiceEvent::hint(&updated, false));
         Ok(())
@@ -72,7 +73,7 @@ impl WhatsAppService {
         let dir = self
             .media_dir
             .clone()
-            .ok_or_else(|| anyhow::anyhow!("no media folder configured"))?;
+            .ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.media_directory_missing")))?;
         let updated = fetch_quote_media(&self.client, &self.store, &dir, chat, id).await?;
         let _ = self.events.send(ServiceEvent::hint(&updated, false));
         Ok(())
@@ -382,10 +383,10 @@ impl WhatsAppService {
     /// Turns a picture into a sticker in the media folder without sending it.
     pub fn save_sticker(&self, bytes: &[u8]) -> Result<String> {
         let webp = sticker_webp(bytes)
-            .ok_or_else(|| anyhow::anyhow!("that file is not an image we can turn into a sticker"))?;
+            .ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.sticker_image_invalid")))?;
         let dir = self
             .media_dir()
-            .ok_or_else(|| anyhow::anyhow!("no media folder is configured"))?
+            .ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.media_directory_missing")))?
             .join("stickers");
         std::fs::create_dir_all(&dir)?;
         let nanos = std::time::SystemTime::now()
@@ -525,10 +526,10 @@ impl WhatsAppService {
         reply: Option<(String, String, String)>,
     ) -> Result<()> {
         super::broadcast_lists::writable_target(chat)?;
-        let dir = self.media_dir().ok_or_else(|| anyhow::anyhow!("no media folder is configured"))?;
+        let dir = self.media_dir().ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.media_directory_missing")))?;
         let file = std::fs::canonicalize(path)?;
         if !file.starts_with(std::fs::canonicalize(&dir)?) {
-            anyhow::bail!("refusing to send a file from outside the media folder");
+            anyhow::bail!(MessageRef::new("error.media_path_denied"));
         }
         match kind {
             "sticker" => self.send_sticker(chat, super::media_sticker_file::read_sticker_file(&file)?, reply).await,
@@ -536,16 +537,16 @@ impl WhatsAppService {
                 let options = SendOptions { gif: true, ..Default::default() };
                 self.send_media_file(chat, "gif.mp4", file, None, reply, options).await.map(|_| ())
             }
-            _ => anyhow::bail!("only stickers and GIFs are sent from the library"),
+            _ => anyhow::bail!(MessageRef::new("error.media_library_type_invalid")),
         }
     }
 }
 
 fn ensure_exportable_media(message: &StoredMessage) -> Result<()> {
-    anyhow::ensure!(!message.local.revoked, "this message was deleted");
+    anyhow::ensure!(!message.local.revoked, MessageRef::new("error.media_message_revoked"));
     anyhow::ensure!(matches!(message.media.kind.as_deref(),
         Some("image" | "video" | "gif" | "audio" | "document" | "sticker")),
-        "this message has no exportable attachment");
+        MessageRef::new("error.media_attachment_missing"));
     Ok(())
 }
 
@@ -650,7 +651,7 @@ pub(super) fn build_media_message(
 /// one-time media from. Documents have no view-once form.
 fn apply_view_once(kind: &str, mut message: wa::Message) -> Result<wa::Message> {
     if kind == "document" {
-        anyhow::bail!("view-once only works for photos, videos and voice notes");
+        anyhow::bail!(MessageRef::new("error.media_view_once_type_invalid"));
     }
     if let Some(m) = message.image_message.as_option_mut() {
         m.view_once = Some(true);

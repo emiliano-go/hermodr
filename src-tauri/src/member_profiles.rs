@@ -1,4 +1,5 @@
-use crate::{connection::command_error, AppState};
+use crate::command_error::{CommandError, CommandResult};
+use crate::AppState;
 use postal_core::{store::member_profiles::MemberNote, MemberProfile, WhatsAppService};
 use std::sync::Arc;
 use tauri::State;
@@ -11,11 +12,11 @@ pub(crate) async fn user_profile(
     group: Option<String>,
     live: Option<bool>,
     force: Option<bool>,
-) -> Result<MemberProfile, String> {
+) -> CommandResult<MemberProfile> {
     let account = account_id
         .or_else(|| state.accounts.lock().unwrap().active.clone())
-        .ok_or("No active account.")?;
-    let service = state.account_service(&account)?;
+        .ok_or_else(|| CommandError::code("error.not_connected"))?;
+    let service = state.account_service(&account).map_err(|error| CommandError::code("error.account_changed").with_diagnostic(error))?;
     let result = service
         .member_profile(
             &jid,
@@ -24,12 +25,12 @@ pub(crate) async fn user_profile(
             force.unwrap_or(false),
             || {
                 account_current(&state, &account, &service)
-                    .map_err(|error| std::io::Error::other(error).into())
+                    .map_err(|error| error.message.into())
             },
         )
         .await;
     account_current(&state, &account, &service)?;
-    result.map_err(|error| command_error(&service, error))
+    result.map_err(|error| { service.note_error(&error); CommandError::from(error) })
 }
 
 #[tauri::command]
@@ -40,27 +41,27 @@ pub(crate) async fn set_member_note(
     group: Option<String>,
     text: String,
     warnings: u32,
-) -> Result<MemberNote, String> {
-    let service = state.account_service(&account_id)?;
+) -> CommandResult<MemberNote> {
+    let service = state.account_service(&account_id).map_err(|error| CommandError::code("error.account_changed").with_diagnostic(error))?;
     let result = service
         .set_member_note(&jid, group.as_deref(), &text, warnings, || {
             account_current(&state, &account_id, &service)
-                .map_err(|error| std::io::Error::other(error).into())
+                .map_err(|error| error.message.into())
         })
         .await;
     account_current(&state, &account_id, &service)?;
-    result.map_err(|error| command_error(&service, error))
+    result.map_err(|error| { service.note_error(&error); CommandError::from(error) })
 }
 
 fn account_current(
     state: &AppState,
     account: &str,
     expected: &Arc<WhatsAppService>,
-) -> Result<(), String> {
-    let current = state.account_service(account)?;
+) -> CommandResult<()> {
+    let current = state.account_service(account).map_err(|error| CommandError::code("error.account_changed").with_diagnostic(error))?;
     if Arc::ptr_eq(expected, &current) {
         Ok(())
     } else {
-        Err("account changed during operation".into())
+        Err(CommandError::code("error.account_changed"))
     }
 }

@@ -2,6 +2,8 @@
   tray, mention and emoji completion, the composer form and the attachment
   preview sheet. Moved out of +page.svelte. -->
 <script lang="ts">
+  import { t } from "$lib/i18n/localizer";
+  import { LocalizedError } from "$lib/i18n/errors";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import Button from "$lib/ui/Button.svelte";
   import ExpressionPicker, { type PickerTab } from "$lib/composer/ExpressionPicker.svelte";
@@ -75,7 +77,7 @@
     disabled = false,
     connected = !disabled,
     defaultQuality = "hd",
-    onsoundclip = async () => { throw new Error("Audio clip sending is unavailable."); },
+    onsoundclip = async () => { throw new LocalizedError({ kind: "postal_error", code: "error.content.audio_clip_sending_is_unavailable", params: {} }); },
     onslashcommand = () => {},
     onsharecontacts = () => {},
     onquickreply = () => {},
@@ -109,7 +111,7 @@
     takereply: () => Record<string, string>;
     onpickeremoji: (emoji: string) => void;
     onpickersent: () => void;
-    onpickererror: (message: string) => void;
+    onpickererror: (message: string | LocalizedError) => void;
     onstage: (file: File) => void;
     oncreatekind: (kind: "poll" | "event") => void;
     oninput: (event: Event) => void;
@@ -122,7 +124,7 @@
     onremove: (id: number) => void;
     ontoggleonce: (id: number) => void;
     onsendvoice: (note: Recording) => void;
-    onvoiceerror: (message: string) => void;
+    onvoiceerror: (message: string | LocalizedError) => void;
     onreceipts: () => void;
     ontyping: () => void;
     receiptsHidden: boolean;
@@ -175,9 +177,9 @@
     if (!disabled && !document.querySelector("dialog[open]")) onsend();
   }
   function enqueuePicker<T>(task: (signal: AbortSignal) => Promise<T>): Promise<T> {
-    if (disabled) return Promise.reject(new Error(broadcastSendReason(selectedChat) ?? "Message sending is disabled here."));
+    if (disabled) return Promise.reject(new LocalizedError({ kind: "postal_error", code: "error.content.message_sending_is_disabled_here", params: {} }));
     return enqueue((signal) => {
-      if (disabled) throw new Error(broadcastSendReason(selectedChat) ?? "Message sending is disabled here.");
+      if (disabled) throw new LocalizedError({ kind: "postal_error", code: "error.content.message_sending_is_disabled_here", params: {} });
       return task(signal);
     });
   }
@@ -185,8 +187,8 @@
   let dismissedSlash = $state<string | null>(null);
   const activeSlash = $derived(slashToken(draft, caret.start, caret.end));
   const slashKey = $derived(activeSlash ? JSON.stringify(activeSlash) : null);
-  const slashDisabled = $derived({ location: "Location sending is unavailable.", "keep-in-chat": "Keep in chat is unavailable.",
-    ...(!selectedChat.endsWith("@g.us") ? { "mention-all": "Mention all is available in groups." } : {}) });
+  const slashDisabled = $derived({ location: t("content.location_sending_is_unavailable"), "keep-in-chat": t("content.keep_in_chat_is_unavailable"),
+    ...(!selectedChat.endsWith("@g.us") ? { "mention-all": t("content.mention_all_is_available_in_groups") } : {}) });
   $effect(() => { void account; void selectedChat; void generation; soundboardOpen = false; cameraOpen = false; dismissedSlash = null; closeTools(); });
   $effect(() => { if (disabled || editing) cameraOpen = false; });
   $effect(() => { if (disabled) { closeAttach(); pickerTab = null; scheduling = false; } });
@@ -272,15 +274,15 @@
       <span class="reply-icon">{replyIcon(replyingTo.media_kind)}</span>
     {/if}
     <span class="reply-body">
-      <span class="reply-to">Replying to {replyAuthor}</span>
+      <span class="reply-to">{t("content.replying_to")} {replyAuthor}</span>
       <span class="reply-snippet">{replySnippet}</span>
     </span>
     <Button
       variant="icon"
       icon="x"
       iconSize={16}
-      title="Cancel reply"
-      aria-label="Cancel reply"
+      title={t("content.cancel_reply")}
+      aria-label={t("content.cancel_reply")}
       onclick={oncancelreply} />
   </div>
 {/if}
@@ -289,27 +291,27 @@
   <div class="reply-preview editing-preview">
     <span class="reply-icon"><Icon name="edit" size={16} /></span>
     <span class="reply-body">
-      <span class="reply-to">Editing message</span>
+      <span class="reply-to">{t("content.editing_message")}</span>
       <span class="reply-snippet">{editing.original}</span>
     </span>
     <Button
       variant="icon"
       icon="x"
       iconSize={16}
-      title="Cancel edit"
-      aria-label="Cancel edit"
+      title={t("content.cancel_edit")}
+      aria-label={t("content.cancel_edit")}
       onclick={oncanceledit} />
   </div>
 {/if}
 
 {#if pending.length > 0}
-  <p class="attachment-mode">{pending[0].retry?.parentId ? "Continue album — original captions and reply kept; draft stays in the composer."
-    : pending[0].retry ? "Retry unsent files — original captions and reply kept; draft stays in the composer."
-    : isAlbumSelection(pending) ? "Send as one album (2–8 photos or videos)." : "Send as separate files. Albums support 2–8 ordinary photos or videos."}</p>
+  <p class="attachment-mode">{pending[0].retry?.parentId ? t("content.continue_album_original_captions_and_reply_kept_draft_stays_in_the_compo")
+    : pending[0].retry ? t("content.retry_unsent_files_original_captions_and_reply_kept_draft_stays_in_the_c")
+    : isAlbumSelection(pending) ? t("content.send_as_one_album_2_8_photos_or_videos") : t("content.send_as_separate_files_albums_support_2_8_ordinary_photos_or_videos")}</p>
   <div class="pending">
     {#each pending as item (item.id)}
       <div class="pending-item">
-        <button class="pending-thumb" title="Preview and caption" onclick={() => (previewId = item.id)}>
+        <button class="pending-thumb" title={t("content.preview_and_caption")} onclick={() => (previewId = item.id)}>
           {#if item.kind === "image"}
             <img src={item.url} alt={item.file.name} />
           {:else if item.kind === "video"}
@@ -326,31 +328,31 @@
             class="once-toggle"
             class:active={item.once}
             aria-pressed={item.once}
-            title={item.once ? "Sent as view once — tap for normal" : "Send as view once"}
-            aria-label="View once"
+            title={item.once ? t("content.sent_as_view_once_tap_for_normal") : t("content.send_as_view_once")}
+            aria-label={t("content.view_once")}
             onclick={() => ontoggleonce(item.id)}>1</button>
         {/if}
-        <span class="pending-name" title={item.file.name}>{item.file.name}</span>
+        <span class="pending-name" title={item.file.name}><bdi dir="auto">{item.file.name}</bdi></span>
         {#if canChooseMediaQuality(item.file)}
-          <select class="quality" aria-label="Upload quality for {item.file.name}" value={item.quality ?? defaultQuality}
+          <select class="quality" aria-label={t("content.upload_quality_for", { name: item.file.name })} value={item.quality ?? defaultQuality}
             onchange={(event) => { item.quality = event.currentTarget.value as MediaQuality; }}>
-            <option value="standard">Standard</option><option value="hd">HD (original)</option>
+            <option value="standard">{t("content.standard")}</option><option value="hd">{t("content.hd_original")}</option>
           </select>
         {/if}
         {#if item.caption}
-          <span class="pending-caption">{item.caption}</span>
+          <span class="pending-caption"><bdi dir="auto">{item.caption}</bdi></span>
         {/if}
         <Button
           variant="icon"
           icon="x"
           iconSize={12}
           cls="remove"
-          title="Remove"
-          aria-label="Remove"
+          title={t("content.remove")}
+          aria-label={t("content.remove")}
           onclick={() => onremove(item.id)} />
       </div>
     {/each}
-    <span class="pending-status">Type a caption below, then press Enter.</span>
+    <span class="pending-status">{t("content.type_a_caption_below_then_press_enter")}</span>
   </div>
 {/if}
 
@@ -363,7 +365,7 @@
         class:active={i === mentionIndex}
         onclick={() => onselectmention(person)}
         onmouseenter={() => (mentionIndex = i)}>
-        {person.name}
+        <bdi dir="auto">{person.name}</bdi>
         <!-- The alias that matched, else their username. Either way it is a
           hint: the row is addressed by name either way. -->
         {#if person.token !== person.name}<span class="mention-handle"> - @{person.token}</span
@@ -384,12 +386,12 @@
 {/if}
 <Soundboard open={soundboardOpen} {account} chat={selectedChat} {generation} disabled={disabled || !!editing || recording}
   onsend={async (file, scope) => {
-    if (disabled) throw new Error(broadcastSendReason(scope.chat) ?? "Message sending is disabled here.");
+    if (disabled) throw new LocalizedError({ kind: "postal_error", code: "error.content.message_sending_is_disabled_here", params: {} });
     await onsoundclip(file, scope);
   }} onclose={() => { soundboardOpen = false; }} />
 {#if !disabled && emojiToken && emojiMatches.length > 0}
-  <div class="suggest" role="listbox" aria-label="Emoji suggestions">
-    <span class="suggest-title">Emoji matching :{emojiToken.query}</span>
+  <div class="suggest" role="listbox" aria-label={t("content.emoji_suggestions")}>
+    <span class="suggest-title">{t("content.emoji_matching")}{emojiToken.query}</span>
     {#each emojiMatches as e, i (e.emoji)}
       <button
         type="button"
@@ -435,7 +437,7 @@
   <div
     class="attach-wrap"
     role="group"
-    aria-label="Attach"
+    aria-label={t("content.attach")}
     onmouseenter={openAttach}
     onmouseleave={scheduleAttachClose}
     onfocusin={openAttach}
@@ -447,18 +449,18 @@
     iconSize={22}
     cls="attach"
     active={attachMenu}
-    title="Attach"
-    aria-label="Attach"
+    title={t("content.attach")}
+    aria-label={t("content.attach")}
     aria-haspopup="menu"
     aria-expanded={attachMenu}
     {disabled}
     onclick={() => { if (!disabled) attachMenu = !attachMenu; }} />
   {#if attachMenu && !disabled}
-    <div class="attach-menu" role="menu" aria-label="Attach">
+    <div class="attach-menu" role="menu" aria-label={t("content.attach")}>
       <button type="button" role="menuitem" disabled={disabled || editing !== null || !account}
-        onclick={() => { closeAttach(); onsharecontacts(); }}><Icon name="user" size={18} /> Share contacts</button>
+        onclick={() => { closeAttach(); onsharecontacts(); }}><Icon name="user" size={18} /> {t("content.share_contacts")}</button>
       <button type="button" role="menuitem" disabled={disabled || editing !== null || !account}
-        onclick={() => { closeAttach(); cameraOpen = true; }}><Icon name="image" size={18} /> Take a photo</button>
+        onclick={() => { closeAttach(); cameraOpen = true; }}><Icon name="image" size={18} /> {t("content.take_a_photo")}</button>
       <button
         type="button"
         role="menuitem"
@@ -467,7 +469,7 @@
           if (disabled) return;
           closeAttach();
           filePicker?.click();
-        }}><Icon name="paperclip" size={18} /> Upload a file</button>
+        }}><Icon name="paperclip" size={18} /> {t("content.upload_a_file")}</button>
       <button
         type="button"
         role="menuitem"
@@ -476,7 +478,7 @@
           if (disabled) return;
           closeAttach();
           oncreatekind("poll");
-        }}><Icon name="poll" size={18} /> Create poll</button>
+        }}><Icon name="poll" size={18} /> {t("content.create_poll")}</button>
       <button
         type="button"
         role="menuitem"
@@ -485,7 +487,7 @@
           if (disabled) return;
           closeAttach();
           oncreatekind("event");
-        }}><Icon name="calendar" size={18} /> Create event</button>
+        }}><Icon name="calendar" size={18} /> {t("content.create_event")}</button>
     </div>
   {/if}
   </div>
@@ -508,14 +510,14 @@
     onselect={updateCaret}
     onkeydown={(event) => { if (!disabled) onkey(event); }}
     rows="1"
-    placeholder={editing ? "Edit message" : pending.length > 0 ? "Add a caption (optional)" : "Type a message"}
+    placeholder={editing ? t("content.edit_message") : pending.length > 0 ? t("content.add_a_caption_optional") : t("content.type_a_message")}
   ></textarea>
   <div class="composer-tools">
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div
       class="tools-wrap"
       role="group"
-      aria-label="More messaging options"
+      aria-label={t("content.more_messaging_options")}
       onmouseenter={openTools}
       onmouseleave={scheduleToolsClose}
       onfocusin={openTools}
@@ -526,14 +528,14 @@
         icon="sliders"
         iconSize={20}
         active={toolsMenu}
-        title="More messaging options"
-        aria-label="More messaging options"
+        title={t("content.more_messaging_options")}
+        aria-label={t("content.more_messaging_options")}
         aria-haspopup="menu"
         aria-expanded={toolsMenu}
         disabled={!account || !selectedChat}
         onclick={() => { if (account && selectedChat) toolsMenu = !toolsMenu; }} />
       {#if toolsMenu && account && selectedChat}
-        <div class="tools-menu" role="menu" aria-label="More messaging options">
+        <div class="tools-menu" role="menu" aria-label={t("content.more_messaging_options")}>
           <QuickRepliesMenu {account} chat={selectedChat} {generation} requestKey={quickReplies.key}
             dataScope={quickReplies.scope(selectedChat)} replies={quickReplies.replies} loading={quickReplies.loading}
             syncing={quickReplies.syncing} error={quickReplies.error} {connected} menuItem
@@ -545,50 +547,50 @@
             variant="menu"
             icon="clock"
             iconSize={18}
-            title={canSchedule ? "Schedule this message" : "Scheduled messages"}
-            aria-label={canSchedule ? "Schedule this message" : "Scheduled messages"}
+            title={canSchedule ? t("content.schedule_this_message") : t("content.scheduled_messages")}
+            aria-label={canSchedule ? t("content.schedule_this_message") : t("content.scheduled_messages")}
             onclick={() => {
               closeTools();
               if (canSchedule) scheduling = true;
               else scheduled.open = true;
-            }}>{canSchedule ? "Schedule this message" : "Scheduled messages"}</Button>
+            }}>{canSchedule ? t("content.schedule_this_message") : t("content.scheduled_messages")}</Button>
           <Button
             variant="menu"
             icon={receiptsHidden ? "eyeOff" : "eye"}
             iconSize={18}
             active={receiptsHidden}
             pressed={receiptsHidden}
-            title={receiptsHidden ? "Read receipts hidden here" : "Hide read receipts here"}
-            aria-label="Hide read receipts here"
-            onclick={() => { closeTools(); onreceipts(); }}>{receiptsHidden ? "Read receipts hidden here" : "Hide read receipts here"}</Button>
+            title={receiptsHidden ? t("content.read_receipts_hidden_here") : t("content.hide_read_receipts_here")}
+            aria-label={t("content.hide_read_receipts_here")}
+            onclick={() => { closeTools(); onreceipts(); }}>{receiptsHidden ? t("content.read_receipts_hidden_here") : t("content.hide_read_receipts_here")}</Button>
           <Button
             variant="menu"
             icon={typingHidden ? "keyboardOff" : "keyboard"}
             iconSize={18}
             active={typingHidden}
             pressed={typingHidden}
-            title={typingHidden ? "Typing not sent here" : "Stop sending typing here"}
-            aria-label="Stop sending typing here"
-            onclick={() => { closeTools(); ontyping(); }}>{typingHidden ? "Typing not sent here" : "Stop sending typing here"}</Button>
+            title={typingHidden ? t("content.typing_not_sent_here") : t("content.stop_sending_typing_here")}
+            aria-label={t("content.stop_sending_typing_here")}
+            onclick={() => { closeTools(); ontyping(); }}>{typingHidden ? t("content.typing_not_sent_here") : t("content.stop_sending_typing_here")}</Button>
         </div>
       {/if}
     </div>
-    <Button variant="icon" icon="volume" iconSize={20} active={soundboardOpen} title="Soundboard" aria-label="Soundboard"
+    <Button variant="icon" icon="volume" iconSize={20} active={soundboardOpen} title={t("content.soundboard")} aria-label={t("content.soundboard")}
       onclick={() => { soundboardOpen = !soundboardOpen; }} />
     <Button
       variant="icon"
       cls="tool-text"
       active={pickerTab === "gif"}
-      title="GIFs"
+      title={t("content.gifs")}
       {disabled}
-      onclick={() => { if (!disabled) pickerTab = pickerTab === "gif" ? null : "gif"; }}>GIF</Button>
+      onclick={() => { if (!disabled) pickerTab = pickerTab === "gif" ? null : "gif"; }}>{t("content.gif")}</Button>
     <Button
       variant="icon"
       icon="sticker"
       iconSize={20}
       active={pickerTab === "sticker"}
-      title="Stickers"
-      aria-label="Stickers"
+      title={t("content.stickers")}
+      aria-label={t("content.stickers")}
       {disabled}
       onclick={() => { if (!disabled) pickerTab = pickerTab === "sticker" ? null : "sticker"; }} />
     <Button
@@ -596,8 +598,8 @@
       icon="smile"
       iconSize={20}
       active={pickerTab === "emoji"}
-      title="Emoji"
-      aria-label="Emoji"
+      title={t("content.emoji")}
+      aria-label={t("content.emoji")}
       {disabled}
       onclick={() => { if (!disabled) pickerTab = pickerTab === "emoji" ? null : "emoji"; }} />
   </div>
@@ -606,12 +608,12 @@
       variant="send"
       icon="mic"
       iconSize={19}
-      title="Record a voice message"
-      aria-label="Record a voice message"
+      title={t("content.record_a_voice_message")}
+      aria-label={t("content.record_a_voice_message")}
       {disabled}
       onclick={() => { if (!disabled) recording = true; }} />
   {:else}
-    <Button variant="send" icon="send" iconSize={18} type="submit" title="Send" aria-label="Send" {disabled} />
+    <Button variant="send" icon="send" iconSize={18} type="submit" title={t("content.send")} aria-label={t("content.send")} {disabled} />
   {/if}
   {/if}
 </form>
@@ -619,7 +621,7 @@
   {#key `${account}:${selectedChat}:${generation}`}
     <CameraCapture {account} chat={selectedChat} {generation}
       onstage={(file, scope) => {
-        if (disabled || editing || scope.account !== account || scope.chat !== selectedChat || scope.generation !== generation) throw new Error("Camera attachment target changed.");
+        if (disabled || editing || scope.account !== account || scope.chat !== selectedChat || scope.generation !== generation) throw new LocalizedError({ kind: "postal_error", code: "error.content.camera_attachment_target_changed", params: {} });
         onstage(file);
       }} onclose={() => { cameraOpen = false; }} />
   {/key}
@@ -628,7 +630,7 @@
 
 {#if scheduling && !disabled}
   <ScheduleDialog text={draft} onsave={(_text, dueAt) => {
-    if (disabled) throw new Error(broadcastSendReason(selectedChat) ?? "Message scheduling is disabled here.");
+    if (disabled) throw new LocalizedError({ kind: "postal_error", code: "error.content.message_scheduling_is_disabled_here", params: {} });
     return onschedule(dueAt);
   }} onclose={() => (scheduling = false)} />
 {/if}
@@ -644,7 +646,7 @@
       class="sheet preview-sheet"
       role="dialog"
       aria-modal="true"
-      aria-label="Attachment preview">
+      aria-label={t("content.attachment_preview")}>
       {#if previewItem.kind === "image" && cropping}
         <ImageCropper
           file={previewItem.file}
@@ -652,7 +654,7 @@
           oncancel={() => (cropping = false)} />
       {:else if previewItem.kind === "image"}
         <img class="preview-large" src={previewItem.url} alt={previewItem.file.name} />
-        <Button variant="ghost" cls="crop-button" onclick={() => (cropping = true)}>Crop or resize</Button>
+        <Button variant="ghost" cls="crop-button" onclick={() => (cropping = true)}>{t("content.crop_or_resize")}</Button>
       {:else if previewItem.kind === "video"}
         <div class="preview-video">
           <VideoPlayer src={previewItem.url} autoplay={false} />
@@ -660,15 +662,15 @@
       {:else}
         <span class="file-icon large"><Icon name="file" size={56} /></span>
       {/if}
-      <span class="pending-name">{previewItem.file.name}</span>
+      <span class="pending-name"><bdi dir="auto">{previewItem.file.name}</bdi></span>
       <input
         class="caption"
         value={previewItem.caption}
         oninput={(e) => previewItem && (previewItem.caption = e.currentTarget.value)}
-        placeholder="Add a caption"
+        placeholder={t("content.add_a_caption")}
         autocomplete="off"
       />
-      <Button variant="primary" onclick={() => (previewId = null)}>Done</Button>
+      <Button variant="primary" onclick={() => (previewId = null)}>{t("content.done")}</Button>
     </div>
   </div>
 {/if}
@@ -683,7 +685,7 @@
     margin: 0 14px;
     padding: 8px 8px 8px 12px;
     background: var(--surface);
-    border-left: 3px solid var(--accent);
+    border-inline-start: 3px solid var(--accent);
     border-radius: var(--radius-sm) var(--radius-sm) 0 0;
     font-size: 12px;
     color: var(--muted);
@@ -756,7 +758,7 @@
   .pending :global(.remove) {
     position: absolute;
     top: -6px;
-    right: -6px;
+    inset-inline-end: -6px;
     width: 20px;
     height: 20px;
     min-width: 0;
@@ -775,7 +777,7 @@
   .once-toggle {
     position: absolute;
     top: 4px;
-    left: 4px;
+    inset-inline-start: 4px;
     display: grid;
     place-items: center;
     width: 22px;
@@ -822,7 +824,7 @@
     border-top: 1px solid var(--line);
   }
   .mention {
-    text-align: left;
+    text-align: start;
     background: transparent;
     border: 0;
     color: inherit;
@@ -835,7 +837,7 @@
     background: var(--raised);
   }
   .mention-handle {
-    margin-left: 6px;
+    margin-inline-start: 6px;
     color: var(--muted);
     font-size: 12.5px;
   }
@@ -846,8 +848,8 @@
   /* Discord-style completion list over the composer. */
   .suggest {
     position: absolute;
-    left: 12px;
-    right: 12px;
+    inset-inline-start: 12px;
+    inset-inline-end: 12px;
     bottom: calc(100% + 6px);
     z-index: 50;
     display: flex;
@@ -879,7 +881,7 @@
     color: var(--text);
     font: inherit;
     font-size: 14.5px;
-    text-align: left;
+    text-align: start;
     cursor: pointer;
   }
   .suggest-row.active {
@@ -905,7 +907,7 @@
   }
   .attach-menu {
     position: absolute;
-    left: 0;
+    inset-inline-start: 0;
     bottom: calc(100% + 16px);
     z-index: 56;
     display: flex;
@@ -922,8 +924,8 @@
     content: "";
     position: absolute;
     top: 100%;
-    left: 0;
-    right: 0;
+    inset-inline-start: 0;
+    inset-inline-end: 0;
     height: 20px;
   }
   .attach-menu button {
@@ -937,7 +939,7 @@
     color: var(--text);
     font: inherit;
     font-size: 14.5px;
-    text-align: left;
+    text-align: start;
     cursor: pointer;
   }
   .attach-menu button :global(svg) {
@@ -971,8 +973,8 @@
     content: "";
     position: absolute;
     top: 100%;
-    left: 0;
-    right: 0;
+    inset-inline-start: 0;
+    inset-inline-end: 0;
     height: 20px;
   }
   .tools-menu :global(.btn-menu) {

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { formatDate as localeDate, formatTime as localeTime } from "$lib/i18n/localizer";
+  import { t } from "$lib/i18n/localizer";
   import { onDestroy, untrack } from "svelte";
   import type { FoundItem } from "$lib/utils/models";
   import { fade, scale } from "svelte/transition";
@@ -13,7 +15,7 @@
     empty,
     onquery,
     onmore,
-    moreLabel = "Load more",
+    moreLabel = t("content.load_more"),
     initialQuery = "",
     onopen,
     onclose,
@@ -79,8 +81,8 @@
   function when(ts: number) {
     const date = new Date(ts * 1000);
     return new Date().toDateString() === date.toDateString()
-      ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-      : date.toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" });
+      ? localeTime((date).getTime() / 1000, { hour: "2-digit", minute: "2-digit" })
+      : localeDate((date).getTime() / 1000, { day: "numeric", month: "short", year: "numeric" });
   }
 </script>
 
@@ -100,10 +102,10 @@
     transition:scale|global={{ start: 0.96, duration: motion(160) }}>
     <header>
       <div class="heading">
-        <h2>{title}</h2>
+        <h2><bdi dir="auto">{title}</bdi></h2>
         {#if subtitle}<span class="sub">{subtitle}</span>{/if}
       </div>
-      <button class="close" aria-label="Close" onclick={onclose}><Icon name="x" size={18} /></button>
+      <button class="close" aria-label={t("content.close")} onclick={onclose}><Icon name="x" size={18} /></button>
     </header>
     <label class="search">
       <Icon name="search" size={15} />
@@ -112,32 +114,32 @@
     </label>
     <ul>
       {#if items === null}
-        <li class="empty">Loading…</li>
+        <li class="empty">{t("content.loading")}</li>
       {:else if shown.length === 0}
-        <li class="empty">{items.length === 0 && !(onquery && needle) ? empty : "Nothing matches."}</li>
+        <li class="empty">{items.length === 0 && !(onquery && needle) ? empty : t("content.nothing_matches")}</li>
       {:else}
-        <li class="count">{shown.length} {shown.length === 1 ? "message" : "messages"}</li>
+        <li class="count">{t("content.message_count", { count: shown.length })}</li>
       {/if}
       {#each shown as item (`${item.chat}/${item.id}`)}
         <li>
           <button class="row" class:unread={item.unread} onclick={() => onopen(item)}>
             <span class="head">
               <span class="who">
-                {#if item.unread}<span class="dot" aria-label="Unread"></span>{/if}
-                {item.author}
-                {#if item.where}<span class="where">in {item.where}</span>{/if}
+                {#if item.unread}<span class="dot" aria-label={t("content.unread")}></span>{/if}
+                <bdi dir="auto">{item.author}</bdi>
+                {#if item.where}<span class="where">{t("content.in")} {item.where}</span>{/if}
               </span>
               <span class="when">{when(item.timestamp)}</span>
             </span>
             <span class="text"
-              >{#each parts(item.text) as part, i (i)}{#if part.hit}<mark>{part.text}</mark>{:else}{part.text}{/if}{/each}</span>
+              >{#each parts(item.text) as part, i (i)}{#if part.hit}<mark><bdi dir="auto">{part.text}</bdi></mark>{:else}<bdi dir="auto">{part.text}</bdi>{/if}{/each}</span>
           </button>
         </li>
       {/each}
       {#if onmore && items !== null && needle}
         <li class="more-row">
           <button class="more" disabled={loadingMore} onclick={more}>
-            {#if loadingMore}<span class="spinner"></span> Asking your phone…{:else}{moreLabel}{/if}
+            {#if loadingMore}<span class="spinner"></span> {t("content.asking_your_phone")}{:else}{moreLabel}{/if}
           </button>
         </li>
       {/if}
@@ -249,12 +251,12 @@
     gap: 3px;
     padding: 10px 12px;
     border: 0;
-    border-left: 3px solid transparent;
+    border-inline-start: 3px solid transparent;
     border-radius: 8px;
     background: transparent;
     color: var(--text);
     font: inherit;
-    text-align: left;
+    text-align: start;
     cursor: pointer;
     transition: background calc(0.12s * var(--motion-scale)) var(--ease);
   }
@@ -262,7 +264,7 @@
     background: var(--surface);
   }
   .row.unread {
-    border-left-color: var(--mention);
+    border-inline-start-color: var(--mention);
     background: var(--mention-soft);
   }
   .head {

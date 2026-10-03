@@ -1,3 +1,4 @@
+import { LocalizedError } from "../i18n/errors.ts";
 import { get, writable } from "svelte/store";
 import { appendHistory, clearHistory, loadHistory, saveHistory } from "./history.ts";
 import type { HistorySnapshot, HistoryStorage, NotificationHistoryEntry } from "./history.ts";
@@ -20,7 +21,7 @@ export function createNotificationHistory(storage: () => HistoryStorage) {
     let snapshot = accounts.get(account);
     if (!snapshot) {
       try { snapshot = loadHistory(account, storage()); }
-      catch { snapshot = { entries: [], error: "Notification history storage is unavailable. New entries are temporary.", writable: false }; }
+      catch { snapshot = { entries: [], error: new LocalizedError({ kind: "postal_error", code: "error.content.notification_history_storage_is_unavailable_new_entries_are_temporary", params: {} }), writable: false }; }
     }
     if (!current()) return null;
     publish(account, snapshot);
@@ -36,7 +37,7 @@ export function createNotificationHistory(storage: () => HistoryStorage) {
     if (snapshot.writable) {
       if (!current()) return false;
       try { const local = storage(); if (!current()) return false; next = saveHistory(account, entries, local); }
-      catch { next.error = "Notification history storage is unavailable. New entries are temporary."; }
+      catch { next.error = new LocalizedError({ kind: "postal_error", code: "error.content.notification_history_storage_is_unavailable_new_entries_are_temporary", params: {} }); }
     }
     if (!current() || get(state).account !== account) return false;
     publish(account, next);
@@ -48,7 +49,7 @@ export function createNotificationHistory(storage: () => HistoryStorage) {
     if (!snapshot || !current()) return false;
     let next: HistorySnapshot;
     try { const local = storage(); if (!current()) return false; next = clearHistory(account, snapshot, local); }
-    catch { next = { ...snapshot, error: "Notification history could not be cleared. Local storage is unavailable." }; }
+    catch { next = { ...snapshot, error: new LocalizedError({ kind: "postal_error", code: "error.content.notification_history_could_not_be_cleared_local_storage_is_unavailable", params: {} }) }; }
     if (!current() || get(state).account !== account) return false;
     publish(account, next);
     return !next.error;

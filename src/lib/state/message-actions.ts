@@ -10,6 +10,8 @@ import { members } from "./members.svelte";
 import { messages } from "./messages.svelte";
 import { ui } from "./ui.svelte";
 import { session } from "./session.svelte";
+import { t } from "../i18n/localizer.ts";
+import { uiError } from "./localized.ts";
 
 export function target(m: StoredMessage) {
   return { chat: m.chat, id: m.id, sender: m.sender, fromMe: m.from_me };
@@ -57,15 +59,15 @@ type MenuBuilder = (ctx: MenuCtx) => MenuItem | MenuItem[] | null;
 const MENU_BUILDERS: Record<MenuId, MenuBuilder> = {
   labels: ({ m }) => !m.revoked && !m.deleted && !m.spoiler && !m.system_kind && !m.media_once_kind
     && m.media_kind !== "view_once" && m.media_kind !== "unknown" && !isUnavailable(m)
-    ? { label: "Labels", icon: "edit", action: () => { ui.labelTargets = [{ chat: m.chat, id: m.id }]; } } : null,
+    ? { label: t("page.menu.labels"), icon: "edit", action: () => { ui.labelTargets = [{ chat: m.chat, id: m.id }]; } } : null,
   // Under the quick-reaction row, and only once somebody has reacted: an entry
   // leading to an empty list is a dead end.
   reactions: ({ m }) =>
     messages.reactionsFor.get(m.id)?.length
-      ? { label: "Reactions", icon: "smile", action: () => (ui.reactionsFor = m) }
+      ? { label: t("page.menu.reactions"), icon: "smile", action: () => (ui.reactionsFor = m) }
       : null,
   reply: ({ m }) => ({
-    label: "Reply",
+    label: t("page.menu.reply"),
     icon: "reply",
     action: () => {
       composer.editing = null;
@@ -75,18 +77,18 @@ const MENU_BUILDERS: Record<MenuId, MenuBuilder> = {
   }),
   edit: ({ m }) =>
     m.from_me && !m.revoked && !m.deleted && !m.media_kind && m.text.trim() && !broadcastSendReason(m.chat)
-      ? { label: "Edit", icon: "edit", action: () => composer.startEditing(m) }
+      ? { label: t("page.menu.edit"), icon: "edit", action: () => composer.startEditing(m) }
       : null,
   info: ({ m }) =>
     m.from_me
-      ? { label: "Message info", icon: "check", action: () => (ui.infoFor = m) }
+      ? { label: t("page.menu.info"), icon: "check", action: () => (ui.infoFor = m) }
       : null,
   // Admins can remove a member straight from their message; the owner can
   // never be removed, and we cannot remove ourselves this way.
   "remove-member": ({ m, other, senderIsOwner }) =>
     other && members.isAdmin() && !senderIsOwner
       ? {
-          label: `Remove ${members.senderLabel(m)} from group`,
+          label: t("page.menu.remove_member", { name: members.senderLabel(m) }),
           icon: "trash",
           danger: true,
           action: () =>
@@ -97,7 +99,7 @@ const MENU_BUILDERS: Record<MenuId, MenuBuilder> = {
     other
       ? [
           {
-            label: "Reply privately",
+            label: t("page.menu.reply_private"),
             icon: "users",
             action: async () => {
               await openChat(bare(m.sender));
@@ -107,7 +109,7 @@ const MENU_BUILDERS: Record<MenuId, MenuBuilder> = {
             },
           },
           {
-            label: `Message ${members.senderLabel(m)}`,
+            label: t("page.menu.message_person", { name: members.senderLabel(m) }),
             icon: "message",
             action: () => openChat(bare(m.sender)),
           },
@@ -116,7 +118,7 @@ const MENU_BUILDERS: Record<MenuId, MenuBuilder> = {
   copy: ({ m, text }) =>
     text && !m.revoked
       ? {
-          label: "Copy",
+          label: t("page.menu.copy"),
           icon: "copy",
           action: () => act(() => navigator.clipboard.writeText(text)),
         }
@@ -129,15 +131,15 @@ const MENU_BUILDERS: Record<MenuId, MenuBuilder> = {
     const mediaAction = (action: string) =>
       act(() => invoke("message_media_action", { chat: m.chat, id: m.id, action }));
     const items: MenuItem[] = [];
-    if (image) items.push({ label: "Copy Image", icon: "copy", action: () => mediaAction("copy_image") });
+    if (image) items.push({ label: t("page.menu.copy_image"), icon: "copy", action: () => mediaAction("copy_image") });
     items.push(
       {
-        label: image ? "Save Image…" : "Save Attachment…",
+        label: image ? t("page.menu.save_image") : t("page.menu.save_attachment"),
         icon: "download",
         action: () => mediaAction("save"),
       },
       {
-        label: image ? "Open Image" : "Open Attachment",
+        label: image ? t("page.menu.open_image") : t("page.menu.open_attachment"),
         icon: "external",
         action: () => mediaAction("open"),
       },
@@ -146,12 +148,12 @@ const MENU_BUILDERS: Record<MenuId, MenuBuilder> = {
   },
   forward: ({ m }) =>
     !m.revoked
-      ? { label: "Forward", icon: "forward", action: () => (ui.forwarding = [m]) }
+      ? { label: t("page.menu.forward"), icon: "forward", action: () => (ui.forwarding = [m]) }
       : null,
   pin: ({ m }) =>
     !m.revoked && !broadcastSendReason(m.chat)
       ? {
-          label: messages.marks.pinned === m.id ? "Unpin" : "Pin",
+          label: messages.marks.pinned === m.id ? t("page.menu.unpin") : t("page.menu.pin"),
           icon: "pin",
           action: () =>
             act(() => composer.enqueue(() => {
@@ -163,7 +165,7 @@ const MENU_BUILDERS: Record<MenuId, MenuBuilder> = {
   star: ({ m }) =>
     !m.revoked
       ? {
-          label: messages.starred.has(m.id) ? "Unstar" : "Star",
+          label: messages.starred.has(m.id) ? t("page.menu.unstar") : t("page.menu.star"),
           icon: "star",
           action: () =>
             starMessages([m], !messages.starred.has(m.id)),
@@ -172,13 +174,13 @@ const MENU_BUILDERS: Record<MenuId, MenuBuilder> = {
   report: ({ m, other }) =>
     other
       ? {
-          label: "Report to admins",
+          label: t("page.menu.report"),
           icon: "flag",
           action: () => (ui.reporting = m),
         }
       : null,
   delete: ({ m }) => ({
-    label: "Delete",
+    label: t("page.menu.delete"),
     icon: "trash",
     danger: true,
     action: () => (ui.deleting = m),
@@ -186,7 +188,7 @@ const MENU_BUILDERS: Record<MenuId, MenuBuilder> = {
   select: ({ m }) =>
     !m.revoked
       ? {
-          label: "Select messages",
+          label: t("page.menu.select"),
           icon: "check",
           action: () => (ui.picking = { [m.id]: m }),
         }
@@ -400,10 +402,10 @@ export async function saveEvent(chat: string, id: string, fields: object) {
   guardBroadcastSend(chat);
   const accountId = session.activeAccount, generation = messages.accountGeneration, event = Object.freeze(structuredClone(fields));
   const current = () => !!accountId && accountId === session.activeAccount && generation === messages.accountGeneration && chat === chats.selectedChat;
-  if (!current()) throw new Error("Conversation changed before editing the event.");
+  if (!current()) throw uiError("error.state.event_edit_scope");
   await composer.enqueue((signal) => {
     signal.throwIfAborted();
-    if (!current()) throw new Error("Conversation changed before editing the event.");
+    if (!current()) throw uiError("error.state.event_edit_scope");
     guardBroadcastSend(chat);
     return invoke("edit_event", { accountId, chat, id, event });
   });

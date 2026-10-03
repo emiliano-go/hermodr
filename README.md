@@ -323,9 +323,17 @@ they scroll away.
 
 ## Security
 
-- Message and protocol-session databases, downloaded media and backups are
-  plaintext on disk. WhatsApp transport encryption does not encrypt these
-  local files. OS database encryption and password-locked chats remain open work.
+- Local databases remain plaintext by default. Settings → Privacy offers
+  database encryption with SQLCipher and an account key held in the OS
+  credential store. Enable it and restart Postal to migrate existing message,
+  protocol-session, alias, favorite and scheduled-message databases. Existing
+  encrypted databases still require their original key when this setting is
+  turned off; turning it off does not decrypt them. Missing or inaccessible
+  keys block opening the affected account. Downloaded media and exported
+  backups remain plaintext. WhatsApp transport encryption does not encrypt
+  these local files. See [database encryption](docs/database-encryption.md)
+  for coverage, recovery and build requirements. Password-locked chats remain
+  separate work.
 - The UI runs under a content security policy: scripts only from the app, no
   remote fonts, images or connections. Media uses explicit asset, blob and data
   sources. Inline styles remain allowed for Svelte and user themes; inline
@@ -347,7 +355,7 @@ they scroll away.
 ## Testing
 
 ```console
-cargo test --locked --workspace
+node scripts/cargo.mjs test --locked --workspace
 pnpm check
 pnpm test
 node --experimental-strip-types src/lib/utils/format.ts

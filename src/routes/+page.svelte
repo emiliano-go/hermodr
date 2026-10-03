@@ -8,11 +8,15 @@
   import { act, canDeleteForEveryone, canDeletePickedForEveryone, copyMessages, deleteMessage, deleteSelected, eventFields, forwardMessages, menuItems as messageMenuItems, pickedInOrder, reactMessages, saveEvent, starMessages, target, viewableMessages } from "$lib/state/message-actions";
   import { onMount, tick, untrack } from "svelte";
   import { invoke } from "$lib/utils/ipc";
+  import { LocalizedError, normalizeError } from "$lib/i18n/errors";
+  import { uiError, uiMessage } from "$lib/state/localized";
+  import { formatDate, formatNumber, t } from "$lib/i18n/localizer";
+  import { locale } from "$lib/i18n/locale.svelte";
   import { listen } from "@tauri-apps/api/event";
   import StarredList from "$lib/messages/StarredList.svelte";
   import MessageFinder from "$lib/messages/MessageFinder.svelte";
   import ChatSettings from "$lib/chat/ChatSettings.svelte";
-  import { formatBulkReadFailures } from "$lib/utils/bulk-chats";
+  import { bulkReadError } from "$lib/utils/bulk-chats";
   import NewGroup from "$lib/chat/NewGroup.svelte";
   import type { ChatRetention } from "$lib/utils/models";
   import ProfileCard from "$lib/contacts/ProfileCard.svelte";
@@ -22,7 +26,7 @@
   import ContactInfo from "$lib/contacts/ContactInfo.svelte";
   import BroadcastInfo from "$lib/chat/BroadcastInfo.svelte";
   import Panel from "$lib/ui/Panel.svelte";
-  import { isBroadcastList, broadcastSendReason } from "$lib/utils/broadcast";
+  import { isBroadcastList, broadcastSendError, broadcastSendReason } from "$lib/utils/broadcast";
   import type { BroadcastList } from "$lib/utils/wire";
   import NewContact from "$lib/contacts/NewContact.svelte";
   import ContactSharing from "$lib/contacts/ContactSharing.svelte";
@@ -110,20 +114,20 @@
   async function inboxAction(account: string, chat: string, action: InboxAction) {
     const generation = messages.accountGeneration;
     const current = () => account === session.activeAccount && generation === messages.accountGeneration && session.connected;
-    if (!current()) throw new Error("Inbox account changed or disconnected.");
+    if (!current()) throw uiError("error.page.inbox_scope");
     if (action.kind === "label") {
       await labels.applyChat(action.label, chat, action.applied);
       return;
     }
     await composer.enqueue((signal) => {
-      if (signal.aborted || !current()) throw new Error("Inbox account changed before operation.");
+      if (signal.aborted || !current()) throw uiError("error.page.inbox_scope");
       if (action.kind === "read") return invoke(action.read ? "mark_read" : "set_marked_unread", { account, chat, unread: true });
       if (action.kind === "archive") return invoke("set_archived", { account, chat, archived: action.archived });
-      if (!Number.isInteger(action.seconds) || action.seconds < -1) throw new Error("Invalid mute duration.");
+      if (!Number.isInteger(action.seconds) || action.seconds < -1) throw uiError("error.page.mute_duration");
       const until = action.seconds <= 0 ? action.seconds : Math.floor(Date.now() / 1000) + action.seconds;
       return invoke("set_muted", { account, chat, until });
     });
-    if (!current()) throw new Error("Inbox account changed during operation.");
+    if (!current()) throw uiError("error.page.inbox_scope");
     if (action.kind === "read" && action.read && chat === chats.selectedChat) {
       messages.firstUnreadId = null;
       messages.lastUnreadId = null;
@@ -132,21 +136,21 @@
   }
 
   async function sendContacts(contacts: SharedContact[], scope: ContactShareScope): Promise<string> {
-    const reason = broadcastSendReason(scope.chat);
-    if (reason) throw new Error(reason);
+    const reason = broadcastSendError(scope.chat);
+    if (reason) throw reason;
     const current = () => scope.account === session.activeAccount && scope.chat === chats.selectedChat
       && scope.generation === messages.accountGeneration && session.connected;
     const allowed = () => current() && !isBroadcastList(scope.chat) && !composer.editing && !composer.recording && (!members.chatGroup || members.chatGroup.can_send);
-    if (!allowed()) throw new Error("Contact sharing target changed or is unavailable.");
+    if (!allowed()) throw uiError("error.page.contact_scope");
     const result = await composer.enqueue((signal) => {
-      if (signal.aborted || !allowed()) throw new Error("Contact sharing target changed before send.");
+      if (signal.aborted || !allowed()) throw uiError("error.page.contact_scope");
       return invoke<import("$lib/utils/wire").ContactSendResult>("send_contacts", { account: scope.account, chat: scope.chat, contacts });
     });
-    if (!result.message_id) throw new Error("Contact send was not acknowledged.");
+    if (!result.message_id) throw uiError("error.page.contact_ack");
     if (current()) {
-      if (result.warning) ui.notify(result.warning);
+      if (result.warning_ref || result.warning) ui.notify(result.warning_ref ?? uiMessage("page.contact_send_warning"), result.diagnostic ?? result.warning ?? undefined);
       try { await messages.reloadMessages(scope.chat); await chats.refreshChats(); }
-      catch (error) { if (current()) ui.fail(error); }
+      catch (error) { if (current()) ui.fail(uiError("error.page.contact_refresh", {}, error)); }
     }
     return result.message_id;
   }
@@ -191,8 +195,20 @@
   });
   $effect(() => {
     const accountId = session.activeAccount;
-    const count = desktopUnreadCount(chats.chats);
-    untrack(() => { void invoke("desktop_unread", { accountId, count: accountId ? count : 0 }).catch((error) => ui.fail(error)); });
+    const count = accountId ? desktopUnreadCount(chats.chats) : 0;
+    const tooltip = count ? t("native.tray_unread", { count }) : t("native.tray_name");
+    const badgeLabel = count ? formatNumber(count, { useGrouping: false }) : "";
+    untrack(() => { void invoke("desktop_unread", { accountId, count, tooltip, badgeLabel }).catch((error) => ui.fail(error)); });
+  });
+
+  let nativeLocaleQueue = Promise.resolve();
+  $effect(() => {
+    const language = locale.language;
+    let current = true;
+    nativeLocaleQueue = nativeLocaleQueue.then(async () => {
+      if (current) await invoke("set_native_locale", { language });
+    }).catch((error) => { if (current) ui.fail(error); });
+    return () => { current = false; };
   });
 
   $effect(() => {
@@ -225,8 +241,9 @@
     event.preventDefault();
     const startX = event.clientX;
     const startWidth = customization.listWidth ?? 300;
+    const direction = locale.dir === "rtl" ? -1 : 1;
     const onMove = (e: MouseEvent) => {
-      customization.listWidth = Math.max(180, Math.min(640, startWidth + e.clientX - startX));
+      customization.listWidth = Math.max(180, Math.min(640, startWidth + direction * (e.clientX - startX)));
     };
     const onUp = () => {
       window.removeEventListener("mousemove", onMove);
@@ -369,8 +386,8 @@
       const removed = await invoke<number>("flush_media");
       ui.notify(
         removed > 0
-          ? `Removed media from ${removed} message(s).`
-          : "There was no downloaded media to remove.",
+          ? uiMessage("page.media_removed", { count: removed })
+          : uiMessage("page.media_empty"),
       );
       await chats.refreshChats();
       if (chats.selectedChat) await messages.reloadMessages(chats.selectedChat);
@@ -382,7 +399,7 @@
   async function clearHistory() {
     try {
       const removed = await invoke<number>("clear_history");
-      ui.notify(`Deleted ${removed} message(s) from this computer.`);
+      ui.notify(uiMessage("page.history_deleted", { count: removed }));
       await chats.refreshChats();
       if (chats.selectedChat) await messages.reloadMessages(chats.selectedChat);
     } catch (e) {
@@ -498,7 +515,7 @@
   let contactInfoFor = $state<string | null>(null);
   let broadcastFor = $state<{ account: string; chat: string; generation: number } | null>(null);
   let broadcastInfo = $state<BroadcastList | null>(null);
-  let broadcastLoading = $state(false), broadcastError = $state<string | null>(null);
+  let broadcastLoading = $state(false), broadcastError = $state<LocalizedError | null>(null);
   $effect(() => {
     const scope = broadcastFor;
     const account = session.activeAccount, chat = chats.selectedChat, generation = messages.accountGeneration;
@@ -512,7 +529,7 @@
       broadcastInfo = null; broadcastError = null; broadcastLoading = true;
       void invoke<BroadcastList | null>("broadcast_list", { accountId: scope.account, chat: scope.chat })
         .then((info) => { if (current) broadcastInfo = info; })
-        .catch((error) => { if (current) broadcastError = String(error); })
+        .catch((error) => { if (current) broadcastError = normalizeError(error); })
         .finally(() => { if (current) broadcastLoading = false; });
     });
     return () => { current = false; };
@@ -529,7 +546,7 @@
   let spaceFinderKey = $state(0);
   let spaceOpenSeq = 0;
   let spaceCatalog = $state.raw<SearchResult[]>([]), spaceGroups = $state.raw<CachedSpaceGroup[]>([]), spaceSaved = $state.raw<StoredMessage[]>([]);
-  let spaceCatalogLoading = $state(false), spaceCatalogError = $state<string | null>(null);
+  let spaceCatalogLoading = $state(false), spaceCatalogError = $state<LocalizedError | null>(null);
   let spaceCatalogRequest = 0;
   let spacePickerFor = $state<{ account: string; generation: number; spaceId: string } | null>(null);
   let spaceCommunityFor = $state<{ account: string; generation: number; jid: string } | null>(null);
@@ -550,7 +567,7 @@
         invoke<CachedSpaceGroup[]>("space_group_catalog", { accountId: account }), invoke<StoredMessage[]>("starred_messages", { accountId: account }),
       ]);
       if (current()) { spaceCatalog = catalog; spaceGroups = groups; spaceSaved = saved; }
-    } catch (error) { if (current()) spaceCatalogError = String(error); }
+    } catch (error) { if (current()) spaceCatalogError = normalizeError(error); }
     finally { if (current()) spaceCatalogLoading = false; }
   }
   $effect(() => {
@@ -586,15 +603,15 @@
       add({ kind, jid: row.jid } as SpaceTarget, title);
       if (row.kind === "contact") add({ kind: "contact", jid: row.jid }, title);
     }
-    for (const group of spaceGroups) add({ kind: group.community ? "community" : "group", jid: group.jid }, group.subject ?? chats.chatName(group.jid), "Cached group");
+    for (const group of spaceGroups) add({ kind: group.community ? "community" : "group", jid: group.jid }, group.subject ?? chats.chatName(group.jid), t("page.cached_group"));
     for (const jid of favorites.chats) {
       if (jid.endsWith("@lid") || jid.endsWith("@s.whatsapp.net")) add({ kind: "favorite_contact", jid }, chats.chatName(jid));
-      else add({ kind: jid.endsWith("@newsletter") ? "channel" : jid.endsWith("@g.us") ? spaceGroups.some((group) => group.jid === jid && group.community) ? "community" : "group" : "chat", jid }, chats.chatName(jid), "Favorite");
+      else add({ kind: jid.endsWith("@newsletter") ? "channel" : jid.endsWith("@g.us") ? spaceGroups.some((group) => group.jid === jid && group.community) ? "community" : "group" : "chat", jid }, chats.chatName(jid), t("page.favorite"));
     }
     if (labels.account === session.activeAccount) for (const label of labels.view.labels) add({ kind: "label", label_id: label.id }, label.name);
     for (const message of spaceSaved) add({ kind: "saved_message", chat: message.chat, message_id: message.id }, plain(message.text), chats.chatName(message.chat));
-    if (ui.finder?.mode === "search" && ui.finder.query?.trim()) add({ kind: "saved_search", query: ui.finder.query, chat: ui.finder.chat }, `Search: ${ui.finder.query}`);
-    add({ kind: "inbox_view", filters: { ...currentInboxFilters } }, "Current inbox view");
+    if (ui.finder?.mode === "search" && ui.finder.query?.trim()) add({ kind: "saved_search", query: ui.finder.query, chat: ui.finder.chat }, t("page.saved_search_title", { query: ui.finder.query }));
+    add({ kind: "inbox_view", filters: { ...currentInboxFilters } }, t("page.current_inbox"));
     return rows;
   });
   async function openSpaceTarget(target: SpaceTarget) {
@@ -822,7 +839,7 @@
         thumb: null,
         kind: m.reply_to_kind ?? "image",
         caption: "",
-        author: m.reply_to_sender === "@me" ? "You" : members.senderName(m.reply_to_sender ?? ""),
+        get author() { return m.reply_to_sender === "@me" ? t("chat.you") : members.senderName(m.reply_to_sender ?? ""); },
         avatar: null,
         timestamp: m.timestamp,
       },
@@ -865,7 +882,7 @@
         await tick();
         if (!current()) return;
         const row = messages.messages.find((message) => message.id === id);
-        if (row && keywords.hidden(row)) { ui.fail("This message is hidden by your keyword rules."); return; }
+        if (row && keywords.hidden(row)) { ui.fail(uiError("error.page.keyword_hidden")); return; }
         scrollToMessage(id);
         return;
       }
@@ -878,14 +895,14 @@
         await tick();
         if (!current()) return;
         const row = messages.messages.find((message) => message.id === id);
-        if (row && keywords.hidden(row)) { ui.fail("This message is hidden by your keyword rules."); return; }
+        if (row && keywords.hidden(row)) { ui.fail(uiError("error.page.keyword_hidden")); return; }
         if (messageList?.hasMessage(id)) {
           scrollToMessage(id);
           return;
         }
         if (messages.messages.at(-1)?.id === before) break;
       }
-      if (current()) ui.fail("Your phone did not send that message; it may be older than it keeps, or deleted.");
+      if (current()) ui.fail(uiError("error.page.history_missing"));
     } catch (e) {
       if (current()) ui.fail(e);
     } finally {
@@ -901,10 +918,10 @@
     const current = () => account === session.activeAccount && generation === messages.accountGeneration;
     try {
       await composer.enqueue((signal) => {
-        if (signal.aborted || !current()) throw new Error("account changed before operation");
+        if (signal.aborted || !current()) throw uiError("error.page.account_scope");
         return invoke("set_contact_blocked", { account, jid, blocked: true });
       });
-      if (current()) ui.notify("Contact blocked.");
+      if (current()) ui.notify(uiMessage("page.contact_blocked"));
     } catch (error) { if (current()) ui.fail(error); }
   }
   async function markAllRead() {
@@ -916,11 +933,11 @@
     try {
       const results = await composer.enqueue(() => invoke<import("$lib/utils/wire").MarkReadResult[]>("mark_all_read", { accountId }));
       if (!current()) return;
-      const failures = formatBulkReadFailures(results, (chat) => {
+      const failure = bulkReadError(results, (chat) => {
         const known = chats.chats.find((item) => item.chat === chat);
         return known ? chats.chatLabel(known) : members.displayName(null, chat);
       });
-      if (failures.length) ui.fail(failures.join("\n"));
+      if (failure) ui.fail(failure);
       if (results.some((result) => result.chat === chats.selectedChat && !result.error)) {
         messages.firstUnreadId = null;
         messages.lastUnreadId = null;
@@ -938,21 +955,21 @@
     const generation = messages.accountGeneration;
     const current = () => accountId === session.activeAccount && chat === chats.selectedChat
       && generation === messages.accountGeneration;
-    if (!kind || !accountId || !chat) throw new Error("Conversation changed before creating.");
-    const reason = broadcastSendReason(chat);
-    if (reason) throw new Error(reason);
+    if (!kind || !accountId || !chat) throw uiError("error.page.create_scope");
+    const reason = broadcastSendError(chat);
+    if (reason) throw reason;
     const payload: Record<string, unknown> = { ...(value as object) };
     if (Array.isArray(payload.options)) payload.options = Object.freeze([...payload.options]);
     Object.freeze(payload);
     const quiz = kind === "poll" && Object.hasOwn(payload, "correctIndex");
     const correct = payload.correctIndex;
     if (quiz && (!Array.isArray(payload.options) || typeof correct !== "number" || !Number.isInteger(correct)
-      || correct < 0 || correct >= payload.options.length)) throw new Error("Invalid quiz correct answer.");
+      || correct < 0 || correct >= payload.options.length)) throw uiError("error.page.quiz_answer");
     const command = kind === "event" ? "create_event" : quiz ? "create_quiz" : "create_poll";
     const args = kind === "poll" ? { ...payload, accountId, chat } : { accountId, chat, event: payload };
     await composer.enqueue(async (signal) => {
       signal.throwIfAborted();
-      if (!current()) throw new Error("Conversation changed before creating.");
+      if (!current()) throw uiError("error.page.create_scope");
       await invoke(command, args);
     });
     if (!current()) return;
@@ -973,12 +990,12 @@
     const generation = messages.accountGeneration, selected = [...options];
     const current = () => accountId === session.activeAccount && chat === chats.selectedChat
       && generation === messages.accountGeneration;
-    if (!accountId || !current()) throw new Error("Conversation changed before voting.");
-    const reason = broadcastSendReason(chat);
-    if (reason) throw new Error(reason);
+    if (!accountId || !current()) throw uiError("error.page.vote_scope");
+    const reason = broadcastSendError(chat);
+    if (reason) throw reason;
     await composer.enqueue(async (signal) => {
       signal.throwIfAborted();
-      if (!current()) throw new Error("Conversation changed before voting.");
+      if (!current()) throw uiError("error.page.vote_scope");
       await invoke("vote_poll", { accountId, chat, id, options: selected });
     });
     if (!current()) return;
@@ -994,14 +1011,14 @@
   async function respondEvent(message: StoredMessage, response: string, extraGuestCount?: number) {
     const accountId = session.activeAccount, chat = message.chat, id = message.id;
     const generation = messages.accountGeneration;
-    const reason = broadcastSendReason(chat);
-    if (reason) throw new Error(reason);
+    const reason = broadcastSendError(chat);
+    if (reason) throw reason;
     const current = () => !!accountId && accountId === session.activeAccount && chat === chats.selectedChat
       && generation === messages.accountGeneration;
-    if (!current()) throw new Error("Conversation changed before responding.");
+    if (!current()) throw uiError("error.page.respond_scope");
     await composer.enqueue(async (signal) => {
       signal.throwIfAborted();
-      if (!current()) throw new Error("Conversation changed before responding.");
+      if (!current()) throw uiError("error.page.respond_scope");
       await invoke("respond_event", { accountId, chat, id, response, extraGuestCount: extraGuestCount ?? null });
     });
     if (current()) {
@@ -1016,7 +1033,7 @@
     if (!m) return null;
     return {
       id: m.id,
-      author: m.from_me ? "You" : members.senderLabel(m),
+      get author() { return m.from_me ? t("chat.you") : members.senderLabel(m); },
       body: m.media_kind
         ? plain(captionOf(m), (user) => members.mentionName(user)) || MEDIA_LABELS[m.media_kind]
         : plain(m.text, (user) => members.mentionName(user)),
@@ -1068,7 +1085,7 @@
       thumb: m.media_thumb,
       kind: m.media_kind!,
       caption: plain(captionOf(m), (user) => members.mentionName(user)),
-      author: m.from_me ? "You" : members.senderLabel(m),
+      get author() { return m.from_me ? t("chat.you") : members.senderLabel(m); },
       avatar: who ? (chats.avatars[who] ?? null) : null,
       timestamp: m.timestamp,
     };
@@ -1116,10 +1133,10 @@
       // harmless loop warning as a window error. Ignore it, or every render
       // paints an error banner over the interface.
       if (event.message?.startsWith("ResizeObserver loop")) return;
-      ui.fail(event.message || "Unexpected error");
+      ui.fail(uiError("error.page.unexpected", {}, event.error ?? event.message));
     };
     const onRejection = (event: PromiseRejectionEvent) => {
-      ui.fail(event.reason ?? "Unexpected error");
+      ui.fail(event.reason ?? uiError("error.page.unexpected"));
     };
     window.addEventListener("error", onError);
     window.addEventListener("unhandledrejection", onRejection);
@@ -1299,9 +1316,15 @@
 />
 
 {#if ui.error}
+  {@const failure = normalizeError(ui.error)}
   <div class="error" role="alert">
-    <span>{ui.error}</span>
-    <Button variant="icon" icon="x" iconSize={16} title="Dismiss" aria-label="Dismiss" onclick={() => (ui.error = null)} />
+    <div>
+      <span>{failure.message}</span>
+      {#if failure.diagnostic}
+        <details><summary>{t("error.technical_details")}</summary><pre dir="auto">{failure.diagnostic}</pre></details>
+      {/if}
+    </div>
+    <Button variant="icon" icon="x" iconSize={16} title={t("action.dismiss")} aria-label={t("action.dismiss")} onclick={() => (ui.error = null)} />
   </div>
 {/if}
 
@@ -1434,7 +1457,7 @@
       {:else if chats.selectedChat}
         {@const selectedChat = chats.selectedChat}
         {@const storedTitle = chats.chats.find((c) => c.chat === selectedChat)?.display_name ?? chats.titleOverride}
-        {@const title = isBroadcastList(selectedChat) ? storedTitle || "Broadcast list" : members.displayName(storedTitle, selectedChat)}
+        {@const title = isBroadcastList(selectedChat) ? storedTitle || t("page.broadcast_list") : members.displayName(storedTitle, selectedChat)}
         {@const typingNow = isBroadcastList(selectedChat) ? null : members.typingLabel(selectedChat)}
         <ChatHeader
           {selectedChat}
@@ -1487,6 +1510,7 @@
           forwardedSet={messages.forwarded}
           downloading={messages.downloading}
           downloadErrors={messages.downloadErrors}
+          downloadDiagnostics={messages.downloadDiagnostics}
           downloadTries={messages.downloadTries}
           replyingToId={composer.replyingTo?.id ?? null}
           highlightedId={ui.highlightedId}
@@ -1502,7 +1526,7 @@
           }}
           polls={messages.marks.polls}
           events={messages.marks.events}
-          namer={(jid) => (members.isMe(jid) ? "You" : members.senderName(jid))}
+          namer={(jid) => (members.isMe(jid) ? t("chat.you") : members.senderName(jid))}
           avatarOf={(jid) => chats.pictureOf(jid)}
           avatars={chats.avatars}
           voiceAvatarOf={(m) => {
@@ -1598,7 +1622,7 @@
 
         {#if ui.scrolledUp}
           <button class="jump" onclick={scrollToBottom}>
-            Latest <Icon name="chevronDown" size={15} />
+            {t("page.latest")} <Icon name="chevronDown" size={15} />
           </button>
         {/if}
         </div>
@@ -1618,7 +1642,7 @@
             onlabel={() => {
               ui.labelTargets = pickedInOrder(ui.picking, messages.ordered).filter((m) => !isUnavailable(m) && !m.revoked && !m.deleted && !m.spoiler && !m.system_kind && !m.media_once_kind && m.media_kind !== "view_once" && m.media_kind !== "unknown")
                 .map((m) => ({ chat: m.chat, id: m.id }));
-              if (!ui.labelTargets.length) { ui.labelTargets = null; ui.notify("Select a message that can be labelled."); }
+              if (!ui.labelTargets.length) { ui.labelTargets = null; ui.notify(uiMessage("page.label_selection")); }
               else void labels.refresh();
             }}
             oncopy={() => copyMessages(pickedInOrder(ui.picking, messages.ordered))}
@@ -1656,7 +1680,7 @@
               try {
                 quickReplies.current(scope);
                 const current = quickReplies.replies.find((entry) => entry.id === reply.id);
-                if (!current || current.message !== reply.message) throw new Error("quick reply changed before insertion");
+                if (!current || current.message !== reply.message) throw uiError("error.page.quick_reply_scope");
                 void composer.insertAtCaret(current.message).catch((error) => ui.fail(error));
               } catch (error) { ui.fail(error); }
             }}
@@ -1723,19 +1747,17 @@
           <div class="read-only" role="status">
             <Icon name={members.chatGroup.community ? "users" : "volume"} size={16} />
             {#if members.chatGroup.community}
-              This is a community. People talk in its groups; announcements go to its announcement group.
+              {t("page.community_read_only")}
             {:else}
-              Only admins can send messages{members.chatGroup.announcements
-                ? " to this community's announcements"
-                : " here"}.
+              {t(members.chatGroup.announcements ? "page.announcements_admin_only" : "page.group_admin_only")}
             {/if}
           </div>
         {/if}
       {:else}
         <div class="placeholder">
           <span class="placeholder-icon"><Icon name="message" size={28} /></span>
-          <p class="placeholder-title">No conversation open</p>
-          <p class="hint">Pick a chat on the left, or search for a contact to start one.</p>
+          <p class="placeholder-title">{t("page.no_conversation")}</p>
+          <p class="hint">{t("page.no_conversation_hint")}</p>
         </div>
         {@render syncStatus()}
       {/if}
@@ -1786,7 +1808,7 @@
           // Our own reaction is stored under "@me", which is not an address the
           // contact card could ask about.
           jid: self ? (session.me ?? jid) : bare(jid),
-          label: self ? "You" : members.senderName(jid),
+          label: self ? t("chat.you") : members.senderName(jid),
           avatar: self ? (session.me ? chats.pictureOf(session.me) : null) : chats.pictureOf(bare(jid)),
           self,
         };
@@ -1817,7 +1839,7 @@
 {#if ui.forwarding}
   {@const batch = ui.forwarding}
   <ChatPicker
-    title={batch.length > 1 ? `Forward ${batch.length} messages to` : "Forward message to"}
+    title={batch.length > 1 ? t("page.forward_messages", { count: batch.length }) : t("page.forward_message")}
     chats={chats.chats.map((c) => ({ jid: c.chat, label: chats.chatLabel(c), avatar: chats.avatars[c.chat] ?? null }))}
     onforward={(targets) => forwardMessages(batch, targets)}
     onclose={() => (ui.forwarding = null)} />
@@ -1826,18 +1848,18 @@
 {#if ui.deleting}
   {@const m = ui.deleting}
   <ConfirmDialog
-    label="Delete message"
-    title="Delete message?"
+    label={t("page.delete_message")}
+    title={t("page.delete_message_title")}
     hint={canDeleteForEveryone(m)
-      ? "Delete it for everyone in this chat, or only on this computer (kept greyed out)."
-      : "It is deleted on this computer only, and kept greyed out here."}
+      ? t("page.delete_message_everyone_hint")
+      : t("page.delete_message_local_hint")}
     onclose={() => (ui.deleting = null)}>
     {#snippet actions()}
       {#if canDeleteForEveryone(m)}
-        <button class="danger" onclick={() => deleteMessage(true)}>Delete for everyone</button>
+        <button class="danger" onclick={() => deleteMessage(true)}>{t("page.delete_everyone")}</button>
       {/if}
-      <button class="danger" onclick={() => deleteMessage(false)}>Delete on this computer</button>
-      <button onclick={() => (ui.deleting = null)}>Cancel</button>
+      <button class="danger" onclick={() => deleteMessage(false)}>{t("page.delete_local")}</button>
+      <button onclick={() => (ui.deleting = null)}>{t("ui.cancel")}</button>
     {/snippet}
   </ConfirmDialog>
 {/if}
@@ -1845,18 +1867,18 @@
 {#if ui.bulkDelete}
   {@const picked = ui.bulkDelete}
   <ConfirmDialog
-    label="Delete messages"
-    title={`Delete ${picked.length} message${picked.length === 1 ? "" : "s"}?`}
+    label={t("page.delete_messages")}
+    title={t("page.delete_messages_title", { count: picked.length })}
     hint={canDeletePickedForEveryone()
-      ? "Delete them for everyone, or only on this computer (kept greyed out here)."
-      : "They are deleted on this computer only, and kept greyed out here."}
+      ? t("page.delete_messages_everyone_hint")
+      : t("page.delete_messages_local_hint")}
     onclose={() => (ui.bulkDelete = null)}>
     {#snippet actions()}
       {#if canDeletePickedForEveryone()}
-        <button class="danger" onclick={() => deleteSelected(true)}>Delete for everyone</button>
+        <button class="danger" onclick={() => deleteSelected(true)}>{t("page.delete_everyone")}</button>
       {/if}
-      <button class="danger" onclick={() => deleteSelected(false)}>Delete on this computer</button>
-      <button onclick={() => (ui.bulkDelete = null)}>Cancel</button>
+      <button class="danger" onclick={() => deleteSelected(false)}>{t("page.delete_local")}</button>
+      <button onclick={() => (ui.bulkDelete = null)}>{t("ui.cancel")}</button>
     {/snippet}
   </ConfirmDialog>
 {/if}
@@ -1864,9 +1886,9 @@
 {#if ui.reporting}
   {@const m = ui.reporting}
   <ConfirmDialog
-    label="Report message"
-    title="Report to admins?"
-    hint="The group's admins see this message and that you reported it. WhatsApp is not told."
+    label={t("page.report_message")}
+    title={t("page.report_title")}
+    hint={t("page.report_hint")}
     onclose={() => (ui.reporting = null)}>
     {#snippet actions()}
       <button
@@ -1874,8 +1896,8 @@
         onclick={() => {
           ui.reporting = null;
           act(() => invoke("report_message", { chat: m.chat, id: m.id }));
-        }}>Report</button>
-      <button onclick={() => (ui.reporting = null)}>Cancel</button>
+        }}>{t("page.report")}</button>
+      <button onclick={() => (ui.reporting = null)}>{t("ui.cancel")}</button>
     {/snippet}
   </ConfirmDialog>
 {/if}
@@ -1901,16 +1923,16 @@
   {@const target = ui.chatConfirm.chat}
   {@const isClear = ui.chatConfirm.kind === "clear"}
   <ConfirmDialog
-    label={isClear ? "Clear chat" : "Delete chat"}
-    title={isClear ? `Clear chat with ${confirmChatLabel(target)}?` : `Delete chat with ${confirmChatLabel(target)}?`}
+    label={isClear ? t("page.clear_chat") : t("page.delete_chat")}
+    title={isClear ? t("page.clear_chat_title", { name: confirmChatLabel(target) }) : t("page.delete_chat_title", { name: confirmChatLabel(target) })}
     hint={isClear
-      ? "Its messages are removed from this computer, but the chat stays in the list. The other side is not affected."
-      : "Its messages are removed and the chat leaves the list until a new message arrives. The other side is not affected."}
+      ? t("page.clear_chat_hint")
+      : t("page.delete_chat_hint")}
     onclose={() => (ui.chatConfirm = null)}>
     {#snippet actions()}
       <button class="danger" onclick={() => (isClear ? doClearChat(target) : doDeleteChat(target))}
-        >{isClear ? "Clear chat" : "Delete chat"}</button>
-      <button onclick={() => (ui.chatConfirm = null)}>Cancel</button>
+        >{isClear ? t("page.clear_chat") : t("page.delete_chat")}</button>
+      <button onclick={() => (ui.chatConfirm = null)}>{t("ui.cancel")}</button>
     {/snippet}
   </ConfirmDialog>
 {/if}
@@ -1918,9 +1940,9 @@
 {#if ui.removeMember}
   {@const member = ui.removeMember}
   <ConfirmDialog
-    label="Remove from group"
-    title={`Remove ${member.name}?`}
-    hint="They leave the group on every linked device. You can add them again later."
+    label={t("page.remove_member")}
+    title={t("page.remove_member_title", { name: member.name })}
+    hint={t("page.remove_member_hint")}
     onclose={() => (ui.removeMember = null)}>
     {#snippet actions()}
       <button
@@ -1937,8 +1959,8 @@
           } catch (e) {
             ui.fail(e);
           }
-        }}>Remove</button>
-      <button onclick={() => (ui.removeMember = null)}>Cancel</button>
+        }}>{t("ui.remove")}</button>
+      <button onclick={() => (ui.removeMember = null)}>{t("ui.cancel")}</button>
     {/snippet}
   </ConfirmDialog>
 {/if}
@@ -1964,13 +1986,13 @@
     groupName={members.displayName(null, scope.group)} requestKey={scope.requestKey} dataScope={memberSheet.profile ? scope : null}
     connected={session.connected} local={memberSheet.profile?.local ?? null} live={memberSheet.profile?.live ?? null}
     member={memberSheet.member()} memberSource="cached" picture={memberSheet.profile?.live?.photo.value ?? null}
-    localLoading={memberSheet.localLoading} liveLoading={memberSheet.liveLoading} error={memberSheet.error} liveError={memberSheet.liveError}
+    localLoading={memberSheet.localLoading} liveLoading={memberSheet.liveLoading} error={memberSheet.error} liveError={memberSheet.liveError} liveDiagnostic={memberSheet.liveDiagnostic}
     admin={memberSheet.admin()} blocked={memberSheet.blocked} liveCached={memberSheet.profile?.live_cached ?? false}
     liveStale={memberSheet.profile?.live_stale ?? false} moderationAdminVerified={memberSheet.profile?.moderation_admin_verified ?? false}
     moderationVerifiedAt={memberSheet.profile?.moderation_verified_at ?? null} moderationError={memberSheet.profile?.moderation_error ?? null}
     community={members.chatGroup?.community ?? chats.groupInfo?.community ?? false} auditRevision={chats.auditRevision}
     supportedActions={members.chatGroup || chats.groupInfo ? ["promote", "demote", "remove", "block", "unblock"] : ["promote", "demote", "block", "unblock"]}
-    namer={(jid) => members.displayName(null, jid)} formatTime={(at) => new Date(at * 1000).toLocaleString()}
+    namer={(jid) => members.displayName(null, jid)} formatTime={(at) => formatDate(at, { dateStyle: "medium", timeStyle: "short" })}
     onaction={(scope, action) => memberSheet.action(scope, action)} onsavelocal={(scope, text, warnings) => memberSheet.save(scope, text, warnings)}
     onloadAudit={(scope, filter, cursor) => memberSheet.audit(scope, filter, cursor)}
     onrefresh={(scope) => { memberSheet.current(scope); void memberSheet.load(true, true); }}
@@ -2023,14 +2045,14 @@
   {#key `${messages.accountGeneration}:${ui.finder.mode}:${ui.finder.chat}:${spaceFinderKey}`}
   <MessageFinder
     initialQuery={ui.finder.mode === "search" ? ui.finder.query ?? "" : ""}
-    title={ui.finder.mode === "search" ? "Search messages" : inChat ? "Your mentions" : "Mentions"}
+    title={ui.finder.mode === "search" ? t("page.finder_search") : inChat ? t("page.finder_own_mentions") : t("page.finder_mentions")}
     subtitle={ui.finder.mode === "search" && ui.finder.reach
-      ? `${inChat} · searched back to ${new Date(ui.finder.reach * 1000).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" })}`
-      : (inChat ?? (ui.finder.mode === "pings" ? "Every message that pinged you" : null))}
-    moreLabel="Load the previous day"
-    placeholder={ui.finder.mode === "search" ? "Search this chat" : "Filter mentions"}
+      ? t("page.finder_reach", { name: inChat ?? "", date: formatDate(ui.finder.reach, { day: "numeric", month: "short", year: "numeric" }) })
+      : (inChat ?? (ui.finder.mode === "pings" ? t("page.finder_all_mentions") : null))}
+    moreLabel={t("page.finder_previous_day")}
+    placeholder={ui.finder.mode === "search" ? t("page.finder_placeholder") : t("page.finder_filter_mentions")}
     items={ui.finder.items}
-    empty={ui.finder.mode === "search" ? "Type to search the messages kept on this computer." : "Nobody has mentioned you yet."}
+    empty={ui.finder.mode === "search" ? t("page.finder_search_empty") : t("page.finder_mentions_empty")}
     onquery={ui.finder.mode === "search" ? (q) => searchChat(q) : undefined}
     onmore={ui.finder.mode === "search" && ui.finder.more ? () => searchChat(ui.finder?.query ?? "", true) : undefined}
     onopen={(item) => {
@@ -2104,9 +2126,9 @@
 {/if}
 
 {#if broadcastFor && broadcastFor.account === session.activeAccount && broadcastFor.chat === chats.selectedChat && broadcastFor.generation === messages.accountGeneration}
-  <Panel label="Broadcast recipients" nav={[{ id: "recipients", label: "Recipients", group: "Broadcast list" }]} section="recipients"
+  <Panel label={t("page.broadcast_recipients")} nav={[{ id: "recipients", label: t("page.recipients"), group: t("page.broadcast_list") }]} section="recipients"
     onclose={() => (broadcastFor = null)}>
-    {#snippet header()}<h2>Broadcast list</h2>{/snippet}
+    {#snippet header()}<h2>{t("page.broadcast_list")}</h2>{/snippet}
     {#snippet children()}<BroadcastInfo info={broadcastInfo} loading={broadcastLoading} error={broadcastError}
       nameOf={(jid) => members.displayName(null, jid)} />{/snippet}
   </Panel>
@@ -2133,14 +2155,14 @@
   {@const generation = messages.accountGeneration}
   {@const currentGroup = (signal?: AbortSignal) => {
     if (signal?.aborted || !account || account !== session.activeAccount || generation !== messages.accountGeneration || chats.selectedChat !== selectedChat) {
-      throw new Error("account or group changed during operation");
+      throw uiError("error.page.group_scope");
     }
   }}
   <GroupInfo
     jid={selectedChat}
     title={chat ? chats.chatLabel(chat) : members.displayName(null, selectedChat)}
     info={chats.groupInfo}
-    error={chats.groupInfoError}
+    error={chats.groupInfoError} groupInfoDiagnostic={chats.groupInfoDiagnostic}
     avatars={chats.avatars}
     pinned={!!chat?.pinned}
     onavatar={(jid) => chats.loadAvatar(bare(jid))}
@@ -2205,7 +2227,7 @@
     auditRevision={chats.auditRevision}
     onloadAudit={async (scope, filter, before) => {
       currentGroup();
-      if (scope.account !== account || scope.group !== selectedChat) throw new Error("audit scope changed");
+      if (scope.account !== account || scope.group !== selectedChat) throw uiError("error.page.audit_scope");
       const page = await invoke<import("$lib/utils/wire").GroupAuditPage>("group_audit_page", {
         accountId: account, chat: selectedChat, filter: { ...filter, before, limit: 50 },
       });
@@ -2231,7 +2253,7 @@
 {#if ui.pendingJump}
   <div class="notice">
     <Spinner />
-    <span>Fetching older messages from your phone to find it…</span>
+    <span>{t("page.fetching_jump")}</span>
   </div>
 {/if}
 
@@ -2241,10 +2263,9 @@
     <Spinner />
     <span>
       {#if session.syncPending > 0}
-        Syncing messages · {Math.max(0, session.syncPending - session.syncApplied)} left of {session.syncPending}
-        ({session.syncPercent}%)
+        {t("page.sync_messages", { remaining: Math.max(0, session.syncPending - session.syncApplied), total: session.syncPending, percent: session.syncPercent })}
       {:else}
-        Syncing history from your phone · {session.historyPercent}%
+        {t("page.sync_history", { percent: session.historyPercent })}
       {/if}
     </span>
   </div>
@@ -2254,15 +2275,18 @@
 {#if session.backfill && !ui.notice}
   <div class="notice" role="status">
     <Spinner />
-    <span>Downloading all history · {session.backfill.done} of {session.backfill.total} chats</span>
+    <span>{t("page.backfill", { done: session.backfill.done, total: session.backfill.total })}</span>
   </div>
 {/if}
 
 {#if ui.notice}
   <div class="notice">
-    <span>{ui.notice}</span>
-    <button class="link" onclick={muteNotice}>Do not warn again</button>
-    <Button variant="icon" icon="x" iconSize={16} title="Dismiss" aria-label="Dismiss" onclick={() => (ui.notice = null)} />
+    <div class="notice-copy">
+      <span>{ui.notice}</span>
+      {#if ui.noticeDiagnostic}<details><summary>{t("error.technical_details")}</summary><pre dir="auto">{ui.noticeDiagnostic}</pre></details>{/if}
+    </div>
+    <button class="link" onclick={muteNotice}>{t("page.notice_disable")}</button>
+    <Button variant="icon" icon="x" iconSize={16} title={t("action.dismiss")} aria-label={t("action.dismiss")} onclick={() => (ui.notice = null)} />
   </div>
 {/if}
 
@@ -2272,13 +2296,13 @@
   {#key account}
     <NewGroup {account} me={session.me} avatars={chats.avatars} onavatar={(jid) => chats.loadAvatar(jid)}
       onsearch={async (query) => {
-        if (account !== session.activeAccount || generation !== messages.accountGeneration) throw new Error("account changed");
+        if (account !== session.activeAccount || generation !== messages.accountGeneration) throw uiError("error.page.account_scope");
         const rows = await invoke<import("$lib/utils/wire").SearchResult[]>("group_creation_contacts", { account, query });
-        if (account !== session.activeAccount || generation !== messages.accountGeneration) throw new Error("account changed");
+        if (account !== session.activeAccount || generation !== messages.accountGeneration) throw uiError("error.page.account_scope");
         return rows;
       }}
       oncreate={(subject, jids) => composer.enqueue((signal) => {
-        if (signal.aborted || account !== session.activeAccount || generation !== messages.accountGeneration) throw new Error("account changed before operation");
+        if (signal.aborted || account !== session.activeAccount || generation !== messages.accountGeneration) throw uiError("error.page.account_scope");
         return invoke<import("$lib/utils/wire").GroupCreateResult>("create_group", { account, subject, jids });
       })}
       onopen={async (result) => {
@@ -2330,7 +2354,7 @@
     <UsernameLookup account={scope.account} generation={scope.generation}
       onlookup={(username, usernameKey) => {
         if (usernameFor !== scope || scope.account !== session.activeAccount || scope.generation !== messages.accountGeneration)
-          return Promise.reject(new Error("Account changed before username lookup."));
+          return Promise.reject(uiError("error.page.username_scope"));
         return invoke<import("$lib/utils/wire").UsernameLookupResult>("lookup_username", { accountId: scope.account, username, usernameKey });
       }}
       onfound={async (jid, username) => {
@@ -2347,7 +2371,7 @@
   {#key scope}<SpacePicker account={scope.account} generation={scope.generation} spaceId={scope.spaceId} existing={spaces.snapshot.items}
     catalog={spaceCandidates} loading={spaceCatalogLoading} error={spaceCatalogError}
     onadd={async (targets) => {
-      if (spacePickerFor !== scope || scope.account !== session.activeAccount || scope.generation !== messages.accountGeneration) throw new Error("Space target changed.");
+      if (spacePickerFor !== scope || scope.account !== session.activeAccount || scope.generation !== messages.accountGeneration) throw uiError("error.page.space_scope");
       await spaces.add(scope.spaceId, targets);
     }} onclose={() => { if (spacePickerFor === scope) spacePickerFor = null; }} />{/key}
 {/if}
@@ -2355,11 +2379,11 @@
 {#if spaceCommunityFor && spaceCommunityFor.account === session.activeAccount && spaceCommunityFor.generation === messages.accountGeneration}
   {@const scope = spaceCommunityFor}
   {@const group = spaceGroups.find((group) => group.jid === scope.jid && group.community)}
-  <Panel label="Community" nav={[{ id: "groups", label: "Linked groups", group: "Cached community" }]} section="groups"
+  <Panel label={t("group.community")} nav={[{ id: "groups", label: t("page.linked_groups"), group: t("page.cached_community") }]} section="groups"
     onclose={() => { if (spaceCommunityFor === scope) spaceCommunityFor = null; }}>
-    {#snippet header()}<h2>{group?.subject ?? "Community"}</h2>{/snippet}
+    {#snippet header()}<h2>{group?.subject ?? t("group.community")}</h2>{/snippet}
     {#snippet children()}
-      <p>Local view of the cached community hierarchy.</p>
+      <p>{t("page.community_cache_hint")}</p>
       {#if group}
         {#each spaceGroups.filter((child) => child.parent === scope.jid) as child (child.jid)}
           <Button variant="ghost" onclick={() => {
@@ -2367,15 +2391,15 @@
             spaceCommunityFor = null; void openChat(child.jid);
           }}>{child.subject ?? chats.chatName(child.jid)}</Button>
         {/each}
-      {:else}<p role="status">Community details unavailable locally.</p>{/if}
+      {:else}<p role="status">{t("page.community_cache_empty")}</p>{/if}
     {/snippet}
   </Panel>
 {/if}
 
 {#if ui.sharingContacts && chats.selectedChat}
-  <dialog bind:this={contactDialog} aria-label="Share contacts" oncancel={(event) => { event.preventDefault(); event.stopPropagation(); ui.sharingContacts = false; }}
+  <dialog bind:this={contactDialog} aria-label={t("page.share_contacts")} oncancel={(event) => { event.preventDefault(); event.stopPropagation(); ui.sharingContacts = false; }}
     onkeydown={(event) => { if (event.key === "Escape") event.stopPropagation(); }}>
-    <button class="button" aria-label="Close contact sharing" onclick={() => { ui.sharingContacts = false; }}>Close</button>
+    <button class="button" aria-label={t("page.close_share_contacts")} onclick={() => { ui.sharingContacts = false; }}>{t("ui.close")}</button>
     <ContactSharing mode="share" account={session.activeAccount} connected={session.connected} chat={chats.selectedChat}
       generation={messages.accountGeneration} canSend={!composer.editing && !composer.recording && (!members.chatGroup || members.chatGroup.can_send)}
       choices={Object.entries(members.identities).map(([jid, identity]) => ({ jid, identity }))} onopenchat={openChat} onshare={sendContacts} />
@@ -2390,12 +2414,12 @@
     onsave={(id, name, color) => labels.save(id, name, color)} ondelete={(id) => labels.delete(id)}
     onapply={async (id, labeled) => {
       const targets = ui.labelTargets?.map((target) => ({ ...target })) ?? [];
-      if (!targets.length) throw new Error("Choose a chat or message to label.");
+      if (!targets.length) throw uiError("error.page.label_target");
       if (targets.every((target): target is { chat: string; id: string } => typeof target.id === "string")) {
         await labels.applyMessages(id, targets, labeled);
       } else if (targets.length === 1 && !targets[0].id) {
         await labels.applyChat(id, targets[0].chat, labeled);
-      } else throw new Error("Chat and message labels must be applied separately.");
+      } else throw uiError("error.page.label_target_mixed");
     }} onclose={() => { ui.manageLabels = false; ui.labelTargets = null; }} />
 {/if}
 
@@ -2405,26 +2429,26 @@
     accounts={session.accountList}
     active={session.activeAccount}
     onnotificationjump={async (account, chat, id) => {
-      if (account !== session.activeAccount) throw new Error("account changed");
+      if (account !== session.activeAccount) throw uiError("error.page.account_scope");
       const generation = messages.accountGeneration;
       await jumpTo(chat, id);
-      if (account !== session.activeAccount || generation !== messages.accountGeneration) throw new Error("account changed");
+      if (account !== session.activeAccount || generation !== messages.accountGeneration) throw uiError("error.page.account_scope");
       ui.showSettings = false;
     }}
     onblockedload={async (account) => {
       const generation = messages.accountGeneration;
-      if (account !== session.activeAccount) throw new Error("account changed");
+      if (account !== session.activeAccount) throw uiError("error.page.account_scope");
       const rows = await invoke<import("$lib/utils/wire").BlockedContact[]>("blocked_contacts", { account });
-      if (account !== session.activeAccount || generation !== messages.accountGeneration) throw new Error("account changed");
+      if (account !== session.activeAccount || generation !== messages.accountGeneration) throw uiError("error.page.account_scope");
       return rows;
     }}
     onunblockcontact={async (account, jid) => {
       const generation = messages.accountGeneration;
       await composer.enqueue((signal) => {
-        if (signal.aborted || account !== session.activeAccount || generation !== messages.accountGeneration) throw new Error("account changed before operation");
+        if (signal.aborted || account !== session.activeAccount || generation !== messages.accountGeneration) throw uiError("error.page.account_scope");
         return invoke("set_contact_blocked", { account, jid, blocked: false });
       });
-      if (account !== session.activeAccount || generation !== messages.accountGeneration) throw new Error("account changed");
+      if (account !== session.activeAccount || generation !== messages.accountGeneration) throw uiError("error.page.account_scope");
     }}
     me={session.me}
     onopencontact={async (jid) => { await openChat(jid); ui.showSettings = false; }}
@@ -2742,6 +2766,8 @@
     font-size: 13px;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
   }
+  .notice-copy { min-width: 0; }
+  .notice-copy pre { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
   .notice .link {
     background: transparent;
     border: 0;

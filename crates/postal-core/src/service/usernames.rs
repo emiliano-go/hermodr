@@ -1,4 +1,5 @@
 use super::*;
+use crate::message_ref::MessageRef;
 use whatsapp_rust::UsernameLookup;
 use whatsapp_rust::wacore::types::call::{CallAction, IncomingCall};
 
@@ -19,7 +20,7 @@ pub enum UsernameLookupResult {
 fn found(jid: &Jid, username: Option<&str>) -> Result<UsernameLookupResult> {
     anyhow::ensure!(
         (jid.is_pn() || jid.is_lid()) && !jid.user.is_empty(),
-        "Username lookup returned an invalid contact address."
+        MessageRef::new("error.username_result_address_invalid")
     );
     Ok(UsernameLookupResult::Found {
         jid: jid.to_non_ad().to_string(),
@@ -34,7 +35,7 @@ fn map_lookup(lookup: UsernameLookup) -> Result<UsernameLookupResult> {
         UsernameLookup::KeyRequired { username } => Ok(UsernameLookupResult::KeyRequired {
             username: username.map(|name| name.to_string()),
         }),
-        _ => anyhow::bail!("Unsupported username lookup result."),
+        _ => anyhow::bail!(MessageRef::new("error.username_result_unsupported")),
     }
 }
 
@@ -45,15 +46,15 @@ impl WhatsAppService {
         username_key: Option<&str>,
         authorize: impl Fn() -> bool,
     ) -> Result<UsernameLookupResult> {
-        anyhow::ensure!(authorize(), "Account changed before username lookup.");
-        anyhow::ensure!(self.is_connected(), "not connected yet");
+        anyhow::ensure!(authorize(), MessageRef::new("error.account_changed"));
+        anyhow::ensure!(self.is_connected(), MessageRef::new("error.not_connected"));
         let lookup = self
             .client
             .contacts()
             .find_by_username(username.trim(), username_key)
             .await?;
         let result = map_lookup(lookup)?;
-        anyhow::ensure!(authorize(), "Account changed during username lookup.");
+        anyhow::ensure!(authorize(), MessageRef::new("error.account_changed"));
         let mut changed = false;
         if let UsernameLookupResult::Found { jid, .. } = &result {
             changed = import_sdk_contact_mapping(
@@ -64,13 +65,13 @@ impl WhatsAppService {
             )
             .await?;
         }
-        anyhow::ensure!(authorize(), "Account changed during username lookup.");
+        anyhow::ensure!(authorize(), MessageRef::new("error.account_changed"));
         let (result, username_changed) = self
             .store
             .run(move |store| persist_lookup(store, result))
             .await?;
         changed |= username_changed;
-        anyhow::ensure!(authorize(), "Account changed during username lookup.");
+        anyhow::ensure!(authorize(), MessageRef::new("error.account_changed"));
         if changed {
             let _ = self.events.send(ServiceEvent::NamesUpdated { count: 1 });
         }
@@ -84,11 +85,11 @@ pub(super) async fn import_sdk_contact_mapping(
     jid: &Jid,
     authorize: impl Fn() -> bool,
 ) -> Result<bool> {
-    anyhow::ensure!(authorize(), "Account changed before identity import.");
+    anyhow::ensure!(authorize(), MessageRef::new("error.account_changed"));
     let Some(entry) = client.get_lid_pn_entry(jid).await? else {
         return Ok(false);
     };
-    anyhow::ensure!(authorize(), "Account changed during identity import.");
+    anyhow::ensure!(authorize(), MessageRef::new("error.account_changed"));
     let lid = user_part(&entry.lid);
     let pn = user_part(&entry.phone_number);
     let changed = store
@@ -96,7 +97,7 @@ pub(super) async fn import_sdk_contact_mapping(
         .await?
         .as_ref()
         .is_none_or(|(_, old)| old != &pn);
-    anyhow::ensure!(authorize(), "Account changed during identity import.");
+    anyhow::ensure!(authorize(), MessageRef::new("error.account_changed"));
     store.set_lid_pn(&lid, &pn).await?;
     Ok(changed)
 }

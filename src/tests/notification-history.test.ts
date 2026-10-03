@@ -9,6 +9,8 @@ import type { StoredMessage } from "../lib/utils/models.ts";
 import { appendHistory, historyKey, loadHistory, saveHistory } from "../lib/notifications/history.ts";
 import type { HistoryStorage, NotificationHistoryEntry } from "../lib/notifications/history.ts";
 import { createNotificationHistory } from "../lib/notifications/history-store.ts";
+import { LocalizedError } from "../lib/i18n/errors.ts";
+import { t } from "../lib/i18n/localizer.ts";
 
 class MemoryStorage implements HistoryStorage {
   values = new Map<string, string>();
@@ -82,8 +84,12 @@ test("corrupt or wrongly scoped storage stays untouched until explicit clear", (
     const history = createNotificationHistory(() => storage);
     assert.equal(history.record("account", entry("new"), () => true), false);
     assert.equal(get(history).entries[0].id, "new");
-    assert.ok(get(history).error);
-    assert.equal(get(history).error!.includes("SECRET"), false);
+    const failure = get(history).error;
+    assert.ok(failure instanceof LocalizedError);
+    assert.equal(failure.code, "error.content.saved_notification_history_could_not_be_read_new_entries_are_temporary_c");
+    assert.equal(failure.message.includes("SECRET"), false);
+    assert.equal(failure.diagnostic, undefined);
+    assert.equal(JSON.stringify(failure.descriptor).includes("SECRET"), false);
     assert.equal(storage.getItem(historyKey("account")), raw);
     assert.equal(history.clear("account", () => true), true);
     assert.equal(history.record("account", entry("saved"), () => true), true);
@@ -96,7 +102,11 @@ test("quota failures retain temporary entries across account switches without cl
   const history = createNotificationHistory(() => storage);
   storage.failWrite = true;
   assert.equal(history.record("a", entry("temporary"), () => true), false);
-  assert.match(get(history).error!, /could not be saved/);
+  const failure = get(history).error;
+  assert.ok(failure instanceof LocalizedError);
+  assert.equal(failure.code, "error.content.notification_history_could_not_be_saved_recent_entries_are_kept_only_unt");
+  assert.match(failure.message, /could not be saved/);
+  assert.equal(failure.diagnostic, undefined);
   history.load("b"); history.load("a");
   assert.equal(get(history).entries[0].id, "temporary");
   assert.deepEqual(loadHistory("a", storage).entries, []);
@@ -113,7 +123,11 @@ test("failed clear keeps entries and exposes the error", () => {
   storage.failRemove = true;
   assert.equal(history.clear("account", () => true), false);
   assert.equal(get(history).entries.length, 1);
-  assert.match(get(history).error!, /could not be cleared/);
+  const failure = get(history).error;
+  assert.ok(failure instanceof LocalizedError);
+  assert.equal(failure.code, "error.content.notification_history_could_not_be_cleared_try_again_when_local_storage_i");
+  assert.match(failure.message, /could not be cleared/);
+  assert.equal(failure.diagnostic, undefined);
   assert.equal(loadHistory("account", storage).entries.length, 1);
 });
 
@@ -155,6 +169,7 @@ function producer() {
   const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText
     .replace(/^import[\s\S]*?from\s+["'][^"']+["'];?\s*/gm, "").replace(/^export /gm, "");
   const bindings = { session, messages, chats, members, keywords, notificationHistory: history,
+    t,
     shouldNotify, isChatMuted, notificationBody, notificationTitle, groupNotificationBody,
     isPlaceholder: (name: string) => /^\+?[\d\s]+$/.test(name),
     invoke: (...args: unknown[]) => invoke(...args),

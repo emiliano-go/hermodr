@@ -1,4 +1,6 @@
 <script lang="ts" module>
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
+  import { t } from "$lib/i18n/localizer";
   export type PickerChat = { jid: string; label: string; avatar: string | null };
 </script>
 
@@ -24,7 +26,7 @@
 
   let query = $state("");
   let busy = $state(false);
-  let failed = $state<string | null>(null);
+  let failed = $state<LocalizedError | string | null>(null);
   let chosen = $state<Record<string, true>>({});
   const shown = $derived(
     chats.filter((c) => c.label.toLowerCase().includes(query.trim().toLowerCase())),
@@ -51,7 +53,7 @@
       await onforward(destinations);
       onclose();
     } catch (e) {
-      failed = String(e);
+      failed = normalizeError(e);
     } finally {
       busy = false;
     }
@@ -69,12 +71,12 @@
   <div class="dialog" role="dialog" aria-modal="true" aria-label={title} transition:scale|global={{ start: 0.96, duration: motion(160) }}>
     <header>
       <h2>{title}</h2>
-      <button class="close" aria-label="Close" onclick={onclose}><Icon name="x" size={18} /></button>
+      <button class="close" aria-label={t("ui.close")} onclick={onclose}><Icon name="x" size={18} /></button>
     </header>
     <label class="search">
       <Icon name="search" size={15} />
       <!-- svelte-ignore a11y_autofocus -->
-      <input placeholder="Search chats" bind:value={query} autofocus />
+      <input placeholder={t("chat.search")} bind:value={query} autofocus />
     </label>
     {#if failed}<p class="error">{failed}</p>{/if}
     <ul>
@@ -102,7 +104,7 @@
     </ul>
     <footer>
       <button class="go" disabled={busy || picked.length === 0} onclick={forward}>
-        {busy ? "Forwarding…" : `Forward${picked.length > 0 ? ` (${picked.length})` : ""}`}
+        {busy ? t("chat.forwarding") : picked.length > 0 ? t("chat.forward_count", { count: picked.length }) : t("chat.forward")}
       </button>
     </footer>
   </div>
@@ -196,7 +198,7 @@
     background: transparent;
     color: var(--text);
     font: inherit;
-    text-align: left;
+    text-align: start;
     cursor: pointer;
   }
   .row:hover:not(:disabled) {

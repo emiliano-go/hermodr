@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { t, formatNumber } from "$lib/i18n/localizer";
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
   import { untrack } from "svelte";
   import Avatar from "$lib/ui/Avatar.svelte";
   import { appliableLabels, inboxCategories, inboxChats } from "$lib/utils/inbox";
@@ -14,13 +16,13 @@
     connected: boolean;
     chats: ChatSummary[];
     loading?: boolean;
-    error?: string | null;
+    error?: LocalizedError | string | null;
     labels?: InboxLabel[] | null;
     labelsByChat?: Readonly<Record<string, readonly string[]>>;
     labelsWritable?: boolean;
     labelsLoading?: boolean;
     labelsComplete?: boolean;
-    labelsError?: string | null;
+    labelsError?: LocalizedError | string | null;
     chatLabelOf: (chat: ChatSummary) => string;
     avatarOf?: (jid: string) => string | null;
     previewTextOf?: (chat: ChatSummary) => string;
@@ -37,11 +39,11 @@
     onfilterschange?: (filters: InboxFilters) => void;
   } = $props();
 
-  const kinds = [["unread", "Unread"], ["mentions", "Mentions"], ["labelled", "Labelled"], ["muted", "Muted"], ["archived", "Archived"]] as const;
+  const kinds = [["unread", "chat.unread"], ["mentions", "chat.mentions"], ["labelled", "chat.labelled"], ["muted", "chat.muted"], ["archived", "chat.archived"]] as const;
   const emptyFilters = (): InboxFilters => ({ unread: false, mentions: false, labelled: false, muted: false, archived: false, label: "", query: "" });
   let filters = $state(emptyFilters());
   let busy = $state<Record<string, boolean>>({});
-  let failures = $state<Record<string, string>>({});
+  let failures = $state<Record<string, LocalizedError | string>>({});
   let muteSeconds = $state(8 * 3600);
   let now = $state(Math.floor(Date.now() / 1000));
   let generation = 0;
@@ -70,55 +72,55 @@
     failures = { ...failures, [chat.chat]: "" };
     const current = () => owner === account && revision === generation && connected;
     try { await onaction(owner, chat.chat, action); }
-    catch (failure) { if (current()) failures = { ...failures, [chat.chat]: String(failure) }; }
+    catch (failure) { if (current()) failures = { ...failures, [chat.chat]: normalizeError(failure) }; }
     finally { if (current()) busy = { ...busy, [chat.chat]: false }; }
   }
 </script>
 
-<section class="inbox" aria-label="Unified inbox">
-  <header><h2>Inbox</h2><span class="connection" role="status">{connected ? "Connected" : "Offline, showing cached chats"}</span></header>
+<section class="inbox" aria-label={t("chat.unified_inbox")}>
+  <header><h2>{t("chat.inbox")}</h2><span class="connection" role="status">{connected ? t("settings.connected") : t("chat.inbox_offline")}</span></header>
   {#if syncPending > 0}
     <div class="sync" role="status">
-      <span>{connected ? "Catching up" : "Catch-up paused while offline"}: {Math.min(syncPending, Math.max(0, syncApplied))} of {syncPending} messages</span>
-      <progress aria-label="Offline message catch-up" max={syncPending} value={Math.min(syncPending, Math.max(0, syncApplied))}></progress>
+      <span>{connected ? t("chat.catching_up") : t("chat.catch_up_paused")}: {t("chat.catch_up_counts", { applied: Math.min(syncPending, Math.max(0, syncApplied)), count: syncPending })}</span>
+      <progress aria-label={t("chat.catch_up_label")} max={syncPending} value={Math.min(syncPending, Math.max(0, syncApplied))}></progress>
     </div>
   {/if}
   {#if historyPercent !== null}
-    <div class="sync" role="status"><span>History sync: {Math.min(100, Math.max(0, historyPercent))}%</span>
-      <progress aria-label="History sync" max="100" value={Math.min(100, Math.max(0, historyPercent))}></progress></div>
+    <div class="sync" role="status"><span>{t("chat.history_progress", { percent: formatNumber(Math.min(100, Math.max(0, historyPercent)) / 100, { style: "percent", maximumFractionDigits: 0 }) })}</span>
+      <progress aria-label={t("chat.history_sync")} max="100" value={Math.min(100, Math.max(0, historyPercent))}></progress></div>
   {/if}
-  {#if backfill}<p class="status" role="status">Loading older history: {backfill.done} of {backfill.total} chats</p>{/if}
-  {#if finalizing}<p class="status" role="status">Finishing message sync…</p>{/if}
+  {#if backfill}<p class="status" role="status">{t("chat.history_backfill", { done: backfill.done, count: backfill.total })}</p>{/if}
+  {#if finalizing}<p class="status" role="status">{t("chat.sync_finishing")}</p>{/if}
   <div class="filters">
-    <input class="search" type="search" aria-label="Search inbox chats" placeholder="Search chats" bind:value={filters.query} />
-    <fieldset><legend>Match all selected filters</legend>
+    <input class="search" type="search" dir="auto" aria-label={t("chat.inbox_search")} placeholder={t("chat.search")} bind:value={filters.query} />
+    <fieldset><legend>{t("chat.match_filters")}</legend>
       {#each kinds as [kind, label]}
         <label class="pill" class:on={filters[kind]}>
           <input type="checkbox" bind:checked={filters[kind]} disabled={kind === "labelled" && labels === null} />
-          <span>{label}</span>
+          <span>{t(label)}</span>
         </label>
       {/each}
     </fieldset>
-    <label class="choice">Label <select bind:value={filters.label} disabled={labels === null}>
-      <option value="">Any label</option>{#each labels ?? [] as label (label.id)}<option value={label.id}>{label.name}</option>{/each}
+    <label class="choice">{t("labels.label")} <select bind:value={filters.label} disabled={labels === null}>
+      <option value="">{t("labels.any")}</option>{#each labels ?? [] as label (label.id)}<option value={label.id}><bdi>{label.name}</bdi></option>{/each}
     </select></label>
-    <label class="choice">Mute duration <select bind:value={muteSeconds}>
-      <option value={8 * 3600}>8 hours</option><option value={7 * 86400}>1 week</option><option value={-1}>Always</option>
+    <label class="choice">{t("chat.mute_duration")} <select bind:value={muteSeconds}>
+      <option value={8 * 3600}>{t("chat.mute_eight_hours")}</option><option value={7 * 86400}>{t("chat.mute_week")}</option><option value={-1}>{t("ui.always")}</option>
     </select></label>
-    {#if filtered}<button onclick={() => (filters = emptyFilters())}>Clear filters</button>{/if}
+    {#if filtered}<button onclick={() => (filters = emptyFilters())}>{t("chat.filters_clear")}</button>{/if}
   </div>
-  {#if labelsLoading}<p class="status" role="status">Loading labels…</p>
-  {:else if labels === null && !labelsError}<p class="status">Labels are not available for this account.</p>
-  {:else if !labelsWritable}<p class="status">Labels are read-only for this account.</p>{/if}
-  {#if labels !== null && !labelsComplete}<p class="status">Showing labels stored on this device. WhatsApp may have more labels.</p>{/if}
-  {#if labelsError}<p class="error" role="alert">Could not load labels: {labelsError}</p>{/if}
-  {#if error}<div class="error" role="alert">{error}{#if onretry}<button onclick={onretry} disabled={loading}>Retry</button>{/if}</div>{/if}
-  {#if !account}<p class="status" role="status">Select an account to open the inbox.</p>
+  {#if labelsLoading}<p class="status" role="status">{t("labels.loading")}</p>
+  {:else if labels === null && !labelsError}<p class="status">{t("labels.unavailable_account")}</p>
+  {:else if !labelsWritable}<p class="status">{t("labels.read_only")}</p>{/if}
+  {#if labels !== null && !labelsComplete}<p class="status">{t("labels.cached_hint")}</p>{/if}
+  {#if labelsError}<p class="error" role="alert">{t("labels.load_failed", { error: normalizeError(labelsError).message })}</p>{/if}
+  {#if error}<div class="error" role="alert">{error}{#if onretry}<button onclick={onretry} disabled={loading}>{t("ui.retry")}</button>{/if}</div>{/if}
+  {#if !account}<p class="status" role="status">{t("chat.inbox_select_account")}</p>
   {:else}
-    {#if loading}<p class="status" role="status">Loading inbox…</p>{/if}
-    {#if labelsLoading && (filters.labelled || filters.label)}<p class="status" role="status">Waiting for labels to finish loading.</p>
+    {#if loading}<p class="status" role="status">{t("chat.inbox_loading")}</p>{/if}
+    {#if labelsLoading && (filters.labelled || filters.label)}<p class="status" role="status">{t("chat.inbox_wait_labels")}</p>
     {:else if shown.length === 0 && !loading && !error}
-      <p class="status" role="status">{filtered ? "No chats match these filters." : chats.length === 0 ? "No chats stored for this account." : "No unread, mentioned, labelled, muted or archived chats stored on this device."}</p>
+      <p class="status" role="status">{filtered ? t("chat.inbox_no_matches") : chats.length === 0 ? t("chat.inbox_empty_account") : t("chat.inbox_empty")}</p>
     {/if}
     <ul>
       {#each shown as chat (chat.chat)}
@@ -128,28 +130,28 @@
         <li>
           <button class="chat" onclick={() => onopen(chat.chat)} disabled={loading}>
             <Avatar src={avatarOf(chat.chat)} label={name} seed={chat.chat} cls="inbox-avatar" />
-            <span class="body"><span class="title">{name}</span><span class="preview">{previewTextOf(chat) || "No stored messages"}</span></span>
+            <span class="body"><span class="title"><bdi>{name}</bdi></span><span class="preview">{previewTextOf(chat) || t("chat.no_messages")}</span></span>
             {#if chat.last_message_at > 0}<time>{formatTime(chat.last_message_at)}</time>{/if}
           </button>
           <div class="badges">
-            {#if categories.unread}<span>{chat.unread_count > 0 ? `${chat.unread_count} unread` : "Marked unread"}</span>{/if}
+            {#if categories.unread}<span>{chat.unread_count > 0 ? t("chat.unread_count", { count: chat.unread_count }) : t("chat.marked_unread")}</span>{/if}
             {#if categories.mentions}<button class="mention" onclick={() => onopen(chat.chat, true)} disabled={loading}>{chat.mention_count} {chat.mention_count === 1 ? "mention" : "mentions"}</button>{/if}
-            {#if categories.muted}<span>Muted</span>{/if}{#if categories.archived}<span>Archived</span>{/if}
+            {#if categories.muted}<span>{t("chat.muted")}</span>{/if}{#if categories.archived}<span>{t("chat.archived")}</span>{/if}
             {#each (labels ?? []).filter((label) => assigned[chat.chat]?.includes(label.id)) as label (label.id)}
-              <span class="label">{label.name}{#if labelsWritable}<button aria-label={`Remove ${label.name} from ${name}`} disabled={disabled}
+              <span class="label">{label.name}{#if labelsWritable}<button aria-label={t("labels.remove_from_chat", { label: label.name, chat: name })} disabled={disabled}
                 onclick={() => act(chat, { kind: "label", label: label.id, applied: false })}>×</button>{/if}</span>
             {/each}
           </div>
-          <div class="actions" aria-label={`Actions for ${name}`}>
-            <button disabled={disabled} onclick={() => act(chat, { kind: "read", read: categories.unread })}>{categories.unread ? "Mark read" : "Mark unread"}</button>
-            <button disabled={disabled} onclick={() => act(chat, { kind: "archive", archived: !chat.archived })}>{chat.archived ? "Unarchive" : "Archive"}</button>
-            <button disabled={disabled} onclick={() => act(chat, { kind: "mute", seconds: categories.muted ? 0 : muteSeconds })}>{categories.muted ? "Unmute" : "Mute"}</button>
-            <select aria-label={`Apply label to ${name}`} disabled={disabled || labels === null || !labelsWritable || labelsLoading}
+          <div class="actions" aria-label={t("chat.actions_for", { name })}>
+            <button disabled={disabled} onclick={() => act(chat, { kind: "read", read: categories.unread })}>{categories.unread ? t("chat.mark_read") : t("chat.mark_unread")}</button>
+            <button disabled={disabled} onclick={() => act(chat, { kind: "archive", archived: !chat.archived })}>{chat.archived ? t("chat.unarchive") : t("chat.archive")}</button>
+            <button disabled={disabled} onclick={() => act(chat, { kind: "mute", seconds: categories.muted ? 0 : muteSeconds })}>{categories.muted ? t("chat.unmute") : t("chat.mute")}</button>
+            <select aria-label={t("labels.apply_to_chat", { name })} disabled={disabled || labels === null || !labelsWritable || labelsLoading}
               value="" onchange={(event) => { const label = event.currentTarget.value; event.currentTarget.value = ""; if (label) void act(chat, { kind: "label", label, applied: true }); }}>
-              <option value="">Apply label</option>
+              <option value="">{t("labels.apply_one")}</option>
               {#each appliableLabels(labels ?? [], assigned[chat.chat]) as label (label.id)}<option value={label.id}>{label.name}</option>{/each}
             </select>
-            {#if busy[chat.chat]}<span role="status">Updating…</span>{/if}
+            {#if busy[chat.chat]}<span role="status">{t("ui.updating")}</span>{/if}
           </div>
           {#if failures[chat.chat]}<p class="error" role="alert">{failures[chat.chat]}</p>{/if}
         </li>
@@ -171,7 +173,7 @@
   fieldset { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; border: 0; }
   legend { margin-bottom: 6px; color: var(--muted); font-size: 12px; }
   fieldset label, .choice { display: flex; align-items: center; gap: 5px; font-size: 13px; }
-  .filters > .choice:first-of-type { margin-left: auto; }
+  .filters > .choice:first-of-type { margin-inline-start: auto; }
   .choice select { border: 0; border-radius: 999px; background: var(--surface); color: var(--muted); padding: 5px 12px; font-size: 13px; }
   .choice select:hover { background: var(--raised); }
   .pill { position: relative; padding: 5px 12px; border-radius: 999px; background: var(--surface); color: var(--muted); cursor: pointer; }
@@ -185,7 +187,7 @@
   button:disabled, select:disabled { opacity: 0.55; cursor: default; }
   ul { margin: 0; padding: 0; list-style: none; }
   li { padding: 14px 0; border-bottom: 1px solid var(--line); }
-  .chat { display: flex; width: 100%; align-items: center; gap: 10px; padding: 0; border: 0; background: transparent; text-align: left; }
+  .chat { display: flex; width: 100%; align-items: center; gap: 10px; padding: 0; border: 0; background: transparent; text-align: start; }
   .body { flex: 1; min-width: 0; display: grid; gap: 4px; }
   .title { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
   .preview { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -199,7 +201,7 @@
   .actions select { max-width: 100%; font-size: 12px; }
   .actions span { color: var(--muted); font-size: 12px; }
   .error { color: var(--danger); font-size: 13px; overflow-wrap: anywhere; }
-  .error button { margin-left: 10px; }
+  .error button { margin-inline-start: 10px; }
   :global(.inbox-avatar) { width: 36px; height: 36px; flex: none; border-radius: 50%; object-fit: cover; display: grid; place-items: center; background: hsl(var(--hue, 0) 25% 35%); color: white; font-size: 14px; }
-  @media (max-width: 480px) { .inbox { padding: 12px; } time { max-width: 80px; text-align: right; } }
+  @media (max-width: 480px) { .inbox { padding: 12px; } time { max-width: 80px; text-align: end; } }
 </style>

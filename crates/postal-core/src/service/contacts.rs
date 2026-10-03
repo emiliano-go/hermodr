@@ -171,12 +171,13 @@ pub(super) async fn contact_forms(store: &StoreWorker, jid: &str) -> Vec<String>
 /// LID-addressed chat carry the LID. The library's own mapping table bridges
 /// the two, so names already learned apply to existing history instead of only
 /// to messages that arrive after this point.
-pub(super) fn backfill_lid_names(session_path: &std::path::Path, store: &MessageStore) {
+pub(super) fn backfill_lid_names(session_path: &std::path::Path, store: &MessageStore,
+    key: Option<&crate::database_crypto::DatabaseKey>) {
     use std::collections::HashMap;
 
     let mappings = (|| -> Result<HashMap<String, String>> {
-        let conn = rusqlite::Connection::open_with_flags(
-            session_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        let conn = crate::database_crypto::open_database(
+            session_path, key, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
         )?;
         let mut stmt = conn.prepare("SELECT lid, phone_number FROM lid_pn_mapping")?;
         let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
@@ -236,18 +237,20 @@ pub(super) fn backfill_lid_names(session_path: &std::path::Path, store: &Message
 }
 
 fn editable_contact(address: &str) -> Result<Jid> {
-    let jid: Jid = address.parse()?;
+    let jid: Jid = address.parse::<Jid>().map_err(|error| anyhow::Error::new(
+        crate::message_ref::MessageRef::new("error.contact_address")
+    ).context(error.to_string()))?;
     anyhow::ensure!((jid.is_pn() || jid.is_lid()) && jid.device == 0 && jid.agent == 0 && jid.integrator == 0
-        && !jid.user.is_empty() && jid.user.chars().all(|c| c.is_ascii_digit()), "Contact address must be a bare phone number or LID.");
+        && !jid.user.is_empty() && jid.user.chars().all(|c| c.is_ascii_digit()), crate::message_ref::MessageRef::new("error.contact_address"));
     Ok(jid)
 }
 
 fn mapped_contact_phone(target: &Jid, mapping: Option<(String, String)>) -> Result<Jid> {
     if target.is_pn() { return Ok(target.clone()); }
-    let (lid, pn) = mapping.ok_or_else(|| anyhow::anyhow!("This contact's phone number is not known yet."))?;
-    anyhow::ensure!(lid == target.user.as_str(), "Contact mapping belongs to another address.");
+    let (lid, pn) = mapping.ok_or_else(|| anyhow::anyhow!(crate::message_ref::MessageRef::new("error.contact_mapping_unknown")))?;
+    anyhow::ensure!(lid == target.user.as_str(), crate::message_ref::MessageRef::new("error.contact_mapping_address"));
     let phone = editable_contact(&format!("{pn}@s.whatsapp.net"))?;
-    anyhow::ensure!(phone.is_pn(), "Contact mapping has no phone number.");
+    anyhow::ensure!(phone.is_pn(), crate::message_ref::MessageRef::new("error.contact_mapping_phone"));
     Ok(phone)
 }
 
@@ -268,7 +271,7 @@ async fn commit_contact_change(
     store: &StoreWorker, target: &Jid, name: Option<&str>, timestamp: i64,
     authorize: impl FnOnce() -> bool, send: impl std::future::Future<Output = Result<()>>,
 ) -> Result<bool> {
-    anyhow::ensure!(authorize(), "Account changed or disconnected before editing contact.");
+    anyhow::ensure!(authorize(), crate::message_ref::MessageRef::new("error.account_changed"));
     send.await?;
     store.set_contact_state(&target.to_string(), name, name.is_some(), timestamp).await
 }
@@ -277,25 +280,25 @@ impl WhatsAppService {
     pub async fn save_contact(&self, address: &str, full_name: &str, first_name: Option<&str>, save_on_primary_addressbook: bool,
         authorize: impl FnOnce() -> bool) -> Result<()> {
         let full_name = full_name.trim();
-        anyhow::ensure!(!full_name.is_empty(), "Contact name cannot be empty.");
-        anyhow::ensure!(self.is_connected(), "not connected yet");
+        anyhow::ensure!(!full_name.is_empty(), crate::message_ref::MessageRef::new("error.contact_name"));
+        anyhow::ensure!(self.is_connected(), crate::message_ref::MessageRef::new("error.not_connected"));
         let target = contact_phone(&self.client, &self.store, address).await?;
         let timestamp = whatsapp_rust::wacore::time::now_millis();
         let first_name = first_name.map(str::trim).filter(|name| !name.is_empty()).map(str::to_owned);
         let changed = commit_contact_change(&self.store, &target, Some(full_name), timestamp, || authorize() && self.is_connected(), async {
             self.client.chat_actions().save_contact(&target, Some(full_name.to_owned()), first_name, save_on_primary_addressbook)
-                .await.map_err(|error| anyhow::anyhow!(error.to_string()))
+                .await.map_err(anyhow::Error::from)
         }).await?;
         if changed { let _ = self.events.send(ServiceEvent::NamesUpdated { count: 1 }); }
         Ok(())
     }
 
     pub async fn remove_contact(&self, address: &str, authorize: impl FnOnce() -> bool) -> Result<()> {
-        anyhow::ensure!(self.is_connected(), "not connected yet");
+        anyhow::ensure!(self.is_connected(), crate::message_ref::MessageRef::new("error.not_connected"));
         let target = contact_phone(&self.client, &self.store, address).await?;
         let timestamp = whatsapp_rust::wacore::time::now_millis();
         let changed = commit_contact_change(&self.store, &target, None, timestamp, || authorize() && self.is_connected(), async {
-            self.client.chat_actions().remove_contact(&target).await.map_err(|error| anyhow::anyhow!(error.to_string()))
+            self.client.chat_actions().remove_contact(&target).await.map_err(anyhow::Error::from)
         }).await?;
         if changed { let _ = self.events.send(ServiceEvent::NamesUpdated { count: 1 }); }
         Ok(())

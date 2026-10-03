@@ -1,6 +1,7 @@
 // Small message display helpers shared by the page and the message views.
 // Moved out of +page.svelte.
 import type { StoredMessage } from "./models";
+import { t, formatDate, formatRelative, formatTime as localeTime } from "../i18n/localizer.ts";
 
 /** An SVG file sent as a document, which is drawn in place like a picture. */
 export function isSvg(m: StoredMessage) {
@@ -22,7 +23,7 @@ export function replyIcon(kind: string | null) {
 
 /** A media message's caption. Uncaptioned media is stored as `[kind]`. */
 export function captionOf(message: StoredMessage) {
-  if (message.spoiler) return "[Spoiler]";
+  if (message.spoiler) return t("message.spoiler_caption");
   const text = message.text.trim();
   return text === `[${message.media_kind}]` ? "" : text;
 }
@@ -40,9 +41,9 @@ export function dayLabel(ts: number) {
   const today = new Date();
   const yesterday = new Date();
   yesterday.setDate(today.getDate() - 1);
-  if (day.toDateString() === today.toDateString()) return "Today";
-  if (day.toDateString() === yesterday.toDateString()) return "Yesterday";
-  return day.toLocaleDateString(undefined, {
+  if (day.toDateString() === today.toDateString()) return formatRelative(0, "day");
+  if (day.toDateString() === yesterday.toDateString()) return formatRelative(-1, "day");
+  return formatDate(ts, {
     day: "numeric",
     month: "long",
     year: day.getFullYear() === today.getFullYear() ? undefined : "numeric",
@@ -50,21 +51,21 @@ export function dayLabel(ts: number) {
 }
 
 export function formatTime(seconds: number) {
-  return new Date(seconds * 1000).toLocaleTimeString([], {
+  return localeTime(seconds, {
     hour: "2-digit",
     minute: "2-digit",
   });
 }
 
-export const MEDIA_LABELS: Record<string, string> = {
-  image: "Photo",
-  video: "Video",
-  round_video: "Round video",
-  gif: "GIF",
-  audio: "Audio",
-  document: "Document",
-  sticker: "Sticker",
-};
+function labels(keys: Record<string, string>): Record<string, string> {
+  return Object.defineProperties(Object.create(null), Object.fromEntries(Object.entries(keys)
+    .map(([kind, code]) => [kind, { enumerable: true, get: () => t(code) }])));
+}
+
+export const MEDIA_LABELS = labels({
+  image: "media.photo", video: "media.video", round_video: "media.round_video", gif: "media.gif",
+  audio: "media.audio", document: "media.document", sticker: "media.sticker",
+});
 
 /** Kinds with a view of their own; anything else is drawn as a card. */
 export const DRAWN_KINDS = new Set([
@@ -80,20 +81,12 @@ export const DRAWN_KINDS = new Set([
   "view_once",
 ]);
 
-export const CARD_LABELS: Record<string, string> = {
-  album: "Media album",
-  location: "📍 Location",
-  live_location: "📍 Live location",
-  contact: "👤 Contact",
-  music: "🎵 Music",
-  unknown: "Unsupported message",
-};
+export const CARD_LABELS = labels({
+  album: "message.album", location: "message.location", live_location: "message.live_location",
+  contact: "message.contact", music: "message.music", unknown: "message.unsupported",
+});
 
-export const VIEW_ONCE_LABEL: Record<string, string> = {
-  image: "Photo",
-  video: "Video",
-  round_video: "Round video",
-  audio: "Voice message",
-  gif: "GIF",
-  sticker: "Sticker",
-};
+export const VIEW_ONCE_LABEL = labels({
+  image: "media.photo", video: "media.video", round_video: "media.round_video", audio: "media.voice",
+  gif: "media.gif", sticker: "media.sticker",
+});

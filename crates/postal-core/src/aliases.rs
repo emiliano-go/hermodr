@@ -29,12 +29,16 @@ pub struct AliasStore {
 impl AliasStore {
     /// Opens (or creates) the alias store at `path`.
     pub fn open(path: &Path) -> Result<Self> {
+        Self::open_with_key(path, None)
+    }
+
+    pub fn open_with_key(path: &Path, key: Option<&crate::database_crypto::DatabaseKey>) -> Result<Self> {
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
                 std::fs::create_dir_all(parent).ok();
             }
         }
-        let conn = Connection::open(path)
+        let conn = crate::database_crypto::open_database(path, key, rusqlite::OpenFlags::default())
             .with_context(|| format!("opening alias store at {}", path.display()))?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
@@ -75,7 +79,7 @@ impl AliasStore {
     pub fn add(&self, jids: &[String], alias: &str) -> Result<()> {
         let alias = validate(alias)?;
         let Some(target) = jids.first() else {
-            anyhow::bail!("No contact to give that alias to");
+            anyhow::bail!(crate::message_ref::MessageRef::new("error.alias_contact"));
         };
         let key = key_of(alias);
         let conn = self.conn.lock().unwrap();
@@ -92,7 +96,7 @@ impl AliasStore {
             if jids.contains(&owner) {
                 return Ok(());
             }
-            anyhow::bail!("That alias already belongs to another contact");
+        anyhow::bail!(crate::message_ref::MessageRef::new("error.alias_conflict"));
         }
         conn.execute(
             "INSERT INTO contact_aliases (jid, alias, key) VALUES (?1, ?2, ?3)",
@@ -127,19 +131,19 @@ fn key_of(alias: &str) -> String {
 fn validate(alias: &str) -> Result<&str> {
     let alias = alias.trim();
     if alias.is_empty() {
-        anyhow::bail!("An alias cannot be empty");
+        anyhow::bail!(crate::message_ref::MessageRef::new("error.alias_empty"));
     }
     if alias.chars().count() > MAX_ALIAS_LEN {
-        anyhow::bail!("An alias can be at most {MAX_ALIAS_LEN} characters");
+        anyhow::bail!(crate::message_ref::MessageRef::new("error.alias_length").with_param("limit", serde_json::Number::from(MAX_ALIAS_LEN)));
     }
     if alias.chars().any(char::is_whitespace) {
-        anyhow::bail!("An alias cannot contain spaces");
+        anyhow::bail!(crate::message_ref::MessageRef::new("error.alias_spaces"));
     }
     if alias.chars().all(|c| c.is_ascii_digit()) {
-        anyhow::bail!("An alias cannot be only digits, which would read as a phone number");
+        anyhow::bail!(crate::message_ref::MessageRef::new("error.alias_digits"));
     }
     if RESERVED.iter().any(|r| r.eq_ignore_ascii_case(alias)) {
-        anyhow::bail!("@{alias} is the group mention, so it cannot be an alias");
+        anyhow::bail!(crate::message_ref::MessageRef::new("error.alias_reserved").with_param("alias", alias));
     }
     Ok(alias)
 }
@@ -205,8 +209,8 @@ mod tests {
         s.add(&jids("a@s"), "Boss").unwrap();
         let refused = s.add(&jids("b@s"), "boss").unwrap_err();
         assert_eq!(
-            refused.to_string(),
-            "That alias already belongs to another contact"
+            refused.downcast_ref::<crate::message_ref::MessageRef>().unwrap().code,
+            "error.alias_conflict"
         );
         assert_eq!(aliases_of(&s, "b@s"), no_aliases());
     }
@@ -237,20 +241,21 @@ mod tests {
     #[test]
     fn aliases_reject_what_a_mention_token_cannot_carry() {
         let s = store();
-        for (alias, why) in [
-            ("", "empty"),
-            ("dottik j", "spaces"),
-            ("  ", "empty"),
-            ("59891954564", "digits"),
-            ("all", "group mention"),
-            ("All-Override", "group mention"),
-            (&"x".repeat(MAX_ALIAS_LEN + 1), "at most 32 characters"),
+        for (alias, code) in [
+            ("", "error.alias_empty"),
+            ("dottik j", "error.alias_spaces"),
+            ("  ", "error.alias_empty"),
+            ("59891954564", "error.alias_digits"),
+            ("all", "error.alias_reserved"),
+            ("All-Override", "error.alias_reserved"),
+            (&"x".repeat(MAX_ALIAS_LEN + 1), "error.alias_length"),
         ] {
-            let refused = s.add(&jids("a@s"), alias).unwrap_err().to_string();
-            assert!(
-                refused.contains(why),
-                "{alias:?} was refused as {refused:?}, not about {why}"
-            );
+            let refused = s.add(&jids("a@s"), alias).unwrap_err();
+            let reference = refused.downcast_ref::<crate::message_ref::MessageRef>().unwrap();
+            assert_eq!(reference.code, code, "{alias:?}");
+            if code == "error.alias_length" {
+                assert_eq!(serde_json::to_value(reference).unwrap()["params"]["limit"], MAX_ALIAS_LEN);
+            }
         }
         assert_eq!(aliases_of(&s, "a@s"), no_aliases());
     }
@@ -277,8 +282,8 @@ mod tests {
         s.add(&jids("a@s"), "Dóttik").unwrap();
         // A byte-wise fold would treat this as a different alias, leaving two
         // people able to answer to what reads as the same name.
-        let refused = s.add(&jids("b@s"), "DÓTTIK").unwrap_err().to_string();
-        assert_eq!(refused, "That alias already belongs to another contact");
+        let refused = s.add(&jids("b@s"), "DÓTTIK").unwrap_err();
+        assert_eq!(refused.downcast_ref::<crate::message_ref::MessageRef>().unwrap().code, "error.alias_conflict");
         assert_eq!(aliases_of(&s, "b@s"), no_aliases());
     }
 }

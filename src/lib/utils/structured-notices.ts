@@ -1,4 +1,5 @@
 import type { StoredMessage } from "./wire";
+import { formatDate, t } from "../i18n/localizer.ts";
 import { noticeText } from "./notices.ts";
 
 type NoticeMessage = Pick<StoredMessage, "media_kind" | "system_kind" | "system_params" | "text" | "sender" | "from_me"> & Partial<Pick<StoredMessage, "spoiler" | "revoked" | "deleted">>;
@@ -8,31 +9,28 @@ export function isPollNotice(message: Pick<NoticeMessage, "media_kind" | "system
     && !message.spoiler && !message.revoked && !message.deleted;
 }
 
-export function structuredNoticeText(message: NoticeMessage, name: (jid: string) => string): string | null {
-  const actor = message.from_me ? "You" : message.sender ? name(message.sender) : "";
-  const title = (value: string | undefined) => value?.trim() ? ` "${value}"` : "";
+export function structuredNoticeText(message: NoticeMessage, name: (jid: string) => string,
+  isSelf: (jid: string) => boolean = (jid) => jid === "@me" || message.from_me && jid === message.sender): string | null {
+  const resolve = (jid: string) => isSelf(jid) ? t("content.you") : name(jid);
+  const actor = message.from_me ? t("content.you") : message.sender ? resolve(message.sender) : "";
+  const titled = (base: string, value: string) => t("notice." + base + (actor ? "_by" : "") + (value?.trim() ? "_title" : ""), { actor, title: value });
   if (message.media_kind === "poll" && !message.system_kind || message.system_kind === "CHAT_POLL_CREATION_MESSAGE") {
-    if (!isPollNotice(message)) return null;
-    return actor ? `${actor} created a poll${title(message.text)}.` : `A poll${title(message.text)} was created.`;
+    return isPollNotice(message) ? titled("poll", message.text) : null;
   }
   switch (message.system_kind) {
-    case "EVENT_UPDATED":
-      return actor ? `${actor} updated the event${title(message.text)}.` : `The event${title(message.text)} was updated.`;
-    case "EVENT_CANCELED":
-      return actor ? `${actor} canceled the event${title(message.text)}.` : `The event${title(message.text)} was canceled.`;
+    case "EVENT_UPDATED": return titled("event_updated", message.text);
+    case "EVENT_CANCELED": return titled("event_canceled", message.text);
     case "SCHEDULED_CALL_CREATED": {
       const [label, timestamp, type] = message.system_params;
-      const at = Number(timestamp);
-      const date = new Date(at * 1000);
-      const when = timestamp && Number.isSafeInteger(at) && at > 0 && !Number.isNaN(date.getTime()) ? ` for ${date.toLocaleString()}` : "";
-      const call = type === "voice" || type === "video" ? `${type} call` : "call";
-      return actor ? `${actor} scheduled a ${call}${title(label)}${when}.` : `A ${call}${title(label)} was scheduled${when}.`;
+      const at = Number(timestamp), date = new Date(at * 1000);
+      const when = timestamp && Number.isSafeInteger(at) && at > 0 && !Number.isNaN(date.getTime())
+        ? t("notice.call_when", { when: formatDate(at, { dateStyle: "medium", timeStyle: "short" }) }) : "";
+      const kind = t(type === "voice" ? "notice.voice_call" : type === "video" ? "notice.video_call" : "notice.call");
+      const call = label?.trim() ? t("notice.call_title", { call: kind, title: label }) : kind;
+      return t(actor ? "notice.scheduled_call_by" : "notice.scheduled_call", { actor, call, when });
     }
-    case "SCHEDULED_CALL_CANCEL":
-      return actor ? `${actor} canceled a scheduled call${title(message.text)}.` : `A scheduled call${title(message.text)} was canceled.`;
-    case "SCHEDULED_CALL_START_MESSAGE":
-      return "A scheduled call started.";
-    default:
-      return message.system_kind ? noticeText(message.system_kind, message.system_params, name, message.sender) : null;
+    case "SCHEDULED_CALL_CANCEL": return titled("scheduled_canceled", message.text);
+    case "SCHEDULED_CALL_START_MESSAGE": return t("notice.scheduled_started");
+    default: return message.system_kind ? noticeText(message.system_kind, message.system_params, resolve, message.sender, isSelf) : null;
   }
 }

@@ -1,6 +1,7 @@
 import { invoke } from "$lib/utils/ipc";
 import { composer } from "./composer.svelte";
 import { ui } from "./ui.svelte";
+import { uiError } from "./localized.ts";
 
 /** Media extensions that can be staged from a pasted file path. */
 const PASTABLE = /\.(jpe?g|png|gif|webp|svg|mp4|mov|m4v|webm|mkv|ogg|opus|mp3|m4a|aac|wav)$/i;
@@ -99,7 +100,7 @@ export async function onPaste(event: ClipboardEvent) {
 
   const file = item?.getAsFile() ?? (await clipboardFile());
   if (file) void composer.stageFile(file);
-  else if (isUriList) ui.fail("Could not read that file. Try the 📎 button.");
+  else if (isUriList) ui.fail(uiError("error.state.file_drop"));
 }
 
 /** Dropping files stages them; dropping anything else must not navigate. */

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from "$lib/i18n/localizer";
   import type { Snippet } from "svelte";
   import type { StoredMessage } from "$lib/utils/wire";
 
@@ -14,7 +15,7 @@
 </script>
 
 {#if items.length}
-  <div class="album-grid" class:mine={items[0].from_me} role="group" aria-label="Media album">
+  <div class="album-grid" class:mine={items[0].from_me} role="group" aria-label={t("content.media_album")}>
     {#if header}{@render header()}{/if}
     <div class="tiles" class:single={items.length === 1}>
       {#each items as message, index (JSON.stringify([message.chat, message.id]))}
@@ -32,5 +33,5 @@
   .tiles.single { grid-template-columns: minmax(0, 1fr); }
   .tile { min-width: 0; max-width: 100%; }
   .tile:first-child:nth-last-child(3) { grid-column: 1 / -1; }
-  footer { padding: 4px 6px; color: var(--muted); font-size: .8em; text-align: right; overflow-wrap: anywhere; }
+  footer { padding: 4px 6px; color: var(--muted); font-size: .8em; text-align: end; overflow-wrap: anywhere; }
 </style>

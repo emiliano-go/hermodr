@@ -26,6 +26,7 @@ pub(crate) fn setup(window: &tauri::WebviewWindow) -> tauri::Result<()> {
             }
         };
         let view = platform.inner();
+        let app = main.app_handle().clone();
         if let Some(settings) = WebViewExt::settings(&view) {
             settings.set_enable_media_stream(true);
         }
@@ -54,7 +55,7 @@ pub(crate) fn setup(window: &tauri::WebviewWindow) -> tauri::Result<()> {
                 request.deny();
                 return true;
             };
-            ask_for_camera(view, request, &parent, trusted.clone());
+            ask_for_camera(view, request, &parent, trusted.clone(), &app);
             true
         });
     })
@@ -71,6 +72,7 @@ fn ask_for_camera(
     request: &webkit2gtk::PermissionRequest,
     parent: &gtk::ApplicationWindow,
     trusted: tauri::Url,
+    app: &tauri::AppHandle,
 ) {
     use std::{cell::RefCell, rc::Rc};
 
@@ -79,12 +81,12 @@ fn ask_for_camera(
         gtk::DialogFlags::MODAL | gtk::DialogFlags::DESTROY_WITH_PARENT,
         gtk::MessageType::Question,
         gtk::ButtonsType::None,
-        "Allow Postal to use your camera to take a photo?",
+        &crate::native_locale::text(app, "native.camera_question"),
     );
-    dialog.set_title("Postal camera permission");
+    dialog.set_title(&crate::native_locale::text(app, "native.camera_title"));
     dialog.add_buttons(&[
-        ("Cancel", gtk::ResponseType::Cancel),
-        ("Allow camera", gtk::ResponseType::Accept),
+        (&crate::native_locale::text(app, "native.camera_cancel"), gtk::ResponseType::Cancel),
+        (&crate::native_locale::text(app, "native.camera_allow"), gtk::ResponseType::Accept),
     ]);
     dialog.set_default_response(gtk::ResponseType::Cancel);
     let pending = Rc::new(RefCell::new(Some(request.clone())));

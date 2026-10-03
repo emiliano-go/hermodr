@@ -59,7 +59,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y lld ffmpeg
       - if: runner.os == 'macOS'
         run: command -v ffmpeg >/dev/null || brew install ffmpeg
-      - run: cargo test --locked --workspace
+      - run: node scripts/cargo.mjs test --locked --workspace
       - if: runner.os == 'Linux'
         run: cargo test --locked --manifest-path plugins/speech-to-text/Cargo.toml
       - run: sccache --show-stats
@@ -92,5 +92,5 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: node scripts/build-transcription-helper.mjs
-      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --features wire-types
+      - run: node scripts/cargo.mjs test --locked --manifest-path src-tauri/Cargo.toml --features wire-types
       - run: sccache --show-stats

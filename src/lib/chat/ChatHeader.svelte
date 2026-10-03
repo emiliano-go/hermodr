@@ -1,6 +1,7 @@
 <!-- The open conversation's header bar: title, presence, tools, the
   jump-to-mention pill and the pinned-message bar. Moved out of +page.svelte. -->
 <script lang="ts">
+  import { t } from "$lib/i18n/localizer";
   import Avatar from "$lib/ui/Avatar.svelte";
   import Button from "$lib/ui/Button.svelte";
   import Icon from "$lib/ui/Icon.svelte";
@@ -66,26 +67,26 @@
 <header class="chat-header">
   <div class="chat-heading">
     {#if isGroup}
-      <button class="heading-avatar" title="Group info" aria-label="Group info" onclick={ongroupinfo}
+      <button class="heading-avatar" title={t("group.info")} aria-label={t("group.info")} onclick={ongroupinfo}
         ><Avatar src={avatar} label={title} seed={selectedChat} /></button
       >
-      <button class="chat-title" title="Group info" onclick={ongroupinfo}>
+      <button class="chat-title" title={t("group.info")} onclick={ongroupinfo}>
         {title}
         <span class="chat-sub" class:typing={typingNow}
           >{typingNow ?? ([groupContext, subtitle].filter(Boolean).join(" · ") || null) ??" "}</span
         >
       </button>
     {:else if isBroadcast}
-      <button class="heading-avatar" title="Broadcast recipients" aria-label="Broadcast recipients" onclick={ongroupinfo}
+      <button class="heading-avatar" title={t("chat.broadcast_recipients")} aria-label={t("chat.broadcast_recipients")} onclick={ongroupinfo}
         ><Avatar src={avatar} label={title} seed={selectedChat} /></button>
-      <button class="chat-title" title="Broadcast recipients" onclick={ongroupinfo}>
-        {title}<span class="chat-sub">Broadcast list</span>
+      <button class="chat-title" title={t("chat.broadcast_recipients")} onclick={ongroupinfo}>
+        {title}<span class="chat-sub">{t("chat.broadcast_list")}</span>
       </button>
     {:else}
-      <button class="heading-avatar" title="Contact info" aria-label="Contact info" onclick={ongroupinfo}
+      <button class="heading-avatar" title={t("contact.info")} aria-label={t("contact.info")} onclick={ongroupinfo}
         ><Avatar src={avatar} label={title} seed={selectedChat} /></button
       >
-      <button class="chat-title" title="Contact info" onclick={ongroupinfo}>
+      <button class="chat-title" title={t("contact.info")} onclick={ongroupinfo}>
         {title}
         {#if typingNow}<span class="chat-sub typing">{typingNow}</span
           >{:else if presenceText}<span class="chat-sub">{presenceText}</span>{/if}
@@ -93,36 +94,36 @@
     {/if}
   </div>
   <div class="header-tools">
-    <Button variant="icon" icon="image" iconSize={18} title="Media gallery" aria-label="Media gallery" onclick={ongallery} />
+    <Button variant="icon" icon="image" iconSize={18} title={t("chat.gallery")} aria-label={t("chat.gallery")} onclick={ongallery} />
     <Button
       variant="icon"
       icon="search"
       iconSize={18}
-      title="Search in this chat"
-      aria-label="Search in this chat"
+      title={t("chat.search_in")}
+      aria-label={t("chat.search_in")}
       onclick={onsearch} />
     {#if isGroup}
       <Button
         variant="icon"
         icon="at"
         iconSize={18}
-        title="Your mentions in this group"
-        aria-label="Your mentions in this group"
+        title={t("chat.your_mentions")}
+        aria-label={t("chat.your_mentions")}
         onclick={onpings} />
     {/if}
     <Button
       variant="icon"
       icon="sliders"
       iconSize={18}
-      title="Chat settings"
-      aria-label="Chat settings"
+      title={t("chat.settings")}
+      aria-label={t("chat.settings")}
       onclick={onsettings} />
     <div class="options-wrap">
       <Button
         variant="icon"
         iconSize={18}
-        title="Chat options"
-        aria-label="Chat options"
+        title={t("chat.options")}
+        aria-label={t("chat.options")}
         aria-expanded={optionsOpen}
         onclick={toggleOptions}>⋯</Button>
       {#if optionsOpen}
@@ -135,7 +136,7 @@
             onclick={() => {
               closeOptions();
               onclearchat();
-            }}>Clear chat</Button>
+            }}>{t("chat.clear")}</Button>
           <Button
             variant="menu"
             icon="trash"
@@ -144,13 +145,13 @@
             onclick={() => {
               closeOptions();
               ondeletechat();
-            }}>Delete chat</Button>
+            }}>{t("chat.delete")}</Button>
         </div>
       {/if}
     </div>
   </div>
   {#if mentionTotal > 0}
-    <button class="jump-mention" title="Jump to mention" onclick={onjumpmention}>
+    <button class="jump-mention" title={t("chat.jump_mention")} onclick={onjumpmention}>
       <Icon name="at" size={14} />
       {mentionCursor}/{mentionTotal}
     </button>
@@ -199,7 +200,7 @@
     display: flex;
     align-items: center;
     gap: 2px;
-    margin-left: auto;
+    margin-inline-start: auto;
     flex: none;
     overflow: visible;
   }
@@ -209,7 +210,7 @@
   .options-menu {
     position: absolute;
     top: calc(100% + 6px);
-    right: 0;
+    inset-inline-end: 0;
     z-index: 50;
     min-width: 180px;
     display: flex;
@@ -241,7 +242,7 @@
     font: inherit;
     font-weight: 600;
     padding: 0;
-    text-align: left;
+    text-align: start;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -292,7 +293,7 @@
     color: var(--muted);
     font: inherit;
     font-size: 13.5px;
-    text-align: left;
+    text-align: start;
     cursor: pointer;
   }
   .pinned-bar:hover {

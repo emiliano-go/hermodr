@@ -1,4 +1,6 @@
 <script lang="ts" module>
+  import { formatDate as localeDate } from "$lib/i18n/localizer";
+  import { LocalizedError, normalizeError } from "$lib/i18n/errors";
   import type { InviteInfo } from "$lib/utils/wire";
   export type { InviteInfo };
 
@@ -12,6 +14,7 @@
 </script>
 
 <script lang="ts">
+  import { t } from "$lib/i18n/localizer";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { onDestroy } from "svelte";
   import { invoke } from "$lib/utils/ipc";
@@ -34,7 +37,7 @@
   } = $props();
 
   let info = $state<InviteInfo | null>(null);
-  let failed = $state<string | null>(null);
+  let failed = $state<LocalizedError | string | null>(null);
   let busy = $state(false);
   let requested = $state(false);
   let attempt = $state(0);
@@ -57,7 +60,7 @@
     cache
       .get(key)!
       .then((value) => { if (revision === generation && account === session.activeAccount && epoch === messages.accountGeneration) info = value; })
-      .catch((error) => { if (revision === generation && account === session.activeAccount && epoch === messages.accountGeneration) failed = String(error); });
+      .catch((error) => { if (revision === generation && account === session.activeAccount && epoch === messages.accountGeneration) failed = normalizeError(error); });
   });
 
   async function join() {
@@ -84,7 +87,7 @@
         onopen(joined.jid);
       }
     } catch (e) {
-      if (current()) failed = String(e);
+      if (current()) failed = normalizeError(e);
     } finally {
       if (current()) busy = false;
     }
@@ -92,7 +95,7 @@
 </script>
 
 <div class="invite">
-  <span class="kind"><Icon name="users" size={13} /> {info?.community ? "Community invite" : "Group invite"}</span>
+  <span class="kind"><Icon name="users" size={13} /> {info?.community ? t("content.community_invite") : t("content.group_invite")}</span>
   {#if info || message}
     {@const picture = message?.media_thumb ?? (info?.picture ? convertFileSrc(info.picture) : null)}
     <div class="head">
@@ -102,33 +105,31 @@
         <span class="picture blank"><Icon name="users" size={22} /></span>
       {/if}
       <div class="text">
-        <span class="subject">{info?.subject ?? message?.text ?? "WhatsApp group"}</span>
+        <span class="subject">{info?.subject ?? message?.text ?? t("content.whatsapp_group")}</span>
         <span class="meta">
           {#if info}
-          {info.size}
-          {info.size === 1 ? "member" : "members"}{#if info.created_at}
-            · created {new Date(info.created_at * 1000).toLocaleDateString()}{/if}
-          {:else}Group invitation{/if}
+          {t("content.member_count", { count: info.size })}{#if info.created_at}{t("content.created")} {localeDate((new Date(info.created_at * 1000)).getTime()/1000, { dateStyle: "short" })}{/if}
+          {:else}{t("content.group_invitation")}{/if}
         </span>
       </div>
     </div>
     {#if info?.description}<p class="description">{info.description}</p>{/if}
     <button class="join" disabled={busy || requested || !session.activeAccount || !!message?.from_me} onclick={join}>
       {info?.joined
-        ? "Open chat"
+        ? t("content.open_chat")
         : requested
-          ? "Request sent"
+          ? t("content.request_sent")
           : busy
-            ? "Joining…"
+            ? t("content.joining")
             : info?.approval
-              ? "Request to join"
-              : "Join group"}
+              ? t("content.request_to_join")
+              : t("content.join_group")}
     </button>
-    {#if requested}<span class="meta">Waiting for an admin to approve.</span>{/if}
+    {#if requested}<span class="meta">{t("content.waiting_for_an_admin_to_approve")}</span>{/if}
     {#if failed}<span class="meta" role="alert">{failed}</span>{/if}
   {:else if failed}
     <span class="meta" role="alert">{failed}</span>
-    <button class="join" onclick={() => attempt++}>Retry</button>
+    <button class="join" onclick={() => attempt++}>{t("content.retry")}</button>
   {:else}
     <div class="head">
       <span class="picture blank loading"></span>
@@ -147,7 +148,7 @@
     min-width: 260px;
     max-width: 360px;
     border-radius: var(--radius);
-    border-left: 3px solid var(--accent);
+    border-inline-start: 3px solid var(--accent);
     background: color-mix(in srgb, var(--text) 6%, transparent);
   }
   .kind {

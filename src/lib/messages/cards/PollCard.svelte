@@ -1,7 +1,10 @@
 <script lang="ts">
+  import { formatNumber as localeNumber } from "$lib/i18n/localizer";
+  import { LocalizedError, messageText, normalizeError } from "$lib/i18n/errors";
+  import { t } from "$lib/i18n/localizer";
   import type { Poll } from "$lib/utils/models";
   import { convertFileSrc } from "@tauri-apps/api/core";
-  import { quizFeedback, quizScopeMatches, type QuizScope } from "$lib/utils/quiz-poll";
+  import { quizScopeMatches, type QuizScope } from "$lib/utils/quiz-poll";
   import { session } from "$lib/state/session.svelte";
   import { chats } from "$lib/state/chats.svelte";
   import { messages } from "$lib/state/messages.svelte";
@@ -28,7 +31,7 @@
 
   let busy = $state(false);
   let details = $state(false);
-  let failed = $state("");
+  let failed = $state<LocalizedError | string | null>("");
   let generation = 0;
   const liveScope = $derived(scope ?? { account: session.activeAccount, chat: chats.selectedChat, generation: messages.accountGeneration, requestKey: poll?.id });
   const quiz = $derived(poll?.quiz ?? null);
@@ -45,7 +48,7 @@
     })),
   );
   const total = $derived(Math.max(1, voters.length));
-  function voterName(jid: string): string { return jid === "@me" ? "You" : namer(jid); }
+  function voterName(jid: string): string { return jid === "@me" ? t("content.you") : namer(jid); }
   $effect(() => {
     void poll?.id; void liveScope.account; void liveScope.chat; void liveScope.generation; void liveScope.requestKey;
     ++generation;
@@ -70,7 +73,7 @@
     try {
       await onvote(next);
     } catch (cause) {
-      if (current()) failed = String(cause);
+      if (current()) failed = normalizeError(cause);
     } finally {
       if (current()) busy = false;
     }
@@ -88,8 +91,8 @@
 
 <div class="poll">
   <span class="question">{poll?.name ?? question}</span>
-  {#if quiz}<span class="hint">Quiz · one correct answer</span>{/if}
-  <span class="hint">{sendReason ?? (multi ? "Select one or more" : "Select one")}</span>
+  {#if quiz}<span class="hint">{t("content.quiz_one_correct_answer")}</span>{/if}
+  <span class="hint">{sendReason ?? (multi ? t("content.select_one_or_more") : t("content.select_one"))}</span>
   {#if poll}
     {#each tally as { option, who } (option)}
       <button
@@ -105,26 +108,27 @@
             <span class="faces">
               {#each who.slice(0, 3) as voter (voter)}{@render face(voter, 18)}{/each}
             </span>
-            <span class="count">{who.length}</span>
+            <span class="count">{localeNumber(who.length)}</span>
           </span>
           <span class="bar"><span style="width: {(who.length / total) * 100}%"></span></span>
         </span>
       </button>
     {/each}
-    {#if busy}<p class="hint" role="status">Sending answer…</p>{/if}
+    {#if busy}<p class="hint" role="status">{t("content.sending_answer")}</p>{/if}
     {#if failed}<p class="error" role="alert">{failed}</p>{/if}
     {#if quiz}
-      <p class="feedback" role="status">{quizFeedback(quiz.my_correct)}</p>
-      <p class="hint">{quiz.correct_option === null ? "Correct answer is undisclosed." : `Correct answer: ${quiz.correct_option}`}</p>
-      {#if !quiz.can_vote}<p class="hint" role="status">Voting unavailable on this device.</p>{/if}
-      {#if !quiz.results_complete}<p class="hint" role="status">Results are incomplete on this device.</p>{/if}
-      {#if quiz.error}<p class="error" role="alert">{quiz.error}</p>{/if}
+      <p class="feedback" role="status">{t(quiz.my_correct === true ? "content.quiz_correct" : quiz.my_correct === false ? "content.quiz_incorrect" : "content.quiz_unavailable")}</p>
+      <p class="hint">{quiz.correct_option === null ? t("content.correct_answer_is_undisclosed") : t("content.correct_answer_value", { param0: (quiz.correct_option) })}</p>
+      {#if !quiz.can_vote}<p class="hint" role="status">{t("content.voting_unavailable_on_this_device")}</p>{/if}
+      {#if !quiz.results_complete}<p class="hint" role="status">{t("content.results_are_incomplete_on_this_device")}</p>{/if}
+      {#if quiz.error_ref || quiz.error}<p class="error" role="alert">{quiz.error_ref ? messageText(quiz.error_ref) : t("error.operation_failed")}</p>{/if}
+      {#if quiz.diagnostic || quiz.error}<details><summary>{t("content.technical_details")}</summary><pre dir="ltr">{quiz.diagnostic ?? quiz.error}</pre></details>{/if}
     {/if}
     {#if details}
       <div class="details">
         {#each tally.filter((t) => t.who.length > 0) as { option, who } (option)}
           <div class="detail">
-            <span class="detail-head">{option} <span class="count">{who.length}</span></span>
+            <span class="detail-head">{option} <span class="count">{localeNumber(who.length)}</span></span>
             {#each who as voter (voter)}
               <span class="voter">{@render face(voter, 24)}{voterName(voter)}</span>
             {/each}
@@ -133,18 +137,18 @@
       </div>
     {/if}
     <span class="footer">
-      {voters.length}
-      {voters.length === 1 ? "vote" : "votes"}
+      {t("content.vote_count", { count: voters.length })}
       {#if voters.length > 0}
-        · <button class="link" onclick={() => (details = !details)}>{details ? "Hide votes" : "View votes"}</button>
+        · <button class="link" onclick={() => (details = !details)}>{details ? t("content.hide_votes") : t("content.view_votes")}</button>
       {/if}
     </span>
   {:else}
-    <span class="hint">This poll's details did not reach this device.</span>
+    <span class="hint">{t("content.this_poll_s_details_did_not_reach_this_device")}</span>
   {/if}
 </div>
 
 <style>
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   .poll {
     display: flex;
     flex-direction: column;
@@ -181,7 +185,7 @@
     background: transparent;
     color: inherit;
     font: inherit;
-    text-align: left;
+    text-align: start;
     cursor: pointer;
   }
   .option:disabled {
@@ -229,7 +233,7 @@
     display: flex;
   }
   .faces > :global(* + *) {
-    margin-left: -6px;
+    margin-inline-start: -6px;
   }
   .face {
     width: var(--size);

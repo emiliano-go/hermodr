@@ -2,6 +2,10 @@
   parent owns the flow state; this renders the switch, the number form and the
   issued code. -->
 <script lang="ts">
+  import { t, formatNumber } from "$lib/i18n/localizer";
+  import { locale } from "$lib/i18n/locale.svelte";
+  import { normalizeError } from "$lib/i18n/errors";
+  const countryNames = $derived(new Intl.DisplayNames([locale.language], { type: "region" }));
   import Button from "$lib/ui/Button.svelte";
   import { COUNTRIES, composeE164, countryFlag, defaultCountryIso } from "$lib/utils/country-codes";
 
@@ -47,13 +51,13 @@
   const expired = $derived(!!code && secondsLeft <= 0);
   const formatted = $derived(code ? `${code.slice(0, 4)}-${code.slice(4)}` : "");
   const countdown = $derived(
-    `${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, "0")}`,
+    `${formatNumber(Math.floor(secondsLeft / 60), { useGrouping: false })}:${formatNumber(secondsLeft % 60, { minimumIntegerDigits: 2, useGrouping: false })}`,
   );
 
   function errorText(value: { message: string; throttled: boolean; unavailable: boolean }) {
-    if (value.unavailable) return "Phone-number linking isn't available for this account. Use the QR code instead.";
-    if (value.throttled) return "WhatsApp is rate-limiting this number. Wait a minute, then try again.";
-    return value.message;
+    if (value.unavailable) return t("settings.phone_unavailable");
+    if (value.throttled) return t("settings.phone_throttled");
+    return normalizeError(value.message).message;
   }
 
   function submit(event: SubmitEvent) {
@@ -63,43 +67,42 @@
 </script>
 
 {#if !active}
-  <button class="toggle" type="button" onclick={onactivate}>Link with phone number instead</button>
+  <button class="toggle" type="button" onclick={onactivate}>{t("settings.phone_link")}</button>
 {:else if code}
-  <div class="code" aria-label="Pairing code">{formatted}</div>
+  <div class="code" aria-label={t("settings.pairing_code")}><bdi dir="ltr">{formatted}</bdi></div>
   <p class="hint">
-    {expired || manual ? "This code expired." : `Expires in ${countdown}.`}
-    On your phone: <strong>Settings → Linked devices → Link a device → Link with phone number instead</strong>,
-    then type the code.
+    {expired || manual ? t("settings.code_expired") : t("settings.code_expires", { time: countdown })}
+    {t("settings.phone_steps")}
   </p>
   {#if expired || manual}
-    <Button variant="primary" onclick={onrefresh}>Get a new code</Button>
+    <Button variant="primary" onclick={onrefresh}>{t("settings.code_new")}</Button>
   {/if}
-  <button class="toggle" type="button" onclick={ondeactivate}>Use the QR code instead</button>
+  <button class="toggle" type="button" onclick={ondeactivate}>{t("settings.use_qr")}</button>
 {:else}
   <form class="number" onsubmit={submit}>
     <span class="fields">
-      <select class="field country" bind:value={iso} aria-label="Country">
-        <option value="">Country</option>
+      <select class="field country" bind:value={iso} aria-label={t("settings.country")}>
+        <option value="">{t("settings.country")}</option>
         {#each COUNTRIES as item (item.iso)}
-          <option value={item.iso}>{countryFlag(item.iso)} {item.name} +{item.dial}</option>
+          <option value={item.iso}>{countryFlag(item.iso)} {countryNames.of(item.iso) ?? item.name} +{item.dial}</option>
         {/each}
       </select>
       <input
         class="field"
-        type="tel"
+        type="tel" dir="ltr"
         inputmode="tel"
         autocomplete="tel-national"
-        placeholder="Phone number"
-        aria-label="Phone number"
+        placeholder={t("contact.phone_number")}
+        aria-label={t("contact.phone_number")}
         bind:value={national} />
     </span>
     <Button variant="primary" type="submit" disabled={!canRequest}>
-      {busy ? "Requesting…" : "Get pairing code"}
+      {busy ? t("settings.requesting") : t("settings.code_get")}
     </Button>
   </form>
   {#if error}<p class="error" role="alert">{errorText(error)}</p>{/if}
-  <p class="hint">Pick your country and type the number without the leading 0.</p>
-  <button class="toggle" type="button" onclick={ondeactivate}>Use the QR code instead</button>
+  <p class="hint">{t("settings.phone_hint")}</p>
+  <button class="toggle" type="button" onclick={ondeactivate}>{t("settings.use_qr")}</button>
 {/if}
 
 <style>

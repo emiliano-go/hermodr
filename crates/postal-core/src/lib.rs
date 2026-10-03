@@ -5,11 +5,15 @@
 //! importantly, makes history sync a decision this program gets to make.
 
 pub mod aliases;
+pub mod database_crypto;
+#[cfg(test)]
+mod database_store_tests;
 pub mod history;
+pub mod message_ref;
 pub mod ogg;
 pub mod service;
 pub use service::ContactSendResult;
-pub use service::{MemberProfile, MemberProfileLive};
+pub use service::{MemberProfile, MemberProfileLive, MemberProfileLiveView};
 pub mod store;
 
 #[cfg(feature = "wire-types")]

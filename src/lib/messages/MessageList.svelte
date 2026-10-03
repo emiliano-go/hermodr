@@ -3,6 +3,7 @@
   viewport are mounted (virtua); everything else lives in SQLite behind the
   cursor pager. Moved out of +page.svelte. -->
 <script lang="ts">
+  import { t } from "$lib/i18n/localizer";
   import { tick } from "svelte";
   import { VList, type VListHandle } from "virtua/svelte";
   import MessageRow from "$lib/messages/MessageRow.svelte";
@@ -15,7 +16,7 @@
   import OutgoingItem from "$lib/messages/OutgoingItem.svelte";
   import TypingIndicator from "$lib/media/TypingIndicator.svelte";
   import { bare, isUnavailable } from "$lib/utils/message";
-  import { UNAVAILABLE_LABEL, UNAVAILABLE_EXPLANATION } from "$lib/utils/notices";
+  import { unavailableLabel, unavailableExplanation } from "$lib/utils/notices";
   import { isPollNotice } from "$lib/utils/structured-notices";
   import type {
     ChatEvent,
@@ -45,6 +46,7 @@
     forwardedSet,
     downloading,
     downloadErrors,
+    downloadDiagnostics = {},
     downloadTries,
     replyingToId,
     highlightedId,
@@ -122,6 +124,7 @@
     forwardedSet: Set<string>;
     downloading: Record<string, true>;
     downloadErrors: Record<string, string>;
+    downloadDiagnostics?: Record<string, string>;
     downloadTries: Record<string, number>;
     replyingToId: string | null;
     highlightedId: string | null;
@@ -234,6 +237,7 @@
     forwardedSet,
     downloading,
     downloadErrors,
+    downloadDiagnostics,
     downloadTries,
     replyingToId,
     highlightedId,
@@ -384,10 +388,10 @@
   bind:this={scroller}
   onclickcapture={captureClick}>
   {#if switching && messages.length === 0}
-    <p class="loading">Loading messages…</p>
+    <p class="loading">{t("content.loading_messages")}</p>
   {/if}
   {#if loadingOlder}
-    <p class="paging" role="status">Loading messages…</p>
+    <p class="paging" role="status">{t("content.loading_messages")}</p>
   {/if}
   <VList
     bind:this={list}
@@ -403,15 +407,15 @@
       <div class="vrow">
         {#if row.kind === "e2e"}
           <p class="system e2e">
-            Messages are end-to-end encrypted. No one outside of this chat, not even WhatsApp, can read or listen to them.
+            {t("content.messages_are_end_to_end_encrypted_no_one_outside_of_this_chat_not_even_w")}
           </p>
         {:else if row.kind === "hidden"}
-          <p class="system" role="status">Loaded messages are hidden by your keyword rules.</p>
+          <p class="system" role="status">{t("content.loaded_messages_are_hidden_by_your_keyword_rules")}</p>
         {:else if row.kind === "day"}
           <div class="day"><span>{dayLabel(row.timestamp)}</span></div>
         {:else if row.kind === "unread"}
           <button class="unread-divider" data-unread-divider onclick={() => onjumpunread(row.id)}>
-            <span>Unread messages</span>
+            <span>{t("content.unread_messages")}</span>
           </button>
         {:else if row.kind === "group"}
           {@const group = row.group}
@@ -433,11 +437,11 @@
           {:else if isUnavailable(message)}
             <article class="unavailable-message" class:mine={message.from_me} data-id={message.id} data-chat={message.chat}>
               <header>
-                <b>{message.from_me ? "You" : senderLabel(message)}</b>
+                <b>{message.from_me ? t("content.you") : senderLabel(message)}</b>
                 <time datetime={new Date(message.timestamp * 1000).toISOString()}>{formatTime(message.timestamp)}</time>
               </header>
-              <strong>{UNAVAILABLE_LABEL}</strong>
-              <p>{UNAVAILABLE_EXPLANATION}</p>
+              <strong>{unavailableLabel()}</strong>
+              <p>{unavailableExplanation()}</p>
             </article>
           {:else if message.system_kind || isPollNotice(message)}
             <StructuredNotice {message} poll={polls.find((poll) => poll.id === message.id)} {namer}

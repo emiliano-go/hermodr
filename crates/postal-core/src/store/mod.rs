@@ -460,6 +460,12 @@ pub struct QuizFeedback {
     pub my_correct: Option<bool>,
     pub results_complete: bool,
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "wire-types", ts(optional))]
+    pub error_ref: Option<crate::message_ref::MessageRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "wire-types", ts(optional))]
+    pub diagnostic: Option<String>,
     pub can_vote: bool,
 }
 
@@ -588,12 +594,16 @@ impl Drop for Batch<'_> {
 impl MessageStore {
     /// Opens (or creates) the store at `path`.
     pub fn open(path: &Path) -> Result<Self> {
+        Self::open_with_key(path, None)
+    }
+
+    pub fn open_with_key(path: &Path, key: Option<&crate::database_crypto::DatabaseKey>) -> Result<Self> {
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
                 std::fs::create_dir_all(parent)?;
             }
         }
-        let conn = Connection::open(path)
+        let conn = crate::database_crypto::open_database(path, key, rusqlite::OpenFlags::default())
             .with_context(|| format!("opening message store at {}", path.display()))?;
 
         // WAL keeps reads from blocking the writer, which matters because

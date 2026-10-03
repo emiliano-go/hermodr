@@ -1,6 +1,7 @@
 use std::{io::Write as _, path::PathBuf};
 use tauri::AppHandle;
 use crate::{account_store::{data_dir, now_millis}, desktop::shell_open};
+use crate::command_error::{CommandError, CommandResult};
 
 /// Copies log output to stderr and to the log file. The file is unbuffered so
 /// a line written before an abort is on disk.
@@ -96,6 +97,6 @@ pub(crate) fn frontend_log(level: String, message: String) {
 
 /// Opens the log file with the desktop's default application.
 #[tauri::command(async)]
-pub(crate) fn open_log(app: AppHandle) -> Result<(), String> {
-    shell_open(log_path(&app).as_os_str())
+pub(crate) fn open_log(app: AppHandle) -> CommandResult<()> {
+    shell_open(log_path(&app).as_os_str()).map_err(CommandError::from)
 }

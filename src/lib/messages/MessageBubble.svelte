@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from "$lib/i18n/localizer";
   // One conversation message: the row, the bubble and every media branch.
   // The list computes the view model; every action funnels back through the
   // api so the page keeps owning state and IPC.
@@ -46,10 +47,10 @@
 
 {#snippet metadata()}
   {#if vm.isStarred}<span class="star"><Icon name="star" size={11} /></span>{/if}
-  {#if vm.isEdited}<span class="edited-mark">Edited</span>{/if}
+  {#if vm.isEdited}<span class="edited-mark">{t("content.edited")}</span>{/if}
   {#if !albumCell}{api.formatTime(message.timestamp)}{/if}
   {#if message.from_me}
-    <span class="ticks" class:read={message.status === "read"} title={message.status ?? "pending"}>
+    <span class="ticks" class:read={message.status === "read"} title={message.status ?? t("content.pending")}>
       {#if message.status === "pending"}
         <Icon name="clock" size={14} />
       {:else if message.status === "sent"}
@@ -102,7 +103,7 @@
     <button
       type="button"
       class="sender-avatar"
-      title="Profile"
+      title={t("content.profile")}
       onclick={(e) => api.onprofile(message.sender, vm.senderText, e)}
       ><Avatar
         src={vm.senderAvatar}
@@ -121,29 +122,29 @@
 
   {#if message.revoked && !vm.hasBody}
     <!-- Nothing local to keep: only a revoke we heard about, never the message. -->
-    <span class="revoked">This message was deleted<span class="meta-spacer" aria-hidden="true">{@render metadata()}</span></span>
+    <span class="revoked">{t("content.this_message_was_deleted")}<span class="meta-spacer" aria-hidden="true">{@render metadata()}</span></span>
   {:else if spoilerHidden}
-    <button class="spoiler-reveal" onclick={() => { revealedFor = revealKey; }}>Reveal spoiler</button>
+    <button class="spoiler-reveal" onclick={() => { revealedFor = revealKey; }}>{t("content.reveal_spoiler")}</button>
     {#if vm.inlineMeta}<span class="meta">{@render metadata()}</span>{/if}
   {:else}
     {#if messageLabels.length}
-      <div class="message-labels" aria-label="Message labels">{#each messageLabels as label (label.id)}<span>{label.name}</span>{/each}</div>
+      <div class="message-labels" aria-label={t("content.message_labels")}>{#each messageLabels as label (label.id)}<span><bdi dir="auto">{label.name}</bdi></span>{/each}</div>
     {/if}
     {#if vm.isForwarded}
-      <span class="forwarded-mark"><Icon name="forward" size={13} /> Forwarded</span>
+      <span class="forwarded-mark"><Icon name="forward" size={13} /> {t("content.forwarded")}</span>
     {/if}
     {#if message.reply_to_text}
       <MessageCard {message} {vm} {api} variant="quote" />
     {/if}
 
     {#if vm.viewOnce && !message.media_path}
-      {@const what = VIEW_ONCE_LABEL[message.media_kind ?? ""] ?? "View once message"}
+      {@const what = VIEW_ONCE_LABEL[message.media_kind ?? ""] ?? t("content.view_once_message")}
       {#if vm.viewOnce.opened && !vm.viewOnce.available}
         <!-- Nothing arrived, or this account sent it and the sender cannot
              reopen it, and no reply carried a copy. There is nothing left to ask anyone for. -->
         <span class="once spent">
           <span class="once-mark">1</span>
-          <span>{what}<small>Open it on your phone</small></span>
+          <span>{what}<small>{t("content.open_it_on_your_phone")}</small></span>
         </span>
       {:else}
         <button
@@ -151,10 +152,10 @@
           onclick={() => api.ononce(message)}>
           <span class="once-mark">1</span>
           <span>{what}<small>{vm.downloading
-              ? "Asking for it…"
+              ? t("content.asking_for_it")
               : vm.viewOnce.available
-                ? "Open"
-                : "Tap to view"}</small></span>
+                ? t("content.open")
+                : t("content.tap_to_view")}</small></span>
         </button>
       {/if}
     {:else if vm.viewOnce && message.media_path}
@@ -169,28 +170,29 @@
           path={message.media_path}
           duration={message.media_duration}
           avatar={vm.voiceAvatar}
-          title={message.from_me ? "You" : vm.senderText}
-          initials={initials(message.from_me ? "You" : vm.senderText)} />
+          mine={message.from_me}
+          title={message.from_me ? t("chat.you") : vm.senderText}
+          initials={initials(message.from_me ? t("chat.you") : vm.senderText)} />
       {:else if onceKind === "sticker"}
         {#if stickerBroken}
-          <span class="sticker sticker-unsupported" title="Unsupported sticker">Unsupported sticker</span>
+          <span class="sticker sticker-unsupported" title={t("content.unsupported_sticker")}>{t("content.unsupported_sticker")}</span>
         {:else}
-          <img class="sticker" src={convertFileSrc(message.media_path)} alt="Sticker" decoding="async" onerror={() => (stickerBroken = true)} />
+          <img class="sticker" src={convertFileSrc(message.media_path)} alt={t("content.sticker")} decoding="async" onerror={() => (stickerBroken = true)} />
         {/if}
       {:else}
         <img class="media" src={convertFileSrc(message.media_path)} alt={message.text} decoding="async" />
       {/if}
     {:else if message.media_kind === "sticker" && message.media_path}
       {#if stickerBroken}
-        <span class="sticker sticker-unsupported" title="Unsupported sticker">Unsupported sticker</span>
+        <span class="sticker sticker-unsupported" title={t("content.unsupported_sticker")}>{t("content.unsupported_sticker")}</span>
       {:else}
-        <img class="sticker" src={convertFileSrc(message.media_path)} alt="Sticker" decoding="async" onerror={() => (stickerBroken = true)} />
+        <img class="sticker" src={convertFileSrc(message.media_path)} alt={t("content.sticker")} decoding="async" onerror={() => (stickerBroken = true)} />
       {/if}
     {:else if message.media_kind === "sticker"}
       <!-- Fetched on its own when shown; the placeholder keeps the sticker's space. -->
       <button
         class="sticker sticker-pending"
-        title={vm.downloading ? "Loading sticker" : "Load sticker"}
+        title={vm.downloading ? t("content.loading_sticker") : t("content.load_sticker")}
         onclick={() => api.ondownload(message)}>
         {#if vm.downloading}<Spinner />{:else}<Icon name="sticker" size={28} />{/if}
       </button>
@@ -199,7 +201,7 @@
       <button
         class="media-button"
         class:once-kept={filtered}
-        title={filtered ? "One-time photo, click to reveal" : message.media_path ? "View" : "Download"}
+        title={filtered ? t("content.one_time_photo_click_to_reveal") : message.media_path ? t("content.view") : t("content.download")}
         onclick={() =>
           filtered
             ? api.onrevealonce(message)
@@ -215,7 +217,7 @@
         {#if filtered}
           <span class="media-overlay once-overlay">
             <span class="once-mark">1</span>
-            <span>One-time photo<small>Click to reveal</small></span>
+            <span>{t("content.one_time_photo")}<small>{t("content.click_to_reveal")}</small></span>
           </span>
         {:else if !message.media_path}
           <span class="media-overlay">
@@ -228,25 +230,25 @@
     {:else if message.media_kind === "round_video" && vm.onceKept && !vm.onceRevealed}
       <button class="round-pending" onclick={() => api.onrevealonce(message)}>
         <span class="media-fetch"><span class="once-mark">1</span></span>
-        <span>One-time round video · Click to reveal</span>
+        <span>{t("content.one_time_round_video_click_to_reveal")}</span>
       </button>
     {:else if message.media_kind === "round_video" && message.media_path}
       <VideoPlayer src={mediaSrc(message.media_path)} path={message.media_path} poster={message.media_thumb} round autoplay={false} />
     {:else if message.media_kind === "round_video"}
-      <button class="round-video-pending" disabled={vm.downloading} onclick={() => api.ondownload(message)} aria-label="Download round video">
+      <button class="round-video-pending" disabled={vm.downloading} onclick={() => api.ondownload(message)} aria-label={t("content.download_round_video")}>
         {#if message.media_thumb}<img src={mediaSrc(message.media_thumb)} alt="" decoding="async" />{/if}
         {#if vm.downloading}<Spinner />{:else}<Icon name="download" size={28} />{/if}
       </button>
     {:else if ["image", "video", "gif"].includes(message.media_kind ?? "") && !message.media_path}
       <button
         class="media-stub"
-        title="Download"
+        title={t("content.download")}
         disabled={vm.downloading}
         onclick={() => api.ondownload(message)}>
         <span class="media-fetch">
           {#if vm.downloading}<Spinner />{:else}<Icon name="download" size={22} />{/if}
         </span>
-        <span>{message.media_kind === "image" ? "Photo" : message.media_kind === "gif" ? "GIF" : "Video"}</span>
+        <span>{message.media_kind === "image" ? t("content.photo") : message.media_kind === "gif" ? t("content.gif") : t("content.video")}</span>
       </button>
     {:else if (message.media_kind === "video" || message.media_kind === "gif") &&
     (message.media_path || message.media_thumb)}
@@ -255,10 +257,10 @@
         class="media-button video"
         class:once-kept={filtered}
         title={filtered
-          ? "One-time video, click to reveal"
+          ? t("content.one_time_video_click_to_reveal")
           : message.media_path
-            ? "Play"
-            : "Download"}
+            ? t("content.play")
+            : t("content.download")}
         onclick={() =>
           filtered
             ? api.onrevealonce(message)
@@ -274,12 +276,12 @@
         {#if filtered}
           <span class="media-overlay once-overlay">
             <span class="once-mark">1</span>
-            <span>{message.media_kind === "gif" ? "One-time GIF" : "One-time video"}<small
-                >Click to reveal</small></span>
+            <span>{message.media_kind === "gif" ? t("content.one_time_gif") : t("content.one_time_video")}<small
+                >{t("content.click_to_reveal")}</small></span>
           </span>
         {:else}
           <span class="media-overlay">
-            {#if message.media_kind === "gif"}GIF{:else}<span class="play">▶</span>{/if}
+            {#if message.media_kind === "gif"}{t("content.gif")}{:else}<span class="play">▶</span>{/if}
           </span>
         {/if}
       </button>
@@ -287,7 +289,7 @@
       {#if vm.onceKept && !vm.onceRevealed}
         <button
           class="voice-pending"
-          title="One-time voice message, click to reveal"
+          title={t("content.one_time_voice_message_click_to_reveal")}
           onclick={() => api.onrevealonce(message)}>
           <span class="voice-pending-icon"><span class="once-mark">1</span></span>
           <span class="voice-pending-bars" aria-hidden="true">
@@ -302,11 +304,11 @@
           mine={message.from_me}
           play={vm.autoplay}
           chained={vm.autoplay}
-          title={message.from_me ? "You" : vm.senderText}
+          title={message.from_me ? t("chat.you") : vm.senderText}
           onplayed={() => api.onmarkplayed(message)}
           onended={() => api.onnextvoice(message)}
           onpaused={() => api.onpausevoice()}
-          initials={initials(message.from_me ? "You" : vm.senderText)} />
+          initials={initials(message.from_me ? t("chat.you") : vm.senderText)} />
         {#if session.activeAccount && !vm.onceKept}
           <Transcript accountId={session.activeAccount} chat={message.chat} id={message.id} enabled={transcription.enabled} hidden={spoilerHidden} />
         {/if}
@@ -315,7 +317,7 @@
       <!-- Not downloaded yet: the note's own row, with the download where play will be. -->
       <button
         class="voice-pending"
-        title="Download voice message"
+        title={t("content.download_voice_message")}
         disabled={vm.downloading}
         onclick={() => api.ondownload(message)}>
         <span class="voice-pending-icon">
@@ -363,7 +365,7 @@
     {#if message.media_kind === "music" && !message.media_thumb && !vm.downloadError}
       <button class="download-failed" disabled={vm.downloading} onclick={() => api.ondownload(message)}>
         {#if vm.downloading}<Spinner />{:else}<Icon name="download" size={14} />{/if}
-        Load artwork
+        {t("content.load_artwork")}
       </button>
     {/if}
 
@@ -373,13 +375,13 @@
         title={vm.downloadError}
         disabled={vm.downloadGaveUp}
         onclick={() => api.ondownload(message)}>
-        {#if vm.downloadGaveUp}
-          Download failed · retry limit reached
-        {:else}
+        {#if vm.downloadGaveUp}{t("content.download_failed_retry_limit_reached")}{:else}
           <Icon name="repeat" size={14} />
-          Couldn't download · Retry
-        {/if}
+          {t("content.couldn_t_download_retry")}{/if}
       </button>
+      {#if vm.downloadDiagnostic}
+        <details class="download-diagnostic"><summary>{t("content.technical_details")}</summary><pre dir="ltr">{vm.downloadDiagnostic}</pre></details>
+      {/if}
     {/if}
 
     {#if vm.caption}
@@ -397,7 +399,7 @@
     {#if message.media_kind === "document" && !message.media_path && !vm.viewOnce}
       <button class="download" onclick={() => api.ondownload(message)}>
         <Icon name="download" size={14} />
-        Download {message.media_kind}
+        {t("content.download")} {message.media_kind}
       </button>
     {/if}
 
@@ -406,8 +408,8 @@
 
   <button
     class="reply-btn"
-    title="Message options"
-    aria-label="Message options"
+    title={t("content.message_options")}
+    aria-label={t("content.message_options")}
     onclick={(e) => api.onreplymenu(e, message)}><Icon name="chevronDown" size={16} /></button
   >
   <span class="meta">
@@ -416,8 +418,8 @@
   {#if vm.reactions}
     <button
       class="reactions"
-      title="Show reactions"
-      aria-label="Show reactions"
+      title={t("content.show_reactions")}
+      aria-label={t("content.show_reactions")}
       onclick={() => api.onopenreactions(message)}>
       {#each vm.reactions.slice(0, 3) as r (r.emoji)}<span>{r.emoji}</span>{/each}
       {#if vm.reactions.reduce((n, r) => n + r.count, 0) > 1}
@@ -429,6 +431,7 @@
 </div>
 
 <style>
+  .download-diagnostic pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   .message-labels { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 5px; }
   .message-labels span { border-radius: 8px; padding: 2px 6px; background: var(--raised); color: var(--muted); font-size: 11px; }
   .spoiler-reveal { padding: 8px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--raised); color: var(--text); font: inherit; cursor: pointer; }
@@ -470,7 +473,7 @@
   .msg-row.picking {
     position: relative;
     cursor: pointer;
-    padding-left: calc(var(--pad-l) + 30px);
+    padding-inline-start: calc(var(--pad-l) + 30px);
   }
   .msg-row.picking .bubble {
     pointer-events: none;
@@ -480,7 +483,7 @@
     position: absolute;
     top: 50%;
     /* Clear of the 38px the sender avatar hangs left of its bubble. */
-    left: 8px;
+    inset-inline-start: 8px;
     width: 20px;
     height: 20px;
     margin-top: -10px;
@@ -566,11 +569,11 @@
     background: inherit;
   }
   .bubble.first:not(.mine)::before {
-    left: -8px;
+    inset-inline-start: -8px;
     clip-path: polygon(0 0, 100% 0, 100% 100%);
   }
   .bubble.first.mine::before {
-    right: -8px;
+    inset-inline-end: -8px;
     clip-path: polygon(0 0, 100% 0, 0 100%);
   }
   .bubble.media-only {
@@ -582,13 +585,13 @@
   }
   .bubble.inline-meta .meta {
     position: absolute;
-    right: 7px;
+    inset-inline-end: 7px;
     bottom: 4px;
   }
   /* The time sits on the picture instead of below it. */
   .bubble.media-only .meta {
     position: absolute;
-    right: 9px;
+    inset-inline-end: 9px;
     bottom: 8px;
     padding: 1px 7px;
     border-radius: 999px;
@@ -677,7 +680,7 @@
     background: none;
     color: inherit;
     font: inherit;
-    text-align: left;
+    text-align: start;
     cursor: pointer;
   }
   .once > span:last-child {
@@ -719,7 +722,7 @@
     font: inherit;
     color: var(--text);
     cursor: pointer;
-    text-align: left;
+    text-align: start;
   }
   .file:hover {
     background: rgba(0, 0, 0, 0.28);
@@ -771,7 +774,7 @@
     place-items: center;
     width: 44px;
     height: 44px;
-    padding-left: 3px;
+    padding-inline-start: 3px;
     box-sizing: border-box;
     border-radius: 999px;
     background: rgba(6, 8, 10, 0.6);
@@ -892,7 +895,7 @@
   }
   :global(.meta-spacer) {
     display: inline-flex;
-    padding-left: 8px;
+    padding-inline-start: 8px;
     height: 1px;
     visibility: hidden;
     pointer-events: none;
@@ -900,7 +903,7 @@
   .reply-btn {
     position: absolute;
     top: 3px;
-    right: 3px;
+    inset-inline-end: 3px;
     z-index: 1;
     display: flex;
     padding: 3px;
@@ -988,7 +991,7 @@
   .reactions {
     position: absolute;
     bottom: -16px;
-    left: 8px;
+    inset-inline-start: 8px;
     display: flex;
     align-items: center;
     gap: 1px;
@@ -1004,11 +1007,11 @@
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
   }
   .bubble.mine .reactions {
-    left: auto;
-    right: 8px;
+    inset-inline-start: auto;
+    inset-inline-end: 8px;
   }
   .reaction-count {
-    margin-left: 3px;
+    margin-inline-start: 3px;
     font-size: 12px;
   }
   @keyframes shimmer {

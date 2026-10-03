@@ -1,4 +1,6 @@
 <script lang="ts" module>
+  import type { LocalizedError } from "$lib/i18n/errors";
+  import { t } from "$lib/i18n/localizer";
   import type { UserProfile } from "$lib/utils/wire";
   export type { UserProfile };
 </script>
@@ -41,7 +43,7 @@
     /** The local aliases they answer to. */
     aliases?: string[];
     /** Stores the alias, resolving to the reason it was refused, or null. */
-    onaddalias?: (alias: string) => Promise<string | null>;
+    onaddalias?: (alias: string) => Promise<LocalizedError | string | null>;
     onremovealias?: (alias: string) => void;
     onmessage: (jid: string) => void;
     onclose: () => void;
@@ -54,7 +56,7 @@
   let enlarged = $state(false);
   let aliasDraft = $state("");
   let aliasBusy = $state<string | null>(null);
-  let aliasError = $state<string | null>(null);
+  let aliasError = $state<LocalizedError | string | null>(null);
   const aliasValue = $derived(aliasDraft.trim());
   // Our own aliases would name ourselves, which `@all` already does.
   const canAlias = $derived(!self && onaddalias !== undefined);
@@ -114,13 +116,13 @@
   bind:offsetWidth={width}
   bind:offsetHeight={height}
   role="dialog"
-  aria-label="Profile of {shown}"
+  aria-label={t("contact.profile_of", { name: shown })}
   style="left: {position.left}px; top: {position.top}px; --hue: {hue}"
   transition:fly={{ y: 6, duration: motion(140) }}>
   <div class="banner"></div>
   <div class="avatar-wrap">
     {#if picture}
-      <button class="zoom" title="View picture" aria-label="View picture" onclick={() => (enlarged = true)}
+      <button class="zoom" title={t("contact.view_picture")} aria-label={t("contact.view_picture")} onclick={() => (enlarged = true)}
         ><img class="avatar" src={convertFileSrc(picture)} alt="" /></button
       >
     {:else}
@@ -128,10 +130,10 @@
     {/if}
   </div>
   <div class="body">
-    <h2>{shown}{#if self}<span class="you">You</span>{/if}</h2>
+    <h2>{shown}{#if self}<span class="you">{t("chat.you")}</span>{/if}</h2>
     <div class="handles">
       {#if profile?.username}<span>@{profile.username}</span>{/if}
-      {#if number}<span>{number}</span>{/if}
+      {#if number}<span><bdi>{number}</bdi></span>{/if}
     </div>
     {#if profile?.business}
       <span class="badge"><Icon name="check" size={12} /> {profile.business}</span>
@@ -139,21 +141,21 @@
     {#if tag}<span class="tag">{tag}</span>{/if}
 
     <div class="section">
-      <h3>About</h3>
+      <h3>{t("contact.about")}</h3>
       {#if profile}
-        <p>{profile.about ?? "Nothing shared, or hidden by their privacy settings."}</p>
+        <p dir="auto">{profile.about ?? t("contact.profile_hidden")}</p>
       {:else if failed}
-        <p class="muted">Could not reach WhatsApp for their profile.</p>
+        <p class="muted">{t("contact.profile_failed")}</p>
       {:else}
-        <p class="muted">Loading…</p>
+        <p class="muted">{t("ui.loading")}</p>
       {/if}
     </div>
 
     {#if canAlias}
       <div class="section">
-        <h3>Aliases</h3>
+        <h3>{t("contact.aliases")}</h3>
         <p class="alias-note">
-          Type <span class="alias-hint">@alias</span> in a group to mention them. These stay on this device and never change how anyone is shown.
+          {t("contact.alias_hint")}
         </p>
         {#if aliases.length > 0}
           <ul class="alias-list">
@@ -162,8 +164,8 @@
                 <span>@{alias}</span>
                 <button
                   class="alias-drop"
-                  title="Remove @{alias}"
-                  aria-label="Remove @{alias}"
+                  title={t("contact.alias_remove", { alias })}
+                  aria-label={t("contact.alias_remove", { alias })}
                   disabled={aliasBusy !== null}
                   onclick={() => removeAlias(alias)}><Icon name="x" size={12} /></button>
               </li>
@@ -174,18 +176,18 @@
           <input
             class="field"
             maxlength="32"
-            placeholder="Add an alias"
+            placeholder={t("contact.alias_add_placeholder")}
             value={aliasDraft}
             oninput={(e) => (aliasDraft = e.currentTarget.value)}
             onkeydown={(e) => e.key === "Enter" && addAlias()} />
           <button
             class="alias-add"
-            title="Add alias"
-            aria-label="Add alias"
+            title={t("contact.alias_add")}
+            aria-label={t("contact.alias_add")}
             disabled={aliasBusy !== null || !aliasValue}
             onclick={addAlias}><Icon name="plus" size={16} /></button>
         </div>
-        {#if aliasError}<p class="error-text">{aliasError}</p>{/if}
+        {#if aliasError}<p class="error-text">{aliasError}</p>{#if typeof aliasError !== "string" && aliasError.diagnostic}<details><summary>{t("error.technical_details")}</summary><pre dir="auto">{aliasError.diagnostic}</pre></details>{/if}{/if}
       </div>
     {/if}
 
@@ -194,7 +196,7 @@
       <button
         class="message"
         onclick={() => onmessage(profile?.number ? `${profile.number}@s.whatsapp.net` : jid)}>
-        <Icon name="message" size={16} /> Message
+        <Icon name="message" size={16} /> {t("chat.message")}
       </button>
     {/if}
   </div>
@@ -331,10 +333,6 @@
     font-size: 12.5px;
     line-height: 1.4;
   }
-  /* The token as it will be typed in the composer. */
-  .alias-hint {
-    color: var(--accent-text);
-  }
   .alias-list {
     display: flex;
     flex-wrap: wrap;
@@ -383,7 +381,7 @@
     flex: 1;
     min-width: 0;
     padding: 7px 10px;
-    padding-right: 44px;
+    padding-inline-end: 44px;
     border: 1px solid var(--line-strong);
     border-radius: 6px;
     background: var(--surface);
@@ -398,7 +396,7 @@
   .alias-add {
     position: absolute;
     top: 50%;
-    right: 6px;
+    inset-inline-end: 6px;
     transform: translateY(-50%);
     display: grid;
     place-items: center;
@@ -442,4 +440,5 @@
   .message:hover {
     background: var(--accent-hover);
   }
+  details pre { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>

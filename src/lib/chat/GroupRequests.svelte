@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
+  import { t } from "$lib/i18n/localizer";
   import { untrack } from "svelte";
   import type { GroupJoinRequest } from "$lib/utils/wire";
   import type { ParticipantChange } from "$lib/utils/models";
@@ -17,8 +19,10 @@
   let selected = $state<Record<string, true>>({});
   let loading = $state(false);
   let busy = $state(false);
-  let error = $state<string | null>(null);
-  let outcomes = $state<{ jid: string; name: string; completed: boolean; text: string }[]>([]);
+  let error = $state<LocalizedError | string | null>(null);
+  let outcomeBatch = $state.raw<{ jids: string[]; changes: ParticipantChange[]; approve: boolean; names: Map<string, string> } | null>(null);
+  const outcomes = $derived(outcomeBatch ? joinRequestResults(outcomeBatch.jids, outcomeBatch.changes, outcomeBatch.approve)
+    .map((row) => ({ ...row, name: outcomeBatch!.names.get(row.jid) ?? row.jid })) : []);
   let generation = 0;
   const picked = $derived(Object.keys(selected));
 
@@ -38,7 +42,7 @@
         selected = Object.fromEntries(picked.filter((jid) => rows.some((row) => row.jid === jid)).map((jid) => [jid, true] as const));
       }
     } catch (e) {
-      if (current(target, account, revision)) error = String(e);
+      if (current(target, account, revision)) error = normalizeError(e);
     } finally {
       if (current(target, account, revision)) loading = false;
     }
@@ -50,7 +54,7 @@
     ++generation;
     requests = null;
     selected = {};
-    outcomes = [];
+    outcomeBatch = null;
     error = null;
     busy = false;
     loading = false;
@@ -74,7 +78,7 @@
     try {
       const changes = await onchange([...jids], approve);
       if (!current(target, account, revision)) return;
-      outcomes = joinRequestResults(jids, changes, approve).map((row) => ({ ...row, name: names.get(row.jid) ?? row.jid }));
+      outcomeBatch = { jids: [...jids], changes, approve, names };
       const completed = new Set(outcomes.filter((row) => row.completed).map((row) => row.jid));
       requests = (requests ?? []).filter((row) => !completed.has(row.jid));
       selected = Object.fromEntries(picked.filter((jid) => !completed.has(jid)).map((jid) => [jid, true] as const));
@@ -85,53 +89,53 @@
           selected = Object.fromEntries(picked.filter((jid) => rows.some((row) => row.jid === jid)).map((jid) => [jid, true] as const));
         }
       } catch (e) {
-        if (current(target, account, revision)) error = `Could not refresh the remaining requests: ${e}`;
+        if (current(target, account, revision)) error = normalizeError({ kind: "postal_error", code: "error.group_requests_refresh", params: {}, diagnostic: normalizeError(e).diagnostic });
       }
     } catch (e) {
-      if (current(target, account, revision)) error = String(e);
+      if (current(target, account, revision)) error = normalizeError(e);
     } finally {
       if (current(target, account, revision)) busy = false;
     }
   }
 </script>
 
-<h2>Join requests</h2>
-<p class="lede">Approve or deny people waiting to join this group.</p>
+<h2>{t("group.requests")}</h2>
+<p class="lede">{t("group.requests_hint")}</p>
 <div class="actions">
-  <button class="button" disabled={busy || loading} onclick={refresh}>{loading ? "Refreshing…" : "Refresh"}</button>
+  <button class="button" disabled={busy || loading} onclick={refresh}>{loading ? t("ui.refreshing") : t("ui.refresh")}</button>
   {#if requests && requests.length > 0}
     <label><input type="checkbox" disabled={busy || loading} checked={requests.every((row) => !!selected[row.jid])}
-      onchange={(e) => { selected = e.currentTarget.checked ? Object.fromEntries(requests!.map((row) => [row.jid, true] as const)) : {}; }} /> Select all</label>
-    <span class="muted">{picked.length} selected</span>
-    <button class="button primary" disabled={busy || loading || picked.length === 0} onclick={() => act(picked, true)}>Approve selected</button>
-    <button class="button deny" disabled={busy || loading || picked.length === 0} onclick={() => act(picked, false)}>Deny selected</button>
+      onchange={(e) => { selected = e.currentTarget.checked ? Object.fromEntries(requests!.map((row) => [row.jid, true] as const)) : {}; }} /> {t("ui.select_all")}</label>
+    <span class="muted">{t("group.requests_selected", { count: picked.length })}</span>
+    <button class="button primary" disabled={busy || loading || picked.length === 0} onclick={() => act(picked, true)}>{t("group.approve_selected")}</button>
+    <button class="button deny" disabled={busy || loading || picked.length === 0} onclick={() => act(picked, false)}>{t("group.deny_selected")}</button>
   {/if}
 </div>
 {#if error}<p class="error-text" role="alert">{error}</p>{/if}
 {#if outcomes.length > 0}
-  <ul class="outcomes" aria-label="Join request results">
+  <ul class="outcomes" aria-label={t("group.request_results")}>
     {#each outcomes as outcome (outcome.jid)}
       <li><strong>{outcome.name}</strong><span class:refused={!outcome.completed}>{outcome.text}</span></li>
     {/each}
   </ul>
 {/if}
 {#if requests === null}
-  <p class="muted">{error ? "Join requests could not be loaded." : "Loading join requests…"}</p>
+  <p class="muted">{error ? t("group.requests_failed") : t("group.requests_loading")}</p>
 {:else if requests.length === 0}
-  <p class="muted">No pending join requests.</p>
+  <p class="muted">{t("group.requests_empty")}</p>
 {:else}
   <ul class="requests">
     {#each requests as request (request.jid)}
       <li>
         <label><input type="checkbox" checked={!!selected[request.jid]} disabled={busy || loading}
           onchange={() => toggle(request.jid)} /><span>{namer(request.name, request.jid)}</span></label>
-        <button class="button primary" disabled={busy || loading} onclick={() => act([request.jid], true)}>Approve</button>
-        <button class="button deny" disabled={busy || loading} onclick={() => act([request.jid], false)}>Deny</button>
+        <button class="button primary" disabled={busy || loading} onclick={() => act([request.jid], true)}>{t("group.approve")}</button>
+        <button class="button deny" disabled={busy || loading} onclick={() => act([request.jid], false)}>{t("group.deny")}</button>
       </li>
     {/each}
   </ul>
 {/if}
-{#if busy}<p class="muted" role="status">Updating join requests…</p>{/if}
+{#if busy}<p class="muted" role="status">{t("group.requests_updating")}</p>{/if}
 
 <style>
   .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 12px 0; }

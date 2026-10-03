@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { t } from "$lib/i18n/localizer";
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
   import { untrack } from "svelte";
   import { invoke } from "$lib/utils/ipc";
   import Button from "$lib/ui/Button.svelte";
@@ -18,7 +20,7 @@
   let firstName = $state("");
   let saveOnPhone = $state(true);
   let busy = $state<"save" | "remove" | null>(null);
-  let error = $state("");
+  let error = $state<LocalizedError | string>("");
   let result = $state("");
   let dirty = $state(false);
   let generation = 0;
@@ -49,10 +51,10 @@
       if (id !== account || revision !== generation) return;
       dirty = true;
       if (remove) fullName = firstName = "";
-      result = remove ? "Contact removed." : "Contact saved.";
+      result = remove ? "contact.removed" : "contact.saved";
       onsaved(target);
     } catch (failure) {
-      if (id === account && revision === generation) error = String(failure);
+      if (id === account && revision === generation) error = normalizeError(failure);
     } finally {
       if (id === account && revision === generation) busy = null;
     }
@@ -62,22 +64,22 @@
 <form onsubmit={(event) => { event.preventDefault(); void submit(); }}>
   <fieldset disabled={!!busy || !account || !connected}>
     {#if !jid}
-      <label>Phone number<input type="tel" autocomplete="tel" bind:value={phone} placeholder="+598 91954564" required /></label>
+      <label>{t("contact.phone_number")}<input type="tel" dir="ltr" autocomplete="tel" bind:value={phone} placeholder={t("contact.phone_example")} required /></label>
     {/if}
-    <label>Full name<input autocomplete="name" bind:value={fullName} oninput={() => { dirty = true; result = ""; }} required /></label>
-    <label>First name <span>(optional)</span><input autocomplete="given-name" bind:value={firstName} /></label>
-    <label class="check"><input type="checkbox" bind:checked={saveOnPhone} />Save to phone's address book</label>
+    <label>{t("contact.full_name")}<input dir="auto" autocomplete="name" bind:value={fullName} oninput={() => { dirty = true; result = ""; }} required /></label>
+    <label>{t("contact.first_name")} <span>{t("ui.optional")}</span><input dir="auto" autocomplete="given-name" bind:value={firstName} /></label>
+    <label class="check"><input type="checkbox" bind:checked={saveOnPhone} />{t("contact.save_on_phone")}</label>
     <div class="actions">
-      <Button variant="primary" type="submit">{busy === "save" ? "Saving…" : saved ? "Save changes" : "Save contact"}</Button>
+      <Button variant="primary" type="submit">{busy === "save" ? t("ui.saving") : saved ? t("ui.save_changes") : t("contact.save")}</Button>
       {#if saved && jid}
-        <Button variant="ghost" danger type="button" onclick={() => submit(true)}>{busy === "remove" ? "Removing…" : "Remove contact"}</Button>
+        <Button variant="ghost" danger type="button" onclick={() => submit(true)}>{busy === "remove" ? t("ui.removing") : t("contact.remove")}</Button>
       {/if}
     </div>
   </fieldset>
 </form>
-{#if !account || !connected}<p role="status">Connect this account to edit contacts.</p>{/if}
+{#if !account || !connected}<p role="status">{t("contact.connect_to_edit")}</p>{/if}
 {#if error}<p role="alert">{error}</p>{/if}
-{#if result}<p role="status">{result}</p>{/if}
+{#if result}<p role="status">{t(result)}</p>{/if}
 
 <style>
   fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: .75rem; }

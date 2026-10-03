@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-native-locale"
+description = "Enables the set_native_locale command without any pre-configured scope."
+commands.allow = ["set_native_locale"]
+
+[[permission]]
+identifier = "deny-set-native-locale"
+description = "Denies the set_native_locale command without any pre-configured scope."
+commands.deny = ["set_native_locale"]

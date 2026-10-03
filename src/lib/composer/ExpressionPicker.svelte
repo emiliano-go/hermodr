@@ -3,6 +3,8 @@
 </script>
 
 <script lang="ts">
+  import { t } from "$lib/i18n/localizer";
+  import { LocalizedError, normalizeError } from "$lib/i18n/errors";
   import { onMount, untrack } from "svelte";
   import { fly } from "svelte/transition";
   import { motion } from "$lib/utils/theme.svelte";
@@ -52,7 +54,7 @@
     takereply: () => Record<string, string>;
     onemoji: (emoji: string) => void;
     onsent: () => void;
-    onerror: (message: string) => void;
+    onerror: (message: string | LocalizedError) => void;
     onclose: () => void;
     emojiOnly?: boolean;
     anchor?: { x: number; y: number } | null;
@@ -69,7 +71,7 @@
   /** The synced sticker library: packs, favourites and recents. */
   let lib = $state<StickerLibrary>({ packs: [], favorites: [], recent: [], catalog_complete: false });
   let openPack = $state<{ pack: StickerPack; stickers: Sticker[] } | null>(null);
-  let packLoading = $state(false), packError = $state(""), libraryError = $state("");
+  let packLoading = $state(false), packError = $state<LocalizedError | string | null>(""), libraryError = $state<LocalizedError | string | null>("");
   let packRequest = 0;
 
   const FAV_KEY = "postal.favStickers";
@@ -168,7 +170,7 @@
     libraryError = "";
     invoke<string[]>("media_library", { kind, prefer: kind === "sticker" ? untrack(() => favourites) : [] })
       .then((paths) => { if (active && pickerCurrent(owner) && tab === kind) library[kind] = paths; })
-      .catch((failure) => { if (active && pickerCurrent(owner) && tab === kind) libraryError = `Could not load cached media: ${failure}`; });
+      .catch((failure) => { if (active && pickerCurrent(owner) && tab === kind) libraryError = normalizeError(failure); });
     return () => { active = false; };
   });
 
@@ -191,11 +193,11 @@
     } catch {
       // Favourites only last this session then.
     }
-    if (!session.connected) { packError = "Favorite saved locally. Connect this account to request phone sync."; return; }
+    if (!session.connected) { packError = new LocalizedError({ kind: "postal_error", code: "error.content.favorite_saved_locally_connect_this_account_to_request_phone_sync", params: {} }); return; }
     try {
       await invoke("favorite_sticker_path", { accountId: owner.account, path, favorite: !on });
     } catch (failure) {
-      if (request === packRequest && pickerCurrent(owner)) packError = `Favorite sync failed; local favorite kept: ${failure}`;
+      if (request === packRequest && pickerCurrent(owner)) packError = normalizeError(failure);
     } finally {
       if (request === packRequest && pickerCurrent(owner)) stickerEvents.touch();
     }
@@ -227,7 +229,7 @@
       if (!current()) return;
       openPack = { pack, stickers: list };
     } catch (e) {
-      if (current()) packError = `Could not refresh pack. Cached stickers remain available: ${e}`;
+      if (current()) packError = normalizeError(e);
     } finally {
       if (current()) packLoading = false;
     }
@@ -242,13 +244,13 @@
   class RateLimited extends Error {}
 
   function isRateLimit(e: unknown) {
-    return /429|rate[- ]?overlimit/i.test(String(e));
+    return /429|rate[- ]?overlimit/i.test(normalizeError(e).diagnostic ?? String(e));
   }
 
   function rateText(e: unknown) {
     return e instanceof RateLimited
-      ? "WhatsApp is rate-limiting sticker downloads. Try again in a few minutes."
-      : String(e);
+      ? new LocalizedError({ kind: "postal_error", code: "error.content.whatsapp_is_rate_limiting_sticker_downloads_try_again_in_a_few_minutes", params: {} })
+      : normalizeError(e);
   }
 
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -261,7 +263,7 @@
     if (!owner) return null;
     const current = () => request === packRequest && pickerCurrent(owner);
     if (sticker.path) return sticker.path;
-    if (!session.connected) { packError = "Connect this account to download stickers."; return null; }
+    if (!session.connected) { packError = new LocalizedError({ kind: "postal_error", code: "error.content.connect_this_account_to_download_stickers", params: {} }); return null; }
     if (fetching[sticker.filehash]) return null;
     const pending = fetching;
     pending[sticker.filehash] = true;
@@ -274,7 +276,7 @@
     } catch (e) {
       if (!current()) return null;
       if (isRateLimit(e)) throw new RateLimited(String(e));
-      packError = `Sticker download failed: ${e}`;
+      packError = normalizeError(e);
       return null;
     } finally {
       delete pending[sticker.filehash];
@@ -307,7 +309,7 @@
           }
         }
         if (!fetched) {
-          packError = "WhatsApp is rate-limiting sticker downloads. Try again in a few minutes.";
+          packError = new LocalizedError({ kind: "postal_error", code: "error.content.whatsapp_is_rate_limiting_sticker_downloads_try_again_in_a_few_minutes", params: {} });
           return;
         }
         await sleep(FETCH_GAP_MS);
@@ -337,19 +339,19 @@
   async function toggleSyncedFavorite(sticker: Sticker) {
     const owner = pickerScope(), request = packRequest;
     if (!owner) return;
-    if (!session.connected) { packError = "Connect this account to update synced favorites."; return; }
+    if (!session.connected) { packError = new LocalizedError({ kind: "postal_error", code: "error.content.connect_this_account_to_update_synced_favorites", params: {} }); return; }
     packError = "";
     try {
       await invoke("favorite_sticker", { accountId: owner.account, filehash: sticker.filehash, favorite: !sticker.favorite });
     } catch (failure) {
-      if (request === packRequest && pickerCurrent(owner)) packError = `Favorite request failed: ${failure}`;
+      if (request === packRequest && pickerCurrent(owner)) packError = normalizeError(failure);
     } finally {
       if (request === packRequest && pickerCurrent(owner)) stickerEvents.touch();
     }
   }
 
   function canSendTo(destination: string) {
-    const reason = broadcastSendReason(destination) ?? (disabled ? "Message sending is disabled here." : null);
+    const reason = broadcastSendReason(destination) ?? (disabled ? t("content.message_sending_is_disabled_here") : null);
     if (reason) onerror(reason);
     return !reason;
   }
@@ -361,14 +363,14 @@
     onclose();
     try {
       await enqueue((signal) => {
-        if (disabled) throw new Error("Message sending is disabled here.");
+        if (disabled) throw new LocalizedError({ kind: "postal_error", code: "error.content.message_sending_is_disabled_here", params: {} });
         guardBroadcastSend(destination);
-        if (!pickerCurrent(owner)) throw new Error("Sticker destination changed before sending.");
+        if (!pickerCurrent(owner)) throw new LocalizedError({ kind: "postal_error", code: "error.content.sticker_destination_changed_before_sending", params: {} });
         return task(signal);
       });
       if (pickerCurrent(owner)) onsent();
     } catch (e) {
-      if (pickerCurrent(owner)) onerror(String(e));
+      if (pickerCurrent(owner)) onerror(normalizeError(e));
     }
   }
 
@@ -418,7 +420,7 @@
       const paths = await invoke<string[]>("media_library", { kind: "sticker", prefer: favourites });
       if (current()) library.sticker = paths;
     } catch (e) {
-      if (current()) packError = `Could not save sticker: ${e}`;
+      if (current()) packError = normalizeError(e);
     }
   }
 
@@ -438,25 +440,25 @@
   <div class="tile">
     <button
       class="tile-send"
-      title={sticker.path ? "Send sticker" : "Fetch sticker"}
+      title={sticker.path ? t("content.send_sticker") : t("content.fetch_sticker")}
       onclick={() => clickSticker(sticker)}>
       {#if sticker.path && !broken[sticker.path]}
         <img src={convertFileSrc(sticker.path!)} alt="" loading="lazy" onerror={() => (broken[sticker.path!] = true)} />
       {:else}
         <span class="tile-unsupported">
           {sticker.lottie
-            ? "Lottie sticker"
+            ? t("content.lottie_sticker")
             : fetching[sticker.filehash]
-              ? "Fetching…"
-              : "Tap to fetch"}
+              ? t("content.fetching")
+              : t("content.tap_to_fetch")}
         </span>
       {/if}
     </button>
     <button
       class="fav"
       class:on={sticker.favorite}
-      title={sticker.favorite ? "Remove from favourites" : "Add to favourites"}
-      aria-label="Favourite"
+      title={sticker.favorite ? t("content.remove_from_favourites") : t("content.add_to_favourites")}
+      aria-label={t("content.favourite")}
       onclick={() => toggleSyncedFavorite(sticker)}><Icon name="star" size={14} /></button>
   </div>
 {/snippet}
@@ -467,7 +469,7 @@
   class="picker"
   class:anchored={emojiOnly && anchor}
   role="dialog"
-  aria-label={emojiOnly ? "Choose a reaction" : "Emoji, GIFs and stickers"}
+  aria-label={emojiOnly ? t("content.choose_a_reaction") : t("content.emoji_gifs_and_stickers")}
   bind:this={pickerEl}
   style={emojiOnly && anchor
     ? `left: ${anchorPos.left}px; top: ${anchorPos.top}px; width: min(360px, calc(100vw - 32px)); height: min(440px, calc(100vh - 120px));`
@@ -477,14 +479,14 @@
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
       class="resize"
-      title="Drag to resize"
+      title={t("content.drag_to_resize")}
       onpointerdown={onResizeDown}
       onpointermove={onResizeMove}
       onpointerup={onResizeUp}></div>
     <div class="tabs" role="tablist">
-      <button role="tab" class:active={tab === "gif"} aria-selected={tab === "gif"} onclick={() => (tab = "gif")}>GIFs</button>
-      <button role="tab" class:active={tab === "sticker"} aria-selected={tab === "sticker"} onclick={() => (tab = "sticker")}>Stickers</button>
-      <button role="tab" class:active={tab === "emoji"} aria-selected={tab === "emoji"} onclick={() => (tab = "emoji")}>Emoji</button>
+      <button role="tab" class:active={tab === "gif"} aria-selected={tab === "gif"} onclick={() => (tab = "gif")}>{t("content.gifs")}</button>
+      <button role="tab" class:active={tab === "sticker"} aria-selected={tab === "sticker"} onclick={() => (tab = "sticker")}>{t("content.stickers")}</button>
+      <button role="tab" class:active={tab === "emoji"} aria-selected={tab === "emoji"} onclick={() => (tab = "emoji")}>{t("content.emoji")}</button>
     </div>
   {/if}
 
@@ -492,7 +494,7 @@
     <label class="search">
       <Icon name="search" size={15} />
       <!-- svelte-ignore a11y_autofocus -->
-      <input placeholder="Find the perfect emoji" bind:value={query} autofocus />
+      <input placeholder={t("content.find_the_perfect_emoji")} bind:value={query} autofocus />
     </label>
     <div class="emoji-body">
       {#if !query.trim()}
@@ -509,10 +511,10 @@
               <button title=":{e.shortcodes[0] ?? e.label}:" onclick={() => pickEmoji(e.emoji)}>{e.emoji}</button>
             {/each}
           </div>
-          {#if results.length === 0}<p class="empty">No emoji matches "{query}".</p>{/if}
+          {#if results.length === 0}<p class="empty">{t("content.no_emoji_matches", { query })}</p>{/if}
         {:else}
           {#if recents.length}
-            <h4>Frequently used</h4>
+            <h4>{t("content.frequently_used")}</h4>
             <div class="grid">
               {#each recents as emoji (emoji)}
                 <button onclick={() => pickEmoji(emoji)}>{emoji}</button>
@@ -527,7 +529,7 @@
               {/each}
             </div>
           {/each}
-          {#if emojis.length === 0}<p class="empty">Loading emoji…</p>{/if}
+          {#if emojis.length === 0}<p class="empty">{t("content.loading_emoji")}</p>{/if}
         {/if}
       </div>
     </div>
@@ -548,7 +550,7 @@
       {#if libraryError}<p class="sticker-error" role="alert">{libraryError}</p>{/if}
       <button class="upload" onclick={() => fileInput?.click()}>
         <Icon name="plus" size={16} />
-        {tab === "sticker" ? "Send an image as a sticker" : "Send a video as a GIF"}
+        {tab === "sticker" ? t("content.send_an_image_as_a_sticker") : t("content.send_a_video_as_a_gif")}
       </button>
       <input
         class="file-input"
@@ -570,49 +572,49 @@
         {#if openPack}
           {@const pack = openPack}
           <div class="pack-head">
-            <button class="pack-back" title="All packs" onclick={() => { ++packRequest; packLoading = false; packError = ""; openPack = null; }}><Icon name="chevronLeft" size={15} /></button>
-            <span class="pack-name">{pack.pack.name ?? pack.pack.publisher ?? "Sticker pack"}</span>
+            <button class="pack-back" title={t("content.all_packs")} onclick={() => { ++packRequest; packLoading = false; packError = ""; openPack = null; }}><Icon name="chevronLeft" size={15} /></button>
+            <span class="pack-name">{pack.pack.name ?? pack.pack.publisher ?? t("content.sticker_pack")}</span>
             {#if pack.stickers.length > 0}
               <button
                 class="fetch-all"
                 disabled={!!fetchingAll[pack.pack.pack_id]}
                 onclick={() => fetchAll(pack.pack.pack_id, pack.stickers)}>
-                {fetchingAll[pack.pack.pack_id] ? "Fetching…" : "Fetch all"}
+                {fetchingAll[pack.pack.pack_id] ? t("content.fetching") : t("content.fetch_all")}
               </button>
             {/if}
           </div>
-          {#if packLoading}<p class="empty" role="status">Refreshing pack; cached stickers remain available.</p>{/if}
+          {#if packLoading}<p class="empty" role="status">{t("content.refreshing_pack_cached_stickers_remain_available")}</p>{/if}
           <div class="tiles stickers">
             {#each pack.stickers as sticker (sticker.filehash)}
               <button
                 class="tile-send"
-                title={sticker.path ? "Send sticker" : "Fetch sticker"}
+                title={sticker.path ? t("content.send_sticker") : t("content.fetch_sticker")}
                 onclick={() => clickSticker(sticker)}>
                 {#if sticker.path && !broken[sticker.path]}
                   <img src={convertFileSrc(sticker.path!)} alt="" loading="lazy" onerror={() => (broken[sticker.path!] = true)} />
                 {:else}
                   <span class="tile-unsupported">
                     {sticker.lottie
-                      ? "Lottie sticker"
+                      ? t("content.lottie_sticker")
                       : fetching[sticker.filehash]
-                        ? "Fetching…"
-                        : "Tap to fetch"}
+                        ? t("content.fetching")
+                        : t("content.tap_to_fetch")}
                   </span>
                 {/if}
               </button>
             {/each}
           </div>
-          {#if pack.stickers.length === 0 && !packLoading}<p class="empty">No cached stickers in this pack.</p>{/if}
+          {#if pack.stickers.length === 0 && !packLoading}<p class="empty">{t("content.no_cached_stickers_in_this_pack")}</p>{/if}
         {:else}
           {#if lib.favorites.length > 0}
             <div class="section-head">
-              <h4>Favorites</h4>
+              <h4>{t("content.favorites")}</h4>
               {#if lib.favorites.some((sticker) => !sticker.path)}
                 <button
                   class="fetch-all"
                   disabled={!!fetchingAll["favorites"]}
                   onclick={() => fetchAll("favorites", lib.favorites)}>
-                  {fetchingAll["favorites"] ? "Fetching…" : "Fetch all"}
+                  {fetchingAll["favorites"] ? t("content.fetching") : t("content.fetch_all")}
                 </button>
               {/if}
             </div>
@@ -623,7 +625,7 @@
             </div>
           {/if}
           {#if lib.recent.length > 0}
-            <h4>Recent</h4>
+            <h4>{t("content.recent")}</h4>
             <div class="tiles stickers">
               {#each lib.recent as sticker (sticker.filehash)}
                 {@render syncedTile(sticker)}
@@ -631,10 +633,10 @@
             </div>
           {/if}
           {#if lib.packs.length > 0}
-            <h4>Categories</h4>
+            <h4>{t("content.categories")}</h4>
             <div class="pack-bar">
               {#each lib.packs as pack (pack.pack_id)}
-                <button class="pack-chip" title={pack.publisher ?? "Pack"} onclick={() => openPackView(pack)}>
+                <button class="pack-chip" title={pack.publisher ?? t("content.pack")} onclick={() => openPackView(pack)}>
                   {#if pack.tray_path}<img src={convertFileSrc(pack.tray_path)} alt="" />{/if}
                   <span>{pack.name ?? pack.pack_id.slice(0, 8)}</span>
                 </button>
@@ -642,16 +644,16 @@
             </div>
           {/if}
           {#if lib.favorites.length === 0 && lib.recent.length === 0 && stickers.length === 0}
-            <p class="empty">Your stickers sync from your phone. Send a sticker and it appears here.</p>
+            <p class="empty">{t("content.your_stickers_sync_from_your_phone_send_a_sticker_and_it_appears_here")}</p>
           {/if}
           {#if stickers.length > 0}
-            <h4>All received</h4>
+            <h4>{t("content.all_received")}</h4>
             <div class="tiles stickers">
               {#each stickers as path (path)}
                 <div class="tile">
-                  <button class="tile-send" title="Send sticker" onclick={() => sendFromLibrary(path, "sticker")}>
+                  <button class="tile-send" title={t("content.send_sticker")} onclick={() => sendFromLibrary(path, "sticker")}>
                     {#if broken[path]}
-                      <span class="tile-unsupported">Unsupported sticker</span>
+                      <span class="tile-unsupported">{t("content.unsupported_sticker")}</span>
                     {:else}
                       <img src={convertFileSrc(path)} alt="" loading="lazy" onerror={() => (broken[path] = true)} />
                     {/if}
@@ -659,8 +661,8 @@
                   <button
                     class="fav"
                     class:on={favourites.includes(path)}
-                    title={favourites.includes(path) ? "Remove from favourites" : "Add to favourites"}
-                    aria-label="Favourite"
+                    title={favourites.includes(path) ? t("content.remove_from_favourites") : t("content.add_to_favourites")}
+                    aria-label={t("content.favourite")}
                     onclick={() => toggleFavourite(path)}><Icon name="star" size={14} /></button>
                 </div>
               {/each}
@@ -670,14 +672,14 @@
       {:else}
         <div class="tiles gifs">
           {#each library.gif as path (path)}
-            <button class="tile-send" title="Send GIF" onclick={() => sendFromLibrary(path, "gif")}>
+            <button class="tile-send" title={t("content.send_gif")} onclick={() => sendFromLibrary(path, "gif")}>
               <!-- svelte-ignore a11y_media_has_caption -->
               <video src={convertFileSrc(path)} autoplay loop muted playsinline></video>
             </button>
           {/each}
         </div>
         {#if library.gif.length === 0}
-          <p class="empty">GIFs you receive show up here, ready to send again.</p>
+          <p class="empty">{t("content.gifs_you_receive_show_up_here_ready_to_send_again")}</p>
         {/if}
       {/if}
     </div>
@@ -740,7 +742,7 @@
     width: 7px;
     height: 7px;
     border-top: 2px solid var(--faint);
-    border-left: 2px solid var(--faint);
+    border-inline-start: 2px solid var(--faint);
     border-top-left-radius: 3px;
     opacity: 0;
     transition: opacity calc(0.15s * var(--motion-scale)) var(--ease);
@@ -940,7 +942,7 @@
     font-weight: 600;
   }
   .fetch-all {
-    margin-left: auto;
+    margin-inline-start: auto;
     padding: 5px 10px;
     border: 0;
     border-radius: 6px;

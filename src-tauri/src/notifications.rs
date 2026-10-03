@@ -1,4 +1,5 @@
 use crate::AppState;
+use crate::command_error::{CommandError, CommandResult};
 use postal_core::WhatsAppService;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -15,9 +16,11 @@ fn opens_chat(response: &notify_rust::NotificationResponse) -> bool {
         || matches!(response, notify_rust::NotificationResponse::Action(action) if action == "open-chat")
 }
 
-fn current(state: &AppState, account_id: &str, service: &Arc<WhatsAppService>) -> Result<(), String> {
-    if !Arc::ptr_eq(service, &state.service_for_account(account_id)?) {
-        return Err("account changed".into());
+fn current(state: &AppState, account_id: &str, service: &Arc<WhatsAppService>) -> CommandResult<()> {
+    let active = state.service_for_account(account_id)
+        .map_err(|error| CommandError::code("error.account_changed").with_diagnostic(error))?;
+    if !Arc::ptr_eq(service, &active) {
+        return Err(CommandError::code("error.account_changed"));
     }
     Ok(())
 }
@@ -25,9 +28,9 @@ fn current(state: &AppState, account_id: &str, service: &Arc<WhatsAppService>) -
 #[tauri::command]
 pub(crate) async fn chat_sound_muted(
     state: State<'_, AppState>, account_id: String, chat: String,
-) -> Result<Option<bool>, String> {
+) -> CommandResult<Option<bool>> {
     let service = state.service_for_account(&account_id)?;
-    let muted = service.chat_sound_muted(&chat).await.map_err(|e| e.to_string())?;
+    let muted = service.chat_sound_muted(&chat).await.map_err(CommandError::from)?;
     current(&state, &account_id, &service)?;
     Ok(muted)
 }
@@ -35,17 +38,17 @@ pub(crate) async fn chat_sound_muted(
 #[tauri::command]
 pub(crate) async fn set_chat_sound_muted(
     state: State<'_, AppState>, account_id: String, chat: String, muted: Option<bool>,
-) -> Result<(), String> {
+) -> CommandResult<()> {
     let service = state.service_for_account(&account_id)?;
-    service.set_chat_sound_muted(&chat, muted).await.map_err(|e| e.to_string())?;
+    service.set_chat_sound_muted(&chat, muted).await.map_err(CommandError::from)?;
     current(&state, &account_id, &service)
 }
 
-fn notification(title: &str, body: &str, muted: bool) -> notify_rust::Notification {
+fn notification(title: &str, body: &str, muted: bool, action_label: &str) -> notify_rust::Notification {
     let mut note = notify_rust::Notification::new();
-    note.summary(title).body(body).auto_icon().action("open-chat", "Open chat");
+    note.summary(title).body(body).auto_icon().action("open-chat", action_label);
     #[cfg(all(unix, not(target_os = "macos")))]
-    note.action("default", "Open chat");
+    note.action("default", action_label);
     #[cfg(all(unix, not(target_os = "macos")))]
     if muted {
         note.hint(notify_rust::Hint::SuppressSound(true));
@@ -59,15 +62,16 @@ fn notification(title: &str, body: &str, muted: bool) -> notify_rust::Notificati
 pub(crate) async fn show_chat_notification(
     app: AppHandle, state: State<'_, AppState>, account_id: String, chat: String,
     title: String, body: String,
-) -> Result<(), String> {
+) -> CommandResult<()> {
     let service = state.service_for_account(&account_id)?;
-    let muted = service.chat_sound_muted(&chat).await.map_err(|e| e.to_string())?.unwrap_or(false);
-    let note = notification(&title, &body, muted);
+    let muted = service.chat_sound_muted(&chat).await.map_err(CommandError::from)?.unwrap_or(false);
+    let action_label = crate::native_locale::text(&app, "native.open_chat");
+    let note = notification(&title, &body, muted, &action_label);
     #[cfg(windows)]
     let note = {
         let mut note = note;
-        let exe = tauri::utils::platform::current_exe().map_err(|e| e.to_string())?;
-        let directory = exe.parent().ok_or("executable directory unavailable")?;
+        let exe = tauri::utils::platform::current_exe().map_err(CommandError::operation_failed)?;
+        let directory = exe.parent().ok_or_else(|| CommandError::code("error.notification_executable_directory_unavailable"))?;
         let directory = directory.display().to_string();
         let sep = std::path::MAIN_SEPARATOR;
         if !(directory.ends_with(format!("{sep}target{sep}debug").as_str())
@@ -87,7 +91,7 @@ pub(crate) async fn show_chat_notification(
     let target = DesktopChatTarget { account_id, chat };
     let (shown, result) = tokio::sync::oneshot::channel();
     tauri::async_runtime::spawn_blocking(move || {
-        let Some(service) = service_ref.upgrade() else { let _ = shown.send(Err("account changed".into())); return; };
+        let Some(service) = service_ref.upgrade() else { let _ = shown.send(Err(CommandError::code("error.account_changed"))); return; };
         if let Err(error) = current(&app.state::<AppState>(), &target.account_id, &service) {
             let _ = shown.send(Err(error)); return;
         }
@@ -96,7 +100,7 @@ pub(crate) async fn show_chat_notification(
         }
         let handle = match note.show() {
             Ok(handle) => handle,
-            Err(error) => { let _ = shown.send(Err(error.to_string())); return; }
+            Err(error) => { let _ = shown.send(Err(CommandError::operation_failed(error))); return; }
         };
         let _ = shown.send(Ok(()));
         let service_ref = Arc::downgrade(&service);
@@ -113,7 +117,7 @@ pub(crate) async fn show_chat_notification(
             log::warn!("could not listen for notification action: {error}");
         }
     });
-    result.await.map_err(|_| "notification worker stopped".to_string())?
+    result.await.map_err(|_| CommandError::code("error.notification_worker_stopped"))?
 }
 
 #[cfg(test)]
@@ -122,12 +126,13 @@ mod tests {
 
     #[test]
     fn sound_muting_keeps_visual_content_and_normal_defaults() {
-        let normal = notification("Synthetic title", "Synthetic body", false);
-        let muted = notification("Synthetic title", "Synthetic body", true);
+        let normal = notification("Synthetic title", "Synthetic body", false, "Synthetic localized action");
+        let muted = notification("Synthetic title", "Synthetic body", true, "Synthetic localized action");
         assert_eq!(normal.summary, "Synthetic title");
         assert_eq!(normal.body, "Synthetic body");
         assert_eq!(normal.summary, muted.summary);
         assert_eq!(normal.body, muted.body);
+        assert!(format!("{normal:?}").contains("Synthetic localized action"));
         #[cfg(all(unix, not(target_os = "macos")))]
         {
             assert!(!normal.hints.contains(&notify_rust::Hint::SuppressSound(true)));

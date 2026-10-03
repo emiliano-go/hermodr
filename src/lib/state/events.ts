@@ -28,6 +28,8 @@ import { session } from "./session.svelte";
 import { stickers } from "./stickers.svelte";
 import { ui } from "./ui.svelte";
 import { keywords } from "./keywords.svelte";
+import { t } from "../i18n/localizer.ts";
+import { uiMessage } from "./localized.ts";
 import { notificationHistory } from "$lib/notifications/history-store";
 
 export type EventHost = {
@@ -196,7 +198,7 @@ function notifyForMessage(message: StoredMessage, fresh: boolean) {
   if (!current()) return;
   const isGroup = chat.endsWith("@g.us");
   const chatName = notifyChatName(chat);
-  const senderName = message.from_me ? "You" : notifySenderName(message);
+  const senderName = message.from_me ? t("chat.you") : notifySenderName(message);
   const preview = notificationBody({ ...message, media_kind: message.media_once_kind ? "view_once" : message.media_kind }, (user) => members.mentionName(user));
   const title = notificationTitle({ isGroup, chatName, senderName });
   const body = isGroup ? groupNotificationBody(senderName, preview) : preview;
@@ -251,7 +253,7 @@ async function notifyForHint(chat: string, id: string, fresh: boolean) {
   // The row is not on this device yet; still ping with the chat name.
   const isGroup = chat.endsWith("@g.us");
   const chatName = notifyChatName(chat);
-  showChatNotification(chatName, isGroup ? "New message" : `New message from ${chatName}`, chat, account,
+  showChatNotification(chatName, isGroup ? t("state.new_message") : t("state.new_message_from", { name: chatName }), chat, account,
     () => account === session.activeAccount && generation === messages.accountGeneration
       && notificationsOn() && !isOpenChat(chat) && !isChatMuted(mutedUntilOf(chat)));
 }
@@ -390,7 +392,7 @@ export async function dispatchServiceEvent(payload: ServiceEvent, host: EventHos
       if (!deferRefresh(null)) queueRefreshChats();
       break;
     case "chatPinRemoved":
-      ui.notify("WhatsApp removed this pin. Postal now matches your account.");
+      ui.notify(uiMessage("state.pin_removed"));
       if (!deferRefresh(null)) queueRefreshChats();
       break;
     case "namesUpdated":

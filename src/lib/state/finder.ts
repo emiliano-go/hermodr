@@ -10,6 +10,7 @@ import { keywordHidden } from "$lib/utils/keywords";
 import { compareMessages } from "$lib/utils/message-window";
 import { labels } from "./labels.svelte";
 import { labelSearch } from "$lib/utils/label-search";
+import { t } from "../i18n/localizer.ts";
 
 export async function openStarred() {
   ui.showStarred = true;
@@ -20,8 +21,8 @@ export async function openStarred() {
       chat: m.chat,
       id: m.id,
       where: chats.chatName(m.chat),
-      author: m.from_me ? "You" : members.displayName(m.sender_name, m.sender),
-      text: members.replyPreviewText(m),
+      get author() { return m.from_me ? t("chat.you") : members.displayName(m.sender_name, m.sender); },
+      get text() { return members.replyPreviewText(m); },
       timestamp: m.timestamp,
       sender: m.sender,
       fromMe: m.from_me,
@@ -40,8 +41,8 @@ function found(m: StoredMessage, across: boolean): FoundItem {
     chat: m.chat,
     id: m.id,
     where: across ? chats.chatName(m.chat) : null,
-    author: m.from_me ? "You" : members.displayName(m.sender_name, m.sender),
-    text: members.replyPreviewText(m),
+    get author() { return m.from_me ? t("chat.you") : members.displayName(m.sender_name, m.sender); },
+    get text() { return members.replyPreviewText(m); },
     timestamp: m.timestamp,
     unread: !m.read && !m.from_me,
   };

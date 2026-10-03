@@ -1,4 +1,5 @@
 use super::*;
+use crate::message_ref::MessageRef;
 use rusqlite::{params_from_iter, types::Value};
 
 pub const MAX_GALLERY_PAGE: u32 = 100;
@@ -58,7 +59,7 @@ pub(super) fn create_indexes(conn: &Connection) -> Result<()> {
 }
 
 fn query(filter: &GalleryFilter, cursor: Option<&GalleryCursor>, limit: usize) -> Result<(String, Vec<Value>)> {
-    anyhow::ensure!(!matches!((filter.since, filter.until), (Some(start), Some(end)) if start >= end), "date range must end after it starts");
+    anyhow::ensure!(!matches!((filter.since, filter.until), (Some(start), Some(end)) if start >= end), MessageRef::new("error.gallery_date_range_invalid"));
     let links = matches!(filter.kind, Some(GalleryKind::Link));
     let suffix = if filter.chat.is_some() { "chat" } else { "all" };
     let index = if links { format!("links_{suffix}") } else if filter.kind.is_some() {

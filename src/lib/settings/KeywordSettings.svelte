@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from "$lib/i18n/localizer";
   import { keywords } from "$lib/state/keywords.svelte";
   import Button from "$lib/ui/Button.svelte";
   let { account, onchange = () => {} }: { account: string | null; onchange?: () => void } = $props();
@@ -26,14 +27,14 @@
   }
 </script>
 
-<p>Rules are saved locally for this account. Match literal text anywhere in incoming messages, ignoring case. One word or phrase per line; up to 50 entries per list and 100 characters per entry.</p>
-<p>Hidden matches take priority. Spoilers, view-once content and unavailable messages are excluded.</p>
+<p>{t("settings.keywords_hint")}</p>
+<p>{t("settings.keywords_priority")}</p>
 <fieldset disabled={!account}>
-  <label>Highlight keywords<textarea rows="5" bind:value={highlight} oninput={() => { saved = false; }}></textarea></label>
-  <label>Hide keywords<textarea rows="5" bind:value={hide} oninput={() => { saved = false; }}></textarea></label>
-  <Button variant="primary" disabled={!dirty && !keywords.error} onclick={save}>{saved ? "Saved" : "Save keyword rules"}</Button>
+  <label>{t("settings.keywords_highlight")}<textarea dir="auto" rows="5" bind:value={highlight} oninput={() => { saved = false; }}></textarea></label>
+  <label>{t("settings.keywords_hide")}<textarea dir="auto" rows="5" bind:value={hide} oninput={() => { saved = false; }}></textarea></label>
+  <Button variant="primary" disabled={!dirty && !keywords.error} onclick={save}>{saved ? t("ui.saved") : t("settings.keywords_save")}</Button>
 </fieldset>
-{#if !account}<p role="status">Select an account to edit its keyword rules.</p>{/if}
+{#if !account}<p role="status">{t("settings.keywords_select_account")}</p>{/if}
 {#if keywords.error}<p role="alert">{keywords.error}</p>{/if}
 {#if keywords.countError}<p role="alert">{keywords.countError}</p>{/if}
 

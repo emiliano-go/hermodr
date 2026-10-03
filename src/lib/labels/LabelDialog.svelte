@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
+  import { t } from "$lib/i18n/localizer";
   import type { Label } from "$lib/utils/wire";
   import Icon from "$lib/ui/Icon.svelte";
 
@@ -11,7 +13,7 @@
     mixed?: readonly string[];
     mode: "manage" | "apply";
     busy?: boolean;
-    error?: string | null;
+    error?: LocalizedError | string | null;
     complete?: boolean;
     defaultColor?: number;
     onapply: (labelId: string, labeled: boolean) => Promise<void>;
@@ -24,7 +26,7 @@
   let draft = $state<{ id: string; name: string; color: number | undefined }>({ id: "", name: "", color: 0 });
   let confirmation = $state<Label | null>(null);
   let working = $state(false);
-  let failure = $state("");
+  let failure = $state<LocalizedError | string>("");
   let generation = 0;
   const disabled = $derived(busy || working || !account);
   const validColor = $derived(draft.color !== undefined && Number.isInteger(draft.color) && draft.color >= -2147483648 && draft.color <= 2147483647);
@@ -52,7 +54,7 @@
     failure = "";
     const current = () => owner === account && revision === generation;
     try { await task(); if (current()) done?.(); }
-    catch (cause) { if (current()) failure = String(cause); }
+    catch (cause) { if (current()) failure = normalizeError(cause); }
     finally { if (current()) working = false; }
   }
 
@@ -71,52 +73,52 @@
   }
 </script>
 
-<dialog bind:this={dialog} aria-label={mode === "manage" ? "Manage labels" : "Apply labels"}
+<dialog bind:this={dialog} aria-label={mode === "manage" ? t("labels.manage") : t("labels.apply")}
   onclick={(event) => { if (event.target === dialog) onclose(); }}
   oncancel={(event) => { event.preventDefault(); event.stopPropagation(); onclose(); }}
   onkeydown={(event) => { if (event.key === "Escape") event.stopPropagation(); }}>
-  <header><h2>{mode === "manage" ? "Manage labels" : "Apply labels"}</h2>
-    <button class="close" aria-label="Close labels" onclick={onclose}><Icon name="x" size={18} /></button></header>
-  {#if !account}<p role="status">Select an account to use labels.</p>{/if}
-  {#if !complete}<p class="muted">Showing labels stored on this device. WhatsApp may have more labels.</p>{/if}
+  <header><h2>{mode === "manage" ? t("labels.manage") : t("labels.apply")}</h2>
+    <button class="close" aria-label={t("labels.close")} onclick={onclose}><Icon name="x" size={18} /></button></header>
+  {#if !account}<p role="status">{t("labels.select_account")}</p>{/if}
+  {#if !complete}<p class="muted">{t("labels.cached_hint")}</p>{/if}
   {#if mode === "apply"}
-    {#if labels.length === 0}<p role="status">No labels stored on this device.</p>{/if}
+    {#if labels.length === 0}<p role="status">{t("labels.empty")}</p>{/if}
     <ul>
       {#each labels as label (label.id)}
         <li><label class="apply"><input type="checkbox" checked={selected.includes(label.id)} use:markMixed={mixed.includes(label.id)}
           disabled={disabled} onchange={(event) => apply(event, label)} /> {label.name}</label>
-          {#if mixed.includes(label.id)}<span class="muted">Some selected items</span><button disabled={disabled}
-            onclick={() => run(() => onapply(label.id, false))} aria-label={`Remove ${label.name} from all selected items`}>Remove from all</button>{/if}
+          {#if mixed.includes(label.id)}<span class="muted">{t("labels.some_selected")}</span><button disabled={disabled}
+            onclick={() => run(() => onapply(label.id, false))} aria-label={t("labels.remove_all_name", { name: label.name })}>{t("labels.remove_all")}</button>{/if}
         </li>
       {/each}
     </ul>
   {:else}
-    {#if labels.length === 0}<p role="status">No labels stored on this device.</p>{/if}
+    {#if labels.length === 0}<p role="status">{t("labels.empty")}</p>{/if}
     <ul>
       {#each labels as label (label.id)}
-        <li><span class="label-name">{label.name}</span>
-          <button disabled={disabled} aria-label={`Edit ${label.name}`} onclick={() => { confirmation = null; draft = { ...label }; failure = ""; }}>Edit</button>
-          <button disabled={disabled} aria-label={`Delete ${label.name}`} onclick={() => (confirmation = { ...label })}>Delete</button></li>
+        <li><span class="label-name"><bdi>{label.name}</bdi></span>
+          <button disabled={disabled} aria-label={t("labels.edit_name", { name: label.name })} onclick={() => { confirmation = null; draft = { ...label }; failure = ""; }}>{t("ui.edit")}</button>
+          <button disabled={disabled} aria-label={t("labels.delete_name", { name: label.name })} onclick={() => (confirmation = { ...label })}>{t("ui.delete")}</button></li>
       {/each}
     </ul>
     <form onsubmit={(event) => { event.preventDefault(); save(); }}>
-      <h3>{draft.id ? "Edit label" : "New label"}</h3>
-      <label>Name <input aria-label="Label name" bind:value={draft.name} required disabled={disabled} /></label>
-      <div class="form-actions"><button type="submit" disabled={disabled || !draft.name.trim() || !validColor}>{draft.id ? "Save label" : "Create label"}</button>
-        {#if draft.id}<button type="button" disabled={disabled} onclick={() => (draft = { id: "", name: "", color: defaultColor })}>Cancel edit</button>{/if}</div>
+      <h3>{draft.id ? t("labels.edit") : t("labels.new")}</h3>
+      <label>{t("ui.name")} <input aria-label={t("labels.name")} dir="auto" bind:value={draft.name} required disabled={disabled} /></label>
+      <div class="form-actions"><button type="submit" disabled={disabled || !draft.name.trim() || !validColor}>{draft.id ? t("labels.save") : t("labels.create")}</button>
+        {#if draft.id}<button type="button" disabled={disabled} onclick={() => (draft = { id: "", name: "", color: defaultColor })}>{t("ui.cancel_edit")}</button>{/if}</div>
     </form>
     {#if confirmation}
-      <section class="confirmation" aria-label="Confirm label deletion">
-        <p>Delete "{confirmation.name}" and remove its associations?</p>
+      <section class="confirmation" aria-label={t("labels.delete_confirm_title")}>
+        <p>{t("labels.delete_confirm", { name: confirmation.name })}</p>
         <button class="danger" disabled={disabled} onclick={() => {
           const id = confirmation!.id;
           void run(() => ondelete(id), () => { confirmation = null; if (draft.id === id) draft = { id: "", name: "", color: defaultColor }; });
-        }}>Confirm delete</button>
-        <button disabled={disabled} onclick={() => (confirmation = null)}>Cancel deletion</button>
+        }}>{t("ui.confirm_delete")}</button>
+        <button disabled={disabled} onclick={() => (confirmation = null)}>{t("ui.cancel_delete")}</button>
       </section>
     {/if}
   {/if}
-  {#if working || busy}<p class="muted" role="status">Updating labels…</p>{/if}
+  {#if working || busy}<p class="muted" role="status">{t("labels.updating")}</p>{/if}
   {#if error || failure}<p class="error" role="alert">{failure || error}</p>{/if}
 </dialog>
 
@@ -140,12 +142,12 @@
   input[type="checkbox"]:hover:not(:disabled) { border-color: var(--accent); }
   input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   input[type="checkbox"]:checked, input[type="checkbox"]:indeterminate { background: var(--accent); border-color: var(--accent); }
-  input[type="checkbox"]:checked::after { content: ""; width: 9px; height: 5px; border-left: 2px solid var(--accent-ink); border-bottom: 2px solid var(--accent-ink); transform: rotate(-45deg) translateY(-1px); }
+  input[type="checkbox"]:checked::after { content: ""; width: 9px; height: 5px; border-inline-start: 2px solid var(--accent-ink); border-bottom: 2px solid var(--accent-ink); transform: rotate(-45deg) translateY(-1px); }
   input[type="checkbox"]:indeterminate::after { content: ""; width: 9px; height: 2px; border-radius: 1px; background: var(--accent-ink); }
   .form-actions { display: flex; flex-wrap: wrap; gap: 8px; }
   .muted { color: var(--muted); font-size: 12px; }
   .confirmation { margin-top: 18px; padding-top: 10px; border-top: 1px solid var(--line-strong); }
   .confirmation p { overflow-wrap: anywhere; font-size: 13px; }
-  .confirmation button + button { margin-left: 8px; }
+  .confirmation button + button { margin-inline-start: 8px; }
   .danger, .error { color: var(--danger); } .error { overflow-wrap: anywhere; font-size: 13px; }
 </style>

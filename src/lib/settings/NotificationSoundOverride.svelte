@@ -1,10 +1,12 @@
 <script lang="ts">
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
+  import { t } from "$lib/i18n/localizer";
   import { invoke } from "$lib/utils/ipc";
   let { accountId, chat }: { accountId: string; chat: string } = $props();
   let muted = $state(false);
   let loaded = $state(false);
   let busy = $state(true);
-  let error = $state("");
+  let error = $state<LocalizedError | string>("");
   let generation = 0;
   function current(token: number, account: string, target: string) {
     return token === generation && account === accountId && target === chat;
@@ -15,7 +17,7 @@
     try {
       const value = await invoke<boolean | null>("chat_sound_muted", { accountId: account, chat: target });
       if (current(token, account, target)) { muted = value ?? false; loaded = true; }
-    } catch (failure) { if (current(token, account, target)) error = String(failure); }
+    } catch (failure) { if (current(token, account, target)) error = normalizeError(failure); }
     finally { if (current(token, account, target)) busy = false; }
   }
   $effect(() => {
@@ -31,19 +33,19 @@
     try {
       await invoke("set_chat_sound_muted", { accountId: account, chat: target, muted: next });
       if (current(token, account, target)) muted = next;
-    } catch (failure) { if (current(token, account, target)) error = String(failure); }
+    } catch (failure) { if (current(token, account, target)) error = normalizeError(failure); }
     finally { if (current(token, account, target)) busy = false; }
   }
 </script>
 
-<label><span>Mute notification sound</span>
+<label><span>{t("settings.sound_mute")}</span>
   <input class="toggle" type="checkbox" checked={muted} disabled={busy || !loaded}
     onchange={(event) => change(event.currentTarget)} />
 </label>
-<p>Message notifications still appear for this chat.</p>
+<p>{t("settings.sound_mute_hint")}</p>
 {#if error}
   <p role="alert">{error}</p>
-  <button type="button" disabled={busy} onclick={() => load(accountId, chat)}>Retry</button>
+  <button type="button" disabled={busy} onclick={() => load(accountId, chat)}>{t("ui.retry")}</button>
 {/if}
 
 <style>
@@ -67,7 +69,7 @@
     content: "";
     position: absolute;
     top: 3px;
-    left: 3px;
+    inset-inline-start: 3px;
     width: 16px;
     height: 16px;
     border-radius: 50%;
@@ -89,4 +91,5 @@
     opacity: 0.55;
     cursor: default;
   }
+  :global([dir="rtl"]) .toggle:checked::after { transform: translateX(-16px); }
 </style>

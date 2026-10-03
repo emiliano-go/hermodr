@@ -19,6 +19,7 @@ test("composer albums preserve scope, ordered uploads and safe retry boundaries"
     const { messages } = await load("../lib/state/messages.svelte.ts");
     const { session } = await load("../lib/state/session.svelte.ts");
     const { ui } = await load("../lib/state/ui.svelte.ts");
+    const { englishCatalog, installLocaleProvider, loadCatalog, t: translate } = await load("../lib/i18n/localizer.ts");
     const { setHandler, invoke } = await load("../../tests/scheduled/ipc.ts");
     chats.refreshChats = async () => {};
     messages.reloadMessages = async () => {};
@@ -46,7 +47,7 @@ test("composer albums preserve scope, ordered uploads and safe retry boundaries"
         account_id: args.accountId, chat: args.chat, parent_id: args.parentId ?? "album-parent",
         sent_ids: args.items.map((_: unknown, i: number) => `sent-${i}`), next_index: args.items.length,
         uncertain_index: null, uncertain_id: null, parent_uncertain: false, preflight_failed: false,
-        warnings: [], error: null, ...extra,
+        warnings: [], error: null, failure: null, warning_messages: [], ...extra,
       });
       setHandler(async (command: string, args: any) => {
         calls.push({ command, args });
@@ -104,6 +105,62 @@ test("composer albums preserve scope, ordered uploads and safe retry boundaries"
       assert.equal(f.composer.outgoing.length, 0);
     });
 
+    await t.test("typed partial failures keep the accepted prefix, uncertainty and retryable tail", async () => {
+      const f = fixture();
+      f.control.outcome = (args) => f.result(args, { sent_ids: ["sent-0"], next_index: 2,
+        uncertain_index: 1, uncertain_id: "uncertain-1", error: "legacy partial detail",
+        failure: { code: "error.operation_failed", params: {}, diagnostic: "typed partial detail" } });
+      await f.composer.sendPending();
+      const recovery = f.composer.attachmentRecoveries[0];
+      assert.deepEqual(recovery.sentIds, ["sent-0"]);
+      assert.deepEqual(recovery.uncertain.map((entry: any) => entry.id), [2]);
+      assert.deepEqual(f.composer.pending.map((entry: any) => entry.id), [3]);
+      assert.equal(recovery.diagnostic, "typed partial detail"); assert.equal(ui.error.code, "error.operation_failed");
+      assert.equal(f.calls.find((call) => call.command === "send_album")!.args.items.length, 3);
+      assert.equal(f.tokens.size, 0); assert.equal(f.composer.outgoing.length, 0);
+    });
+
+    await t.test("typed warnings retranslate without creating recovery or failures for accepted items", async () => {
+      const f = fixture();
+      let snapshot = { locale: "en", catalog: englishCatalog };
+      const restore = installLocaleProvider(() => snapshot);
+      try {
+        f.control.outcome = (args) => f.result(args, { warnings: ["legacy warning detail"],
+          warning_messages: [{ code: "common.items", params: { count: 3 }, diagnostic: "typed warning detail" }] });
+        await f.composer.sendPending();
+        assert.equal(ui.notice, translate("common.items", { count: 3 }));
+        assert.equal(ui.noticeDiagnostic, "typed warning detail");
+        snapshot = { locale: "ar", catalog: await loadCatalog("ar") };
+        assert.equal(ui.notice, translate("common.items", { count: 3 }));
+        assert.equal(ui.error, null); assert.equal(f.composer.pending.length, 0);
+        assert.equal(f.composer.attachmentRecoveries.length, 0); assert.equal(f.composer.outgoing.length, 0);
+      } finally { restore(); }
+    });
+
+    await t.test("malformed warning references retain diagnostics without reclassifying accepted items", async () => {
+      const f = fixture();
+      f.control.outcome = (args) => f.result(args, { warnings: ["legacy recipient detail", "legacy malformed detail"],
+        warning_messages: [{ code: "unknown.album_note", params: {} }, { code: "common.items", params: [], diagnostic: {} }] });
+      await f.composer.sendPending();
+      assert.equal(ui.error, null); assert.equal(f.composer.pending.length, 0);
+      assert.equal(f.composer.attachmentRecoveries.length, 0); assert.equal(f.composer.outgoing.length, 0);
+      assert.equal(ui.notice, [translate("state.album_warning"), translate("state.album_warning")].join("\n"));
+      assert.match(ui.noticeDiagnostic, /unknown.album_note/); assert.match(ui.noticeDiagnostic, /legacy recipient detail/);
+      assert.match(ui.noticeDiagnostic, /legacy malformed detail/); assert.equal(f.tokens.size, 0);
+    });
+
+    await t.test("malformed failure references retain the acknowledged prefix and known-unsent tail", async () => {
+      const f = fixture();
+      f.control.outcome = (args) => f.result(args, { sent_ids: ["sent-0"], next_index: 1,
+        error: "legacy failure detail", failure: { code: "error.operation_failed", params: [], diagnostic: {} } });
+      await f.composer.sendPending();
+      assert.deepEqual(f.composer.pending.map((entry: any) => entry.id), [2, 3]);
+      assert.ok(f.composer.pending.every((entry: any) => entry.retry.parentId === "album-parent"));
+      assert.equal(f.composer.attachmentRecoveries.length, 0);
+      assert.equal(ui.error.message, translate("error.state.album_details"));
+      assert.match(ui.error.diagnostic, /legacy failure detail/); assert.equal(f.tokens.size, 0);
+    });
+
     for (const stopped of [0, 1, 2]) await t.test(`known-unsent tail at index ${stopped} continues without consuming newer composer state`, async () => {
       const f = fixture();
       f.composer.pending[0].caption = "";
@@ -145,7 +202,8 @@ test("composer albums preserve scope, ordered uploads and safe retry boundaries"
       session.settings.warn_missing_video_preview = false;
       f.control.outcome = (args) => f.result(args, { warnings: ["Album omitted one recipient device."] });
       await f.composer.sendPending();
-      assert.equal(ui.notice, "Album omitted one recipient device.");
+      assert.equal(ui.notice, translate("state.album_warning"));
+      assert.equal(ui.noticeDiagnostic, "Album omitted one recipient device.");
       assert.equal(f.composer.pending.length, 0);
       assert.equal(f.tokens.size, 0);
     });

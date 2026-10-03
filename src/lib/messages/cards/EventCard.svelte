@@ -1,4 +1,8 @@
 <script lang="ts">
+  import { formatNumber as localeNumber } from "$lib/i18n/localizer";
+  import { formatDate as localeDate, formatTime as localeTime } from "$lib/i18n/localizer";
+  import { LocalizedError, normalizeError } from "$lib/i18n/errors";
+  import { t } from "$lib/i18n/localizer";
   import { onDestroy } from "svelte";
   import type { ChatEvent } from "$lib/utils/models";
   import Icon from "$lib/ui/Icon.svelte";
@@ -34,11 +38,11 @@
   } = $props();
 
   let busy = $state(false);
-  let failed = $state("");
+  let failed = $state<LocalizedError | string | null>("");
   let details = $state(false);
   let extraGuestCount = $state<number | undefined>(undefined);
   let generation = 0, alive = true, ownerKey = "", guestSource = "";
-  const answers = [["going", "Going"], ["maybe", "Maybe"], ["not_going", "Can't go"]] as const;
+  const answers = $derived([["going", t("content.going")], ["maybe", t("content.maybe")], ["not_going", t("content.can_t_go")]] as const);
   const liveScope = $derived(scope ?? { account: null, chat, generation: 0, requestKey: event?.id });
   const sendReason = $derived(broadcastSendReason(liveScope.chat));
   const mine = $derived(event?.responses.find((row) => row.responder === "@me") ?? null);
@@ -46,9 +50,9 @@
     const rows = event?.responses.filter((row) => row.response === value) ?? [];
     return { value, label, rows, guests: rows.reduce((sum, row) => sum + (knownGuests(row.extra_guest_count) ? row.extra_guest_count : 0), 0) };
   }));
-  const responseReason = $derived(sendReason ?? (!event ? "This event's details did not reach this device." : event.canceled
-    ? "This event was canceled." : !event.can_respond ? event.invitation
-      ? "This invitation is read-only on this device." : "This event cannot be answered on this device." : null));
+  const responseReason = $derived(sendReason ?? (!event ? t("content.this_event_s_details_did_not_reach_this_device") : event.canceled
+    ? t("content.this_event_was_canceled") : !event.can_respond ? event.invitation
+      ? t("content.this_invitation_is_read_only_on_this_device") : t("content.this_event_cannot_be_answered_on_this_device") : null));
   const validGuests = $derived(event?.extra_guests_allowed !== true || extraGuestCount === undefined || knownGuests(extraGuestCount));
 
   $effect(() => {
@@ -74,9 +78,9 @@
   function when(start: number, end: number | null) {
     const from = new Date(start * 1000);
     const to = end == null ? null : new Date(end * 1000);
-    if (!Number.isFinite(from.getTime()) || to && !Number.isFinite(to.getTime())) return "Event time unavailable.";
-    const date = (d: Date) => d.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
-    const time = (d: Date) => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    if (!Number.isFinite(from.getTime()) || to && !Number.isFinite(to.getTime())) return t("content.event_time_unavailable");
+    const date = (d: Date) => localeDate((d).getTime() / 1000, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+    const time = (d: Date) => localeTime((d).getTime() / 1000, { hour: "2-digit", minute: "2-digit" });
     return to ? `${date(from)}, ${time(from)} – ${from.toDateString() === to.toDateString() ? time(to) : `${date(to)}, ${time(to)}`}` : `${date(from)}, ${time(from)}`;
   }
 
@@ -89,7 +93,7 @@
     try {
       await task();
     } catch (cause) {
-      if (current()) failed = String(cause);
+      if (current()) failed = normalizeError(cause);
     } finally {
       if (current()) busy = false;
     }
@@ -103,55 +107,55 @@
 </script>
 
 <div class="event" class:canceled={event?.canceled}>
-  <span class="badge"><Icon name="calendar" size={14} /> Event</span>
-  {#if pinned}<span class="badge"><Icon name="pin" size={14} /> Pinned event</span>{/if}
+  <span class="badge"><Icon name="calendar" size={14} /> {t("content.event")}</span>
+  {#if pinned}<span class="badge"><Icon name="pin" size={14} /> {t("content.pinned_event")}</span>{/if}
   <span class="name">{event?.name ?? title}</span>
-  {#if event?.canceled}<span class="muted">This event was canceled.</span>{/if}
+  {#if event?.canceled}<span class="muted">{t("content.this_event_was_canceled")}</span>{/if}
   {#if event?.start != null}
     <span class="line"><Icon name="clock" size={14} /> {when(event.start, event.end)}</span>
   {:else if event?.end != null}
-    <span class="line">Ends {when(event.end, null)}</span>
+    <span class="line">{t("content.ends")} {when(event.end, null)}</span>
   {/if}
   {#if event?.location}
     <span class="line"><Icon name="pin" size={14} /> {event.location}</span>
   {/if}
   {#if event?.link}
     <button class="line link" onclick={() => onopenurl(event.link!)}>
-      <Icon name="external" size={14} /> Join call
+      <Icon name="external" size={14} /> {t("content.join_call")}
     </button>
   {/if}
   {#if event?.description}<p class="description">{event.description}</p>{/if}
   {#if event}
-    {#if event.invitation}<span class="muted">Event invitation</span>{/if}
-    {#if event.is_scheduled_call != null}<span class="muted">Scheduled call: {event.is_scheduled_call ? "Yes" : "No"}</span>{/if}
-    {#if event.has_reminder != null}<span class="muted">Reminder: {event.has_reminder ? "Enabled" : "None"}</span>{/if}
-    {#if event.reminder_offset_sec != null}<span class="muted">Reminder offset: {event.reminder_offset_sec} seconds</span>{/if}
-    {#if event.has_reminder === true && event.reminder_offset_sec == null}<span class="muted">Reminder offset unavailable.</span>{/if}
-    <span class="muted">{event.extra_guests_allowed == null ? "Extra-guest allowance unavailable." : event.extra_guests_allowed ? "Extra guests allowed." : "Extra guests are not allowed."}</span>
-    <span class="muted">{groups.map((group) => `${group.rows.length} ${group.value === "not_going" ? "can't go" : group.value}${group.guests ? ` (+${group.guests} guests)` : ""}`).join(" · ")}</span>
-    <span class="your-response">Your response: {answers.find(([value]) => value === mine?.response)?.[1] ?? "Not responded"}
-      {#if knownGuests(mine?.extra_guest_count)} · {mine!.extra_guest_count} extra {mine!.extra_guest_count === 1 ? "guest" : "guests"}{/if}</span>
+    {#if event.invitation}<span class="muted">{t("content.event_invitation")}</span>{/if}
+    {#if event.is_scheduled_call != null}<span class="muted">{t("content.scheduled_call")} {event.is_scheduled_call ? t("content.yes") : t("content.no")}</span>{/if}
+    {#if event.has_reminder != null}<span class="muted">{t("content.reminder")} {event.has_reminder ? t("content.enabled") : t("content.none")}</span>{/if}
+    {#if event.reminder_offset_sec != null}<span class="muted">{t("content.reminder_offset")} {localeNumber(event.reminder_offset_sec)} {t("content.seconds")}</span>{/if}
+    {#if event.has_reminder === true && event.reminder_offset_sec == null}<span class="muted">{t("content.reminder_offset_unavailable")}</span>{/if}
+    <span class="muted">{event.extra_guests_allowed == null ? t("content.extra_guest_allowance_unavailable") : event.extra_guests_allowed ? t("content.extra_guests_allowed") : t("content.extra_guests_are_not_allowed")}</span>
+    <span class="muted">{groups.map((group) => t("content.response_count", { count: group.rows.length, response: group.label }) + (group.guests ? " (+" + t("content.extra_guest_count", { count: group.guests }) + ")" : "")).join(" · ")}</span>
+    <span class="your-response">{t("content.your_response")} {answers.find(([value]) => value === mine?.response)?.[1] ?? t("content.not_responded")}
+      {#if knownGuests(mine?.extra_guest_count)} · {t("content.extra_guest_count", { count: mine!.extra_guest_count })}{/if}</span>
     <details bind:open={details}>
-      <summary>Attendees</summary>
+      <summary>{t("content.attendees")}</summary>
       {#each groups as group (group.value)}
-        <section class="attendees" aria-label={`${group.label} attendees`}>
-          <h3>{group.label} ({group.rows.length})</h3>
-          {#if !group.rows.length}<span class="muted">No responses received.</span>{/if}
+        <section class="attendees" aria-label={t("content.value_attendees", { param0: (group.label) })}>
+          <h3>{group.label} ({localeNumber(group.rows.length)})</h3>
+          {#if !group.rows.length}<span class="muted">{t("content.no_responses_received")}</span>{/if}
           <ul>{#each group.rows as row (row.responder)}
-            {@const name = row.responder === "@me" ? "You" : names(row.responder)}
+            {@const name = row.responder === "@me" ? t("content.you") : names(row.responder)}
             {@const path = picture(row.responder)}
-            <li><Avatar label={name} seed={row.responder} src={path} /><span>{name}
-              {#if knownGuests(row.extra_guest_count)}<small>{row.extra_guest_count} extra {row.extra_guest_count === 1 ? "guest" : "guests"}</small>
-              {:else if event.extra_guests_allowed === true}<small>Guest count unavailable.</small>{/if}</span></li>
+            <li><Avatar label={name} seed={row.responder} src={path} /><span><bdi dir="auto">{name}</bdi>
+              {#if knownGuests(row.extra_guest_count)}<small>{t("content.extra_guest_count", { count: row.extra_guest_count })}</small>
+              {:else if event.extra_guests_allowed === true}<small>{t("content.guest_count_unavailable")}</small>{/if}</span></li>
           {/each}</ul>
         </section>
       {/each}
     </details>
     {#if responseReason}<span class="muted" role="status">{responseReason}</span>{/if}
     {#if event.extra_guests_allowed === true && !event.canceled && event.can_respond}
-      <label class="guests">Your extra guests (optional)<input type="number" min="0" max="2147483647" step="1"
+      <label class="guests">{t("content.your_extra_guests_optional")}<input type="number" min="0" max="2147483647" step="1"
         bind:value={extraGuestCount} disabled={busy || !!sendReason} /></label>
-      {#if !validGuests}<span class="error" role="alert">Enter a whole guest count from 0 to 2147483647.</span>{/if}
+      {#if !validGuests}<span class="error" role="alert">{t("content.enter_a_whole_guest_count_from_0_to_2147483647")}</span>{/if}
     {/if}
     <div class="answers">
       {#each answers as [value, label] (value)}
@@ -161,23 +165,23 @@
       {/each}
     </div>
     {#if mine}
-      <button class="link" disabled title="Clearing an RSVP is unavailable with the current protocol API.">Clear response</button>
-      <span class="muted">Clearing an RSVP is unavailable with the current protocol API.</span>
+      <button class="link" disabled title={t("content.clearing_an_rsvp_is_unavailable_with_the_current_protocol_api")}>{t("content.clear_response")}</button>
+      <span class="muted">{t("content.clearing_an_rsvp_is_unavailable_with_the_current_protocol_api")}</span>
     {/if}
     {#if failed}<span class="error" role="alert">{failed}</span>{/if}
     {#if onedit && oncancel}
       <div class="owner">
         <button class="link" disabled={busy || !!responseReason} title={responseReason ?? undefined}
-          onclick={() => { if (!busy && !responseReason) onedit?.(); }}>Edit</button>
+          onclick={() => { if (!busy && !responseReason) onedit?.(); }}>{t("content.edit")}</button>
         <button
           class="link danger"
           disabled={busy || !!responseReason}
           title={responseReason ?? undefined}
-          onclick={() => run(() => oncancel!())}>Cancel event</button>
+          onclick={() => run(() => oncancel!())}>{t("content.cancel_event")}</button>
       </div>
     {/if}
   {:else if !event}
-    <span class="muted">This event's details did not reach this device.</span>
+    <span class="muted">{t("content.this_event_s_details_did_not_reach_this_device")}</span>
   {/if}
 </div>
 

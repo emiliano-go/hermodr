@@ -2,6 +2,7 @@
   Moved out of +page.svelte. The list precomputes each typer's label and hue;
   only pictures resolve here. -->
 <script lang="ts">
+  import { t } from "$lib/i18n/localizer";
   import Avatar from "$lib/ui/Avatar.svelte";
   import Icon from "$lib/ui/Icon.svelte";
   import TypingDots from "$lib/media/TypingDots.svelte";
@@ -31,17 +32,17 @@
         >
         <span class="typer">{typer.label}</span>
         {#if typer.state === "recording"}
-          <span class="recording"><Icon name="mic" size={15} /> recording audio…</span>
+          <span class="recording"><Icon name="mic" size={15} /> {t("content.recording_audio")}</span>
         {:else}
           <TypingDots />
         {/if}
       </div>
     {/each}
     {#if typers.length > shown.length}
-      <span class="typing-more">and {typers.length - shown.length} more…</span>
+      <span class="typing-more">{t("content.and")} {typers.length - shown.length} {t("content.more")}</span>
     {/if}
   {:else if typers[0].state === "recording"}
-    <span class="recording"><Icon name="mic" size={15} /> recording audio…</span>
+    <span class="recording"><Icon name="mic" size={15} /> {t("content.recording_audio")}</span>
   {:else}
     <TypingDots />
   {/if}
@@ -58,8 +59,8 @@
     border-radius: var(--radius-sm);
     border-top-left-radius: 0;
     box-shadow: 0 1px 0.5px rgba(11, 20, 26, 0.13);
-    margin-left: var(--pad-l);
-    margin-right: var(--pad-r);
+    margin-inline-start: var(--pad-l);
+    margin-inline-end: var(--pad-r);
   }
   .typing-bubble {
     margin-top: 10px;
@@ -76,7 +77,7 @@
     width: 9px;
     height: 13px;
     background: inherit;
-    left: -8px;
+    inset-inline-start: -8px;
     clip-path: polygon(0 0, 100% 0, 100% 100%);
   }
   .typing-row {
@@ -93,7 +94,7 @@
   .typing-more {
     color: var(--muted);
     font-size: 12.8px;
-    padding-left: 2px;
+    padding-inline-start: 2px;
   }
   .recording {
     display: flex;

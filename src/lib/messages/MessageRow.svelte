@@ -79,6 +79,7 @@
       chatEvent: ctx.events.find((e) => e.id === message.id),
       downloading: !!ctx.downloading[message.id],
       downloadError: message.media_path ? null : (ctx.downloadErrors[message.id] ?? null),
+      downloadDiagnostic: message.media_path ? null : (ctx.downloadDiagnostics?.[message.id] ?? null),
       downloadGaveUp: (ctx.downloadTries[message.id] ?? 0) >= MAX_DOWNLOAD_TRIES,
       hasBody,
       picking: !!ctx.picking && !message.revoked,

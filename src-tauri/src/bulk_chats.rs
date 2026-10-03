@@ -1,4 +1,4 @@
-use crate::{connection::command_error, settings::sends_privacy, AppState};
+use crate::{command_error::{CommandError, CommandResult}, settings::sends_privacy, AppState};
 use postal_core::{ChatSummary, WhatsAppService};
 use std::{future::Future, sync::Arc};
 use tauri::State;
@@ -8,29 +8,29 @@ use tauri::State;
 pub(crate) struct MarkReadResult {
     pub chat: String,
     pub changed: Option<usize>,
-    pub error: Option<String>,
+    pub error: Option<CommandError>,
 }
 
 fn current_service(
     state: &AppState,
     account_id: &str,
     service: &Arc<WhatsAppService>,
-) -> Result<(), String> {
-    let current = state.service_for_account(account_id)?;
+) -> CommandResult<()> {
+    let current = state.service_for_account(account_id).map_err(|error| CommandError::code("error.account_changed").with_diagnostic(error))?;
     if !Arc::ptr_eq(service, &current) {
-        return Err("account changed".into());
+        return Err(CommandError::code("error.account_changed"));
     }
     Ok(())
 }
 
 async fn mark_unread_chats<F, Fut>(
     chats: Vec<ChatSummary>,
-    current: impl Fn() -> Result<(), String>,
+    current: impl Fn() -> CommandResult<()>,
     mut mark: F,
-) -> Result<Vec<MarkReadResult>, String>
+) -> CommandResult<Vec<MarkReadResult>>
 where
     F: FnMut(String) -> Fut,
-    Fut: Future<Output = Result<usize, String>>,
+    Fut: Future<Output = CommandResult<usize>>,
 {
     let mut results = Vec::new();
     for chat in chats
@@ -57,12 +57,12 @@ where
 pub(crate) async fn mark_all_read(
     state: State<'_, AppState>,
     account_id: String,
-) -> Result<Vec<MarkReadResult>, String> {
-    let service = state.service_for_account(&account_id)?;
+) -> CommandResult<Vec<MarkReadResult>> {
+    let service = state.service_for_account(&account_id).map_err(|error| CommandError::code("error.account_changed").with_diagnostic(error))?;
     let chats = service
         .chats()
         .await
-        .map_err(|error| command_error(&service, error))?;
+        .map_err(|error| { service.note_error(&error); CommandError::from(error) })?;
     let state = &*state;
     let service = &service;
     let account_id = &account_id;
@@ -75,7 +75,7 @@ pub(crate) async fn mark_all_read(
             service
                 .mark_read(&chat, receipts)
                 .await
-                .map_err(|error| command_error(service, error))
+                .map_err(|error| { service.note_error(&error); error.into() })
         },
     )
     .await
@@ -128,7 +128,7 @@ mod tests {
                         async move {
                             calls.borrow_mut().push(chat.clone());
                             if chat == "failed" {
-                                Err("synthetic failure".into())
+                                Err(CommandError::code("error.bulk_read_failed").with_diagnostic("synthetic failure"))
                             } else {
                                 Ok(if chat == "archived" { 3 } else { 0 })
                             }
@@ -140,7 +140,8 @@ mod tests {
                 assert_eq!(*calls.borrow(), ["archived", "failed", "manual"]);
                 assert_eq!(results.len(), 3);
                 assert_eq!(results[0].changed, Some(3));
-                assert_eq!(results[1].error.as_deref(), Some("synthetic failure"));
+                assert_eq!(results[1].error.as_ref().unwrap().message.code, "error.bulk_read_failed");
+                assert_eq!(results[1].error.as_ref().unwrap().diagnostic.as_deref(), Some("synthetic failure"));
                 assert_eq!(results[1].changed, None);
                 assert_eq!(results[2].changed, Some(0));
                 assert!(results[2].error.is_none());
@@ -151,7 +152,7 @@ mod tests {
                     vec![chat("first", 1, false, false), chat("next", 1, false, true)],
                     || {
                         if switched.get() {
-                            Err("account changed".into())
+                            Err(CommandError::code("error.account_changed"))
                         } else {
                             Ok(())
                         }
@@ -167,11 +168,11 @@ mod tests {
                     },
                 )
                 .await;
-                assert_eq!(cancelled.unwrap_err(), "account changed");
+                assert_eq!(cancelled.unwrap_err().message.code, "error.account_changed");
                 assert_eq!(*calls.borrow(), ["first"]);
                 assert!(mark_unread_chats(
                     Vec::new(),
-                    || Err("account changed".into()),
+                    || Err(CommandError::code("error.account_changed")),
                     |_| async { Ok(0) }
                 )
                 .await

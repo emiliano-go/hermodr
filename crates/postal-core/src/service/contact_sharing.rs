@@ -1,4 +1,5 @@
 use super::*;
+use crate::message_ref::MessageRef;
 use whatsapp_rust::wacore_binary::{Node, NodeRef};
 
 const MAX_CONTACTS: usize = 50;
@@ -10,6 +11,12 @@ const MAX_BATCH_BYTES: usize = 256 * 1024;
 pub struct ContactSendResult {
     pub message_id: String,
     pub warning: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "wire-types", ts(optional))]
+    pub warning_ref: Option<MessageRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "wire-types", ts(optional))]
+    pub diagnostic: Option<String>,
 }
 
 impl WhatsAppService {
@@ -29,7 +36,7 @@ impl WhatsAppService {
         link: &str,
         current: impl Fn() -> Result<()> + Send,
     ) -> Result<String> {
-        anyhow::ensure!(link.len() <= 2048, "Contact link is too long.");
+        anyhow::ensure!(link.len() <= 2048, MessageRef::new("error.contact_link_length"));
         if let Some(code) = link.trim().strip_prefix("https://wa.me/qr/") {
             validate_qr_code(code)?;
             let query = ContactQrQuery::Resolve(code.to_owned());
@@ -45,7 +52,7 @@ impl WhatsAppService {
             .contacts()
             .is_on_whatsapp(&[target.clone()])
             .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            .map_err(anyhow::Error::from)?;
         current()?;
         let found = entries.iter().find(|entry| {
             entry.jid.to_non_ad() == target
@@ -56,7 +63,7 @@ impl WhatsAppService {
         });
         anyhow::ensure!(
             found.is_some_and(|entry| entry.is_registered && entry.contact_error.is_none()),
-            "This phone number could not be verified on WhatsApp."
+            MessageRef::new("error.contact_phone_verify")
         );
         Ok(target.to_string())
     }
@@ -74,7 +81,7 @@ impl WhatsAppService {
                 && target.device == 0
                 && target.agent == 0
                 && target.integrator == 0,
-            "Invalid contact-sharing destination."
+            MessageRef::new("error.contact_share_destination")
         );
         let message = contact_message(contacts)?;
         group_history::guard_ordinary_message(&message)?;
@@ -95,7 +102,7 @@ impl WhatsAppService {
         let sent = self.client.send_message(target.clone(), message).await?;
         anyhow::ensure!(
             !sent.message_id.is_empty(),
-            "Contact send was not acknowledged."
+            MessageRef::new("error.contact_send_ack")
         );
         let mut row = self.own_message(
             chat,
@@ -122,19 +129,19 @@ impl WhatsAppService {
         let row = self.store.message(chat, id).await?;
         anyhow::ensure!(
             contacts_readable(&row, reveal_spoiler),
-            "This contact message is no longer available."
+            MessageRef::new("error.contact_message_unavailable")
         );
         let mut payload = row
             .media
             .locator
             .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("This contact message has no original vCard."))?;
+            .ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.contact_vcard_original")))?;
         anyhow::ensure!(
             payload.len() <= MAX_BATCH_BYTES + 4096,
-            "Contact payload is too large."
+            MessageRef::new("error.contact_payload_size")
         );
         let decoded = <wa::Message as buffa::Message>::decode(&mut payload)
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            .map_err(anyhow::Error::from)?;
         contact_cards(&decoded)
     }
 }
@@ -151,6 +158,8 @@ async fn save_acknowledged_contact(
             ContactSendResult {
                 message_id,
                 warning: None,
+                warning_ref: None,
+                diagnostic: None,
             },
             Some(row),
         ),
@@ -161,6 +170,8 @@ async fn save_acknowledged_contact(
                 ContactSendResult {
                     message_id,
                     warning: Some(warning),
+                    warning_ref: Some(MessageRef::new("warning.contact_local_save")),
+                    diagnostic: Some(format!("{error:#}")),
                 },
                 None,
             )
@@ -184,7 +195,7 @@ fn validate_qr_code(code: &str) -> Result<()> {
             && code
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'),
-        "Invalid contact QR token."
+        MessageRef::new("error.contact_qr_token")
     );
     Ok(())
 }
@@ -223,26 +234,26 @@ impl ContactQrQuery {
                 .attrs()
                 .optional_string("xmlns")
                 .is_none_or(|namespace| namespace == "w:qr"),
-            "Invalid contact QR response namespace."
+            MessageRef::new("error.contact_qr_namespace")
         );
         anyhow::ensure!(
             response.tag == "iq"
                 && response.attrs().optional_string("type").as_deref() == Some("result"),
-            "Invalid contact QR response."
+            MessageRef::new("error.contact_qr_response")
         );
         let qr = response
             .get_optional_child("qr")
-            .ok_or_else(|| anyhow::anyhow!("Contact QR response has no QR result."))?;
+            .ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.contact_qr_result")))?;
         anyhow::ensure!(
             qr.get_optional_child("error").is_none(),
-            "Contact QR lookup failed."
+            MessageRef::new("error.contact_qr_lookup")
         );
         let mut attrs = qr.attrs();
         let result = match self {
             Self::Own => {
                 let code = attrs
                     .optional_string("code")
-                    .ok_or_else(|| anyhow::anyhow!("Contact QR response has no code."))?;
+                    .ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.contact_qr_code")))?;
                 let code = code
                     .strip_prefix("https://wa.me/qr/")
                     .or_else(|| code.strip_prefix("https://api.whatsapp.com/qr/"))
@@ -252,7 +263,7 @@ impl ContactQrQuery {
             }
             Self::Resolve(_) => {
                 let jid = attrs.optional_jid("jid").ok_or_else(|| {
-                    anyhow::anyhow!("Contact QR response has no contact address.")
+                    anyhow::anyhow!(MessageRef::new("error.contact_qr_address_missing"))
                 })?;
                 anyhow::ensure!(
                     (jid.is_lid() || (jid.is_pn() && contact_number(&jid.user).is_ok()))
@@ -260,7 +271,7 @@ impl ContactQrQuery {
                         && jid.user.len() <= 32
                         && jid.user.bytes().all(|byte| byte.is_ascii_digit())
                         && jid.integrator == 0,
-                    "Contact QR returned an invalid contact address."
+                    MessageRef::new("error.contact_qr_address")
                 );
                 jid.to_non_ad().to_string()
             }
@@ -276,21 +287,21 @@ fn contact_number(value: &str) -> Result<&str> {
         (7..=15).contains(&number.len())
             && !number.starts_with('0')
             && number.bytes().all(|byte| byte.is_ascii_digit()),
-        "Use an international phone number with its country code."
+        MessageRef::new("error.contact_phone")
     );
     Ok(number)
 }
 
 fn contact_link_jid(value: &str) -> Result<Jid> {
-    anyhow::ensure!(value.len() <= 2048, "Contact link is too long.");
+    anyhow::ensure!(value.len() <= 2048, MessageRef::new("error.contact_link_length"));
     let link = value.trim();
     let phone = link
         .strip_prefix("https://wa.me/")
-        .ok_or_else(|| anyhow::anyhow!("Paste an https://wa.me phone link."))?;
+        .ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.contact_phone_link")))?;
     let phone = phone.strip_suffix('/').unwrap_or(phone);
     anyhow::ensure!(
         phone.bytes().all(|byte| byte.is_ascii_digit()),
-        "Paste an https://wa.me phone link."
+        MessageRef::new("error.contact_phone_link")
     );
     Ok(format!("{}@s.whatsapp.net", contact_number(phone)?).parse()?)
 }
@@ -320,7 +331,7 @@ fn make_vcard(name: &str, phone: &str) -> Result<String> {
     let name = name.trim();
     anyhow::ensure!(
         !name.is_empty() && name.chars().count() <= 160 && !name.chars().any(char::is_control),
-        "Contact name is empty, too long, or contains control characters."
+        MessageRef::new("error.contact_share_name")
     );
     let phone = contact_number(phone)?;
     let name = escape_card(name);
@@ -331,14 +342,14 @@ fn make_vcard(name: &str, phone: &str) -> Result<String> {
 fn contact_message(contacts: &[(String, String)]) -> Result<wa::Message> {
     anyhow::ensure!(
         !contacts.is_empty() && contacts.len() <= MAX_CONTACTS,
-        "Choose between 1 and 50 contacts."
+        MessageRef::new("error.contact_share_count").with_param("limit", serde_json::Number::from(MAX_CONTACTS))
     );
     let mut seen = std::collections::HashSet::new();
     let mut cards = Vec::with_capacity(contacts.len());
     for (name, phone) in contacts {
         anyhow::ensure!(
             seen.insert(contact_number(phone)?),
-            "The same phone number was selected twice."
+            MessageRef::new("error.contact_share_duplicate")
         );
         cards.push(wa::message::ContactMessage {
             display_name: Some(name.trim().into()),
@@ -367,18 +378,18 @@ fn contact_cards(message: &wa::Message) -> Result<Vec<(String, String)>> {
     anyhow::ensure!(
         !(message.contact_message.as_option().is_some()
             && message.contacts_array_message.as_option().is_some()),
-        "Mixed contact payload is not supported."
+        MessageRef::new("error.contact_payload_mixed")
     );
     let cards: Vec<_> = if let Some(card) = message.contact_message.as_option() {
         vec![card]
     } else if let Some(array) = message.contacts_array_message.as_option() {
         array.contacts.iter().collect()
     } else {
-        anyhow::bail!("This payload has no contacts.");
+        anyhow::bail!(MessageRef::new("error.contact_payload_empty"));
     };
     anyhow::ensure!(
         !cards.is_empty() && cards.len() <= MAX_CONTACTS,
-        "Contact payload has too many contacts."
+        MessageRef::new("error.contact_payload_count")
     );
     let mut total = 0;
     cards
@@ -388,11 +399,11 @@ fn contact_cards(message: &wa::Message) -> Result<Vec<(String, String)>> {
             let vcard = card
                 .vcard
                 .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("The contact has no vCard."))?;
+                .ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.contact_vcard_missing")))?;
             total += name.len() + vcard.len();
             anyhow::ensure!(
                 name.len() <= 1024 && vcard.len() <= MAX_CARD_BYTES && total <= MAX_BATCH_BYTES,
-                "Contact payload is too large."
+                MessageRef::new("error.contact_payload_size")
             );
             Ok((name.to_owned(), vcard.to_owned()))
         })

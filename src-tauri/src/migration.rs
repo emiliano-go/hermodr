@@ -21,7 +21,10 @@ pub(crate) fn migrate_media(app: &AppHandle, accounts: &AccountsFile) {
         if !db.exists() {
             continue;
         }
-        match postal_core::MessageStore::open(&db) {
+        let key = match app.state::<crate::database_encryption::DatabaseEncryption>().key(&account.id) {
+            Ok(key) => key, Err(_) => continue,
+        };
+        match postal_core::MessageStore::open_with_key(&db, key.as_ref()) {
             Ok(store) => {
                 if let Err(e) = store.relocate_media(&from, &to) {
                     log::warn!("media migration for {}: {e}", account.id);

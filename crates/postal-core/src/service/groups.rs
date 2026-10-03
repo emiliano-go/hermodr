@@ -1,6 +1,7 @@
 //! Groups and communities: names, members, invites and admin tools.
 
 use super::*;
+use crate::message_ref::MessageRef;
 use crate::store::group_audit::GroupAuditKind as AuditKind;
 use whatsapp_rust::wacore::iq::groups::ParticipantChangeResponse;
 use whatsapp_rust::wacore::types::wire_enums::MemberAddMode;
@@ -132,7 +133,7 @@ impl WhatsAppService {
             .groups()
             .fetch_metadata(&jid)
             .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            .map_err(anyhow::Error::from)?;
         self.client
             .groups()
             .resolve_participant_addresses(&mut metadata)
@@ -320,7 +321,7 @@ impl WhatsAppService {
             .groups()
             .add_participants(&group, &participants)
             .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            .map_err(anyhow::Error::from)?;
         self.audit_participant_changes(chat, &results, AuditKind::Join, previous.as_ref()).await;
         self.after_group_change(chat);
         Ok(results.iter().map(change_of).collect())
@@ -339,7 +340,7 @@ impl WhatsAppService {
         } else {
             groups.remove_participants(&group, &participants).await
         }
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        .map_err(anyhow::Error::from)?;
         self.audit_participant_changes(chat, &results, AuditKind::Remove, previous.as_ref()).await;
         self.after_group_change(chat);
         Ok(results.iter().map(change_of).collect())
@@ -355,7 +356,7 @@ impl WhatsAppService {
             .groups()
             .promote_participants(&group, &participants)
             .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            .map_err(anyhow::Error::from)?;
         self.audit_participant_changes(chat, &results, AuditKind::Promote, previous.as_ref()).await;
         self.after_group_change(chat);
         Ok(results.iter().map(change_of).collect())
@@ -371,7 +372,7 @@ impl WhatsAppService {
             .groups()
             .demote_participants(&group, &participants)
             .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            .map_err(anyhow::Error::from)?;
         self.audit_participant_changes(chat, &results, AuditKind::Demote, previous.as_ref()).await;
         self.after_group_change(chat);
         Ok(results.iter().map(change_of).collect())
@@ -385,7 +386,7 @@ impl WhatsAppService {
             .groups()
             .set_member_add_mode(&group, mode)
             .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            .map_err(anyhow::Error::from)?;
         self.audit_local_group_change(chat, AuditKind::MemberAddMode, None, None, None, None,
             Some(if allow { "all_member_add" } else { "admin_add" })).await.logged();
         self.after_group_change(chat);
@@ -424,10 +425,10 @@ impl WhatsAppService {
             .groups()
             .get_invite_info(link)
             .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            .map_err(anyhow::Error::from)?;
         let jid = group.id.to_string();
         let joined = self.client.groups().list_participating().await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?
+            .map_err(anyhow::Error::from)?
             .iter().any(|group| group.id.to_string() == jid);
         let picture = self.avatar(&jid, false).await.ok().flatten();
         Ok(InviteInfo {
@@ -451,7 +452,7 @@ impl WhatsAppService {
             .groups()
             .join_with_invite_code(link)
             .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            .map_err(anyhow::Error::from)?;
         let pending = matches!(joined, JoinGroupResult::PendingApproval(_));
         if !pending { self.after_group_change(&joined.group_jid().to_string()); }
         Ok((joined.group_jid().to_string(), pending))
@@ -524,7 +525,7 @@ impl WhatsAppService {
             .groups()
             .report_messages_to_admins(jid, &[id.to_string()])
             .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))
+            .map_err(anyhow::Error::from)
     }
 
     /// Messages members reported to this group's admins. Only admins may ask.
@@ -535,7 +536,7 @@ impl WhatsAppService {
             .groups()
             .get_reported_messages(jid)
             .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            .map_err(anyhow::Error::from)?;
         let mut reports = Vec::with_capacity(reported.reports.len());
         for report in reported.reports {
             reports.push(AdminReport {
@@ -558,7 +559,7 @@ impl WhatsAppService {
             .groups()
             .set_allow_admin_reports(jid, allow)
             .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            .map_err(anyhow::Error::from)?;
         if let Some(info) = self.group_cache.lock().unwrap().get_mut(chat) {
             info.allow_admin_reports = allow;
         }
@@ -575,7 +576,7 @@ impl WhatsAppService {
             .groups()
             .update_member_label(jid, label)
             .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            .map_err(anyhow::Error::from)?;
         let own: Vec<String> = [self.client.pn(), self.client.lid()]
             .into_iter()
             .flatten()
@@ -596,7 +597,9 @@ impl WhatsAppService {
 /// rather than silently dropping whoever it named.
 pub(super) fn parse_jids(jids: &[String]) -> Result<Vec<Jid>> {
     jids.iter()
-        .map(|jid| jid.parse::<Jid>().map_err(|e| anyhow::anyhow!("bad participant address {jid}: {e}")))
+        .map(|jid| jid.parse::<Jid>().map_err(|error| anyhow::Error::new(
+            MessageRef::new("error.group_participant_address").with_param("address", jid.as_str())
+        ).context(error.to_string())))
         .collect()
 }
 
@@ -631,6 +634,10 @@ mod participant_tests {
     fn addresses_are_parsed_or_the_call_fails() {
         let good = parse_jids(&["59899000000@s.whatsapp.net".into()]).unwrap();
         assert_eq!(good.len(), 1);
-        assert!(parse_jids(&["not a jid".into()]).is_err());
+        let error = parse_jids(&["not a jid".into()]).unwrap_err();
+        let reference = error.downcast_ref::<MessageRef>().unwrap();
+        assert_eq!(reference.code, "error.group_participant_address");
+        assert_eq!(serde_json::to_value(reference).unwrap()["params"]["address"], "not a jid");
+        assert!(error.chain().count() > 1);
     }
 }

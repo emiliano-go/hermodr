@@ -1,4 +1,6 @@
 use super::*;
+use crate::message_ref::MessageRef;
+use anyhow::Context;
 use std::collections::{HashMap, HashSet};
 use whatsapp_rust::wacore_binary::{Jid, JidExt};
 
@@ -135,22 +137,23 @@ pub(crate) fn migrate(conn: &Connection) -> Result<()> {
 
 fn text(value: &str, limit: usize, empty: bool) -> Result<()> {
     anyhow::ensure!(value.len() <= limit && (empty || !value.trim().is_empty())
-        && !value.chars().any(char::is_control), "Invalid Space text or identifier.");
+        && !value.chars().any(char::is_control), MessageRef::new("error.space_text_invalid")
+            .with_param("max_bytes", serde_json::Number::from(limit as u64)).with_param("actual_bytes", serde_json::Number::from(value.len() as u64)));
     Ok(())
 }
 
 fn identifier(value: &str) -> Result<()> {
     text(value, 128, false)?;
-    anyhow::ensure!(value.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'), "Invalid Space ID.");
+    anyhow::ensure!(value.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'), MessageRef::new("error.space_id_invalid"));
     Ok(())
 }
 
 fn address(value: &str) -> Result<Jid> {
     text(value, 256, false)?;
-    let jid: Jid = value.parse()?;
+    let jid: Jid = value.parse().with_context(|| MessageRef::new("error.space_address_invalid"))?;
     anyhow::ensure!(!jid.user.is_empty() && jid.device == 0 && jid.agent == 0 && jid.integrator == 0
         && (jid.is_pn() || jid.is_lid() || jid.is_group() || value.ends_with("@newsletter") || jid.is_broadcast_list()),
-        "Invalid local Space address.");
+        MessageRef::new("error.space_address_invalid"));
     Ok(jid)
 }
 
@@ -158,15 +161,15 @@ fn validate_target(target: &SpaceTarget) -> Result<()> {
     match target {
         SpaceTarget::Chat { jid } => { address(jid)?; }
         SpaceTarget::Group { jid } | SpaceTarget::Community { jid } => {
-            anyhow::ensure!(address(jid)?.is_group(), "Space group reference is not a group.");
+            anyhow::ensure!(address(jid)?.is_group(), MessageRef::new("error.space_group_invalid"));
         }
         SpaceTarget::Channel { jid } => {
             address(jid)?;
-            anyhow::ensure!(jid.ends_with("@newsletter"), "Space channel reference is not a channel.");
+            anyhow::ensure!(jid.ends_with("@newsletter"), MessageRef::new("error.space_channel_invalid"));
         }
         SpaceTarget::Contact { jid } | SpaceTarget::FavoriteContact { jid } => {
             let jid = address(jid)?;
-            anyhow::ensure!(jid.is_pn() || jid.is_lid(), "Space contact reference is not a contact.");
+            anyhow::ensure!(jid.is_pn() || jid.is_lid(), MessageRef::new("error.space_contact_invalid"));
         }
         SpaceTarget::Label { label_id } => text(label_id, 256, false)?,
         SpaceTarget::SavedMessage { chat, message_id } => { address(chat)?; text(message_id, 256, false)?; }
@@ -198,25 +201,27 @@ fn canonical_target(conn: &Connection, mut target: SpaceTarget) -> Result<SpaceT
 }
 
 fn validate_snapshot(snapshot: &SpaceSnapshot) -> Result<()> {
-    anyhow::ensure!(snapshot.spaces.len() <= MAX_SPACES && snapshot.items.len() <= MAX_ITEMS, "Space metadata exceeds local bounds.");
+    anyhow::ensure!(snapshot.spaces.len() <= MAX_SPACES && snapshot.items.len() <= MAX_ITEMS, MessageRef::new("error.space_metadata_limits")
+        .with_param("max_spaces", serde_json::Number::from(MAX_SPACES as u64)).with_param("actual_spaces", serde_json::Number::from(snapshot.spaces.len() as u64))
+        .with_param("max_items", serde_json::Number::from(MAX_ITEMS as u64)).with_param("actual_items", serde_json::Number::from(snapshot.items.len() as u64)));
     let spaces: HashMap<_, _> = snapshot.spaces.iter().map(|space| (space.id.as_str(), space)).collect();
-    anyhow::ensure!(spaces.len() == snapshot.spaces.len(), "Duplicate Space IDs.");
+    anyhow::ensure!(spaces.len() == snapshot.spaces.len(), MessageRef::new("error.space_id_duplicate"));
     let mut positions: HashMap<Option<&str>, Vec<u32>> = HashMap::new();
     for space in &snapshot.spaces {
         identifier(&space.id)?;
         text(&space.name, 256, false)?;
-        anyhow::ensure!(space.name == space.name.trim() && (0..=9_007_199_254_740_991).contains(&space.created_at), "Invalid Space name or creation time.");
+        anyhow::ensure!(space.name == space.name.trim() && (0..=9_007_199_254_740_991).contains(&space.created_at), MessageRef::new("error.space_name_or_time_invalid"));
         if let Some(icon) = &space.icon { text(icon, 128, false)?; }
         if let Some(color) = &space.color {
             anyhow::ensure!(matches!(color.len(), 7 | 9) && color.starts_with('#')
-                && color[1..].bytes().all(|b| b.is_ascii_hexdigit()), "Invalid Space color.");
+                && color[1..].bytes().all(|b| b.is_ascii_hexdigit()), MessageRef::new("error.space_color_invalid"));
         }
         let mut seen = HashSet::new();
         let mut parent = space.parent_id.as_deref();
         seen.insert(space.id.as_str());
         while let Some(id) = parent {
-            anyhow::ensure!(seen.insert(id), "Space nesting contains a cycle.");
-            parent = spaces.get(id).ok_or_else(|| anyhow::anyhow!("Space parent is missing."))?.parent_id.as_deref();
+            anyhow::ensure!(seen.insert(id), MessageRef::new("error.space_cycle"));
+            parent = spaces.get(id).ok_or_else(|| anyhow::Error::new(MessageRef::new("error.space_parent_missing").with_param("id", id)))?.parent_id.as_deref();
         }
         positions.entry(space.parent_id.as_deref()).or_default().push(space.order);
     }
@@ -226,9 +231,9 @@ fn validate_snapshot(snapshot: &SpaceSnapshot) -> Result<()> {
     let mut positions: HashMap<&str, Vec<u32>> = HashMap::new();
     for item in &snapshot.items {
         identifier(&item.id)?;
-        anyhow::ensure!(ids.insert(&item.id) && spaces.contains_key(item.space_id.as_str()), "Duplicate item ID or missing Space.");
+        anyhow::ensure!(ids.insert(&item.id) && spaces.contains_key(item.space_id.as_str()), MessageRef::new("error.space_item_or_owner_invalid"));
         validate_target(&item.target)?;
-        anyhow::ensure!(targets.insert((&item.space_id, serde_json::to_string(&item.target)?)), "Duplicate reference in one Space.");
+        anyhow::ensure!(targets.insert((&item.space_id, serde_json::to_string(&item.target)?)), MessageRef::new("error.space_reference_duplicate"));
         positions.entry(&item.space_id).or_default().push(item.order);
     }
     for orders in positions.values_mut() { validate_orders(orders)?; }
@@ -237,7 +242,7 @@ fn validate_snapshot(snapshot: &SpaceSnapshot) -> Result<()> {
 
 fn validate_orders(orders: &mut [u32]) -> Result<()> {
     orders.sort_unstable();
-    anyhow::ensure!(orders.iter().copied().eq(0..orders.len() as u32), "Space ordering must be a complete contiguous sequence.");
+    anyhow::ensure!(orders.iter().copied().eq(0..orders.len() as u32), MessageRef::new("error.space_order_invalid"));
     Ok(())
 }
 
@@ -281,13 +286,13 @@ fn compact(snapshot: &mut SpaceSnapshot) {
 }
 
 fn space_mut<'a>(snapshot: &'a mut SpaceSnapshot, id: &str) -> Result<&'a mut Space> {
-    snapshot.spaces.iter_mut().find(|space| space.id == id).ok_or_else(|| anyhow::anyhow!("Space no longer exists."))
+    snapshot.spaces.iter_mut().find(|space| space.id == id).ok_or_else(|| anyhow::Error::new(MessageRef::new("error.space_unavailable").with_param("id", id)))
 }
 
 fn reorder_spaces(snapshot: &mut SpaceSnapshot, parent: Option<String>, ids: Vec<String>) -> Result<()> {
     let mut expected: Vec<_> = snapshot.spaces.iter().filter(|space| space.parent_id == parent).map(|space| space.id.clone()).collect();
     let mut sorted = ids.clone(); expected.sort(); sorted.sort();
-    anyhow::ensure!(expected == sorted, "Reorder must name every sibling exactly once.");
+    anyhow::ensure!(expected == sorted, MessageRef::new("error.space_reorder_invalid"));
     if let Some(parent) = &parent { space_mut(snapshot, parent)?; }
     for (order, id) in ids.iter().enumerate() { space_mut(snapshot, id)?.order = order as u32; }
     Ok(())
@@ -297,7 +302,7 @@ fn reorder_items(snapshot: &mut SpaceSnapshot, space_id: String, ids: Vec<String
     space_mut(snapshot, &space_id)?;
     let mut expected: Vec<_> = snapshot.items.iter().filter(|item| item.space_id == space_id).map(|item| item.id.clone()).collect();
     let mut sorted = ids.clone(); expected.sort(); sorted.sort();
-    anyhow::ensure!(expected == sorted, "Reorder must name every Space item exactly once.");
+    anyhow::ensure!(expected == sorted, MessageRef::new("error.space_item_reorder_invalid"));
     for (order, id) in ids.iter().enumerate() {
         snapshot.items.iter_mut().find(|item| &item.id == id).unwrap().order = order as u32;
     }
@@ -331,13 +336,13 @@ fn apply_action(conn: &Connection, snapshot: &mut SpaceSnapshot, action: SpaceAc
         SpaceAction::AddItem { id, space_id, target } => {
             let target = canonical_target(conn, target)?;
             for item in snapshot.items.iter().filter(|item| item.space_id == space_id) {
-                anyhow::ensure!(canonical_target(conn, item.target.clone())? != target, "Duplicate reference in one Space.");
+                anyhow::ensure!(canonical_target(conn, item.target.clone())? != target, MessageRef::new("error.space_reference_duplicate"));
             }
             let order = snapshot.items.iter().filter(|item| item.space_id == space_id).count() as u32;
             snapshot.items.push(SpaceItem { id, space_id, target, order });
         }
         SpaceAction::RemoveItem { id } => {
-            anyhow::ensure!(snapshot.items.iter().any(|item| item.id == id), "Space item no longer exists.");
+            anyhow::ensure!(snapshot.items.iter().any(|item| item.id == id), MessageRef::new("error.space_item_unavailable").with_param("id", id.as_str()));
             snapshot.items.retain(|item| item.id != id);
         }
         SpaceAction::ReorderItems { space_id, ids } => reorder_items(snapshot, space_id, ids)?,
@@ -364,7 +369,8 @@ impl MessageStore {
     }
 
     pub fn import_spaces(&self, mut archive: SpaceArchive) -> Result<SpaceSnapshot> {
-        anyhow::ensure!(archive.version == 1, "Unsupported Space metadata version.");
+        anyhow::ensure!(archive.version == 1, MessageRef::new("error.space_metadata_version")
+            .with_param("version", serde_json::Number::from(archive.version)).with_param("supported", serde_json::Number::from(1)));
         validate_snapshot(&archive.snapshot)?;
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.savepoint()?;
@@ -381,19 +387,20 @@ impl MessageStore {
     }
 
     pub fn cache_space_groups(&self, groups: &[CachedSpaceGroup]) -> Result<()> {
-        anyhow::ensure!(groups.len() <= MAX_ITEMS, "Group catalog exceeds local bounds.");
+        anyhow::ensure!(groups.len() <= MAX_ITEMS, MessageRef::new("error.space_group_catalog_limit")
+            .with_param("max", serde_json::Number::from(MAX_ITEMS as u64)).with_param("actual", serde_json::Number::from(groups.len() as u64)));
         let mut seen = HashSet::new();
         for group in groups {
-            anyhow::ensure!(address(&group.jid)?.is_group() && seen.insert(&group.jid), "Invalid or duplicate cached group.");
+            anyhow::ensure!(address(&group.jid)?.is_group() && seen.insert(&group.jid), MessageRef::new("error.space_cached_group_invalid"));
             if let Some(subject) = &group.subject {
-                anyhow::ensure!(subject.len() <= 4096 && !subject.contains('\0'), "Invalid cached group subject.");
+                anyhow::ensure!(subject.len() <= 4096 && !subject.contains('\0'), MessageRef::new("error.space_cached_subject_invalid"));
             }
             if let Some(parent) = &group.parent {
-                anyhow::ensure!(address(parent)?.is_group() && parent != &group.jid && !group.community, "Invalid cached community parent.");
+                anyhow::ensure!(address(parent)?.is_group() && parent != &group.jid && !group.community, MessageRef::new("error.space_cached_parent_invalid"));
                 anyhow::ensure!(groups.iter().find(|candidate| &candidate.jid == parent).is_none_or(|candidate| candidate.community),
-                    "Cached subgroup parent is not a community.");
+                    MessageRef::new("error.space_cached_parent_not_community"));
             }
-            anyhow::ensure!(!group.announcements || group.parent.is_some(), "Announcement group has no community parent.");
+            anyhow::ensure!(!group.announcements || group.parent.is_some(), MessageRef::new("error.space_cached_announcement_parent_missing"));
         }
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.savepoint()?;
@@ -600,7 +607,7 @@ impl<'a> Resolver<'a> {
 }
 
 fn selected_items<'a>(snapshot: &'a SpaceSnapshot, id: &str) -> Result<Vec<&'a SpaceItem>> {
-    anyhow::ensure!(snapshot.spaces.iter().any(|space| space.id == id), "Space no longer exists.");
+    anyhow::ensure!(snapshot.spaces.iter().any(|space| space.id == id), MessageRef::new("error.space_unavailable").with_param("id", id));
     let mut pending = vec![id];
     let mut items = Vec::new();
     while let Some(id) = pending.pop() {

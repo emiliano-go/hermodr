@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { LocalizedError, normalizeError } from "$lib/i18n/errors";
+  import { t } from "$lib/i18n/localizer";
   import MessageCard from "$lib/messages/cards/MessageCard.svelte";
   import Icon from "$lib/ui/Icon.svelte";
   import { isPollNotice, structuredNoticeText } from "$lib/utils/structured-notices";
@@ -14,13 +16,13 @@
   } = $props();
 
   let dialog = $state<HTMLDialogElement>();
-  let error = $state("");
+  let error = $state<LocalizedError | string | null>("");
   const line = $derived(structuredNoticeText(message, namer));
 
   async function vote(options: string[]) {
     error = "";
     try { await onvote(options); }
-    catch (cause) { error = String(cause); }
+    catch (cause) { error = normalizeError(cause); }
   }
 </script>
 
@@ -28,12 +30,12 @@
   {#if isPollNotice(message)}
     <button class="system poll-notice bubble" class:highlighted data-id={message.id} data-chat={message.chat}
       aria-haspopup="dialog" onclick={() => { error = ""; dialog?.showModal(); }}>
-      <Icon name="poll" size={14} /> {line} <span class="open">Open poll</span>
+      <Icon name="poll" size={14} /> {line} <span class="open">{t("content.open_poll")}</span>
     </button>
-    <dialog bind:this={dialog} aria-label="Poll" oncancel={(event) => event.stopPropagation()}
+    <dialog bind:this={dialog} aria-label={t("content.poll")} oncancel={(event) => event.stopPropagation()}
       onclick={(event) => { if (event.target === dialog) dialog?.close(); }}
       onkeydown={(event) => { if (event.key === "Escape") event.stopPropagation(); }}>
-      <header><h2>Poll</h2><button class="close" aria-label="Close poll" onclick={() => dialog?.close()}><Icon name="x" size={18} /></button></header>
+      <header><h2>{t("content.poll")}</h2><button class="close" aria-label={t("content.close_poll")} onclick={() => dialog?.close()}><Icon name="x" size={18} /></button></header>
       <MessageCard variant="poll" {poll} question={message.text} {namer} {picture} onvote={vote} />
       {#if error}<p class="error" role="alert">{error}</p>{/if}
     </dialog>

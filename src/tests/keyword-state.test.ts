@@ -44,13 +44,13 @@ test("keyword state rejects stale account/rule/request/generation counts and kee
     release({ stale: 9 }); await oldGeneration; assert.deepEqual(state.counts, { latest: 3 });
     failSave = true;
     assert.equal(state.save("account-b", { highlight: ["Unpersisted"], hide: [] }), false);
-    assert.deepEqual(state.rules, { highlight: ["New rule"], hide: [] }); assert.match(state.error, /quota/);
+    assert.deepEqual(state.rules, { highlight: ["New rule"], hide: [] }); assert.equal(state.error, "Could not save keyword rules."); assert.match(state.diagnostic, /quota/);
     assert.equal(state.save("account-a", { highlight: ["Wrong account"], hide: [] }), false);
     failSave = false;
     const restarted = new KeywordsState(storage); restarted.load("account-b");
     assert.deepEqual(restarted.rules, { highlight: ["New rule"], hide: [] });
     setHandler(() => { throw new Error("unavailable count"); });
-    await state.refreshCounts("account-b", () => external); assert.deepEqual(state.counts, {}); assert.match(state.countError, /unavailable count/);
+    await state.refreshCounts("account-b", () => external); assert.deepEqual(state.counts, {}); assert.equal(state.countError, "Could not refresh keyword badges."); assert.match(state.countDiagnostic, /unavailable count/);
     state.load(null); assert.deepEqual(state.rules, { highlight: [], hide: [] }); assert.deepEqual(state.counts, {});
   } finally { await server.close(); }
 });

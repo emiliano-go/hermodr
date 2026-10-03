@@ -2,6 +2,7 @@
   sent message replaces it. Moved out of +page.svelte with its own bubble
   look so it shares no scoped styles with MessageBubble. -->
 <script lang="ts">
+  import { t } from "$lib/i18n/localizer";
   import Icon from "$lib/ui/Icon.svelte";
   import { motion } from "$lib/utils/theme.svelte";
   import type { Outgoing } from "$lib/utils/models";
@@ -22,9 +23,9 @@
         <!-- svelte-ignore a11y_media_has_caption -->
         <video class="media" src={upload.url} preload="metadata" muted></video>
       {:else}
-        <span class="upload-name"><Icon name="file" size={20} />{upload.name}</span>
+        <span class="upload-name"><Icon name="file" size={20} /><bdi dir="auto">{upload.name}</bdi></span>
       {/if}
-      <span class="upload-ring" aria-label="Uploading, {Math.round(upload.progress * 100)}%">
+      <span class="upload-ring" aria-label={t("content.upload_progress", { percent: Math.round(upload.progress * 100) })}>
         <svg viewBox="0 0 48 48" width="48" height="48">
           <circle class="ring-track" cx="24" cy="24" r="20" />
           <circle
@@ -39,7 +40,7 @@
         <span class="ring-label">{upload.progress > 0 ? `${Math.round(upload.progress * 100)}%` : ""}</span>
       </span>
     </div>
-    {#if upload.caption}<span class="upload-caption">{upload.caption}</span>{/if}
+    {#if upload.caption}<span class="upload-caption"><bdi dir="auto">{upload.caption}</bdi></span>{/if}
   </div>
 </div>
 
@@ -79,7 +80,7 @@
     width: 9px;
     height: 13px;
     background: inherit;
-    right: -8px;
+    inset-inline-end: -8px;
     clip-path: polygon(0 0, 100% 0, 0 100%);
   }
   .bubble.media-only {

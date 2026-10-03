@@ -2,11 +2,13 @@
      menu or by clicking the pill under a message. Your own section carries an
      X that takes your reaction back, since the pill no longer does that. -->
 <script lang="ts" module>
+  import { formatNumber as localeNumber } from "$lib/i18n/localizer";
   export type Reactor = { jid: string; label: string; avatar: string | null; self: boolean };
   export type ReactorGroup = { emoji: string; people: Reactor[] };
 </script>
 
 <script lang="ts">
+  import { t } from "$lib/i18n/localizer";
   import { fade, scale } from "svelte/transition";
   import { motion } from "$lib/utils/theme.svelte";
   import Avatar from "$lib/ui/Avatar.svelte";
@@ -42,25 +44,25 @@
     class="dialog"
     role="dialog"
     aria-modal="true"
-    aria-label="Reactions"
+    aria-label={t("content.reactions")}
     transition:scale|global={{ start: 0.96, duration: motion(160) }}>
     <header>
-      <h2>Reactions{#if total}<span class="count">{total}</span>{/if}</h2>
-      <button class="close" aria-label="Close" onclick={onclose}><Icon name="x" size={18} /></button>
+      <h2>{t("content.reactions")}{#if total}<span class="count">{total}</span>{/if}</h2>
+      <button class="close" aria-label={t("content.close")} onclick={onclose}><Icon name="x" size={18} /></button>
     </header>
     {#if total === 0}
-      <p class="empty">Nobody has reacted to this message.</p>
+      <p class="empty">{t("content.nobody_has_reacted_to_this_message")}</p>
     {:else}
       <div class="body">
         {#each groups as group (group.emoji)}
           <section>
             <h3>
-              <span class="emoji">{group.emoji}</span><span class="n">{group.people.length}</span>
+              <span class="emoji">{group.emoji}</span><span class="n">{localeNumber(group.people.length)}</span>
               {#if group.people.some((p) => p.self)}
                 <button
                   class="remove"
-                  title="Remove your reaction"
-                  aria-label="Remove your reaction"
+                  title={t("content.remove_your_reaction")}
+                  aria-label={t("content.remove_your_reaction")}
                   onclick={onremove}><Icon name="x" size={14} /></button>
               {/if}
             </h3>
@@ -69,8 +71,8 @@
                 <li>
                   <button
                     class="reactor-row"
-                    title="Profile of {person.label}"
-                    aria-label="Profile of {person.label}"
+                    title={t("content.profile_of", { name: person.label })}
+                    aria-label={t("content.profile_of", { name: person.label })}
                     onclick={(e) => onprofile(person.jid, person.label, e, person.self)}>
                     <Avatar cls="reactor" src={person.avatar} label={person.label} seed={person.jid} />
                     <span class="who">{person.label}</span>
@@ -170,7 +172,7 @@
     place-items: center;
     width: 24px;
     height: 24px;
-    margin-left: auto;
+    margin-inline-start: auto;
     border: 0;
     border-radius: 50%;
     background: transparent;
@@ -197,7 +199,7 @@
     background: transparent;
     color: var(--text);
     font: inherit;
-    text-align: left;
+    text-align: start;
     cursor: pointer;
     transition: background calc(0.12s * var(--motion-scale));
   }

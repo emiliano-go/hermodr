@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import { createServer } from "vite";
+import { normalizeError, LocalizedError } from "../lib/i18n/errors.ts";
 import type { UsernameLookupResult } from "../lib/utils/wire.ts";
 
 const source = readFileSync(new URL("../lib/chat/UsernameLookup.svelte", import.meta.url), "utf8");
@@ -24,6 +25,11 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+function failure(value: unknown): LocalizedError {
+  assert.ok(value instanceof LocalizedError);
+  return value;
+}
+
 function fixture() {
   const requests: { username: string; key: string | undefined; result: ReturnType<typeof deferred<UsernameLookupResult>> }[] = [];
   const opened: { jid: string; username: string | null }[] = [];
@@ -32,7 +38,7 @@ function fixture() {
   const context = {
     account: "a", generation: 1, openedAccount: "a", openedGeneration: 1,
     closed: false, request: 0, query: "", usernameKey: "", busy: false,
-    result: null as UsernameLookupResult | null, error: null as string | null,
+    result: null as UsernameLookupResult | null, error: null as LocalizedError | string | null, normalizeError,
     dialog: { close: () => { dialogCloses++; } }, onclose: () => { closes++; },
     onlookup: (username: string, key?: string) => {
       const result = deferred<UsernameLookupResult>();
@@ -108,14 +114,16 @@ test("current lookup and chat-opening failures remain visible and retryable", as
   const first = f.actions.lookup();
   f.requests[0].result.reject(new Error("Synthetic lookup failure"));
   await first;
-  assert.equal(f.actions.error, "Error: Synthetic lookup failure");
+  assert.equal(failure(f.actions.error).code, "error.operation_failed");
+  assert.match(failure(f.actions.error).diagnostic ?? "", /Synthetic lookup failure/);
   assert.equal(f.actions.busy, false);
   f.actions.onfound = async () => { throw new Error("Synthetic open failure"); };
   const retry = f.actions.lookup();
   assert.equal(f.actions.error, null);
   f.requests[1].result.resolve({ kind: "found", jid: "real@lid", username: null });
   await retry;
-  assert.equal(f.actions.error, "Error: Synthetic open failure");
+  assert.equal(failure(f.actions.error).code, "error.operation_failed");
+  assert.match(failure(f.actions.error).diagnostic ?? "", /Synthetic open failure/);
   assert.equal(f.actions.busy, false);
   assert.equal(f.closes(), 0);
 });

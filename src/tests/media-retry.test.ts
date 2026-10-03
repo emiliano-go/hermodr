@@ -23,7 +23,8 @@ test("media retries stop at the cap, refresh successful downloads and ignore the
     for (let n = 1; n <= MAX_DOWNLOAD_TRIES; n++) await messages.downloadMedia(row.chat, row, true);
     assert.equal(fixture.calls, MAX_DOWNLOAD_TRIES);
     assert.equal(messages.downloadTries[row.id], MAX_DOWNLOAD_TRIES);
-    assert.match(messages.downloadErrors[row.id], /sender unavailable/);
+    assert.equal(messages.downloadErrors[row.id], "Operation failed.");
+    assert.match(messages.downloadDiagnostics[row.id], /sender unavailable/);
     assert.equal(messages.downloading[row.id], undefined);
 
     messages.resetAccount();
@@ -49,7 +50,8 @@ test("media retries stop at the cap, refresh successful downloads and ignore the
     fixture.pending.shift()();
     await current;
     assert.equal(messages.downloadTries[row.id], 1);
-    assert.match(messages.downloadErrors[row.id], /sender unavailable/);
+    assert.equal(messages.downloadErrors[row.id], "Operation failed.");
+    assert.match(messages.downloadDiagnostics[row.id], /sender unavailable/);
     assert.equal(windowFixture.archive.length, 350);
   } finally {
     state?.resetAccount();

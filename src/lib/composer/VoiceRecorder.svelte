@@ -1,8 +1,11 @@
 <script lang="ts" module>
+  import { mediaClock } from "$lib/media/clock";
+  import { LocalizedError } from "$lib/i18n/errors";
   export type Recording = { blob: Blob; seconds: number; waveform: number[]; viewOnce: boolean };
 </script>
 
 <script lang="ts">
+  import { t } from "$lib/i18n/localizer";
   import { onDestroy, onMount } from "svelte";
   import Icon from "$lib/ui/Icon.svelte";
 
@@ -14,7 +17,7 @@
   }: {
     onsend: (recording: Recording) => void;
     oncancel: () => void;
-    onerror: (message: string) => void;
+    onerror: (message: string | LocalizedError) => void;
     disabled?: boolean;
   } = $props();
 
@@ -42,7 +45,7 @@
         audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
       });
     } catch {
-      onerror("Microphone access was refused or no microphone is connected.");
+      onerror(new LocalizedError({ kind: "postal_error", code: "error.content.microphone_access_was_refused_or_no_microphone_is_connected", params: {} }));
       return oncancel();
     }
     startRecorder();
@@ -174,9 +177,7 @@
     oncancel();
   }
 
-  function clock(seconds: number) {
-    return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
-  }
+  const clock = (seconds: number) => mediaClock(seconds);
   const top = $derived(Math.max(0.02, ...live));
 
   function finishPreview() {
@@ -185,22 +186,22 @@
   }
 </script>
 
-<div class="recorder" role="group" aria-label="Recording a voice message">
-  <button type="button" class="icon" title="Discard" aria-label="Discard recording" onclick={cancel}>
+<div class="recorder" role="group" aria-label={t("content.recording_a_voice_message")}>
+  <button type="button" class="icon" title={t("content.discard")} aria-label={t("content.discard_recording")} onclick={cancel}>
     <Icon name="trash" size={20} />
   </button>
   {#if paused}
     <button
       type="button"
       class="icon"
-      title="Record over"
-      aria-label="Discard and record again"
+      title={t("content.record_over")}
+      aria-label={t("content.discard_and_record_again")}
       onclick={recordOver}><Icon name="back10" size={18} /></button>
     <button
       type="button"
       class="icon preview"
-      title={previewing ? "Stop" : "Listen"}
-      aria-label={previewing ? "Stop listening" : "Listen to the recording"}
+      title={previewing ? t("content.stop") : t("content.listen")}
+      aria-label={previewing ? t("content.stop_listening") : t("content.listen_to_the_recording")}
       onclick={togglePreview}><Icon name={previewing ? "pause" : "play"} size={18} filled /></button>
     <input
       class="scrub"
@@ -209,14 +210,14 @@
       max={elapsed}
       step="0.05"
       value={previewAt}
-      aria-label="Preview position"
+      aria-label={t("content.preview_position")}
       oninput={(e) => {
         if (preview) preview.currentTime = Number(e.currentTarget.value);
       }} />
-    <span class="time">{clock(previewing ? previewAt : elapsed)}</span>
+    <span class="time" dir="ltr"><bdi dir="ltr">{clock(previewing ? previewAt : elapsed)}</bdi></span>
   {:else}
     <span class="dot"></span>
-    <span class="time">{clock(elapsed)}</span>
+    <span class="time" dir="ltr"><bdi dir="ltr">{clock(elapsed)}</bdi></span>
     <span class="levels" aria-hidden="true">
       {#each Array(LIVE_BARS - live.length) as _, i (i)}<span class="level idle"></span>{/each}
       {#each live as level, i (i)}<span
@@ -233,19 +234,19 @@
   <button
     type="button"
     class="icon pause"
-    title={paused ? "Resume" : "Pause"}
-    aria-label={paused ? "Resume recording" : "Pause recording"}
+    title={paused ? t("content.resume") : t("content.pause")}
+    aria-label={paused ? t("content.resume_recording") : t("content.pause_recording")}
     disabled={!ready}
     onclick={togglePause}><Icon name={paused ? "mic" : "pause"} size={20} filled={!paused} /></button>
   <button
     type="button"
     class="icon once"
     class:on={once}
-    title="View once"
-    aria-label="View once"
+    title={t("content.view_once")}
+    aria-label={t("content.view_once")}
     aria-pressed={once}
     onclick={() => (once = !once)}>1</button>
-  <button type="button" class="send" title="Send" aria-label="Send voice message" disabled={disabled || !ready} onclick={finish}>
+  <button type="button" class="send" title={t("content.send")} aria-label={t("content.send_voice_message")} disabled={disabled || !ready} onclick={finish}>
     <Icon name="send" size={18} />
   </button>
 </div>

@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { compileModule } from "svelte/compiler";
 import ts from "typescript";
+import { normalizeError } from "../lib/i18n/errors.ts";
 import { galleryDateRange, galleryKey, galleryUrl, galleryViewerItems, galleryVisible } from "../lib/utils/gallery.ts";
 import type { GalleryState } from "../lib/state/gallery.svelte";
 import type { GalleryCursor, GalleryFilter, GalleryItem, GalleryPage, StoredMessage } from "../lib/utils/wire";
@@ -37,7 +38,7 @@ test("gallery holds one page, composes filters, retries errors, and rejects stal
   const source = readFileSync(new URL("../lib/state/gallery.svelte.ts", import.meta.url), "utf8");
   const js = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
   const compiled = compileModule(js, { generate: "server", filename: "gallery.svelte.js" }).js.code.replace(/^import .*;$/gm, "").replace(/^export /gm, "");
-  const State = new Function(`${compiled}\nreturn GalleryState;`)() as new (loader: typeof fetch) => GalleryState;
+  const State = new Function("normalizeError", `${compiled}\nreturn GalleryState;`)(normalizeError) as new (loader: typeof fetch) => GalleryState;
   const gallery = new State(fetch);
   const filter: GalleryFilter = { chat: "a@s", kind: "image", from_me: true, since: 100, until: 200 };
   const old = gallery.reset(filter);
@@ -62,7 +63,8 @@ test("gallery holds one page, composes filters, retries errors, and rejects stal
   requests[3].reject(new Error("offline"));
   await previous;
   assert.equal(gallery.pageIndex, 1);
-  assert.match(gallery.error ?? "", /offline/);
+  assert.equal(gallery.error, "Operation failed.");
+  assert.match(gallery.diagnostic ?? "", /offline/);
   const retry = gallery.retry();
   assert.equal(requests[4].cursor, null);
   requests[4].resolve({ items: [item("b@g.us", "same")], next_cursor: cursor });

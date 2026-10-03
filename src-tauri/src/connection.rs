@@ -2,6 +2,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use postal_core::{WhatsAppService, ServiceEvent};
 use tauri::{AppHandle, Emitter, Manager, State};
+use crate::command_error::{CommandError, CommandResult};
 use crate::{AppState, ONCE_EVENT, SERVICE_EVENT, account_store::{Account, DEFAULT_ACCOUNT_LABEL, SESSION_POINTER, SESSION_POINTER_ANDROID, account_base, active_account, config_for, current_sessions, now_millis, once_config_for, remove_stale_sessions, save_accounts}};
 
 /// Snapshot of the connection state, for the UI's initial render.
@@ -59,8 +60,8 @@ pub(crate) fn connection_state(state: State<'_, AppState>) -> ConnectionState {
 }
 
 #[tauri::command]
-pub(crate) async fn boolean_props(state: State<'_, AppState>) -> Result<Vec<postal_core::service::BooleanProp>, String> {
-    Ok(state.service()?.boolean_props().await)
+pub(crate) async fn boolean_props(state: State<'_, AppState>) -> CommandResult<Vec<postal_core::service::BooleanProp>> {
+    Ok(state.service().map_err(|_| CommandError::code("error.not_connected"))?.boolean_props().await)
 }
 
 /// Connects the account, pairing by QR the first time.
@@ -68,7 +69,7 @@ pub(crate) async fn boolean_props(state: State<'_, AppState>) -> Result<Vec<post
 /// Returns once the service is running; the QR code and connection state arrive
 /// as [`SERVICE_EVENT`] messages so the UI can render them as they happen.
 /// Starts the service for an account, replacing any running one.
-pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &str) -> Result<(), String> {
+pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &str) -> CommandResult<()> {
     crate::floating::invalidate_all(app);
     log::info!("starting account {account}");
     app.state::<crate::transcription::TranscriptionState>().cancel_all();
@@ -81,20 +82,23 @@ pub(crate) async fn start_service(app: &AppHandle, state: &AppState, account: &s
     }
 
     let settings = state.settings.lock().unwrap().clone();
+    let base = account_base(app, account);
+    let database_key = app.state::<crate::database_encryption::DatabaseEncryption>().new_account_key(account, &account_base(app, "default"))
+        .map_err(crate::database_encryption::command_failure)?;
     // A change of cold storage moves the archive before it is opened.
     crate::account_store::migrate_history(app, &settings, account);
-    let config = config_for(app, &settings, account);
+    let mut config = config_for(app, &settings, account);
+    config.database_key = database_key;
     if let Some(directory) = &config.media_dir {
         let directory = crate::media_access::validate_directory(app, directory)?;
         std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
     }
 
-    let base = account_base(app, account);
     remove_stale_sessions(&base, &current_sessions(&base));
 
     let (service, events) = WhatsAppService::start(config).await.map_err(|e| {
         log::error!("failed to start account {account}: {e:#}");
-        format!("failed to start service: {e:#}")
+        CommandError::code("error.service_start_failed").with_diagnostic(e)
     })?;
     let service = Arc::new(service);
     *state.account_service.lock().unwrap() = Some((account.to_owned(), Arc::downgrade(&service)));
@@ -538,21 +542,24 @@ fn set_once_paired(app: &AppHandle, account: &str, paired: bool) {
 
 /// Starts the optional Android instance: a second link used only to fetch
 /// one-time media into the shared store. No-op when it is already running.
-pub(crate) async fn start_once(app: &AppHandle, state: &AppState) -> Result<(), String> {
+pub(crate) async fn start_once(app: &AppHandle, state: &AppState) -> CommandResult<()> {
     if state.once_service.lock().unwrap().is_some() {
         return Ok(());
     }
     let Some(account) = active_account(state) else {
-        return Err("no account yet".to_string());
+        return Err(CommandError::code("error.no_account"));
     };
     let settings = state.settings.lock().unwrap().clone();
+    let database_key = app.state::<crate::database_encryption::DatabaseEncryption>().key(&account)
+        .map_err(crate::database_encryption::command_failure)?;
     crate::account_store::migrate_history(app, &settings, &account);
-    let config = once_config_for(app, &settings, &account)?;
+    let mut config = once_config_for(app, &settings, &account)?;
+    config.database_key = database_key;
     remove_stale_sessions(&account_base(app, &account), &current_sessions(&account_base(app, &account)));
 
     let (service, events) = WhatsAppService::start(config).await.map_err(|e| {
         log::error!("failed to start the Android instance: {e:#}");
-        format!("failed to start the Android instance: {e:#}")
+        CommandError::code("error.companion_start_failed").with_diagnostic(e)
     })?;
     *state.once_qr.lock().unwrap() = service.current_qr();
     let service = Arc::new(service);
@@ -595,15 +602,15 @@ pub(crate) fn once_state(state: State<'_, AppState>) -> OnceState {
 /// existing link, so pairing is its own step that runs the instance just long
 /// enough for the QR to be scanned.
 #[tauri::command]
-pub(crate) fn set_pairing(app: AppHandle, state: State<'_, AppState>, pairing: bool) -> Result<(), String> {
+pub(crate) fn set_pairing(app: AppHandle, state: State<'_, AppState>, pairing: bool) -> CommandResult<()> {
     if pairing {
         // Fail here, where the UI can show it, instead of leaving the pairing
         // screen without a QR until the session times out.
         if !state.settings.lock().unwrap().keep_history {
-            return Err("Pairing the Android companion needs \"Download and keep history\" turned on".into());
+            return Err(CommandError::code("error.companion_history_required"));
         }
         if active_account(&state).is_none() {
-            return Err("no account to pair the Android companion with".into());
+            return Err(CommandError::code("error.no_account"));
         }
     }
     state.once_pairing.store(pairing, Ordering::SeqCst);
@@ -667,18 +674,18 @@ fn forget_once_session(app: &AppHandle, account: &str, service: &Arc<WhatsAppSer
 /// companion. The code arrives as a `pairingCode` event; this only reports
 /// immediate failures.
 #[tauri::command(async)]
-pub(crate) async fn request_pair_code(state: State<'_, AppState>, phone: String, companion: bool) -> Result<(), String> {
+pub(crate) async fn request_pair_code(state: State<'_, AppState>, phone: String, companion: bool) -> CommandResult<()> {
     let service = if companion {
-        state.once_service.lock().unwrap().clone().ok_or("the Android companion is not pairing")?
+        state.once_service.lock().unwrap().clone().ok_or_else(|| CommandError::code("error.companion_not_pairing"))?
     } else {
-        state.service()?
+        state.service().map_err(|_| CommandError::code("error.not_connected"))?
     };
-    service.request_pair_code(&phone).await
+    service.request_pair_code(&phone).await.map_err(|error| CommandError::code("error.pair_code_failed").with_diagnostic(error))
 }
 
 /// Withdraws an outstanding pairing code so the QR (or a new code) takes over.
 #[tauri::command(async)]
-pub(crate) async fn cancel_pair_code(state: State<'_, AppState>, companion: bool) -> Result<(), String> {
+pub(crate) async fn cancel_pair_code(state: State<'_, AppState>, companion: bool) -> CommandResult<()> {
     let service = if companion {
         state.once_service.lock().unwrap().clone()
     } else {
@@ -692,7 +699,7 @@ pub(crate) async fn cancel_pair_code(state: State<'_, AppState>, companion: bool
 
 /// Connects the active account, pairing by QR the first time.
 #[tauri::command]
-pub(crate) async fn connect(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+pub(crate) async fn connect(app: AppHandle, state: State<'_, AppState>) -> CommandResult<()> {
     if state.service.lock().unwrap().is_some() {
         return Ok(());
     }

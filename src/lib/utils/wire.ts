@@ -17,7 +17,7 @@ export type AdminReport = { id: string,
  */
 message: StoredMessage | null, reporters: Array<[string, number]>, };
 export type Album = { parent_id: string | null, expected_images: number | null, expected_videos: number | null, index: number | null, };
-export type AlbumSendResult = { account_id: string, chat: string, parent_id: string, sent_ids: Array<string>, next_index: number, uncertain_index: number | null, uncertain_id: string | null, parent_uncertain: boolean, preflight_failed: boolean, warnings: Array<string>, error: string | null, };
+export type AlbumSendResult = { account_id: string, chat: string, parent_id: string, sent_ids: Array<string>, next_index: number, uncertain_index: number | null, uncertain_id: string | null, parent_uncertain: boolean, preflight_failed: boolean, warnings: Array<string>, error: string | null, failure: MessageFailure | null, warning_messages: Array<MessageFailure>, };
 export type AlbumUploadItem = { upload: string, caption: string | null, quality: MediaQuality | null, progress: string | null, };
 export type ArchiveManifest = { format: string, version: number, messages: number, attachments: number, missing_attachments: number, };
 export type ArchiveReport = { directory: string, messages: number, attachments: number, missing_attachments: number, };
@@ -109,10 +109,13 @@ mute_at_all: boolean,
  */
 marked_unread: boolean, };
 export type CleanupResult = { files: number, bytes: number, };
+export type CommandError = { kind: CommandErrorKind, diagnostic?: string, code: string, params: { [key in string]: MessageParam }, };
+export type CommandErrorKind = "postal_error";
 export type ConnectionState = { started: boolean, connected: boolean, qr: string | null, };
 export type ContactIdentity = { contact_saved: boolean | null, saved_name: string | null, legacy_name: string | null, push_name: string | null, username: string | null, number: string | null, own: boolean, };
-export type ContactSendResult = { message_id: string, warning: string | null, };
+export type ContactSendResult = { message_id: string, warning: string | null, warning_ref?: MessageRef, diagnostic?: string, };
 export type Contributions = { commands: Array<string>, transcription?: TranscriptionContribution | null, };
+export type DatabaseEncryptionStatus = { active_account: string | null, requested: boolean, enabled_at_start: boolean, active_account_encrypted: boolean | null, restart_required: boolean, error: MessageRef | null, diagnostic: string | null, };
 export type DesktopChatTarget = { account_id: string, chat: string, };
 export type DesktopStatus = { start_on_login: boolean, shortcut_registered: boolean, };
 export type DiskRetention = { max_age_hours: RetentionLimit, max_messages_per_chat: RetentionLimit, };
@@ -138,9 +141,9 @@ export type GroupAuditPage = { entries: Array<GroupAuditEntry>, has_more: boolea
 export type GroupAuditSource = "notification" | "message" | "history" | "local" | "stored";
 export type GroupCreateParticipant = { jid: string, state: GroupCreateParticipantState, };
 export type GroupCreateParticipantState = "added" | "pending" | "unconfirmed";
-export type GroupCreateResult = { jid: string, subject: string, participants: Array<GroupCreateParticipant>, warnings: Array<string>, };
-export type GroupHistoryOffer = { enabled: boolean, reason: string | null, max_messages: number, time_window_seconds: number, };
-export type GroupHistoryResult = { state: string, message: string, retry_id: string | null, };
+export type GroupCreateResult = { jid: string, subject: string, participants: Array<GroupCreateParticipant>, warnings: Array<string>, warning_refs?: Array<MessageFailure>, };
+export type GroupHistoryOffer = { enabled: boolean, reason: string | null, reason_ref?: MessageRef, max_messages: number, time_window_seconds: number, };
+export type GroupHistoryResult = { state: string, message: string, message_ref?: MessageRef, diagnostic?: string, retry_id: string | null, };
 export type GroupInfo = { subject: string | null, description: string | null, created_at: number | null,
 /**
  * Name and address of whoever created the group.
@@ -240,7 +243,7 @@ expires_at: number | null,
  * Stopped by the sender or expired; the last position is kept.
  */
 ended: boolean, };
-export type MarkReadResult = { chat: string, changed: number | null, error: string | null, };
+export type MarkReadResult = { chat: string, changed: number | null, error: CommandError | null, };
 export type MediaAction = "copy_image" | "save" | "open";
 export type MediaAutoDownload = { image: boolean, video: boolean, audio: boolean, document: boolean, sticker: boolean, gif: boolean, };
 export type MediaAutoDownloadOverrides = { image: boolean | null, video: boolean | null, audio: boolean | null, document: boolean | null, sticker: boolean | null, gif: boolean | null, };
@@ -251,7 +254,7 @@ export type MemberFieldState = "available" | "unavailable" | "restricted" | "err
 export type MemberJoinEvidence = { timestamp: number, actor: string | null, kind: string, message_id: string, };
 export type MemberMessageStats = { total: number, first_at: number | null, last_at: number | null, media_total: number, reactions_sent: number, times_mentioned: number, mention_contexts_recorded: number, group_mention_contexts_recorded: number, };
 export type MemberNote = { text: string, warnings: number, updated_at: number | null, };
-export type MemberProfile = { local: MemberProfileLocal, live: MemberProfileLive | null, live_cached: boolean, live_stale: boolean, moderation_admin_verified: boolean, moderation_verified_at: number | null, moderation_error: string | null, jid: string,
+export type MemberProfile = { local: MemberProfileLocal, live: MemberProfileLiveView | null, live_cached: boolean, live_stale: boolean, moderation_admin_verified: boolean, moderation_verified_at: number | null, moderation_error: string | null, moderation_error_ref?: MessageRef, moderation_diagnostic?: string, jid: string,
 /**
  * Saved, push, business or user name; `None` when only the number is known.
  */
@@ -266,13 +269,17 @@ number: string | null, username: string | null, about: string | null,
 business: string | null, };
 export type MemberProfileField<T> = { state: MemberFieldState, value: T | null, error: string | null, stale: boolean, };
 export type MemberProfileLive = { fetched_at: number, about: MemberProfileField<string>, username: MemberProfileField<string>, photo: MemberProfileField<string>, photo_id: string | null, business: MemberProfileField<MemberBusinessProfile>, business_name: MemberProfileField<string>, device_count: MemberProfileField<number>, };
+export type MemberProfileLiveView = { field_failures: { [key in string]: MessageFailure }, fetched_at: number, about: MemberProfileField<string>, username: MemberProfileField<string>, photo: MemberProfileField<string>, photo_id: string | null, business: MemberProfileField<MemberBusinessProfile>, business_name: MemberProfileField<string>, device_count: MemberProfileField<number>, };
 export type MemberProfileLocal = { jid: string, addresses: Array<string>, identity: ContactIdentity, pn_jid: string | null, lid_jid: string | null, scope_chat: string | null, stats: MemberMessageStats, note: MemberNote, group: CachedMemberGroup | null, join: MemberJoinEvidence | null, mutual_groups: Array<CachedMemberGroup>, signals: MemberSignals, };
 export type MemberSignals = { online: boolean | null, last_seen: number | null, presence_at: number | null, typing: string | null, typing_at: number | null, };
 export type MessageCursor = { timestamp: number, id: string, sort_order: number, };
+export type MessageFailure = { diagnostic?: string, code: string, params: { [key in string]: MessageParam }, };
 export type MessageLabelAssociation = { label_id: string, chat: string, message_id: string, };
 export type MessagePage = { messages: Array<StoredMessage>, has_more: boolean, };
 export type MessagePageDirection = "before" | "after" | "through";
+export type MessageParam = string | number | boolean | null;
 export type MessageReceipt = { recipient: string, name: string | null, delivered_at: number | null, read_at: number | null, played_at: number | null, };
+export type MessageRef = { code: string, params: { [key in string]: MessageParam }, };
 export type OnceState = {
 /**
  * Whether a device was ever linked; survives the instance being stopped.
@@ -354,11 +361,12 @@ export type ProviderConsent = { plugin_id: string, provider: string, };
 export type ProviderKind = "local" | "cloud";
 export type QuickRepliesView = { complete: boolean, replies: Array<QuickReply>, };
 export type QuickReply = { id: string, shortcut: string, message: string, keywords: Array<string>, count: number, associated_label_ids: Array<string>, };
-export type QuizFeedback = { correct_option: string | null, my_correct: boolean | null, results_complete: boolean, error: string | null, can_vote: boolean, };
+export type QuizFeedback = { correct_option: string | null, my_correct: boolean | null, results_complete: boolean, error: string | null, error_ref?: MessageRef, diagnostic?: string, can_vote: boolean, };
 export type Reaction = { target: string, sender: string, emoji: string, };
 export type ResolvedSpaceItem = { item_id: string, chats: Array<string>, unavailable: string | null, };
 export type RetentionLimit = { "kind": "inherit" } | { "kind": "unlimited" } | { "kind": "limited", "value": number };
 export type ScheduledMessage = { id: string, chat: string, text: string, mentions: Array<string>, due_at: number, status: string, error: string | null, attempted: boolean, };
+export type ScheduledMessageView = { failure: CommandError | null, id: string, chat: string, text: string, mentions: Array<string>, due_at: number, status: string, error: string | null, attempted: boolean, };
 export type SearchResult = { jid: string, name: string,
 /**
  * The JID's user part, so the UI can show "number - name".
@@ -577,7 +585,7 @@ send_receipts: boolean,
 /**
  * Whether messages are kept on disk. Off keeps them in memory for this run only.
  */
-keep_history: boolean,
+keep_history: boolean, encrypt_databases: boolean,
 /**
  * Skip the initial-sync loading screen and show the chat UI immediately.
  * Off holds the loading screen until the initial backlog is applied.

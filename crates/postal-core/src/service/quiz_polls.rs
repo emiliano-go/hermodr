@@ -1,4 +1,5 @@
 use super::*;
+use crate::message_ref::{MessageFailure, MessageRef};
 use crate::store::{
     quiz_polls::{QuizCipher, QuizDefinition},
     ChatMarks, Poll, PollVote, QuizFeedback,
@@ -150,7 +151,7 @@ impl WhatsAppService {
         validate_create(question, &options, correct_index)?;
         anyhow::ensure!(
             self.is_connected() && (target.is_pn() || target.is_lid() || target.is_group()),
-            "Quiz account or destination is unavailable."
+            MessageRef::new("error.quiz_destination")
         );
         let to_self = self.is_self_jid(&target);
         let (sent, secret) = self
@@ -188,29 +189,29 @@ impl WhatsAppService {
         let target = broadcast_lists::writable_target(chat)?;
         anyhow::ensure!(
             choices.len() <= 1,
-            "Quizzes accept one answer; no answer withdraws the vote."
+            MessageRef::new("error.quiz_answer_count")
         );
         let def = self
             .store
             .quiz_definition(chat, id)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("Quiz is unavailable or private."))?;
+            .ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.quiz_private")))?;
         let secret = def
             .secret
             .as_deref()
             .filter(|s| s.len() == 32)
-            .ok_or_else(|| anyhow::anyhow!("Quiz arrived without its vote key."))?;
+            .ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.quiz_key_missing")))?;
         let current = self
             .store
             .poll_secret(chat, id)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("Quiz is unavailable."))?;
+            .ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.quiz_unavailable")))?;
         validate_quiz_choices(&def, &current.options, &choices)?;
         let creator: Jid = def.creator.parse()?;
         let own = self
             .client
             .pn()
-            .ok_or_else(|| anyhow::anyhow!("not logged in"))?
+            .ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.not_connected")))?
             .to_non_ad();
         let voter = if creator.is_lid() {
             self.client.lid().unwrap_or_else(|| own.clone()).to_non_ad()
@@ -275,15 +276,23 @@ impl WhatsAppService {
                 my_correct: None,
                 results_complete: false,
                 error: None,
+                error_ref: None,
+                diagnostic: None,
                 can_vote: false,
             };
             if let Some(def) = self.store.quiz_definition(chat, &poll.id).await? {
                 match self.project_quiz(chat, poll, &def, legacy).await {
                     Ok(value) => feedback = value,
-                    Err(error) => feedback.error = Some(error.to_string()),
+                    Err(error) => {
+                        feedback.error = Some(error.to_string());
+                        let failure = MessageFailure::from(error);
+                        feedback.error_ref = Some(failure.message);
+                        feedback.diagnostic = failure.diagnostic;
+                    }
                 }
             } else {
-                feedback.error = Some("Quiz is unavailable or private.".into())
+                feedback.error = Some("Quiz is unavailable or private.".into());
+                feedback.error_ref = Some(MessageRef::new("error.quiz_private"));
             }
             if self.store.quiz_definition(chat, &poll.id).await?.is_none() {
                 poll.votes.clear();
@@ -307,7 +316,7 @@ impl WhatsAppService {
             .secret
             .as_deref()
             .filter(|s| s.len() == 32)
-            .ok_or_else(|| anyhow::anyhow!("Quiz arrived without its vote key."))?;
+            .ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.quiz_key_missing")))?;
         let creator: Jid = def.creator.parse()?;
         let creators = quiz_creator_forms(&self.client, &self.store, &creator).await;
         let snapshot = self.store.quiz_cipher_snapshot(chat, &poll.id).await?;
@@ -404,6 +413,16 @@ fn quiz_feedback(
             .flatten(),
         results_complete: complete,
         can_vote: valid_answer,
+        diagnostic: None,
+        error_ref: if !unchanged {
+            Some(MessageRef::new("error.quiz_answers_edited"))
+        } else if !def.answer_valid {
+            Some(MessageRef::new("error.quiz_correct_unavailable"))
+        } else if !complete {
+            Some(MessageRef::new("warning.quiz_incomplete"))
+        } else {
+            None
+        },
         error: if !unchanged {
             Some("Edited quiz answers are unavailable.".into())
         } else if !def.answer_valid {
@@ -452,13 +471,13 @@ async fn open_quiz_cipher(
                         && hashes.iter().all(|h| options
                             .iter()
                             .any(|o| compute_option_hash(o).as_slice() == h)),
-                    "Invalid quiz selection."
+                    MessageRef::new("error.quiz_selection")
                 );
                 return Ok((voter, creator.clone()));
             }
         }
     }
-    anyhow::bail!("Quiz vote could not be opened.")
+    anyhow::bail!(MessageRef::new("error.quiz_decrypt"))
 }
 
 async fn quiz_creator_forms(client: &Client, store: &StoreWorker, creator: &Jid) -> Vec<Jid> {
@@ -615,7 +634,7 @@ fn validate_create(question: &str, options: &[String], correct: usize) -> Result
                 .collect::<std::collections::HashSet<_>>()
                 .len()
                 == options.len(),
-        "Invalid quiz question, options or correct answer."
+        MessageRef::new("error.quiz_form")
     );
     Ok(())
 }
@@ -627,11 +646,11 @@ fn validate_quiz_choices(
 ) -> Result<()> {
     anyhow::ensure!(
         def.answer_valid && current_options == def.options,
-        "Edited or malformed quiz cannot be voted on here."
+        MessageRef::new("error.quiz_edited")
     );
     anyhow::ensure!(
         choices.iter().all(|c| def.options.contains(c)),
-        "Unknown quiz answer."
+        MessageRef::new("error.quiz_answer")
     );
     Ok(())
 }

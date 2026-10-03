@@ -9,20 +9,25 @@ pub(crate) struct FavoriteDb {
 pub(crate) type FavoriteWorker = super::worker::Worker<FavoriteDb>;
 
 impl FavoriteWorker {
-    pub(crate) async fn open(path: &Path) -> Result<Self> {
+    pub(crate) async fn open_with_key(path: &Path, key: Option<crate::database_crypto::DatabaseKey>) -> Result<Self> {
         let path = path.to_owned();
-        Ok(Self::new(tokio::task::spawn_blocking(move || FavoriteDb::open(&path)).await??))
+        Ok(Self::new(tokio::task::spawn_blocking(move || FavoriteDb::open_with_key(&path, key.as_ref())).await??))
     }
 }
 
 impl FavoriteDb {
+    #[cfg(test)]
     fn open(path: &Path) -> Result<Self> {
+        Self::open_with_key(path, None)
+    }
+
+    fn open_with_key(path: &Path, key: Option<&crate::database_crypto::DatabaseKey>) -> Result<Self> {
         if path != Path::new(":memory:") {
             if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
                 std::fs::create_dir_all(parent)?;
             }
         }
-        let conn = Connection::open(path).context("open favorite chats")?;
+        let conn = crate::database_crypto::open_database(path, key, rusqlite::OpenFlags::default()).context("open favorite chats")?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.execute_batch("CREATE TABLE IF NOT EXISTS favorite_chats (

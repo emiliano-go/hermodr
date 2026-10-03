@@ -1,14 +1,15 @@
 <script lang="ts">
+  import { t } from "$lib/i18n/localizer";
   import { MEDIA_TYPES } from "$lib/utils/auto-download";
   import type { MediaAutoDownload } from "$lib/utils/wire";
   let { value, onchange }: { value: MediaAutoDownload; onchange: (next: MediaAutoDownload) => void } = $props();
 </script>
 
 <div class="downloads">
-  <p>Download incoming media automatically. Each chat can override any type.</p>
-  {#each MEDIA_TYPES as [kind, label]}
+  <p>{t("settings.download_hint")}</p>
+  {#each MEDIA_TYPES as [kind]}
     <label>
-      <span>{label}</span>
+      <span>{t(`settings.media_${kind}`)}</span>
       <input class="switch" type="checkbox" checked={value[kind]}
         onchange={(event) => onchange({ ...value, [kind]: event.currentTarget.checked })} />
     </label>

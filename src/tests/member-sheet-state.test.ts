@@ -3,7 +3,9 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { compileModule } from "svelte/compiler";
 import ts from "typescript";
-import { memberActionReason } from "../lib/utils/member-sheet.ts";
+import { normalizeError } from "../lib/i18n/errors.ts";
+import { uiError } from "../lib/state/localized.ts";
+import { memberActionError } from "../lib/utils/member-sheet.ts";
 import type { MemberSheetState } from "../lib/state/member-sheet.svelte";
 
 const source = readFileSync(new URL("../lib/state/member-sheet.svelte.ts", import.meta.url), "utf8");
@@ -21,8 +23,8 @@ function fixture() {
   type Work = (signal: AbortSignal) => Promise<unknown>;
   let queue = (run: Work) => run(new AbortController().signal);
   const invoke = (command: string, args: any) => { calls.push({ command, args }); return handler(command, args); };
-  const State = new Function("invoke", "memberActionReason", "session", "messages", "chats", "composer", `${compiled}\nreturn MemberSheetState;`)
-    (invoke, memberActionReason, session, messages, chats, { enqueue: (run: Work) => queue(run) }) as new () => MemberSheetState;
+  const State = new Function("invoke", "memberActionError", "session", "messages", "chats", "composer", "normalizeError", "uiError", `${compiled}\nreturn MemberSheetState;`)
+    (invoke, memberActionError, session, messages, chats, { enqueue: (run: Work) => queue(run) }, normalizeError, uiError) as new () => MemberSheetState;
   const state = new State();
   state.scope = { account: session.activeAccount, group: chats.selectedChat, jid: "123@lid", requestKey: 1, generation: 1, title: "Member" };
   return { state, session, messages, chats, calls, handle: (next: typeof handler) => handler = next, queue: (next: typeof queue) => queue = next };

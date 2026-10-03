@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { t } from "$lib/i18n/localizer";
+  import { LocalizedError, normalizeError } from "$lib/i18n/errors";
   import { untrack } from "svelte";
   import type { StickerLibrary, StickerResyncReport } from "$lib/utils/wire";
   import { stickerResyncText, stickerScopeMatches, type StickerScope } from "$lib/utils/sticker-sync";
@@ -12,7 +14,7 @@
   } = $props();
 
   let library = $state<StickerLibrary | null>(null);
-  let loading = $state(false), busy = $state(false), error = $state("");
+  let loading = $state(false), busy = $state(false), error = $state<LocalizedError | string | null>("");
   let report = $state<StickerResyncReport | null>(null);
   let epoch = 0, request = 0, ownerKey = "";
   let lastVersion = untrack(() => version);
@@ -34,7 +36,7 @@
       library = value;
       onlibrary?.(owner, value);
     } catch (failure) {
-      if (current(owner, revision) && read === request) error = `Could not refresh cached sticker library: ${failure}`;
+      if (current(owner, revision) && read === request) error = normalizeError(failure);
     } finally {
       if (current(owner, revision) && read === request) loading = false;
     }
@@ -57,11 +59,11 @@
         library = next;
         onlibrary?.(owner, next);
       } catch (failure) {
-        if (current(owner, revision)) error = `Could not refresh cached sticker library: ${failure}`;
+        if (current(owner, revision)) error = normalizeError(failure);
       }
       if (current(owner, revision)) onsynced?.(owner);
     } catch (failure) {
-      if (current(owner, revision)) error = `Sticker resync failed: ${failure}`;
+      if (current(owner, revision)) error = normalizeError(failure);
     } finally {
       if (current(owner, revision)) busy = false;
     }
@@ -87,22 +89,22 @@
   });
 </script>
 
-<section class="sticker-sync" aria-label="Sticker sync">
-  <button disabled={!account || !connected || busy || loading} onclick={resync}>{busy ? "Resyncing stickers…" : "Resync known stickers"}</button>
-  <p class="muted">Refreshes known shared packs, favorites and recents.</p>
-  {#if !account || !connected}<p class="muted" role="status">Connect this account to resync. Cached data stays available.</p>{/if}
-  {#if loading}<p role="status">Loading cached sticker library…</p>{/if}
-  {#if busy}<p role="status">Sticker resync is pending.</p>{/if}
+<section class="sticker-sync" aria-label={t("content.sticker_sync")}>
+  <button disabled={!account || !connected || busy || loading} onclick={resync}>{busy ? t("content.resyncing_stickers") : t("content.resync_known_stickers")}</button>
+  <p class="muted">{t("content.refreshes_known_shared_packs_favorites_and_recents")}</p>
+  {#if !account || !connected}<p class="muted" role="status">{t("content.connect_this_account_to_resync_cached_data_stays_available")}</p>{/if}
+  {#if loading}<p role="status">{t("content.loading_cached_sticker_library")}</p>{/if}
+  {#if busy}<p role="status">{t("content.sticker_resync_is_pending")}</p>{/if}
   {#if report}
     <p role="status">{stickerResyncText(report)}</p>
-    <p class="muted">{report.mirror_verified === true ? "Phone mirror verified." : "Phone mirror unverified."} {report.catalog_complete === true ? "Full catalog reported." : "Known shared packs only; full installed catalog unverified."}</p>
+    <p class="muted">{report.mirror_verified === true ? t("content.phone_mirror_verified") : t("content.phone_mirror_unverified")} {report.catalog_complete === true ? t("content.full_catalog_reported") : t("content.known_shared_packs_only_full_installed_catalog_unverified")}</p>
     {#if report.app_state_error}<p class="error" role="alert">{report.app_state_error}</p>{/if}
-    {#if report.pack_failures?.length}<ul class="error" aria-label="Pack refresh failures">{#each report.pack_failures as failed (failed.pack_id)}<li>{failed.pack_id}: {failed.error}</li>{/each}</ul>{/if}
+    {#if report.pack_failures?.length}<ul class="error" aria-label={t("content.pack_refresh_failures")}>{#each report.pack_failures as failed (failed.pack_id)}<li>{failed.pack_id}: {failed.error}</li>{/each}</ul>{/if}
   {/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if showPacks && library}
-    {#if library.catalog_complete !== true}<p class="muted">This cache contains known shared packs; it does not verify the phone’s full installed catalog.</p>{/if}
-    {#if library.packs.length === 0}<p class="muted">No known shared packs in this account’s cache.</p>
+    {#if library.catalog_complete !== true}<p class="muted">{t("content.this_cache_contains_known_shared_packs_it_does_not_verify_the_phone_s_fu")}</p>{/if}
+    {#if library.packs.length === 0}<p class="muted">{t("content.no_known_shared_packs_in_this_account_s_cache")}</p>
     {:else}<ul>{#each library.packs as pack (pack.pack_id)}<li>{pack.name ?? pack.publisher ?? pack.pack_id}</li>{/each}</ul>{/if}
   {/if}
 </section>

@@ -19,7 +19,7 @@
     mutual_groups: [{ chat: "cached@g.us", subject: "Cached group", observed_at: 2000, present: true, admin: false, owner: false, label: null, own_admin: false, member_observed_at: 2000, complete_snapshot: true }],
     signals: { online: null, last_seen: null, presence_at: null, typing: null, typing_at: null } });
   let moderationVerifiedAt = $state(Math.floor(Date.now() / 1000));
-  let live = $state<MemberLiveView>({ fetched_at: Math.floor(Date.now() / 1000), photo_id: null,
+  let live = $state<MemberLiveView>({ field_failures: {}, fetched_at: Math.floor(Date.now() / 1000), photo_id: null,
     about: { state: "restricted", value: null, error: "Access denied by server.", stale: false },
     username: { state: "available", value: "member", error: null, stale: false },
     photo: { state: "unavailable", value: null, error: null, stale: false },

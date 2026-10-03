@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
+  import { t } from "$lib/i18n/localizer";
   import { onDestroy } from "svelte";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import Button from "$lib/ui/Button.svelte";
@@ -27,7 +29,7 @@
   let chosen = $state<Record<string, string>>({});
   let searching = $state(false);
   let busy = $state(false);
-  let failed = $state<string | null>(null);
+  let failed = $state<LocalizedError | string | null>(null);
   let created = $state<GroupCreateResult | null>(null);
   let mounted = true;
   onDestroy(() => { mounted = false; });
@@ -52,7 +54,7 @@
         const found = await onsearch(value);
         if (active && current()) { results = found; failed = null; }
       } catch (error) {
-        if (active && current()) failed = String(error);
+        if (active && current()) failed = normalizeError(error);
       } finally {
         if (active && current()) searching = false;
       }
@@ -84,7 +86,7 @@
       await onopen(created);
       if (current()) onclose();
     } catch (error) {
-      if (current()) failed = String(error);
+      if (current()) failed = normalizeError(error);
     } finally {
       if (current()) busy = false;
     }
@@ -103,7 +105,7 @@
       busy = false;
       if (!result.warnings.length && result.participants.every((person) => person.state === "added")) await open();
     } catch (error) {
-      if (current()) failed = String(error);
+      if (current()) failed = normalizeError(error);
     } finally {
       if (current()) busy = false;
     }
@@ -113,44 +115,54 @@
 <dialog bind:this={dialog} aria-labelledby="new-group-title" oncancel={(event) => { event.preventDefault(); close(); }}>
   <form onsubmit={(event) => { event.preventDefault(); if (!created) void create(); }}>
     <header>
-      <h2 id="new-group-title">{created ? "Group created" : "New group"}</h2>
-      <button class="close" type="button" aria-label="Close" disabled={busy} onclick={close}><Icon name="x" size={18} /></button>
+      <h2 id="new-group-title">{created ? t("group.created") : t("group.new")}</h2>
+      <button class="close" type="button" aria-label={t("ui.close")} disabled={busy} onclick={close}><Icon name="x" size={18} /></button>
     </header>
     {#if created}
       <p class="subject">{created.subject}</p>
-      <ul class="outcomes" aria-label="Participant results">
+      <ul class="outcomes" aria-label={t("group.participant_results")}>
         {#each created.participants as person (person.jid)}
           <li class:unconfirmed={person.state === "unconfirmed"}>
             <span>{chosen[person.jid] ?? members.displayName(null, person.jid)}</span>
-            <span class="note">{person.state === "added" ? "Added" : person.state === "pending" ? "Awaiting admin approval" : "Membership not confirmed"}</span>
+            <span class="note">{person.state === "added" ? t("group.added") : person.state === "pending" ? t("group.awaiting_approval") : t("group.membership_unconfirmed")}</span>
           </li>
         {/each}
       </ul>
       {#if created.participants.some((person) => person.state === "unconfirmed")}
-        <p class="note">Check group members and join requests for anyone whose membership was not confirmed.</p>
+        <p class="note">{t("group.membership_check_hint")}</p>
       {/if}
-      {#each created.warnings as warning}<p class="error" role="status">{warning}</p>{/each}
+      {#if created.warning_refs?.length}
+        {#each created.warning_refs as warning}
+          <p class="error" role="status">{t(warning.code, warning.params)}</p>
+          {#if warning.diagnostic}<details><summary>{t("error.technical_details")}</summary><pre dir="auto">{warning.diagnostic}</pre></details>{/if}
+        {/each}
+      {:else}
+        {#each created.warnings as warning}
+          <p class="error" role="status">{t("warning.group_creation_details")}</p>
+          <details><summary>{t("error.technical_details")}</summary><pre dir="auto">{warning}</pre></details>
+        {/each}
+      {/if}
     {:else}
       <label class="field-label">
-        Group subject
-        <input class="field" bind:value={subject} disabled={busy} aria-describedby="group-subject-limit" placeholder="Name this group" />
+        {t("group.subject")}
+        <input class="field" dir="auto" bind:value={subject} disabled={busy} aria-describedby="group-subject-limit" placeholder={t("group.subject_placeholder")} />
       </label>
-      <p id="group-subject-limit" class="note" class:error={subjectLength > 100}>{subjectLength}/100 characters</p>
+      <p id="group-subject-limit" class="note" class:error={subjectLength > 100}>{t("group.subject_count", { count: subjectLength })}</p>
       <label class="search">
         <Icon name="search" size={15} />
-        <input bind:value={query} disabled={busy} aria-label="Search contacts" placeholder="Search contacts" />
+        <input dir="auto" bind:value={query} disabled={busy} aria-label={t("contact.search")} placeholder={t("contact.search")} />
       </label>
       {#if picked.length}
-        <div class="picked" aria-label="Selected participants">
+        <div class="picked" aria-label={t("group.selected_participants")}>
           {#each picked as jid (jid)}
-            <button type="button" disabled={busy} aria-label="Remove {chosen[jid]}" onclick={() => { const next = { ...chosen }; delete next[jid]; chosen = next; }}>
-              {chosen[jid]} <Icon name="x" size={12} />
+            <button type="button" disabled={busy} aria-label={t("group.participant_remove", { name: chosen[jid] })} onclick={() => { const next = { ...chosen }; delete next[jid]; chosen = next; }}>
+              <bdi>{chosen[jid]}</bdi> <Icon name="x" size={12} />
             </button>
           {/each}
         </div>
       {/if}
-      <p class="note">{picked.length}/256 people selected. You are included as group creator.</p>
-      <ul class="contacts" aria-label="Contacts">
+      <p class="note">{t("group.participant_count", { count: picked.length })}</p>
+      <ul class="contacts" aria-label={t("contact.contacts")}>
         {#each shown as row (row.jid)}
           <li>
             <label class="row" class:chosen={!!chosen[row.jid]}>
@@ -165,16 +177,16 @@
           </li>
         {/each}
       </ul>
-      {#if searching}<p class="note" role="status">Searching…</p>
-      {:else if !shown.length}<p class="note">No contacts found.</p>{/if}
+      {#if searching}<p class="note" role="status">{t("ui.searching")}</p>
+      {:else if !shown.length}<p class="note">{t("contact.no_matches")}</p>{/if}
     {/if}
     {#if failed}<p class="error" role="alert">{failed}</p>{/if}
     <footer>
-      <Button variant="ghost" type="button" disabled={busy} onclick={close}>{created ? "Done" : "Cancel"}</Button>
+      <Button variant="ghost" type="button" disabled={busy} onclick={close}>{created ? t("ui.done") : t("ui.cancel")}</Button>
       {#if created}
-        <Button variant="primary" type="button" disabled={busy} onclick={open}>{busy ? "Opening…" : "Open group"}</Button>
+        <Button variant="primary" type="button" disabled={busy} onclick={open}>{busy ? t("ui.opening") : t("group.open")}</Button>
       {:else}
-        <Button variant="primary" type="submit" disabled={busy || !valid}>{busy ? "Creating…" : "Create group"}</Button>
+        <Button variant="primary" type="submit" disabled={busy || !valid}>{busy ? t("ui.creating") : t("group.create")}</Button>
       {/if}
     </footer>
   </form>

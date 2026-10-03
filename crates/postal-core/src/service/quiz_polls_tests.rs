@@ -355,6 +355,8 @@ async fn postal_only_aliases_open_genuine_votes_and_partial_peer_results_keep_ow
     let creator_feedback = quiz_feedback(&def, &poll, false, true, true);
     assert_eq!(creator_feedback.correct_option.as_deref(), Some("B"));
     assert_eq!(creator_feedback.my_correct, None);
+    assert_eq!(partial.error_ref.as_ref().unwrap().code, "warning.quiz_incomplete");
+    assert!(partial.diagnostic.is_none());
     assert_eq!(
         quiz_feedback(&def, &poll, false, true, false).my_correct,
         None

@@ -1,4 +1,5 @@
 use super::*;
+use crate::message_ref::MessageRef;
 use whatsapp_rust::wacore::iq::groups::{GroupMetadataOutcome, GroupQueryIq, ParticipantChangeResponse};
 
 #[derive(Debug, Clone, Serialize)]
@@ -13,7 +14,7 @@ impl WhatsAppService {
     pub async fn group_join_requests(&self, chat: &str) -> Result<Vec<GroupJoinRequest>> {
         let group = self.join_request_admin(chat).await?;
         let requests = self.client.groups().get_membership_requests(group).await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            .map_err(anyhow::Error::from)?;
         let mut seen = std::collections::HashSet::new();
         let requests = requests.into_iter().filter(|request| seen.insert(request.jid.to_non_ad())).collect::<Vec<_>>();
         let jids = requests.iter().map(|request| request.jid.to_non_ad().to_string()).collect::<Vec<_>>();
@@ -31,7 +32,7 @@ impl WhatsAppService {
         let groups = self.client.groups();
         let result = if approve { groups.approve_membership_requests(group, &selected).await }
             else { groups.reject_membership_requests(group, &selected).await }
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            .map_err(anyhow::Error::from)?;
         self.after_group_change(chat);
         Ok(result.iter().map(|response| request_change(response, &selected)).collect())
     }
@@ -39,28 +40,28 @@ impl WhatsAppService {
     async fn join_request_admin(&self, chat: &str) -> Result<Jid> {
         let group = request_group(chat)?;
         let mut metadata = match self.client.execute(GroupQueryIq::new(&group)).await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))? {
+            .map_err(anyhow::Error::from)? {
             GroupMetadataOutcome::Full(metadata) => whatsapp_rust::GroupMetadata::from(*metadata),
-            GroupMetadataOutcome::NotModified => anyhow::bail!("current group role could not be verified"),
+            GroupMetadataOutcome::NotModified => anyhow::bail!(MessageRef::new("error.group_role_unverified")),
         };
         self.client.groups().resolve_participant_addresses(&mut metadata).await;
-        anyhow::ensure!(self.is_group_admin(&metadata), "only group admins can manage join requests");
+        anyhow::ensure!(self.is_group_admin(&metadata), MessageRef::new("error.group_requests_admin"));
         Ok(group)
     }
 }
 
 fn request_group(chat: &str) -> Result<Jid> {
-    let jid: Jid = chat.parse()?;
-    anyhow::ensure!(jid.is_group() && !jid.user.is_empty(), "join requests require a group");
+    let jid: Jid = chat.parse::<Jid>().map_err(|error| anyhow::Error::new(MessageRef::new("error.group_requests_group")).context(error.to_string()))?;
+    anyhow::ensure!(jid.is_group() && !jid.user.is_empty(), MessageRef::new("error.group_requests_group"));
     Ok(jid.to_non_ad())
 }
 
 fn request_participants(jids: &[String]) -> Result<Vec<Jid>> {
-    anyhow::ensure!(!jids.is_empty() && jids.len() <= 1024, "select between 1 and 1024 requests");
+    anyhow::ensure!(!jids.is_empty() && jids.len() <= 1024, MessageRef::new("error.group_requests_count").with_param("limit", serde_json::Number::from(1024)));
     let mut seen = std::collections::HashSet::new();
     let mut selected = Vec::new();
     for jid in groups::parse_jids(jids)? {
-        anyhow::ensure!(!jid.user.is_empty() && (jid.is_pn() || jid.is_lid()), "invalid requester address");
+        anyhow::ensure!(!jid.user.is_empty() && (jid.is_pn() || jid.is_lid()), MessageRef::new("error.group_request_address"));
         let jid = jid.to_non_ad();
         if seen.insert(jid.clone()) { selected.push(jid); }
     }

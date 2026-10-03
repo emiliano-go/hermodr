@@ -2,6 +2,7 @@
 //! protocol messages into stored rows.
 
 use super::*;
+use crate::message_ref::MessageRef;
 use crate::store::group_audit::GroupAuditKind as AuditKind;
 
 impl WhatsAppService {
@@ -105,17 +106,17 @@ impl WhatsAppService {
         let to = broadcast_lists::writable_target(chat)?;
         let text = text.into();
         if text.trim().is_empty() {
-            anyhow::bail!("an edit cannot be empty");
+            anyhow::bail!(MessageRef::new("error.message_edit_empty"));
         }
         let existing = self.store.message(chat, id).await?;
-        anyhow::ensure!(!existing.is_unavailable(), "this message is unavailable on this device");
+        anyhow::ensure!(!existing.is_unavailable(), MessageRef::new("error.message_unavailable"));
         if !existing.header.from_me {
-            anyhow::bail!("only your own messages can be edited");
+            anyhow::bail!(MessageRef::new("error.message_edit_own"));
         }
         let sent = self.client
             .edit_message(to, id, wa::Message::text(text.clone()))
             .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            .map_err(anyhow::Error::from)?;
         self.store.update_message_content(chat, id, &text).await?;
         if group_audit::audit_message_allowed(&existing) {
             self.audit_local_group_change(chat, AuditKind::MessageEdit, Some(&existing.header.sender),
@@ -168,7 +169,7 @@ impl WhatsAppService {
         } else {
             actions.unarchive_chat(&jid, range).await
         };
-        result.map_err(|e| anyhow::anyhow!(e.to_string()))
+        result.map_err(anyhow::Error::from)
     }
 
     /// Sending to an archived chat brings it back to the main list, as WhatsApp
@@ -201,7 +202,7 @@ impl WhatsAppService {
             u if u < 0 => actions.mute_chat(&jid).await,
             u => actions.mute_chat_until(&jid, u * 1000).await,
         };
-        result.map_err(|e| anyhow::anyhow!(e.to_string()))
+        result.map_err(anyhow::Error::from)
     }
 
     /// Marks a chat unread by hand, or clears that mark, mirroring it to the account.
@@ -214,13 +215,13 @@ impl WhatsAppService {
             .chat_actions()
             .mark_chat_as_read(&jid, !unread, None)
             .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))
+            .map_err(anyhow::Error::from)
     }
 
     /// Leaves a group.
     pub async fn leave_group(&self, chat: &str) -> Result<()> {
         let jid: Jid = chat.parse()?;
-        self.client.groups().leave(jid).await.map_err(|e| anyhow::anyhow!(e.to_string()))
+        self.client.groups().leave(jid).await.map_err(anyhow::Error::from)
     }
 
     /// The chat a stored message id belongs to.
@@ -304,7 +305,7 @@ impl WhatsAppService {
         self.client
             .send_reaction(jid, Self::message_key(chat, id, sender, from_me), emoji)
             .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            .map_err(anyhow::Error::from)?;
         self.store.set_reaction(chat, id, "@me", emoji).await?;
         let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
         Ok(())
@@ -319,7 +320,7 @@ impl WhatsAppService {
         } else {
             actions.unstar_message(&jid, participant.as_ref(), id, from_me).await
         };
-        done.map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        done.map_err(anyhow::Error::from)?;
         self.store.set_starred(chat, id, starred).await?;
         let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
         Ok(())
@@ -336,9 +337,9 @@ impl WhatsAppService {
         } else {
             self.client.unpin_message(jid, key).await
         };
-        let sent = sent.map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let sent = sent.map_err(anyhow::Error::from)?;
         let pin = history_pins::live_message_pin(sent.message.as_ref(), unix_now() * 1000)?
-            .ok_or_else(|| anyhow::anyhow!("pin confirmation contains no target"))?;
+            .ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.message_pin_target")))?;
         let chat_key = chat.to_owned();
         self.store.run(move |store| store.apply_message_pin_update(&chat_key, &pin, false)).await?;
         if previous.as_ref().is_some_and(group_audit::audit_message_allowed) {
@@ -373,7 +374,7 @@ impl WhatsAppService {
         let sent = self.client
             .revoke_message(jid, id, kind)
             .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            .map_err(anyhow::Error::from)?;
         self.store.revoke_message(chat, id).await?;
         if let Some(previous) = previous.filter(group_audit::audit_message_allowed) {
             let old = if previous.local.revoked { "revoked" } else { "not_revoked" };
@@ -414,8 +415,8 @@ impl WhatsAppService {
     pub async fn forward(&self, from_chat: &str, id: &str, to_chat: &str) -> Result<()> {
         let to = broadcast_lists::writable_target(to_chat)?;
         let message = self.store.message(from_chat, id).await?;
-        anyhow::ensure!(!message.is_unavailable(), "this message is unavailable on this device");
-        anyhow::ensure!(!message.spoiler, "spoiler forwarding is unavailable until every media path preserves its wrapper");
+        anyhow::ensure!(!message.is_unavailable(), MessageRef::new("error.message_unavailable"));
+        anyhow::ensure!(!message.spoiler, MessageRef::new("error.message_spoiler_forward"));
         // Uncaptioned media is stored as `[kind]`, which must not become a caption.
         let placeholder = message.media.kind.as_ref().map(|kind| format!("[{kind}]"));
         let text = message.text.trim();
@@ -436,7 +437,7 @@ impl WhatsAppService {
                 }
             }
             None if message.media.kind.is_some() => {
-                anyhow::bail!("download the media before forwarding it")
+                anyhow::bail!(MessageRef::new("error.message_forward_download"))
             }
             None => {
                 let to_self = self.is_self_jid(&to);

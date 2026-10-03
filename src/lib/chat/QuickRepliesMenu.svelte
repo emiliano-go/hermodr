@@ -1,4 +1,6 @@
 <script lang="ts">
+  import type { LocalizedError } from "$lib/i18n/errors";
+  import { t } from "$lib/i18n/localizer";
   import { onDestroy, tick } from "svelte";
   import Icon from "$lib/ui/Icon.svelte";
   import type { QuickReply } from "$lib/utils/wire";
@@ -7,7 +9,7 @@
   let { account, chat, generation, requestKey, dataScope, replies, loading = false, syncing = false, error = null,
     connected, disabled = false, menuItem = false, onopen, onselect, onsync }: {
     account: string | null; chat: string; generation: number; requestKey: string | number; dataScope: QuickReplyScope | null;
-    replies: readonly QuickReply[]; loading?: boolean; syncing?: boolean; error?: string | null; connected: boolean; disabled?: boolean;
+    replies: readonly QuickReply[]; loading?: boolean; syncing?: boolean; error?: LocalizedError | string | null; connected: boolean; disabled?: boolean;
     menuItem?: boolean; onopen?: () => void;
     onselect: (scope: QuickReplyScope, reply: QuickReply) => void;
     onsync: (scope: QuickReplyScope) => void;
@@ -101,47 +103,47 @@
   type="button"
   class={menuItem ? "menu-row" : "trigger"}
   role={menuItem ? "menuitem" : undefined}
-  title="Quick replies"
-  aria-label="Quick replies"
+  title={t("chat.quick_replies")}
+  aria-label={t("chat.quick_replies")}
   aria-haspopup="dialog"
   aria-controls={id}
   aria-expanded={active}
   disabled={!account || !chat || disabled}
   onclick={open}>
-  <Icon name="message" size={18} />{#if menuItem}<span>Quick replies</span>{/if}
+  <Icon name="message" size={18} />{#if menuItem}<span>{t("chat.quick_replies")}</span>{/if}
 </button>
 <dialog bind:this={dialog} {id} aria-labelledby="{id}-title" onkeydown={key}
   oncancel={(event) => { event.preventDefault(); if (!composing) close(); }} onclose={() => { if (!dialog.open) openedScope = null; }}>
   {#if active && openedScope}
-    <header><h2 id="{id}-title">Stored quick replies</h2>
-      <button type="button" class="close" aria-label="Close quick replies" onclick={close}><Icon name="x" size={18} /></button>
+    <header><h2 id="{id}-title">{t("chat.quick_replies_stored")}</h2>
+      <button type="button" class="close" aria-label={t("chat.quick_replies_close")} onclick={close}><Icon name="x" size={18} /></button>
     </header>
-    <p class="note">Choose a reply to insert its text into your draft.</p>
+    <p class="note">{t("chat.quick_replies_hint")}</p>
     <div class="sync-row"><button type="button" disabled={!connected || loading || syncing || disabled} onclick={() => { if (openedScope) sync(openedScope); }}>
-      {syncing ? "Requesting sync…" : "Sync from phone"}
-    </button>{#if !connected}<span>Connect this account to sync.</span>{/if}</div>
-    <p class="note">Sync requests phone updates. More replies may arrive after the request finishes.</p>
-    {#if ready && loading}<p class="note" role="status">Loading stored quick replies…</p>{/if}
+      {syncing ? t("chat.quick_replies_syncing") : t("chat.quick_replies_sync")}
+    </button>{#if !connected}<span>{t("chat.quick_replies_connect")}</span>{/if}</div>
+    <p class="note">{t("chat.quick_replies_sync_hint")}</p>
+    {#if ready && loading}<p class="note" role="status">{t("chat.quick_replies_loading")}</p>{/if}
     {#if ready && error}<p class="error" role="alert">{error}</p>{/if}
-    <input bind:this={input} bind:value={query} type="search" role="combobox" aria-label="Find quick replies"
+    <input bind:this={input} bind:value={query} type="search" dir="auto" role="combobox" aria-label={t("chat.quick_replies_find")}
       oncompositionstart={() => (composing = true)} oncompositionend={() => (composing = false)}
       aria-autocomplete="list" aria-expanded="true" aria-controls="{id}-results"
       aria-activedescendant={chosen ? `${id}-option-${selected}` : undefined}
-      placeholder="Search shortcuts, messages or keywords" />
-    <ul bind:this={list} id="{id}-results" role="listbox" aria-label="Stored quick replies" aria-busy={ready && loading}>
+      placeholder={t("chat.quick_replies_search")} />
+    <ul bind:this={list} id="{id}-results" role="listbox" aria-label={t("chat.quick_replies_stored")} aria-busy={ready && loading}>
       {#each rows as reply (reply.id)}
         {@const index = indices.get(reply.id) ?? -1}
         <li role="presentation"><button type="button" role="option" id={index >= 0 ? `${id}-option-${index}` : undefined}
           aria-selected={reply.id === chosen} data-selected={reply.id === chosen} class:active={reply.id === chosen}
           disabled={disabled || !reply.message.trim()} tabindex="-1" data-reply-id={reply.id}
           onmouseenter={(event) => { const at = indices.get(event.currentTarget.dataset.replyId || ""); if (at !== undefined) selected = at; }} onclick={select}>
-          <span class="shortcut">{reply.shortcut ? `/${reply.shortcut.replace(/^\/+/, "")}` : "Quick reply"}</span>
-          <span class="message">{reply.message || "No text available"}</span>
+          <span class="shortcut">{reply.shortcut ? `/${reply.shortcut.replace(/^\/+/, "")}` : t("chat.quick_reply")}</span>
+          <span class="message" dir="auto">{reply.message || t("chat.no_text")}</span>
         </button></li>
       {/each}
     </ul>
     {#if !loading && rows.length === 0}<p class="note" role="status">
-      {ready ? query.trim() ? "No quick replies match this search." : "No quick replies stored on this device." : "Quick replies have not loaded for this chat."}
+      {ready ? query.trim() ? t("chat.quick_replies_no_matches") : t("chat.quick_replies_empty") : t("chat.quick_replies_not_loaded")}
     </p>{/if}
   {/if}
 </dialog>
@@ -152,7 +154,7 @@
   button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .trigger { display: grid; place-items: center; width: 34px; height: 34px; padding: 0; flex-shrink: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted); }
   .trigger:hover:not(:disabled), .close:hover { background: var(--raised); color: var(--text); }
-  .menu-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text); font-size: 14px; text-align: left; }
+  .menu-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text); font-size: 14px; text-align: start; }
   .menu-row:hover:not(:disabled) { background: var(--raised); }
   .menu-row :global(svg) { color: var(--accent); flex: none; }
   dialog { width: min(440px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); margin: auto; padding: 18px; box-sizing: border-box; overflow: auto; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
@@ -167,7 +169,7 @@
   .sync-row button { padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--raised); color: var(--text); }
   input { width: 100%; min-width: 0; box-sizing: border-box; margin: 4px 0 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg); color: var(--text); font: inherit; }
   ul { list-style: none; max-height: min(300px, 45dvh); overflow-y: auto; margin: 0; padding: 0; }
-  li button { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; width: 100%; min-width: 0; padding: 10px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); text-align: left; }
+  li button { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; width: 100%; min-width: 0; padding: 10px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); text-align: start; }
   li button.active, li button:hover:not(:disabled) { background: var(--raised); }
   .shortcut, .message { width: 100%; overflow-wrap: anywhere; }
   .shortcut { font-weight: 600; font-size: 13px; }

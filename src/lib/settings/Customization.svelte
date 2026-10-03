@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
+  import { t as tr, formatNumber } from "$lib/i18n/localizer";
   import Button from "$lib/ui/Button.svelte";
   import Icon from "$lib/ui/Icon.svelte";
   import ThemePreview, { type Scene } from "$lib/settings/ThemePreview.svelte";
@@ -19,19 +21,20 @@
     type Theme,
   } from "$lib/utils/theme.svelte";
 
+  const themeLabel = (candidate: Theme) => isBuiltIn(candidate) ? tr(`settings.theme_builtin_${candidate.id}`) : candidate.name;
   const groups = [...new Set(TOKENS.map((t) => t.group))];
   const ACCENTS = ["#00a884", "#53bdeb", "#7f66ff", "#e26ab6", "#f0b232", "#f15c6d"];
   const MOTION: [string, string][] = [
-    ["0", "Off"],
-    ["1", "Normal"],
-    ["2", "Slow"],
+    ["0", "ui.off"],
+    ["1", "settings.animation_normal"],
+    ["2", "settings.animation_slow"],
   ];
 
   const SCENES: [Scene, string][] = [
-    ["chat", "Chat"],
-    ["signin", "Sign-in"],
-    ["menu", "Menu"],
-    ["dialog", "Dialog"],
+    ["chat", "chat.chat"],
+    ["signin", "settings.preview_signin"],
+    ["menu", "settings.preview_menu"],
+    ["dialog", "settings.preview_dialog"],
   ];
   let scene = $state<Scene>("chat");
   /** Keeps the preview in view while the controls below scroll. */
@@ -39,7 +42,7 @@
 
   let importing = $state(false);
   let importText = $state("");
-  let importError = $state<string | null>(null);
+  let importError = $state<LocalizedError | string | null>(null);
   let copied = $state<"json" | "css" | null>(null);
 
   const theme = $derived(activeTheme());
@@ -135,9 +138,9 @@
   });
 
   const DENSITIES: [Density, string][] = [
-    ["compact", "Compact"],
-    ["comfortable", "Comfortable"],
-    ["cozy", "Cozy"],
+    ["compact", "settings.density_compact"],
+    ["comfortable", "settings.density_comfortable"],
+    ["cozy", "settings.density_cozy"],
   ];
 
   function removeTheme(id: string) {
@@ -153,7 +156,7 @@
       copied = format;
       setTimeout(() => (copied = null), 1500);
     } catch (e) {
-      importError = `Could not copy theme: ${String(e)}`;
+      importError = normalizeError({ kind: "postal_error", code: "error.theme_copy", params: {}, diagnostic: normalizeError(e).diagnostic });
     }
   }
 
@@ -179,7 +182,7 @@
       importText = "";
       importing = false;
     } catch {
-      importError = "That is not a theme. Paste the JSON that Export copies.";
+      importError = normalizeError({ kind: "postal_error", code: "error.theme_import", params: {} });
     }
   }
 
@@ -194,7 +197,7 @@
 </script>
 
 <section class="block">
-  <h3>Theme</h3>
+  <h3>{tr("settings.theme")}</h3>
   <div class="gallery">
     {#each allThemes() as option (option.id)}
       {@const o = option.tokens}
@@ -227,7 +230,7 @@
           </span>
         </span>
         <span class="card-name">
-          {option.name}
+          {themeLabel(option)}
           {#if option.id === theme.id}<Icon name="check" size={14} />{/if}
         </span>
       </button>
@@ -236,22 +239,22 @@
 
   <div class="toolbar">
     {#if builtIn}
-      <span class="hint">{theme.name} is built in. Changing anything makes an editable copy.</span>
+      <span class="hint">{tr("settings.theme_builtin_hint", { name: themeLabel(theme) })}</span>
     {:else}
       <input
         class="input name"
         value={theme.name}
-        aria-label="Theme name"
+        dir="auto" aria-label={tr("settings.theme_name")}
         oninput={(e) => (theme.name = e.currentTarget.value)} />
     {/if}
     <span class="spacer"></span>
-    <Button variant="ghost" onclick={() => duplicate(theme)}><Icon name="copy" size={14} /> Duplicate</Button>
-    <Button variant="ghost" onclick={() => exportTheme("json")}>{copied === "json" ? "Copied" : "Export"}</Button>
-    <Button variant="ghost" onclick={() => exportTheme("css")}>{copied === "css" ? "Copied CSS" : "Copy CSS"}</Button>
-    <Button variant="ghost" active={importing} onclick={() => (importing = !importing)}>Import</Button>
+    <Button variant="ghost" onclick={() => duplicate(theme)}><Icon name="copy" size={14} /> {tr("settings.theme_duplicate")}</Button>
+    <Button variant="ghost" onclick={() => exportTheme("json")}>{copied === "json" ? tr("ui.copied") : tr("ui.export")}</Button>
+    <Button variant="ghost" onclick={() => exportTheme("css")}>{copied === "css" ? tr("settings.css_copied") : tr("settings.css_copy")}</Button>
+    <Button variant="ghost" active={importing} onclick={() => (importing = !importing)}>{tr("ui.import")}</Button>
     {#if !builtIn}
       <Button variant="ghost" danger onclick={() => removeTheme(theme.id)}>
-        <Icon name="trash" size={14} /> Delete
+        <Icon name="trash" size={14} /> {tr("ui.delete")}
       </Button>
     {/if}
   </div>
@@ -267,10 +270,10 @@
         bind:value={importText}></textarea>
       {#if importError}<p class="error-text">{importError}</p>{/if}
       <div class="toolbar">
-        <span class="hint">Paste a theme someone exported.</span>
+        <span class="hint">{tr("settings.theme_import_hint")}</span>
         <span class="spacer"></span>
-        <Button variant="ghost" onclick={() => (importing = false)}>Cancel</Button>
-        <Button variant="primary" disabled={!importText.trim()} onclick={importTheme}>Import theme</Button>
+        <Button variant="ghost" onclick={() => (importing = false)}>{tr("ui.cancel")}</Button>
+        <Button variant="primary" disabled={!importText.trim()} onclick={importTheme}>{tr("settings.theme_import")}</Button>
       </div>
     </div>
   {/if}
@@ -278,11 +281,11 @@
 
 <section class="block dock" class:pinned>
   <div class="dock-head">
-    <h3>Preview</h3>
-    <div class="segmented small" role="tablist" aria-label="Preview">
+    <h3>{tr("settings.preview")}</h3>
+    <div class="segmented small" role="tablist" aria-label={tr("settings.preview")}>
       {#each SCENES as [id, label] (id)}
         <button role="tab" aria-selected={scene === id} class:active={scene === id} onclick={() => (scene = id)}>
-          {label}
+          {tr(label)}
         </button>
       {/each}
     </div>
@@ -290,7 +293,7 @@
     <button
       class="icon-btn pin"
       class:on={pinned}
-      title={pinned ? "Unpin: let the preview scroll away" : "Pin: keep the preview in view"}
+      title={pinned ? tr("settings.preview_unpin") : tr("settings.preview_pin")}
       aria-pressed={pinned}
       onclick={() => (pinned = !pinned)}><Icon name="pin" size={15} /></button>
   </div>
@@ -298,12 +301,12 @@
 </section>
 
 <section class="block">
-  <h3>Look and feel</h3>
+  <h3>{tr("settings.look_feel")}</h3>
   <div class="panel">
     <div class="quick">
       <div class="q-text">
-        <span class="q-title">Accent colour</span>
-        <span class="hint">Buttons, the send button, selection and replies.</span>
+        <span class="q-title">{tr("settings.accent_colour")}</span>
+        <span class="hint">{tr("settings.accent_hint")}</span>
       </div>
       <div class="accents">
         {#each ACCENTS as color (color)}
@@ -311,17 +314,17 @@
             class="accent-dot"
             class:active={t.accent?.toLowerCase() === color}
             style:background={color}
-            aria-label="Accent {color}"
+            aria-label={tr("settings.accent_name", { color })}
             onclick={() => setAccent(color)}></button>
         {/each}
         <label
           class="accent-dot custom"
           class:active={!ACCENTS.includes(t.accent?.toLowerCase() ?? "")}
-          title="Custom colour">
+          title={tr("settings.custom_colour")}>
           <input
             type="color"
             value={hex(t.accent)}
-            aria-label="Custom accent colour"
+            aria-label={tr("settings.custom_accent")}
             oninput={(e) => setAccent(e.currentTarget.value)} />
         </label>
       </div>
@@ -329,8 +332,8 @@
 
     <div class="quick">
       <div class="q-text">
-        <span class="q-title">Background picture</span>
-        <span class="hint">Behind the chat, and behind everything in Liquid Glass.</span>
+        <span class="q-title">{tr("settings.background_picture")}</span>
+        <span class="hint">{tr("settings.background_hint")}</span>
       </div>
       {#if pictureUrl}
         <img class="bg-thumb" src={pictureUrl} alt="" />
@@ -342,18 +345,18 @@
         bind:this={picturePicker}
         onchange={(e) => setBackground(e.currentTarget.files?.[0])} />
       <Button variant="ghost" onclick={() => picturePicker?.click()}>
-        {customization.background ? "Change" : "Choose…"}
+        {customization.background ? tr("ui.change") : tr("ui.choose")}
       </Button>
       {#if customization.background}
-        <Button variant="ghost" onclick={() => removeAppPicture()}>Remove</Button>
+        <Button variant="ghost" onclick={() => removeAppPicture()}>{tr("ui.remove")}</Button>
       {/if}
     </div>
 
     {#if customization.background}
       <div class="quick">
         <div class="q-text">
-          <span class="q-title">Darken picture</span>
-          <span class="hint">Keeps text readable over bright pictures.</span>
+          <span class="q-title">{tr("settings.picture_darken")}</span>
+          <span class="hint">{tr("settings.picture_darken_hint")}</span>
         </div>
         <div class="slider">
           <input
@@ -362,17 +365,17 @@
             max="0.85"
             step="0.05"
             value={customization.background.dim}
-            aria-label="Darken picture"
+            aria-label={tr("settings.picture_darken")}
             oninput={(e) => customization.background && (customization.background.dim = Number(e.currentTarget.value))} />
-          <span class="readout">{Math.round(customization.background.dim * 100)} %</span>
+          <span class="readout">{formatNumber(customization.background.dim, { style: "percent", maximumFractionDigits: 0 })}</span>
         </div>
       </div>
     {/if}
 
     <div class="quick">
       <div class="q-text">
-        <span class="q-title">Text size</span>
-        <span class="hint">Messages, chat list and menus.</span>
+        <span class="q-title">{tr("settings.text_size")}</span>
+        <span class="hint">{tr("settings.text_size_hint")}</span>
       </div>
       <div class="slider">
         <input
@@ -381,32 +384,32 @@
           max="18"
           step="0.2"
           value={px("font-size", 14.2)}
-          aria-label="Text size"
+          aria-label={tr("settings.text_size")}
           oninput={(e) => setTokens({ "font-size": `${e.currentTarget.value}px` })} />
-        <span class="readout">{px("font-size", 14.2).toFixed(1)} px</span>
+        <span class="readout">{tr("settings.pixels", { count: px("font-size", 14.2) })}</span>
       </div>
     </div>
 
     <div class="quick">
       <div class="q-text">
-        <span class="q-title">Density</span>
-        <span class="hint">How tightly the chat list and messages are packed.</span>
+        <span class="q-title">{tr("settings.density")}</span>
+        <span class="hint">{tr("settings.density_hint")}</span>
       </div>
-      <div class="segmented" role="radiogroup" aria-label="Density">
+      <div class="segmented" role="radiogroup" aria-label={tr("settings.density")}>
         {#each DENSITIES as [value, label] (value)}
           <button
             role="radio"
             aria-checked={(customization.density ?? "comfortable") === value}
             class:active={(customization.density ?? "comfortable") === value}
-            onclick={() => (customization.density = value)}>{label}</button>
+            onclick={() => (customization.density = value)}>{tr(label)}</button>
         {/each}
       </div>
     </div>
 
     <div class="quick">
       <div class="q-text">
-        <span class="q-title">Chat list width</span>
-        <span class="hint">Also set by dragging the list's right edge.</span>
+        <span class="q-title">{tr("settings.chat_list_width")}</span>
+        <span class="hint">{tr("settings.chat_list_width_hint")}</span>
       </div>
       <div class="slider">
         <input
@@ -415,16 +418,16 @@
           max="640"
           step="10"
           value={customization.listWidth ?? 300}
-          aria-label="Chat list width"
+          aria-label={tr("settings.chat_list_width")}
           oninput={(e) => (customization.listWidth = Number(e.currentTarget.value))} />
-        <span class="readout">{customization.listWidth ?? 300} px</span>
+        <span class="readout">{tr("settings.pixels", { count: customization.listWidth ?? 300 })}</span>
       </div>
     </div>
 
     <div class="quick">
       <div class="q-text">
-        <span class="q-title">Corner roundness</span>
-        <span class="hint">Bubbles, fields and dialogs.</span>
+        <span class="q-title">{tr("settings.roundness")}</span>
+        <span class="hint">{tr("settings.roundness_hint")}</span>
       </div>
       <div class="slider">
         <input
@@ -433,24 +436,24 @@
           max="18"
           step="1"
           value={px("radius", 8)}
-          aria-label="Corner roundness"
+          aria-label={tr("settings.roundness")}
           oninput={(e) => setRoundness(Number(e.currentTarget.value))} />
-        <span class="readout">{px("radius", 8)} px</span>
+        <span class="readout">{tr("settings.pixels", { count: px("radius", 8) })}</span>
       </div>
     </div>
 
     <div class="quick">
       <div class="q-text">
-        <span class="q-title">Animations</span>
-        <span class="hint">Transitions between chats, menus and dialogs.</span>
+        <span class="q-title">{tr("settings.animations")}</span>
+        <span class="hint">{tr("settings.animations_hint")}</span>
       </div>
-      <div class="segmented" role="radiogroup" aria-label="Animations">
+      <div class="segmented" role="radiogroup" aria-label={tr("settings.animations")}>
         {#each MOTION as [value, label] (value)}
           <button
             role="radio"
             aria-checked={Number(t["motion-scale"] ?? "1") === Number(value)}
             class:active={Number(t["motion-scale"] ?? "1") === Number(value)}
-            onclick={() => setTokens({ "motion-scale": value })}>{label}</button>
+            onclick={() => setTokens({ "motion-scale": value })}>{tr(label)}</button>
         {/each}
       </div>
     </div>
@@ -458,20 +461,20 @@
 </section>
 
 <section class="block">
-  <h3>Fine-tune</h3>
-  <p class="hint">Every colour and value the interface is drawn with. Click a swatch to pick a colour.</p>
+  <h3>{tr("settings.fine_tune")}</h3>
+  <p class="hint">{tr("settings.fine_tune_hint")}</p>
   <div class="groups">
     {#each groups as group (group)}
       {@const tokens = TOKENS.filter((token) => token.group === group)}
       <details class="group">
         <summary>
-          <span class="g-name">{group}</span>
+          <span class="g-name">{tr(`settings.token_group_${group.toLowerCase().replaceAll(" ", "_")}`)}</span>
           <span class="g-strip">
             {#each tokens.filter((token) => rgba(t[token.key])).slice(0, 8) as token (token.key)}
               <span class="chip" style:--c={t[token.key]}></span>
             {/each}
           </span>
-          <span class="g-count">{tokens.length}</span>
+          <span class="g-count">{formatNumber(tokens.length)}</span>
           <span class="g-chevron"><Icon name="chevronDown" size={16} /></span>
         </summary>
         <div class="tokens">
@@ -479,22 +482,22 @@
             {@const value = t[token.key] ?? ""}
             <div class="token">
               {#if rgba(value)}
-                <label class="chip swatch" style:--c={value} title="Pick a colour">
+                <label class="chip swatch" style:--c={value} title={tr("settings.pick_colour")}>
                   <input
                     type="color"
                     value={hex(value)}
-                    aria-label="{token.label} colour"
+                    aria-label={tr("settings.token_colour", { name: tr(`settings.token_${token.key}`) })}
                     oninput={(e) => setTokens({ [token.key]: recolor(value, e.currentTarget.value) })} />
                 </label>
               {:else}
                 <span class="chip swatch blank"></span>
               {/if}
-              <span class="token-label">{token.label}</span>
+              <span class="token-label">{tr(`settings.token_${token.key}`)}</span>
               <input
                 class="input value"
                 {value}
                 spellcheck="false"
-                aria-label={token.label}
+                aria-label={tr(`settings.token_${token.key}`)}
                 title={value}
                 onchange={(e) => setTokens({ [token.key]: e.currentTarget.value.trim() })} />
             </div>
@@ -508,32 +511,30 @@
 <section class="block">
   <div class="block-head">
     <div>
-      <h3>CSS extensions</h3>
+      <h3>{tr("settings.css_extensions")}</h3>
       <p class="hint">
-        Custom CSS applied after the theme. Component styles are scoped, so use <code>!important</code> or a
-        doubled class (<code>.bubble.bubble</code>) to override them.
+        {tr("settings.css_hint")}
       </p>
       <p class="hint">
-        An extension can restyle or hide anything in the app, including what a message appears to say, so only
-        add CSS you trust. Remote fonts and images are blocked; embed them as <code>data:</code> URLs.
+        {tr("settings.css_security_hint")}
       </p>
     </div>
-    <Button variant="ghost" onclick={addExtension}><Icon name="plus" size={15} /> Add</Button>
+    <Button variant="ghost" onclick={addExtension}><Icon name="plus" size={15} /> {tr("ui.add")}</Button>
   </div>
   {#if customization.extensions.length === 0}
-    <div class="empty">No extensions yet.</div>
+    <div class="empty">{tr("settings.css_empty")}</div>
   {/if}
   {#each customization.extensions as extension, i (extension.id)}
     <div class="extension" class:off={!extension.enabled}>
       <div class="ext-head">
-        <input class="input name" bind:value={extension.name} aria-label="Extension name" />
-        <label class="toggle" title={extension.enabled ? "Enabled" : "Disabled"}>
-          <input type="checkbox" role="switch" bind:checked={extension.enabled} aria-label="Enabled" />
+        <input class="input name" bind:value={extension.name} dir="auto" aria-label={tr("settings.extension_name")} />
+        <label class="toggle" title={extension.enabled ? tr("ui.enabled") : tr("ui.disabled")}>
+          <input type="checkbox" role="switch" bind:checked={extension.enabled} aria-label={tr("ui.enabled")} />
         </label>
         <button
           class="icon-btn"
-          title="Delete"
-          aria-label="Delete {extension.name}"
+          title={tr("ui.delete")}
+          aria-label={tr("settings.extension_delete", { name: extension.name })}
           onclick={() => customization.extensions.splice(i, 1)}><Icon name="trash" size={16} /></button>
       </div>
       <textarea
@@ -577,10 +578,6 @@
     font-size: 12.5px;
     line-height: 1.45;
   }
-  code {
-    font-family: ui-monospace, Consolas, monospace;
-    font-size: 12px;
-  }
   .spacer {
     flex: 1;
   }
@@ -602,7 +599,7 @@
     color: var(--text);
     font: inherit;
     cursor: pointer;
-    text-align: left;
+    text-align: start;
     transition:
       border-color calc(120ms * var(--motion-scale, 1)),
       transform calc(120ms * var(--motion-scale, 1)) var(--ease);
@@ -639,7 +636,7 @@
     flex-direction: column;
     gap: 6px;
     padding: 8px 6px;
-    border-right: 1px solid;
+    border-inline-end: 1px solid;
   }
   .p-row {
     display: flex;
@@ -861,7 +858,7 @@
   }
   .readout {
     width: 52px;
-    text-align: right;
+    text-align: end;
     font-variant-numeric: tabular-nums;
     font-size: 12.5px;
     color: var(--muted);
@@ -1032,7 +1029,7 @@
     content: "";
     position: absolute;
     top: 3px;
-    left: 3px;
+    inset-inline-start: 3px;
     width: 14px;
     height: 14px;
     border-radius: 50%;
@@ -1046,4 +1043,5 @@
     transform: translateX(14px);
     background: var(--accent-ink);
   }
+  :global([dir="rtl"]) .toggle input:checked::after { transform: translateX(-14px); }
 </style>

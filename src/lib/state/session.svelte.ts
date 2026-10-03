@@ -2,6 +2,7 @@
 import { invoke } from "$lib/utils/ipc";
 import type { Account, ConnectionState, UiSettings } from "$lib/utils/models";
 import { ui } from "./ui.svelte";
+import { LocalizedError, normalizeError } from "../i18n/errors.ts";
 
 /** Device memory of the notification kill switch, backing backends that drop it. */
 const NOTIFICATIONS_KEY = "postal.notifications_enabled";
@@ -45,7 +46,14 @@ export class SessionState {
   /** Phone-number linking, an alternative to the QR shown beside it. */
   pairCode = $state<string | null>(null);
   pairCodeExpiresAt = $state<number | null>(null);
-  pairCodeError = $state<{ message: string; throttled: boolean; unavailable: boolean } | null>(null);
+  #pairCodeError = $state<{ failure: LocalizedError; throttled: boolean; unavailable: boolean } | null>(null);
+  get pairCodeError(): { message: string; throttled: boolean; unavailable: boolean; diagnostic?: string } | null {
+    const error = this.#pairCodeError;
+    return error ? { message: error.failure.message, throttled: error.throttled, unavailable: error.unavailable, diagnostic: error.failure.diagnostic } : null;
+  }
+  set pairCodeError(value: { message: unknown; throttled: boolean; unavailable: boolean } | null) {
+    this.#pairCodeError = value ? { failure: normalizeError(value.message), throttled: value.throttled, unavailable: value.unavailable } : null;
+  }
   /** The server asked the user to request a fresh code explicitly. */
   pairCodeManual = $state(false);
   /** A code request is in flight. */
@@ -93,6 +101,7 @@ export class SessionState {
     send_typing: true,
     send_receipts: true,
     keep_history: true,
+    encrypt_databases: false,
     skip_loading_screen: false,
     start_on_login: false,
     keep_archived: true,
@@ -170,7 +179,7 @@ export class SessionState {
     try {
       await invoke("request_pair_code", { phone, companion: false });
     } catch (e) {
-      this.pairCodeError = { message: String(e), throttled: false, unavailable: false };
+      this.pairCodeError = { message: e, throttled: false, unavailable: false };
     } finally {
       this.pairCodeBusy = false;
     }

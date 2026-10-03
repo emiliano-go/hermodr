@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
+  import { t } from "$lib/i18n/localizer";
   import { untrack } from "svelte";
   import { invoke } from "$lib/utils/ipc";
   import type { LinkedDevice } from "$lib/utils/wire";
@@ -15,8 +17,8 @@
   let pending = $state<LinkedDevice | null>(null);
   let loading = $state(false);
   let busy = $state(false);
-  let error = $state("");
-  let result = $state("");
+  let error = $state<LocalizedError | string>("");
+  let result = $state<number | null>(null);
   let generation = 0;
 
   function current(id: string, revision: number) {
@@ -33,7 +35,7 @@
       const rows = await onload(id);
       if (current(id, revision)) devices = rows;
     } catch (failure) {
-      if (current(id, revision)) error = String(failure);
+      if (current(id, revision)) error = normalizeError(failure);
     } finally {
       if (current(id, revision)) loading = false;
     }
@@ -45,7 +47,7 @@
     ++generation;
     devices = pending = null;
     loading = busy = false;
-    error = result = "";
+    error = ""; result = null;
     void untrack(refresh);
     return () => { ++generation; };
   });
@@ -54,75 +56,75 @@
     if (!account || !connected || !pending?.can_unlink || busy || loading) return;
     const id = account, device = pending, revision = generation;
     busy = true;
-    error = result = "";
+    error = ""; result = null;
     try {
       await onunlink(id, device.jid);
       if (!current(id, revision)) return;
       pending = null;
-      result = `WhatsApp accepted logout for device ${device.device_id}.`;
+      result = device.device_id;
       try {
         const rows = await onload(id);
         if (current(id, revision)) devices = rows;
       } catch (failure) {
         if (current(id, revision)) {
           devices = null;
-          error = `Logout accepted. Could not refresh linked devices: ${failure}`;
+          error = normalizeError({ kind: "postal_error", code: "error.device_logout_refresh", params: {}, diagnostic: normalizeError(failure).diagnostic });
         }
       }
     } catch (failure) {
-      if (current(id, revision)) error = String(failure);
+      if (current(id, revision)) error = normalizeError(failure);
     } finally {
       if (current(id, revision)) busy = false;
     }
   }
 </script>
 
-<h2>Linked devices</h2>
-<p>Devices linked to this WhatsApp account. Device names and activity dates are unavailable from WhatsApp on this client.</p>
+<h2>{t("settings.linked_devices")}</h2>
+<p>{t("settings.devices_hint")}</p>
 {#if !account || !connected}
-  <p role="status">Connect this account to view linked devices.</p>
+  <p role="status">{t("settings.devices_connect")}</p>
 {:else}
-  <button class="button" disabled={busy || loading} onclick={refresh}>{loading ? "Refreshing…" : "Refresh"}</button>
+  <button class="button" disabled={busy || loading} onclick={refresh}>{loading ? t("ui.refreshing") : t("ui.refresh")}</button>
   {#if devices}
     <ul>
       {#each devices as device (device.jid)}
         <li>
-          <span>Device {device.device_id}{#if device.is_current}<small> This device</small>{/if}</span>
+          <span>{t("settings.device_name", { id: String(device.device_id) })}{#if device.is_current}<small> {t("settings.this_device")}</small>{/if}</span>
           {#if device.can_unlink}
-            <button class="button" disabled={busy || loading} onclick={() => { pending = device; error = result = ""; }}>
-              Log out device {device.device_id}
+            <button class="button" disabled={busy || loading} onclick={() => { pending = device; error = ""; result = null; }}>
+              {t("settings.device_logout_name", { id: String(device.device_id) })}
             </button>
           {:else if device.is_current}
-            <small>Use account logout to disconnect this device.</small>
+            <small>{t("settings.device_logout_account")}</small>
           {:else}
-            <small>Logout unavailable for this device.</small>
+            <small>{t("settings.device_logout_unavailable")}</small>
           {/if}
         </li>
       {/each}
     </ul>
   {:else if !error}
-    <p role="status">Loading linked devices…</p>
+    <p role="status">{t("settings.devices_loading")}</p>
   {/if}
   {#if pending}
-    <section role="group" aria-label="Confirm device logout">
-      <h3>Log out device {pending.device_id}?</h3>
-      <p>This device will stop receiving messages and must be linked again to reconnect.</p>
+    <section role="group" aria-label={t("settings.device_logout_confirm")}>
+      <h3>{t("settings.device_logout_question", { id: String(pending.device_id) })}</h3>
+      <p>{t("settings.device_logout_hint")}</p>
       <div class="actions">
-        <button class="button" disabled={busy} onclick={unlink}>{busy ? "Logging out…" : "Confirm logout"}</button>
-        <button class="button" disabled={busy} onclick={() => { pending = null; }}>Cancel</button>
+        <button class="button" disabled={busy} onclick={unlink}>{busy ? t("settings.logging_out") : t("settings.logout_confirm")}</button>
+        <button class="button" disabled={busy} onclick={() => { pending = null; }}>{t("ui.cancel")}</button>
       </div>
     </section>
   {/if}
 {/if}
 {#if error}<p role="alert">{error}</p>{/if}
-{#if result}<p role="status">{result}</p>{/if}
+{#if result !== null}<p role="status">{t("settings.device_logged_out", { id: String(result) })}</p>{/if}
 
 <style>
   h2 { margin-top: 0; }
   p, small { color: var(--muted); font-size: .85rem; }
   ul { list-style: none; padding: 0; }
   li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem; padding: .8rem 0; border-bottom: 1px solid var(--line); }
-  li > span small { margin-left: .5rem; }
+  li > span small { margin-inline-start: .5rem; }
   section { border: 1px solid var(--line-strong); padding: 1rem; margin-top: 1rem; border-radius: 6px; }
   h3 { margin: 0; font-size: 1rem; }
   .actions { display: flex; flex-wrap: wrap; gap: .5rem; }

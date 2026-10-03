@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import { createServer } from "vite";
+import { normalizeError } from "../lib/i18n/errors.ts";
+import { t } from "../lib/i18n/localizer.ts";
 import { descendants, directItems, emptyInboxFilters, matchingCandidates, movedIds, ordered, SPACE_KINDS,
   spaceChildren, spaceTree, targetKey, targetTitle } from "../lib/spaces/spaces.ts";
 import type { Space, SpaceItem, SpaceTarget } from "../lib/utils/wire.ts";
@@ -56,7 +58,7 @@ function uiFixture(name: string) {
     onaction: async (action: unknown) => { actions.push(action); },
     onopen: async (target: SpaceTarget) => { opened.push(target); },
     onadd: async (value: SpaceTarget[]) => { additions.push(value); },
-    structuredClone, targetKey, targetTitle, directItems, movedIds, descendants, emptyInboxFilters,
+    structuredClone, targetKey, targetTitle, directItems, movedIds, descendants, emptyInboxFilters, normalizeError, t,
     crypto: { randomUUID: () => "local-uuid" },
   };
   Object.defineProperties(context, {
@@ -117,7 +119,8 @@ test("tree callbacks exclude cyclic parents and retain failed drafts", async () 
   assert.ok(f.actions.every((action) => ["create", "rename", "reparent", "reorder", "delete"].includes(action.kind)));
   f.c.cancel(); f.c.create(); f.c.draft.name = "Retained draft";
   f.c.onaction = async () => { throw new Error("Local write failed"); }; f.c.save(); await tick();
-  assert.equal(f.c.draft.name, "Retained draft"); assert.equal(f.c.failure, "Error: Local write failed");
+  assert.equal(f.c.draft.name, "Retained draft");
+  assert.equal(f.c.failure.code, "error.operation_failed"); assert.match(f.c.failure.diagnostic, /Local write failed/);
 });
 
 test("picker supports every kind, same-space dedupe and explicit saved query/inbox refs", async () => {
@@ -171,7 +174,8 @@ test("picker close/account/generation/Space changes suppress late success and fa
   }
   const f = uiFixture("SpacePicker"); f.c.choose(targets[0]); f.c.onadd = async () => { throw new Error("Retry me"); };
   await f.c.save();
-  assert.equal(f.c.failure, "Error: Retry me"); assert.equal(f.c.selected.length, 1); assert.equal(f.c.closed, false);
+  assert.equal(f.c.failure.code, "error.operation_failed"); assert.match(f.c.failure.diagnostic, /Retry me/);
+  assert.equal(f.c.selected.length, 1); assert.equal(f.c.closed, false);
 });
 
 test("tree and item request ownership discards errors after scope change or dialog close", async () => {
@@ -209,7 +213,7 @@ test("real SSR renders nested navigation, ten picker kinds and authoritative una
     const picker = render(await load("SpacePicker"), { props: { account: "a", generation: 1, spaceId: "root", existing: [], catalog,
       onadd: async () => { throw new Error("SSR must not add"); }, onclose: () => {} } }).body;
     assert.ok(picker.includes('aria-label="Add items to Space"') && picker.includes('aria-label="Find local items"'));
-    for (const label of Object.values(SPACE_KINDS)) assert.ok(picker.includes(label), label);
+    for (const code of Object.values(SPACE_KINDS)) assert.ok(picker.includes(t(code)), code);
     assert.ok(/<button\b[^>]*disabled[^>]*>\s*Add 0 items/.test(picker.replace(/<!--[\s\S]*?-->/g, "")));
   } finally { await server.close(); }
 });

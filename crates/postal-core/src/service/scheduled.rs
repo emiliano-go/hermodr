@@ -1,11 +1,12 @@
 use super::*;
+use crate::message_ref::{MessageFailure, MessageRef};
 use anyhow::Context;
 use crate::store::scheduled::{ScheduledMessage, ScheduledOutbox};
 
 fn validate_schedule(chat: &str, text: &str, due_at: i64, now: i64) -> Result<()> {
-    broadcast_lists::writable_target(chat)?;
-    anyhow::ensure!(!text.trim().is_empty(), "scheduled message cannot be empty");
-    anyhow::ensure!(due_at > now, "choose a future time");
+    broadcast_lists::writable_target(chat).with_context(|| MessageRef::new("error.scheduled_target_invalid"))?;
+    anyhow::ensure!(!text.trim().is_empty(), MessageRef::new("error.scheduled_text_required"));
+    anyhow::ensure!(due_at > now, MessageRef::new("error.scheduled_future_required"));
     Ok(())
 }
 
@@ -28,7 +29,7 @@ fn scheduled_wire(message: &ScheduledMessage, subject: Option<String>) -> wa::Me
 impl WhatsAppService {
     pub async fn schedule_message(&self, chat: &str, text: String, mentions: Vec<String>, due_at: i64) -> Result<String> {
         validate_schedule(chat, &text, due_at, unix_now())?;
-        for jid in mentions.iter().filter(|jid| *jid != "@all") { let _: Jid = jid.parse()?; }
+        for jid in mentions.iter().filter(|jid| *jid != "@all") { let _: Jid = jid.parse().with_context(|| MessageRef::new("error.scheduled_mention_invalid"))?; }
         let id = self.client.generate_message_id();
         let (saved_id, chat) = (id.clone(), chat.to_owned());
         self.scheduled.run(move |store| store.schedule_message(&saved_id, &chat, &text, &mentions, due_at)).await?;
@@ -40,8 +41,8 @@ impl WhatsAppService {
     }
 
     pub async fn update_scheduled_message(&self, id: String, text: String, due_at: i64) -> Result<()> {
-        anyhow::ensure!(!text.trim().is_empty(), "scheduled message cannot be empty");
-        anyhow::ensure!(due_at > unix_now(), "choose a future time");
+        anyhow::ensure!(!text.trim().is_empty(), MessageRef::new("error.scheduled_text_required"));
+        anyhow::ensure!(due_at > unix_now(), MessageRef::new("error.scheduled_future_required"));
         self.scheduled.run(move |store| store.update_scheduled_message(&id, &text, due_at)).await
     }
 
@@ -54,13 +55,13 @@ impl WhatsAppService {
     }
 
     pub async fn send_scheduled_message(&self, id: String) -> Result<bool> {
-        anyhow::ensure!(self.is_connected() && self.shutdown.lock().unwrap().is_some(), "account is not connected");
+        anyhow::ensure!(self.is_connected() && self.shutdown.lock().unwrap().is_some(), MessageRef::new("error.not_connected"));
         let now = unix_now();
         let Some(scheduled) = self.scheduled.run(move |store| store.claim_scheduled_message(&id, now)).await? else { return Ok(false); };
         let result = self.dispatch_scheduled_message(&scheduled).await;
         if let Err(error) = result {
             self.note_error(&error);
-            let (id, failure) = (scheduled.id.clone(), error.to_string());
+            let (id, failure) = (scheduled.id.clone(), MessageFailure::from(&error));
             self.scheduled.run(move |store| store.fail_scheduled_message(&id, &failure, true)).await?;
             return Err(error);
         }
@@ -68,22 +69,22 @@ impl WhatsAppService {
     }
 
     async fn dispatch_scheduled_message(&self, scheduled: &ScheduledMessage) -> Result<()> {
-        let to = broadcast_lists::writable_target(&scheduled.chat)?;
+        let to = broadcast_lists::writable_target(&scheduled.chat).with_context(|| MessageRef::new("error.scheduled_target_invalid"))?;
         let subject = self.store.name_for(&scheduled.chat).await.observed().flatten();
         let message = scheduled_wire(scheduled, subject);
         super::group_history::guard_ordinary_message(&message)?;
         self.unarchive_on_send(&scheduled.chat).await;
-        anyhow::ensure!(self.is_connected() && self.shutdown.lock().unwrap().is_some(), "account stopped before scheduled send");
+        anyhow::ensure!(self.is_connected() && self.shutdown.lock().unwrap().is_some(), MessageRef::new("error.not_connected"));
         let result = self.client.send_message_with_options(to.clone(), message,
             whatsapp_rust::SendOptions::default().with_message_id(&scheduled.id)).await?;
         let mut stored = self.own_message(&scheduled.chat, &scheduled.id, scheduled.text.clone(), "", self.is_self_jid(&to));
         stored.history_shareable = super::group_history::is_shareable_text(&result.message);
         self.store.insert_message(&stored).await
-            .context("sent; local confirmation failed, delivery may have succeeded")?;
+            .with_context(|| MessageRef::new("error.scheduled_delivery_uncertain"))?;
         let _ = self.events.send(ServiceEvent::hint(&stored, true));
         let id = scheduled.id.clone();
         self.scheduled.run(move |store| store.complete_scheduled_message(&id)).await
-            .context("sent; outbox confirmation failed, delivery may have succeeded")?;
+            .with_context(|| MessageRef::new("error.scheduled_delivery_uncertain"))?;
         Ok(())
     }
 }

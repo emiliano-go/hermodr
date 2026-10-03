@@ -1,4 +1,5 @@
 use super::*;
+use crate::message_ref::MessageRef;
 use crate::store::quick_replies::{QuickReply, QuickRepliesView};
 use whatsapp_rust::AppStateResyncMode;
 
@@ -11,8 +12,8 @@ pub(super) async fn apply_quick_reply_event(store: &StoreWorker, event: &Event) 
     } else {
         Some(QuickReply {
             id: id.clone(),
-            shortcut: action.shortcut.clone().ok_or_else(|| anyhow::anyhow!("quick reply has no shortcut"))?,
-            message: action.message.clone().ok_or_else(|| anyhow::anyhow!("quick reply has no message"))?,
+            shortcut: action.shortcut.clone().ok_or_else(|| anyhow::Error::new(MessageRef::new("error.quick_reply_shortcut_missing")))?,
+            message: action.message.clone().ok_or_else(|| anyhow::Error::new(MessageRef::new("error.quick_reply_message_missing")))?,
             keywords: action.keywords.clone(), count: action.count.unwrap_or(0),
             associated_label_ids: action.associated_label_ids.clone(),
         })
@@ -30,11 +31,11 @@ impl WhatsAppService {
     pub async fn sync_quick_replies(&self, current: impl Fn() -> Result<()> + Send) -> Result<()> {
         for mode in [AppStateResyncMode::Incremental, AppStateResyncMode::Snapshot] {
             current()?;
-            anyhow::ensure!(self.is_connected(), "not connected yet");
+            anyhow::ensure!(self.is_connected(), MessageRef::new("error.not_connected"));
             let report = self.client.resync_app_state([WAPatchName::Regular], mode).await?;
             current()?;
             anyhow::ensure!(report.all_synced() && report.synced.contains(&WAPatchName::Regular),
-                "quick replies are still synchronizing");
+                MessageRef::new("error.quick_replies_sync_pending"));
         }
         Ok(())
     }

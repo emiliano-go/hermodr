@@ -1,5 +1,6 @@
 use super::contact_identity::ContactIdentity;
 use super::*;
+use crate::message_ref::MessageRef;
 use whatsapp_rust::wacore_binary::JidExt;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -120,7 +121,8 @@ pub(super) fn migrate(conn: &Connection) -> Result<()> {
 }
 
 pub(crate) fn member_address(value: &str) -> Result<String> {
-    let jid: whatsapp_rust::prelude::Jid = value.parse()?;
+    let jid: whatsapp_rust::prelude::Jid = value.parse::<whatsapp_rust::prelude::Jid>().map_err(|error|
+        anyhow::Error::new(MessageRef::new("error.member_address")).context(error.to_string()))?;
     anyhow::ensure!(
         (jid.is_pn() || jid.is_lid())
             && jid.device == 0
@@ -129,7 +131,7 @@ pub(crate) fn member_address(value: &str) -> Result<String> {
             && !jid.user.is_empty()
             && jid.user.len() <= 32
             && jid.user.bytes().all(|byte| byte.is_ascii_digit()),
-        "Invalid member address."
+        MessageRef::new("error.member_address")
     );
     Ok(jid.to_string())
 }
@@ -138,14 +140,15 @@ fn profile_scope(chat: Option<&str>) -> Result<String> {
     let Some(chat) = chat else {
         return Ok(String::new());
     };
-    let group: whatsapp_rust::prelude::Jid = chat.parse()?;
+    let group: whatsapp_rust::prelude::Jid = chat.parse::<whatsapp_rust::prelude::Jid>().map_err(|error|
+        anyhow::Error::new(MessageRef::new("error.member_scope")).context(error.to_string()))?;
     anyhow::ensure!(
         (group.is_group() || group.is_pn() || group.is_lid())
             && !group.user.is_empty()
             && group.device == 0
             && group.agent == 0
             && group.integrator == 0,
-        "Profile scope must be a bare chat address."
+        MessageRef::new("error.member_scope")
     );
     Ok(group.to_string())
 }
@@ -324,7 +327,7 @@ impl MessageStore {
                 && note.chars().count() <= 4096
                 && !note.contains('\0')
                 && warnings <= 100000,
-            "Member note or warning count exceeds the local limit."
+            MessageRef::new("error.member_note_limit")
         );
         let forms = super::names::name_forms(self, &jid)?;
         let canonical = forms
@@ -359,10 +362,10 @@ impl MessageStore {
         at: i64,
     ) -> Result<()> {
         let chat = profile_scope(Some(chat))?;
-        anyhow::ensure!(chat.ends_with("@g.us"), "Roster snapshots require a group.");
+        anyhow::ensure!(chat.ends_with("@g.us"), MessageRef::new("error.member_snapshot_group"));
         anyhow::ensure!(
             roster.len() <= 4096 && subject.is_none_or(|value| value.len() <= 4096),
-            "Group profile snapshot is too large."
+            MessageRef::new("error.member_snapshot_limit")
         );
         for member in roster {
             member_address(&member.jid)?;
@@ -371,7 +374,7 @@ impl MessageStore {
                     .label
                     .as_ref()
                     .is_none_or(|label| label.len() <= 4096),
-                "Member tag is too large."
+                MessageRef::new("error.member_label_limit")
             );
         }
         let mut conn = self.conn.lock().unwrap();
@@ -408,16 +411,16 @@ impl MessageStore {
         let chat = profile_scope(Some(chat))?;
         anyhow::ensure!(
             chat.ends_with("@g.us"),
-            "Observed membership changes require a group."
+            MessageRef::new("error.member_observed_group")
         );
         let jid = member_address(jid)?;
         anyhow::ensure!(
             label.is_none_or(|label| label.len() <= 4096),
-            "Member tag is too large."
+            MessageRef::new("error.member_label_limit")
         );
         anyhow::ensure!(
             matches!(action, "remove" | "promote" | "demote" | "label" | "add"),
-            "Unsupported observed member change."
+            MessageRef::new("error.member_observed_action")
         );
         let forms = serde_json::to_string(&super::names::name_forms(self, &jid)?)?;
         let conn = self.conn.lock().unwrap();
@@ -466,7 +469,7 @@ impl MessageStore {
         let chat = profile_scope(Some(chat))?;
         anyhow::ensure!(
             !id.is_empty() && id.len() <= 256 && !id.contains('\0') && targets.len() <= 4096,
-            "Invalid observed mention context."
+            MessageRef::new("error.member_mention_context")
         );
         for target in targets {
             member_address(target)?;
@@ -499,12 +502,12 @@ impl MessageStore {
         let chat = profile_scope(Some(chat))?;
         anyhow::ensure!(
             !id.is_empty() && id.len() <= 256 && !id.contains('\0') && groups.len() <= 4096,
-            "Invalid observed group mention context."
+            MessageRef::new("error.member_group_mention_context")
         );
         for group in groups {
             anyhow::ensure!(
                 profile_scope(Some(group))?.ends_with("@g.us"),
-                "Invalid mentioned group."
+                MessageRef::new("error.member_mentioned_group")
             );
         }
         let mut conn = self.conn.lock().unwrap();
@@ -539,7 +542,7 @@ impl MessageStore {
         };
         anyhow::ensure!(
             typing.is_none_or(|value| matches!(value, "typing" | "recording" | "paused")),
-            "Unsupported typing state."
+            MessageRef::new("error.member_typing")
         );
         self.conn.lock().unwrap().execute("INSERT INTO member_profile_signals(kind,chat,jid,online,last_seen,state,observed_at) VALUES(?1,?2,?3,?4,?5,?6,?7)
             ON CONFLICT(kind,chat,jid) DO UPDATE SET online=excluded.online,last_seen=excluded.last_seen,state=excluded.state,observed_at=excluded.observed_at
@@ -557,7 +560,7 @@ impl MessageStore {
         let jid = member_address(jid)?;
         anyhow::ensure!(
             payload.len() <= 65536,
-            "Member live profile cache is too large."
+            MessageRef::new("error.member_cache_limit")
         );
         self.conn.lock().unwrap().execute("INSERT INTO member_live_profiles(jid,payload,observed_at) VALUES(?1,?2,?3)
             ON CONFLICT(jid) DO UPDATE SET payload=excluded.payload,observed_at=excluded.observed_at WHERE excluded.observed_at>=member_live_profiles.observed_at", params![jid,payload,at])?;

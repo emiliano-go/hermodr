@@ -4,6 +4,7 @@
   go through `cls`. `title`, ARIA attributes, `type`, `disabled` and
   handlers pass through via rest props. -->
 <script lang="ts">
+  import { formatNumber } from "$lib/i18n/localizer";
   import Icon, { type IconName } from "$lib/ui/Icon.svelte";
   import type { Snippet } from "svelte";
 
@@ -58,7 +59,7 @@
   {...rest}>
   {#if icon}<Icon name={icon} size={iconSize} />{/if}
   {@render children?.()}
-  {#if count !== undefined && count !== null}<span class="chip-count">{count}</span>{/if}
+  {#if count !== undefined && count !== null}<span class="chip-count">{typeof count === "number" ? formatNumber(count) : count}</span>{/if}
 </button>
 
 <style>
@@ -177,7 +178,7 @@
     border-radius: 6px;
     color: var(--text);
     font-size: 14px;
-    text-align: left;
+    text-align: start;
   }
   .btn-menu:hover {
     background: var(--raised);

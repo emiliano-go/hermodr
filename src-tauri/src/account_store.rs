@@ -156,6 +156,7 @@ pub(crate) fn config_for(app: &AppHandle, settings: &UiSettings, account: &str) 
     let base = account_base(app, account);
     let default_media = media_cache_dir(app);
     ServiceConfig {
+        database_key: None,
         session_path: session_path(&base, false),
         messages_path: if settings.keep_history {
             history_base(app, settings, account).join("messages.db")

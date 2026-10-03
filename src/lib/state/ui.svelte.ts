@@ -3,6 +3,11 @@
 // (which render them), so they live here instead of in +page.svelte.
 import type { ChatEvent, FoundItem, StarredItem, StoredMessage } from "$lib/utils/models";
 import type { Section } from "$lib/settings/Settings.svelte";
+import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
+import type { MessageRef } from "$lib/utils/wire";
+import { displayMessage } from "./localized";
+
+type Notice = MessageRef | string | readonly (MessageRef | string)[];
 
 /** Mentions of us (everywhere or in one chat), or a search inside one chat. */
 export type Finder = {
@@ -17,9 +22,17 @@ export type Finder = {
 
 export class UiState {
   /** A fatal-ish banner; null hides it. */
-  error = $state<string | null>(null);
+  error = $state<LocalizedError | string | null>(null);
   /** A transient notice, such as a video sent without a preview. */
-  notice = $state<string | null>(null);
+  #notice = $state<Notice | null>(null);
+  #noticeDiagnostic = $state<string | undefined>(undefined);
+  get noticeDiagnostic() { return this.#noticeDiagnostic; }
+  get notice(): string | null {
+    const notice = this.#notice;
+    return notice === null ? null : Array.isArray(notice)
+      ? notice.map(displayMessage).join("\n") : displayMessage(notice as MessageRef | string);
+  }
+  set notice(message: Notice | null) { this.#notice = message; this.#noticeDiagnostic = undefined; }
 
   showSettings = $state(false);
   settingsSection = $state<Section>("accounts");
@@ -85,11 +98,12 @@ export class UiState {
 
   /** Surface a failure instead of dropping it. */
   fail(e: unknown) {
-    this.error = String(e);
+    this.error = normalizeError(e);
   }
 
-  notify(message: string) {
+  notify(message: Notice, diagnostic?: string) {
     this.notice = message;
+    this.#noticeDiagnostic = diagnostic;
   }
 
   resetAccount() {

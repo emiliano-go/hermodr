@@ -1,11 +1,15 @@
 import type { GalleryCursor, GalleryFilter, GalleryItem, GalleryPage } from "../utils/wire";
+import { LocalizedError, normalizeError } from "../i18n/errors.ts";
 
 export class GalleryState {
   items = $state<GalleryItem[]>([]);
   next = $state<GalleryCursor | null>(null);
   pageIndex = $state(0);
   loading = $state(false);
-  error = $state<string | null>(null);
+  #error = $state<LocalizedError | null>(null);
+  get error(): string | null { return this.#error?.message ?? null; }
+  set error(value: unknown) { this.#error = value == null ? null : normalizeError(value); }
+  get diagnostic() { return this.#error?.diagnostic; }
   private cursors: (GalleryCursor | null)[] = [null];
   private filter: GalleryFilter = { chat: null, kind: null, from_me: null, since: null, until: null };
   private sequence = 0;
@@ -53,7 +57,7 @@ export class GalleryState {
       this.pageIndex = index;
       this.cursors = [...this.cursors.slice(0, index), cursor];
     } catch (error) {
-      if (sequence === this.sequence) this.error = String(error);
+      if (sequence === this.sequence) this.error = error;
     } finally {
       if (sequence === this.sequence) this.loading = false;
     }

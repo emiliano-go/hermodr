@@ -1,11 +1,12 @@
+import { t } from "../i18n/localizer.ts";
 import { fuzzyScore } from "../utils/quick-switcher.ts";
 import type { Space, SpaceInboxFilters, SpaceItem, SpaceTarget } from "../utils/wire.ts";
 
 export type SpaceCandidate = { target: SpaceTarget; title: string; detail?: string };
 export const SPACE_KINDS: Record<SpaceTarget["kind"], string> = {
-  chat: "Chats", group: "Groups", community: "Communities", channel: "Channels", contact: "Contacts",
-  favorite_contact: "Favorite contacts", label: "Labels", saved_message: "Saved messages",
-  saved_search: "Saved searches", inbox_view: "Inbox views",
+  chat: "spaces.kind_chat", group: "spaces.kind_group", community: "spaces.kind_community", channel: "spaces.kind_channel", contact: "spaces.kind_contact",
+  favorite_contact: "spaces.kind_favorite_contact", label: "spaces.kind_label", saved_message: "spaces.kind_saved_message",
+  saved_search: "spaces.kind_saved_search", inbox_view: "spaces.kind_inbox_view",
 };
 
 export function emptyInboxFilters(): SpaceInboxFilters {
@@ -28,14 +29,14 @@ export function targetKey(target: SpaceTarget): string {
 export function targetTitle(target: SpaceTarget): string {
   if ("jid" in target) return target.jid;
   switch (target.kind) {
-    case "label": return `Label ${target.label_id}`;
+    case "label": return t("labels.number", { id: target.label_id });
     case "saved_message": return `${target.chat} · ${target.message_id}`;
     case "saved_search": return target.query;
     case "inbox_view": {
       const f = target.filters;
-      const parts = [f.unread && "Unread", f.mentions && "Mentions", f.labelled && "Labelled", f.muted && "Muted", f.archived && "Archived",
-        f.label && `Label ${f.label}`, f.query].filter(Boolean);
-      return parts.length ? parts.join(" · ") : "Inbox";
+      const parts = [f.unread && t("chat.unread"), f.mentions && t("chat.mentions"), f.labelled && t("chat.labelled"), f.muted && t("chat.muted"), f.archived && t("chat.archived"),
+        f.label && t("labels.number", { id: f.label }), f.query].filter(Boolean);
+      return parts.length ? parts.join(" · ") : t("spaces.inbox");
     }
   }
 }

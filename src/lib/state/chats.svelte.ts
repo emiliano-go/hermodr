@@ -17,6 +17,8 @@ import type {
 import { members } from "./members.svelte";
 import { session } from "./session.svelte";
 import { ui } from "./ui.svelte";
+import { LocalizedError, normalizeError } from "../i18n/errors.ts";
+import { t } from "../i18n/localizer.ts";
 
 function bareJid(jid: string) {
   return jid.replace(/@.*$/, "");
@@ -45,7 +47,10 @@ export class ChatsState {
   showGroupInfo = $state(false);
   auditRevision = $state(0);
   groupInfo = $state<GroupInfo | null>(null);
-  groupInfoError = $state<string | null>(null);
+  #groupInfoError = $state<LocalizedError | null>(null);
+  get groupInfoError(): string | null { return this.#groupInfoError?.message ?? null; }
+  set groupInfoError(value: unknown) { this.#groupInfoError = value == null ? null : normalizeError(value); }
+  get groupInfoDiagnostic() { return this.#groupInfoError?.diagnostic; }
 
   /** Cached profile picture per chat; `null` means it has none. */
   avatars: Record<string, string | null> = $state({});
@@ -88,7 +93,7 @@ export class ChatsState {
 
   /** Who sent a chat's last message, as the list prefixes it. */
   previewAuthor(chat: ChatSummary) {
-    if (chat.last_from_me) return "You";
+    if (chat.last_from_me) return t("chat.you");
     if (!chat.chat.endsWith("@g.us") || chat.last_media_kind === "missed_call") return null;
     return members.displayName(chat.last_sender_name, chat.last_sender);
   }
@@ -98,12 +103,12 @@ export class ChatsState {
     const kind = chat.last_media_kind;
     if (kind === "poll") return `📊 ${chat.last_text}`;
     if (kind === "event") return `📅 ${chat.last_text}`;
-    if (kind === "view_once") return "View once message";
-    if (kind === "missed_call") return "Missed call";
+    if (kind === "view_once") return t("state.view_once");
+    if (kind === "missed_call") return t("state.missed_call");
     if (!kind || chat.last_text.trim() !== `[${kind}]`) {
       return plain(chat.last_text, (user) => members.mentionName(user));
     }
-    return MEDIA_LABELS[kind] ?? "Attachment";
+    return MEDIA_LABELS[kind] ?? t("state.attachment");
   }
 
   mediaIcon(kind: string | null): IconName | null {
@@ -233,7 +238,7 @@ export class ChatsState {
     } catch (e) {
       // The query can time out on a busy server; keep the panel open so the
       // failure is visible and retryable rather than looking like a dead click.
-      this.groupInfoError = String(e);
+      this.groupInfoError = e;
     }
   }
 

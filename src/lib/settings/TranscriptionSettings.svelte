@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
+  import { t } from "$lib/i18n/localizer";
   import { onMount } from "svelte";
   import { invoke } from "$lib/utils/ipc";
   import { transcription } from "$lib/state/transcription.svelte";
@@ -7,7 +9,7 @@
   let view = $state<TranscriptionView | null>(null);
   let draft = $state<Settings | null>(null);
   let busy = $state(false);
-  let error = $state("");
+  let error = $state<LocalizedError | string>("");
   let trust = $state(false);
   let modelUrl = $state("");
   let plugin = $derived(view?.plugins.find((p) => p.id === draft?.plugin_id));
@@ -23,7 +25,7 @@
     if (busy) return;
     busy = true; error = "";
     try { await work(); if (reload) await refresh(); }
-    catch (failure) { error = String(failure); }
+    catch (failure) { error = normalizeError(failure); }
     finally { busy = false; }
   }
   onMount(() => { void perform(refresh); });
@@ -60,78 +62,78 @@
   }
 </script>
 
-<section aria-label="Speech to text settings">
-  <h3>Speech to text</h3>
+<section aria-label={t("settings.transcription_label")}>
+  <h3>{t("settings.transcription")}</h3>
   {#if draft && view}
-    <label>Plugin
+    <label>{t("settings.plugin")}
       <select value={draft.plugin_id ?? ""} disabled={busy} onchange={(event) => choosePlugin(event.currentTarget.value)}>
-        <option value="">Disabled</option>
+        <option value="">{t("ui.disabled")}</option>
         {#each view.plugins as plugin}<option value={plugin.id}>{plugin.name}</option>{/each}
       </select>
     </label>
-    {#if !view.plugins.length}<p>Install a verified transcription sidecar, then restart Postal.</p>{/if}
+    {#if !view.plugins.length}<p>{t("settings.transcription_install")}</p>{/if}
     {#if plugin}
-      <label>Provider
+      <label>{t("settings.provider")}
         <select bind:value={draft.provider} disabled={busy}>
-          <option value="" disabled>Choose provider</option>
-          {#each providers as provider}<option value={provider.id}>{provider.name}{provider.transmits_audio ? " · sends audio off-device" : " · local"}</option>{/each}
+          <option value="" disabled>{t("settings.provider_choose")}</option>
+          {#each providers as provider}<option value={provider.id}>{provider.name}{provider.transmits_audio ? t("settings.provider_cloud_suffix") : t("settings.provider_local_suffix")}</option>{/each}
         </select>
       </label>
       {#if !plugin.enabled}
         <label class="setting">
           <div>
-            <span class="setting-title">I trust this native plugin and grant transcription of selected audio</span>
-            <span class="setting-desc">Native plugins can access files and networks.</span>
+            <span class="setting-title">{t("settings.transcription_trust")}</span>
+            <span class="setting-desc">{t("settings.native_plugin_access")}</span>
           </div>
           <input class="switch" type="checkbox" bind:checked={trust} disabled={busy} />
         </label>
-        <button class="button" disabled={busy || !trust || !provider} onclick={() => perform(() => enable(true), true)}>Grant and enable</button>
+        <button class="button" disabled={busy || !trust || !provider} onclick={() => perform(() => enable(true), true)}>{t("settings.grant_enable")}</button>
       {:else}
-        <button class="button" disabled={busy} onclick={() => perform(() => enable(false), true)}>Disable transcription plugin</button>
+        <button class="button" disabled={busy} onclick={() => perform(() => enable(false), true)}>{t("settings.transcription_disable")}</button>
       {/if}
       {#if provider?.transmits_audio}
-        <p>This provider sends voice-note audio off-device. API usage may incur charges.</p>
+        <p>{t("settings.transcription_cloud_hint")}</p>
         <label class="setting">
           <div>
-            <span class="setting-title">I consent to this provider receiving audio</span>
-            <span class="setting-desc">Including automatically transcribed notes.</span>
+            <span class="setting-title">{t("settings.transcription_consent")}</span>
+            <span class="setting-desc">{t("settings.transcription_consent_auto")}</span>
           </div>
           <input class="switch" type="checkbox" checked={cloudConsent} disabled={busy} onchange={(event) => perform(() => consent(event.currentTarget.checked), true)} />
         </label>
         {#if provider.requires_key}
-          <p>API key {view.settings.plugin_id === draft.plugin_id && view.settings.provider === draft.provider && view.key_configured ? "configured" : "not configured"}. Keys stay in the operating-system credential store; entry opens a native prompt.</p>
-          <button class="button" disabled={busy} onclick={() => perform(() => key(false), true)}>Configure API key</button>
-          <button class="button" disabled={busy} onclick={() => perform(() => key(true), true)}>Remove API key</button>
+          <p>{t("settings.api_key_state", { state: t(view.settings.plugin_id === draft.plugin_id && view.settings.provider === draft.provider && view.key_configured ? "settings.api_key_configured" : "settings.api_key_missing") })}</p>
+          <button class="button" disabled={busy} onclick={() => perform(() => key(false), true)}>{t("settings.api_key_configure")}</button>
+          <button class="button" disabled={busy} onclick={() => perform(() => key(true), true)}>{t("settings.api_key_remove")}</button>
         {/if}
       {/if}
       {#if provider?.kind === "local" || provider?.id === "openai"}
-        <label>Audio decoder executable<input value={draft.decoder_executable ?? ""} disabled={busy} onchange={(event) => draft && (draft.decoder_executable = event.currentTarget.value || null)} placeholder="Absolute path to user-installed ffmpeg" /></label>
+        <label>{t("settings.decoder_executable")}<input dir="ltr" value={draft.decoder_executable ?? ""} disabled={busy} onchange={(event) => draft && (draft.decoder_executable = event.currentTarget.value || null)} placeholder={t("settings.decoder_path")} /></label>
       {/if}
       {#if provider?.id === "local-whisper"}
-        <label>Whisper executable<input value={draft.whisper_executable ?? ""} disabled={busy} onchange={(event) => draft && (draft.whisper_executable = event.currentTarget.value || null)} placeholder="Absolute path to whisper-cli" /></label>
-        <label>Model filename<input value={draft.model ?? ""} disabled={busy} onchange={(event) => draft && (draft.model = event.currentTarget.value || null)} /></label>
-        <label>Model SHA-256<input value={draft.model_sha256 ?? ""} disabled={busy} onchange={(event) => draft && (draft.model_sha256 = event.currentTarget.value || null)} /></label>
-        {#if view.data_directory}<p>Models stay in {view.data_directory}.</p>{/if}
-        <label>Model download URL<input type="url" bind:value={modelUrl} disabled={busy} placeholder="https://…" /></label>
-        <p>Explicit download only, up to 256 MiB. Postal verifies SHA-256 before installing; existing models are kept.</p>
-        <button class="button" disabled={busy || !plugin.enabled || !modelUrl.startsWith("https://") || !draft.model || draft.model_sha256?.length !== 64} onclick={() => perform(installModel, true)}>Download and verify model</button>
+        <label>{t("settings.whisper_executable")}<input dir="ltr" value={draft.whisper_executable ?? ""} disabled={busy} onchange={(event) => draft && (draft.whisper_executable = event.currentTarget.value || null)} placeholder={t("settings.whisper_path")} /></label>
+        <label>{t("settings.model_filename")}<input dir="ltr" value={draft.model ?? ""} disabled={busy} onchange={(event) => draft && (draft.model = event.currentTarget.value || null)} /></label>
+        <label>{t("settings.model_hash")}<input dir="ltr" value={draft.model_sha256 ?? ""} disabled={busy} onchange={(event) => draft && (draft.model_sha256 = event.currentTarget.value || null)} /></label>
+        {#if view.data_directory}<p>{t("settings.models_directory", { path: view.data_directory })}</p>{/if}
+        <label>{t("settings.model_url")}<input type="url" dir="ltr" bind:value={modelUrl} disabled={busy} placeholder={t("settings.url_example")} /></label>
+        <p>{t("settings.model_download_hint")}</p>
+        <button class="button" disabled={busy || !plugin.enabled || !modelUrl.startsWith("https://") || !draft.model || draft.model_sha256?.length !== 64} onclick={() => perform(installModel, true)}>{t("settings.model_download")}</button>
       {/if}
-      <label>Language<input value={draft.language ?? ""} disabled={busy} onchange={(event) => draft && (draft.language = event.currentTarget.value || null)} placeholder="Auto-detect, or language code" /></label>
-      <label>Idle unload delay, seconds<input type="number" min="1" max="86400" value={draft.idle_timeout_secs ?? ""} disabled={busy} onchange={(event) => draft && (draft.idle_timeout_secs = event.currentTarget.value ? Number(event.currentTarget.value) : null)} placeholder="Immediate" /></label>
-      <button class="button" disabled={busy || !provider} onclick={() => perform(save, true)}>Save transcription settings</button>
+      <label>{t("settings.transcription_language")}<input dir="ltr" value={draft.language ?? ""} disabled={busy} onchange={(event) => draft && (draft.language = event.currentTarget.value || null)} placeholder={t("settings.transcription_language_hint")} /></label>
+      <label>{t("settings.transcription_idle")}<input type="number" min="1" max="86400" value={draft.idle_timeout_secs ?? ""} disabled={busy} onchange={(event) => draft && (draft.idle_timeout_secs = event.currentTarget.value ? Number(event.currentTarget.value) : null)} placeholder={t("settings.immediate")} /></label>
+      <button class="button" disabled={busy || !provider} onclick={() => perform(save, true)}>{t("settings.transcription_save")}</button>
     {:else}
-      <button class="button" disabled={busy} onclick={() => perform(save, true)}>Save transcription settings</button>
+      <button class="button" disabled={busy} onclick={() => perform(save, true)}>{t("settings.transcription_save")}</button>
     {/if}
     <label class="setting">
       <div>
-        <span class="setting-title">Auto-transcribe downloaded voice notes</span>
-        <span class="setting-desc">Off by default. Chat overrides take precedence. Automatic transcription never downloads audio and skips concealed spoilers.</span>
+        <span class="setting-title">{t("settings.transcription_auto_downloaded")}</span>
+        <span class="setting-desc">{t("settings.transcription_auto_hint")}</span>
       </div>
       <input class="switch" type="checkbox" checked={autoTranscribe} disabled={busy} onchange={(event) => perform(() => onAutoTranscribe(event.currentTarget.checked))} />
     </label>
     {#each view.errors as failure}<p role="alert">{failure}</p>{/each}
   {/if}
-  {#if busy}<p role="status">Working…</p>{/if}
+  {#if busy}<p role="status">{t("ui.working")}</p>{/if}
   {#if error}<p role="alert">{error}</p>{/if}
 </section>
 

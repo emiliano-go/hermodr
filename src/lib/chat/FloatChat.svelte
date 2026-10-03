@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { t, formatDate, formatNumber } from "$lib/i18n/localizer";
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
   import { tick } from "svelte";
   import { blocks, type Inline } from "$lib/utils/format";
   import { FLOAT_HISTORY_LIMIT, floatContent } from "$lib/utils/float-chat";
@@ -11,11 +13,13 @@
     ondraft, onopacity, onsend, onolder, onretry, onretrydraft, onclose }: {
     context: FloatContext | null; rows: StoredMessage[]; draft: string; opacity?: number;
     loading?: boolean; olderLoading?: boolean; hasMore?: boolean; sending?: boolean; closing?: boolean;
-    error?: string | null; sendError?: string | null; draftError?: string | null; draftReady?: boolean;
-    rules?: KeywordRules; rulesReady?: boolean; keywordError?: string | null; onretryrules?: () => void;
+    error?: LocalizedError | string | null; sendError?: LocalizedError | string | null; draftError?: LocalizedError | string | null; draftReady?: boolean;
+    rules?: KeywordRules; rulesReady?: boolean; keywordError?: LocalizedError | string | null; onretryrules?: () => void;
     ondraft: (value: string) => void; onopacity: (value: number) => void; onsend: () => Promise<void>;
     onolder: () => Promise<void>; onretry: () => Promise<void>; onretrydraft: () => void; onclose: () => Promise<void>;
   } = $props();
+  let dismissed = $state.raw<(LocalizedError | string)[]>([]);
+  $effect(() => { error; sendError; draftError; keywordError; context?.account_id; context?.chat; dismissed = []; });
   let scroller = $state<HTMLElement>();
   let seen = 0;
   let pinnedBottom = true;
@@ -50,10 +54,21 @@
   }
 
   function time(value: number) {
-    const date = new Date(value * 1000);
-    return Number.isFinite(date.getTime()) ? date.toLocaleString() : "Time unavailable";
+    return Number.isFinite(value) ? formatDate(value, { dateStyle: "medium", timeStyle: "short" }) : t("chat.time_unavailable");
   }
 </script>
+
+
+{#snippet problem(value: LocalizedError | string)}
+  {#if !dismissed.includes(value)}
+    {@const failure = normalizeError(value)}
+    <div class="error-notice" role="alert">
+      <p class="error">{failure.message}</p>
+      {#if failure.diagnostic}<details><summary>{t("error.technical_details")}</summary><pre dir="auto">{failure.diagnostic}</pre></details>{/if}
+      <button type="button" onclick={() => dismissed = [...dismissed, value]}>{t("action.dismiss")}</button>
+    </div>
+  {/if}
+{/snippet}
 
 {#snippet runs(nodes: Inline[])}
   {#each nodes as node}
@@ -69,28 +84,28 @@
 {#snippet lines(items: Inline[][])}{#each items as line, index}{#if index}<br />{/if}{@render runs(line)}{/each}{/snippet}
 
 <main class="float-chat" style:--float-alpha={`${Math.max(0, Math.min(1, opacity)) * 100}%`}>
-  <header><h1>{context?.title ?? "Floating chat"}</h1><button type="button" disabled={closing} aria-label="Close floating chat" onclick={() => void onclose()}>×</button></header>
-  <div class="toolbar"><label>Background opacity <input type="range" min="0" max="1" step="0.05" value={opacity}
-    oninput={(event) => onopacity(Number(event.currentTarget.value))} /></label><output>{Math.round(opacity * 100)}%</output></div>
-  <p class="connection" role="status">{context?.connected ? "Connected" : "Offline — showing stored messages. Replies are unavailable."}</p>
-  {#if error}<p class="error" role="alert">{error}<button type="button" disabled={loading} onclick={() => void onretry()}>Retry history</button></p>{/if}
-  {#if keywordError}<p class="error" role="alert">{keywordError}{#if onretryrules}<button type="button" onclick={onretryrules}>Retry keyword rules</button>{/if}</p>{/if}
-  <section bind:this={scroller} class="history" aria-label="Stored chat messages" aria-busy={loading}
+  <header><h1><bdi>{context?.title ?? t("chat.float_title")}</bdi></h1><button type="button" disabled={closing} aria-label={t("chat.float_close")} onclick={() => void onclose()}>×</button></header>
+  <div class="toolbar"><label>{t("chat.float_opacity")} <input type="range" min="0" max="1" step="0.05" value={opacity}
+    oninput={(event) => onopacity(Number(event.currentTarget.value))} /></label><output>{formatNumber(opacity, { style: "percent", maximumFractionDigits: 0 })}</output></div>
+  <p class="connection" role="status">{context?.connected ? t("settings.connected") : t("chat.float_offline")}</p>
+  {#if error}<div class="error-actions">{@render problem(error)}<button type="button" disabled={loading} onclick={() => void onretry()}>{t("chat.history_retry")}</button></div>{/if}
+  {#if keywordError}<div class="error-actions">{@render problem(keywordError)}{#if onretryrules}<button type="button" onclick={onretryrules}>{t("chat.keywords_retry")}</button>{/if}</div>{/if}
+  <section bind:this={scroller} class="history" aria-label={t("chat.stored_messages")} aria-busy={loading}
     onscroll={() => { if (scroller) { scrollRevision++; pinnedBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40; } }}>
-    {#if rows.length >= FLOAT_HISTORY_LIMIT}<p class="limit" role="status">Showing up to {FLOAT_HISTORY_LIMIT} stored messages in this window.</p>{/if}
-    {#if hasMore}<button class="older" disabled={olderLoading || rows.length >= FLOAT_HISTORY_LIMIT} title={rows.length >= FLOAT_HISTORY_LIMIT ? "Floating history limit reached." : undefined}
-      onclick={() => { if (rows.length < FLOAT_HISTORY_LIMIT) void onolder(); }}>{olderLoading ? "Loading…" : "Load older messages"}</button>{/if}
-    {#if !rulesReady}<p role="status">Messages are hidden until keyword rules can be read.</p>
-    {:else if loading && !rows.length}<p role="status">Loading messages…</p>
-    {:else if !rows.length}<p>No stored messages.</p>
-    {:else if !visibleRows.length}<p>All loaded messages are hidden by your keyword rules.</p>{/if}
+    {#if rows.length >= FLOAT_HISTORY_LIMIT}<p class="limit" role="status">{t("chat.float_limit", { count: FLOAT_HISTORY_LIMIT })}</p>{/if}
+    {#if hasMore}<button class="older" disabled={olderLoading || rows.length >= FLOAT_HISTORY_LIMIT} title={rows.length >= FLOAT_HISTORY_LIMIT ? t("chat.float_limit_reached") : undefined}
+      onclick={() => { if (rows.length < FLOAT_HISTORY_LIMIT) void onolder(); }}>{olderLoading ? t("ui.loading") : t("chat.messages_older")}</button>{/if}
+    {#if !rulesReady}<p role="status">{t("chat.float_keywords_hidden")}</p>
+    {:else if loading && !rows.length}<p role="status">{t("settings.messages_loading")}</p>
+    {:else if !rows.length}<p>{t("chat.stored_empty")}</p>
+    {:else if !visibleRows.length}<p>{t("chat.keywords_all_hidden")}</p>{/if}
     <ol>{#each visibleRows as message (message.id)}
       {@const content = floatContent(message)}
       <li class:mine={message.from_me} class:notice={content.notice} class:keyword-highlighted={keywordHighlighted(message, rules)}>
-        <b>{message.from_me ? "You" : message.sender_name || message.sender || "Unknown sender"}</b>
+        <b><bdi>{message.from_me ? t("chat.you") : message.sender_name || message.sender || t("chat.sender_unknown")}</bdi></b>
         {#if content.media}<span class="media">{content.media}</span>{/if}
-        <div class="text">
-          {#each blocks(content.notice || content.media === "One-time media" || message.spoiler ? content.text : message.text.trim() === `[${message.media_kind}]` ? "" : message.text) as block}
+        <div class="text" dir="auto">
+          {#each blocks(content.notice || (message.media_kind === "view_once" || !!message.media_once_kind) || message.spoiler ? content.text : message.text.trim() === `[${message.media_kind}]` ? "" : message.text) as block}
             {#if block.kind === "pre"}<pre>{block.text}</pre>
             {:else if block.kind === "quote"}<blockquote>{@render lines(block.lines)}</blockquote>
             {:else if block.kind === "list"}{#if block.ordered}<ol>{#each block.items as item}<li>{@render runs(item)}</li>{/each}</ol>
@@ -102,12 +117,12 @@
       </li>
     {/each}</ol>
   </section>
-  {#if sendError}<p class="error" role="alert">{sendError}</p>{/if}
-  {#if draftError}<p class="error" role="alert">{draftError}<button type="button" onclick={onretrydraft}>Retry draft save</button></p>{/if}
+  {#if sendError}{@render problem(sendError)}{/if}
+  {#if draftError}<div class="error-actions">{@render problem(draftError)}<button type="button" onclick={onretrydraft}>{t("chat.draft_retry")}</button></div>{/if}
   <form onsubmit={(event) => { event.preventDefault(); if (canSend) void onsend(); }}>
-    <textarea aria-label="Reply to this chat" placeholder="Reply…" value={draft} disabled={!draftReady || sending || closing}
+    <textarea aria-label={t("chat.reply_label")} dir="auto" placeholder={t("chat.reply_placeholder")} value={draft} disabled={!draftReady || sending || closing}
       oninput={(event) => ondraft(event.currentTarget.value)} onkeydown={key} rows="2"></textarea>
-    <button type="submit" disabled={!canSend}>{sending ? "Sending…" : "Send"}</button>
+    <button type="submit" disabled={!canSend}>{sending ? t("ui.sending") : t("ui.send")}</button>
   </form>
 </main>
 
@@ -136,9 +151,14 @@
   .text { white-space: pre-wrap; }
   .text p { margin: 4px 0; }
   pre { margin: 4px 0; white-space: pre-wrap; }
-  blockquote { margin: 4px 0; padding-left: 8px; border-left: 2px solid var(--muted, #8696a0); }
+  blockquote { margin: 4px 0; padding-inline-start: 8px; border-inline-start: 2px solid var(--muted, #8696a0); }
   .mention { color: var(--link, #53bdeb); }
   textarea { flex: 1; min-width: 0; resize: vertical; padding: 8px; border: 1px solid var(--line-strong, #3b4a54); border-radius: 6px; background: color-mix(in srgb, var(--surface, #202c33) var(--float-alpha), transparent); }
   .error { margin: 0; color: var(--danger, #ff6b6b); font-size: 12px; }
-  .error button { margin-left: 8px; }
+  .error-actions { display: grid; gap: 6px; }
+  .error-notice { display: grid; gap: 6px; }
+  .error-notice p { margin: 0; }
+  .error-notice summary { cursor: pointer; }
+  .error-notice pre { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 6px 0; }
+  .error-notice button { justify-self: start; }
 </style>

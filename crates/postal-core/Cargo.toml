@@ -22,7 +22,9 @@ qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 # The UI consumes these types directly over Tauri IPC.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rusqlite = { version = "0.40.2", features = ["bundled"] }
+rusqlite = { version = "0.40.2", features = ["bundled-sqlcipher-vendored-openssl"] }
+zeroize = "1"
+diesel = { version = "2.3.11", default-features = false, features = ["sqlite"] }
 # Fetches Open Graph metadata for link previews on outgoing messages.
 ureq = "3"
 # Renders outgoing image thumbnails so recipients see a preview before the

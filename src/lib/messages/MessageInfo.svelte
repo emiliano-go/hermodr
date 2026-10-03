@@ -1,9 +1,13 @@
 <script lang="ts" module>
+  import { formatNumber as localeNumber } from "$lib/i18n/localizer";
+  import { formatDate as localeDate, formatTime as localeTime } from "$lib/i18n/localizer";
+  import { LocalizedError, normalizeError } from "$lib/i18n/errors";
   import type { MessageReceipt as Receipt } from "$lib/utils/wire";
   export type { Receipt };
 </script>
 
 <script lang="ts">
+  import { t } from "$lib/i18n/localizer";
   import { fade, scale } from "svelte/transition";
   import { motion } from "$lib/utils/theme.svelte";
   import { convertFileSrc } from "@tauri-apps/api/core";
@@ -37,13 +41,13 @@
   } = $props();
 
   let receipts = $state<Receipt[] | null>(null);
-  let failed = $state<string | null>(null);
+  let failed = $state<LocalizedError | string | null>(null);
 
   $effect(() => {
     void version;
     invoke<Receipt[]>("message_info", { id })
       .then((r) => (receipts = r))
-      .catch((e) => (failed = String(e)));
+      .catch((e) => (failed = normalizeError(e)));
   });
 
   const played = $derived((receipts ?? []).filter((r) => r.played_at));
@@ -56,10 +60,10 @@
   function when(ts: number | null) {
     if (!ts) return "—";
     const date = new Date(ts * 1000);
-    const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const time = localeTime((date).getTime() / 1000, { hour: "2-digit", minute: "2-digit" });
     return new Date().toDateString() === date.toDateString()
-      ? `Today at ${time}`
-      : `${date.toLocaleDateString()} at ${time}`;
+      ? t("content.today_at_value", { param0: (time) })
+      : t("content.value_at_value", { param0: (localeDate((date).getTime() / 1000, { dateStyle: "short" })), param1: (time) });
   }
 </script>
 
@@ -72,7 +76,7 @@
     {:else}
       <span class="avatar blank"><Icon name="user" size={16} /></span>
     {/if}
-    <span class="who">{name}</span>
+    <span class="who"><bdi dir="auto">{name}</bdi></span>
     <span class="at">{when(at)}</span>
   </li>
 {/snippet}
@@ -85,57 +89,57 @@
   role="presentation"
   transition:fade|global={{ duration: motion(140) }}
   onclick={(e) => e.target === e.currentTarget && onclose()}>
-  <div class="dialog" role="dialog" aria-modal="true" aria-label="Message info" transition:scale|global={{ start: 0.96, duration: motion(160) }}>
+  <div class="dialog" role="dialog" aria-modal="true" aria-label={t("content.message_info")} transition:scale|global={{ start: 0.96, duration: motion(160) }}>
     <header>
-      <h2>Message info</h2>
-      <button class="close" aria-label="Close" onclick={onclose}><Icon name="x" size={18} /></button>
+      <h2>{t("content.message_info")}</h2>
+      <button class="close" aria-label={t("content.close")} onclick={onclose}><Icon name="x" size={18} /></button>
     </header>
     <div class="quoted">
       <span class="quoted-text">{preview}</span>
-      <span class="at">Sent {when(sentAt).replace(/^T/, "t")}</span>
+      <span class="at">{t("content.sent")} {when(sentAt).replace(/^T/, "t")}</span>
     </div>
 
     {#if failed}
       <p class="muted">{failed}</p>
     {:else if receipts === null}
-      <p class="muted">Loading…</p>
+      <p class="muted">{t("content.loading")}</p>
     {:else if !group}
       <ul class="timeline">
-        <li><span class="mark sent"><Icon name="check" size={16} /></span>Sent<span class="at">{when(sentAt)}</span></li>
-        <li><span class="mark"><Icon name="checks" size={16} /></span>Delivered<span class="at">{when(single?.delivered_at ?? null)}</span></li>
-        <li><span class="mark read"><Icon name="checks" size={16} /></span>Read<span class="at">{when(single?.read_at ?? null)}</span></li>
+        <li><span class="mark sent"><Icon name="check" size={16} /></span>{t("content.sent")}<span class="at">{when(sentAt)}</span></li>
+        <li><span class="mark"><Icon name="checks" size={16} /></span>{t("content.delivered")}<span class="at">{when(single?.delivered_at ?? null)}</span></li>
+        <li><span class="mark read"><Icon name="checks" size={16} /></span>{t("content.read")}<span class="at">{when(single?.read_at ?? null)}</span></li>
         {#if voice}
-          <li><span class="mark read"><Icon name="mic" size={13} /></span>Played<span class="at">{when(single?.played_at ?? null)}</span></li>
+          <li><span class="mark read"><Icon name="mic" size={13} /></span>{t("content.played")}<span class="at">{when(single?.played_at ?? null)}</span></li>
         {/if}
       </ul>
     {:else}
       <div class="lists">
         {#if voice}
           <section>
-            <h3><Icon name="mic" size={14} /> Played by <span class="count">{played.length}</span></h3>
+            <h3><Icon name="mic" size={14} /> {t("content.played_by")} <span class="count">{localeNumber(played.length)}</span></h3>
             <ul>{#each played as r (r.recipient)}{@render person(r, r.played_at)}{/each}</ul>
           </section>
         {/if}
         <section>
-          <h3><span class="mark read"><Icon name="checks" size={16} /></span> Read by <span class="count">{read.length}</span></h3>
+          <h3><span class="mark read"><Icon name="checks" size={16} /></span> {t("content.read_by")} <span class="count">{localeNumber(read.length)}</span></h3>
           <ul>
             {#each read as r (r.recipient)}{@render person(r, r.read_at)}{/each}
-            {#if read.length === 0}<li class="empty">No one yet</li>{/if}
+            {#if read.length === 0}<li class="empty">{t("content.no_one_yet")}</li>{/if}
           </ul>
         </section>
         <section>
-          <h3><span class="mark"><Icon name="checks" size={16} /></span> Delivered to <span class="count">{delivered.length}</span></h3>
+          <h3><span class="mark"><Icon name="checks" size={16} /></span> {t("content.delivered_to")} <span class="count">{localeNumber(delivered.length)}</span></h3>
           <ul>
             {#each delivered as r (r.recipient)}{@render person(r, r.delivered_at)}{/each}
-            {#if delivered.length === 0}<li class="empty">No one else</li>{/if}
+            {#if delivered.length === 0}<li class="empty">{t("content.no_one_else")}</li>{/if}
           </ul>
         </section>
         {#if waiting > 0}
-          <p class="muted">{waiting} {waiting === 1 ? "member has" : "members have"} not received it yet.</p>
+          <p class="muted">{t("content.missing_receipts", { count: waiting })}</p>
         {/if}
       </div>
     {/if}
-    <p class="note">Receipts that arrived while this computer was offline, or before this version, are not shown.</p>
+    <p class="note">{t("content.receipts_that_arrived_while_this_computer_was_offline_or_before_this_ver")}</p>
   </div>
 </div>
 
@@ -219,7 +223,7 @@
     color: var(--muted);
   }
   .count {
-    margin-left: auto;
+    margin-inline-start: auto;
     font-weight: 400;
   }
   ul {
@@ -274,7 +278,7 @@
     border-top: 1px solid var(--line);
   }
   .timeline .at {
-    margin-left: auto;
+    margin-inline-start: auto;
   }
   .mark {
     display: inline-grid;

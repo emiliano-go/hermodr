@@ -521,3 +521,18 @@ fn alias_merge_and_context_cleanup_preserve_only_current_local_evidence() {
         0
     );
 }
+
+#[test]
+fn member_validation_retains_typed_errors_before_any_write() {
+    for (result, code) in [
+        (member_address("invalid"), "error.member_address"),
+        (member_address("1@g.us"), "error.member_address"),
+        (profile_scope(Some("invalid")), "error.member_scope"),
+    ] {
+        assert_eq!(result.unwrap_err().downcast_ref::<MessageRef>().unwrap().code, code);
+    }
+    let store = store();
+    let error = store.set_member_note(MEMBER, Some(GROUP), "note", 100001, 1).unwrap_err();
+    assert_eq!(error.downcast_ref::<MessageRef>().unwrap().code, "error.member_note_limit");
+    assert_eq!(store.member_profile_local(MEMBER, Some(GROUP), OWN, 1).unwrap().note.warnings, 0);
+}

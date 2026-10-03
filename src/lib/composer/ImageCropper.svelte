@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from "$lib/i18n/localizer";
   import { onDestroy } from "svelte";
   import Button from "$lib/ui/Button.svelte";
 
@@ -8,7 +9,7 @@
     sizes = true,
     onapply,
     oncancel,
-    applyLabel = "Apply",
+    applyLabel = t("content.apply"),
     altLabel,
     onalt,
   }: {
@@ -131,15 +132,15 @@
   <div class="controls">
     <span class="dims">{Math.round(crop.w * natural.w)} × {Math.round(crop.h * natural.h)}</span>
     {#if sizes}
-      <select class="field" bind:value={longEdge} aria-label="Size">
-        <option value={0}>Original size</option>
-        <option value={2560}>Large (2560)</option>
-        <option value={1600}>Medium (1600)</option>
-        <option value={1024}>Small (1024)</option>
+      <select class="field" bind:value={longEdge} aria-label={t("content.size")}>
+        <option value={0}>{t("content.original_size")}</option>
+        <option value={2560}>{t("content.large_2560")}</option>
+        <option value={1600}>{t("content.medium_1600")}</option>
+        <option value={1024}>{t("content.small_1024")}</option>
       </select>
     {/if}
     <span class="spacer"></span>
-    <Button variant="ghost" type="button" onclick={oncancel}>Cancel</Button>
+    <Button variant="ghost" type="button" onclick={oncancel}>{t("content.cancel")}</Button>
     {#if altLabel && onalt}
       <Button variant="ghost" type="button" onclick={() => apply(onalt)}>{altLabel}</Button>
     {/if}

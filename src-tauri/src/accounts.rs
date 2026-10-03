@@ -1,4 +1,5 @@
 use tauri::{AppHandle, State};
+use crate::command_error::{CommandError, CommandResult};
 use crate::{AppState, account_store::{Account, AccountsView, DEFAULT_ACCOUNT_LABEL, SESSION_POINTER, SESSION_POINTER_ANDROID, account_base, active_account, is_stale_session, now_millis, save_accounts}, connection::start_service};
 
 /// The accounts and which one is active.
@@ -17,7 +18,7 @@ pub(crate) async fn add_account(
     app: AppHandle,
     state: State<'_, AppState>,
     label: Option<String>,
-) -> Result<(), String> {
+) -> CommandResult<()> {
     let id = format!("acct-{}", now_millis());
     {
         let mut file = state.accounts.lock().unwrap();
@@ -40,11 +41,11 @@ pub(crate) async fn switch_account(
     app: AppHandle,
     state: State<'_, AppState>,
     id: String,
-) -> Result<(), String> {
+) -> CommandResult<()> {
     {
         let mut file = state.accounts.lock().unwrap();
         if !file.accounts.iter().any(|a| a.id == id) {
-            return Err("unknown account".into());
+            return Err(CommandError::code("error.unknown_account"));
         }
         file.active = Some(id.clone());
     }
@@ -59,7 +60,7 @@ pub(crate) fn rename_account(
     state: State<'_, AppState>,
     id: String,
     label: String,
-) -> Result<(), String> {
+) -> CommandResult<()> {
     let label = label.trim().to_string();
     if label.is_empty() {
         return Ok(());
@@ -68,7 +69,7 @@ pub(crate) fn rename_account(
         let mut file = state.accounts.lock().unwrap();
         match file.accounts.iter_mut().find(|a| a.id == id) {
             Some(account) => account.label = label,
-            None => return Err("unknown account".into()),
+            None => return Err(CommandError::code("error.unknown_account")),
         }
     }
     save_accounts(&app, &state.accounts.lock().unwrap());
@@ -77,7 +78,7 @@ pub(crate) fn rename_account(
 
 /// Removes an account and its data, switching to another if it was active.
 #[tauri::command]
-pub(crate) async fn remove_account(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
+pub(crate) async fn remove_account(app: AppHandle, state: State<'_, AppState>, id: String) -> CommandResult<()> {
     crate::floating::invalidate_all(&app);
     log::info!("removing account {id}");
     let was_active = active_account(&state).as_deref() == Some(id.as_str());

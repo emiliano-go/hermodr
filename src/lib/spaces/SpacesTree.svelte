@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
+  import { t } from "$lib/i18n/localizer";
 import { onDestroy } from "svelte";
 import Button from "$lib/ui/Button.svelte";
 import Icon, { ICON_NAMES, type IconName } from "$lib/ui/Icon.svelte";
@@ -9,7 +11,7 @@ import { loadEmojis, recentEmojis, rememberEmoji, searchEmojis, type Emoji } fro
   let { account, generation, snapshot, selected, loading = false, busy = false, error = null,
     onselect, onaction }: {
     account: string | null; generation: number; snapshot: SpaceSnapshot; selected: SpaceSelection;
-    loading?: boolean; busy?: boolean; error?: string | null;
+    loading?: boolean; busy?: boolean; error?: LocalizedError | string | null;
     onselect: (selection: SpaceSelection) => void;
     onaction: (action: SpaceAction) => Promise<void>;
   } = $props();
@@ -21,7 +23,7 @@ import { loadEmojis, recentEmojis, rememberEmoji, searchEmojis, type Emoji } fro
   let moving = $state<{ space: Space; parent_id: string | null } | null>(null);
   let confirmation = $state<Space | null>(null);
   let working = $state(false);
-  let failure = $state("");
+  let failure = $state<LocalizedError | string>("");
   let revision = 0, alive = true;
   const disabled = $derived(!account || busy || working || loading);
   const children = $derived(spaceChildren(snapshot.spaces));
@@ -66,7 +68,7 @@ import { loadEmojis, recentEmojis, rememberEmoji, searchEmojis, type Emoji } fro
     working = true;
     failure = "";
     try { await task(); if (current()) done?.(); }
-    catch (cause) { if (current()) failure = String(cause); }
+    catch (cause) { if (current()) failure = normalizeError(cause); }
     finally { if (current()) working = false; }
   }
 
@@ -125,7 +127,7 @@ import { loadEmojis, recentEmojis, rememberEmoji, searchEmojis, type Emoji } fro
       <li>
         <div class="space-row">
           {#if nested.length}
-            <button class="toggle" aria-label={`${collapsed.includes(space.id) ? "Expand" : "Collapse"} ${space.name}`}
+            <button class="toggle" aria-label={t(collapsed.includes(space.id) ? "spaces.expand_name" : "spaces.collapse_name", { name: space.name })}
               aria-expanded={!collapsed.includes(space.id)} onclick={() => {
                 collapsed = collapsed.includes(space.id) ? collapsed.filter((id) => id !== space.id) : [...collapsed, space.id];
               }}>{collapsed.includes(space.id) ? "›" : "⌄"}</button>
@@ -138,14 +140,14 @@ import { loadEmojis, recentEmojis, rememberEmoji, searchEmojis, type Emoji } fro
               {:else}<span aria-hidden="true">{space.icon}</span>{/if}
             {/if}{space.name}
           </button>
-          <details><summary aria-label={`Manage ${space.name}`}>•••</summary>
+          <details><summary aria-label={t("spaces.manage_name", { name: space.name })}>•••</summary>
           <div class="actions">
-            <button disabled={disabled} onclick={(event) => { create(space.id); event.currentTarget.closest("details")?.removeAttribute("open"); }}>Add child Space</button>
-            <button disabled={disabled} onclick={(event) => { draft = { id: space.id, parent_id: space.parent_id, name: space.name, icon: "", color: "#00a884", useColor: false }; failure = ""; event.currentTarget.closest("details")?.removeAttribute("open"); }}>Rename</button>
-            <button disabled={disabled} onclick={(event) => { moving = { space, parent_id: space.parent_id }; failure = ""; event.currentTarget.closest("details")?.removeAttribute("open"); }}>Move to parent</button>
-            <button disabled={disabled || index === 0} onclick={(event) => { move(space, -1); event.currentTarget.closest("details")?.removeAttribute("open"); }}>Move up</button>
-            <button disabled={disabled || index === (children.get(parent)?.length ?? 0) - 1} onclick={(event) => { move(space, 1); event.currentTarget.closest("details")?.removeAttribute("open"); }}>Move down</button>
-            <button disabled={disabled} onclick={(event) => { confirmation = space; failure = ""; event.currentTarget.closest("details")?.removeAttribute("open"); }}>Delete Space</button>
+            <button disabled={disabled} onclick={(event) => { create(space.id); event.currentTarget.closest("details")?.removeAttribute("open"); }}>{t("spaces.add_child")}</button>
+            <button disabled={disabled} onclick={(event) => { draft = { id: space.id, parent_id: space.parent_id, name: space.name, icon: "", color: "#00a884", useColor: false }; failure = ""; event.currentTarget.closest("details")?.removeAttribute("open"); }}>{t("ui.rename")}</button>
+            <button disabled={disabled} onclick={(event) => { moving = { space, parent_id: space.parent_id }; failure = ""; event.currentTarget.closest("details")?.removeAttribute("open"); }}>{t("spaces.move_parent")}</button>
+            <button disabled={disabled || index === 0} onclick={(event) => { move(space, -1); event.currentTarget.closest("details")?.removeAttribute("open"); }}>{t("ui.move_up")}</button>
+            <button disabled={disabled || index === (children.get(parent)?.length ?? 0) - 1} onclick={(event) => { move(space, 1); event.currentTarget.closest("details")?.removeAttribute("open"); }}>{t("ui.move_down")}</button>
+            <button disabled={disabled} onclick={(event) => { confirmation = space; failure = ""; event.currentTarget.closest("details")?.removeAttribute("open"); }}>{t("spaces.delete")}</button>
           </div></details>
         </div>
         {#if nested.length && !collapsed.includes(space.id)}{@render branch(space.id)}{/if}
@@ -154,74 +156,74 @@ import { loadEmojis, recentEmojis, rememberEmoji, searchEmojis, type Emoji } fro
   </ul>
 {/snippet}
 
-<nav class="spaces" aria-label="Spaces" aria-busy={loading || working}>
+<nav class="spaces" aria-label={t("spaces.title")} aria-busy={loading || working}>
   <header>
     <span class="title-row">
-      <button class="toggle" aria-label={`${navCollapsed ? "Expand" : "Collapse"} Spaces`} aria-expanded={!navCollapsed}
+      <button class="toggle" aria-label={t(navCollapsed ? "spaces.expand_name" : "spaces.collapse_name", { name: t("spaces.title") })} aria-expanded={!navCollapsed}
         onclick={() => (navCollapsed = !navCollapsed)}>{navCollapsed ? "›" : "⌄"}</button>
-      <h2>Spaces</h2>
+      <h2>{t("spaces.title")}</h2>
     </span>
-    <Button variant="icon" icon="plus" aria-label="Create Space" disabled={disabled} onclick={() => create()} /></header>
+    <Button variant="icon" icon="plus" aria-label={t("spaces.create")} disabled={disabled} onclick={() => create()} /></header>
   {#if !navCollapsed}
-    <p class="muted">Local views on this device.</p>
+    <p class="muted">{t("spaces.local_hint")}</p>
     <div class="defaults">
-      <Button variant="chip" selected={selected.kind === "all"} disabled={disabled} onclick={() => onselect({ kind: "all" })}>All</Button>
-      <Button variant="chip" selected={selected.kind === "unsorted"} disabled={disabled} onclick={() => onselect({ kind: "unsorted" })}>Unsorted</Button>
+      <Button variant="chip" selected={selected.kind === "all"} disabled={disabled} onclick={() => onselect({ kind: "all" })}>{t("nav.all")}</Button>
+      <Button variant="chip" selected={selected.kind === "unsorted"} disabled={disabled} onclick={() => onselect({ kind: "unsorted" })}>{t("spaces.unsorted")}</Button>
     </div>
     {@render branch(null)}
-    {#if loading}<p role="status">Loading Spaces…</p>
-    {:else if !snapshot.spaces.length}<p class="muted">Create a Space to organize conversations and saved views.</p>{/if}
+    {#if loading}<p role="status">{t("spaces.loading")}</p>
+    {:else if !snapshot.spaces.length}<p class="muted">{t("spaces.empty")}</p>{/if}
   {/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if failure && !dialog?.open}<p class="error" role="alert">{failure}</p>{/if}
 </nav>
 
 {#if draft || moving || confirmation}
-  <dialog bind:this={dialog} aria-label={draft ? draft.id ? "Rename Space" : "Create Space" : moving ? "Move Space" : "Delete Space"}
+  <dialog bind:this={dialog} aria-label={draft ? draft.id ? t("spaces.rename") : t("spaces.create") : moving ? t("spaces.move") : t("spaces.delete")}
     oncancel={(event) => { event.preventDefault(); cancel(); }}>
-    <header><h2>{draft ? draft.id ? "Rename Space" : "Create Space" : moving ? "Move Space" : "Delete Space"}</h2>
-      <Button variant="icon" icon="x" aria-label="Close Space dialog" onclick={cancel} /></header>
+    <header><h2>{draft ? draft.id ? t("spaces.rename") : t("spaces.create") : moving ? t("spaces.move") : t("spaces.delete")}</h2>
+      <Button variant="icon" icon="x" aria-label={t("spaces.dialog_close")} onclick={cancel} /></header>
     {#if draft}
       <form onsubmit={(event) => { event.preventDefault(); save(); }}>
-        <label>Name <input bind:value={draft.name} required maxlength="256" disabled={disabled} /></label>
+        <label>{t("ui.name")} <input dir="auto" bind:value={draft.name} required maxlength="256" disabled={disabled} /></label>
         {#if !draft.id}
-          <label>Parent <select bind:value={draft.parent_id} disabled={disabled}>
-            <option value={null}>Top level</option>{#each parentRows as row (row.space.id)}<option value={row.space.id}>{"— ".repeat(row.depth)}{row.space.name}</option>{/each}
+          <label>{t("spaces.parent")} <select bind:value={draft.parent_id} disabled={disabled}>
+            <option value={null}>{t("spaces.top_level")}</option>{#each parentRows as row (row.space.id)}<option value={row.space.id}>{"— ".repeat(row.depth)}{row.space.name}</option>{/each}
           </select></label>
           <div class="icon-field">
-            <span id="space-icon-label">Icon (optional)</span>
+            <span id="space-icon-label">{t("spaces.icon_optional")}</span>
             <div class="icon-current">
               <span class="preview" aria-hidden="true">
                 {#if draft.icon}{#if isAppIcon(draft.icon)}<Icon name={draft.icon} size={18} />{:else}{draft.icon}{/if}
                 {:else}—{/if}
               </span>
-              <button type="button" disabled={disabled} aria-expanded={iconPopup === "app"} onclick={() => openIconPopup("app")}>App icons</button>
-              <button type="button" disabled={disabled} aria-expanded={iconPopup === "emoji"} onclick={() => openIconPopup("emoji")}>Emoji</button>
-              {#if draft.icon}<button type="button" class="link" disabled={disabled} onclick={() => (draft!.icon = "")}>Remove</button>{/if}
+              <button type="button" disabled={disabled} aria-expanded={iconPopup === "app"} onclick={() => openIconPopup("app")}>{t("spaces.app_icons")}</button>
+              <button type="button" disabled={disabled} aria-expanded={iconPopup === "emoji"} onclick={() => openIconPopup("emoji")}>{t("ui.emoji")}</button>
+              {#if draft.icon}<button type="button" class="link" disabled={disabled} onclick={() => (draft!.icon = "")}>{t("ui.remove")}</button>{/if}
             </div>
             {#if iconPopup}
-              <div class="icon-popup" role="dialog" aria-label={iconPopup === "app" ? "Choose an app icon" : "Choose an emoji"}>
+              <div class="icon-popup" role="dialog" aria-label={iconPopup === "app" ? t("spaces.choose_app_icon") : t("spaces.choose_emoji")}>
                 {#if iconPopup === "app"}
-                  <div class="icon-grid" role="group" aria-label="App icons">
+                  <div class="icon-grid" role="group" aria-label={t("spaces.app_icons")}>
                     {#each ICON_NAMES as name (name)}
                       <button type="button" class="glyph" class:chosen={draft.icon === name} aria-pressed={draft.icon === name}
-                        aria-label={`App icon ${name}`} title={name} disabled={disabled}
+                        aria-label={t("spaces.app_icon_name", { name })} title={name} disabled={disabled}
                         onclick={() => pickIcon(draft!.icon === name ? "" : name)}><Icon name={name} size={18} /></button>
                     {/each}
                   </div>
                 {:else}
-                  <input type="search" aria-label="Search emoji" placeholder="Search emoji" bind:value={emojiQuery} disabled={disabled} />
+                  <input type="search" dir="auto" aria-label={t("ui.search_emoji")} placeholder={t("ui.search_emoji")} bind:value={emojiQuery} disabled={disabled} />
                   {#if !emojiQuery.trim() && recentRow.length}
-                    <p class="muted">Recent</p>
-                    <div class="icon-grid" role="group" aria-label="Recent emoji">
+                    <p class="muted">{t("ui.recent")}</p>
+                    <div class="icon-grid" role="group" aria-label={t("ui.recent_emoji")}>
                       {#each recentRow as emoji (emoji)}
                         <button type="button" class="glyph emoji" class:chosen={draft.icon === emoji} aria-pressed={draft.icon === emoji}
-                          aria-label={`Emoji ${emoji}`} disabled={disabled} onclick={() => pickIcon(emoji)}>{emoji}</button>
+                          aria-label={t("spaces.emoji_name", { emoji })} disabled={disabled} onclick={() => pickIcon(emoji)}>{emoji}</button>
                       {/each}
                     </div>
                   {/if}
-                  <div class="icon-grid" role="group" aria-label="Emoji">
-                    {#if !emojis.length}<p class="muted">Loading emoji…</p>{/if}
+                  <div class="icon-grid" role="group" aria-label={t("ui.emoji")}>
+                    {#if !emojis.length}<p class="muted">{t("ui.emoji_loading")}</p>{/if}
                     {#each shownEmojis as row (row.emoji)}
                       <button type="button" class="glyph emoji" class:chosen={draft.icon === row.emoji} aria-pressed={draft.icon === row.emoji}
                         aria-label={row.label} title={row.label} disabled={disabled} onclick={() => pickIcon(row.emoji)}>{row.emoji}</button>
@@ -231,20 +233,20 @@ import { loadEmojis, recentEmojis, rememberEmoji, searchEmojis, type Emoji } fro
               </div>
             {/if}
           </div>
-          <label class="inline"><input type="checkbox" bind:checked={draft.useColor} disabled={disabled} /> Use a color</label>
-          {#if draft.useColor}<label class="color-row">Color <input type="color" class="swatch" bind:value={draft.color} disabled={disabled} /></label>{/if}
+          <label class="inline"><input type="checkbox" bind:checked={draft.useColor} disabled={disabled} /> {t("spaces.use_color")}</label>
+          {#if draft.useColor}<label class="color-row">{t("ui.color")} <input type="color" class="swatch" bind:value={draft.color} disabled={disabled} /></label>{/if}
         {/if}
-        <Button variant="primary" type="submit" disabled={disabled || !draft.name.trim()}>{draft.id ? "Save name" : "Create Space"}</Button>
+        <Button variant="primary" type="submit" disabled={disabled || !draft.name.trim()}>{draft.id ? t("spaces.save_name") : t("spaces.create")}</Button>
       </form>
     {:else if moving}
-      <label>Parent of {moving.space.name} <select bind:value={moving.parent_id} disabled={disabled}>
-        <option value={null}>Top level</option>{#each parentRows.filter((row) => !excluded.has(row.space.id)) as row (row.space.id)}
+      <label>{t("spaces.parent_of", { name: moving.space.name })} <select bind:value={moving.parent_id} disabled={disabled}>
+        <option value={null}>{t("spaces.top_level")}</option>{#each parentRows.filter((row) => !excluded.has(row.space.id)) as row (row.space.id)}
           <option value={row.space.id}>{"— ".repeat(row.depth)}{row.space.name}</option>{/each}
       </select></label>
-      <Button variant="primary" disabled={disabled || moving.parent_id === moving.space.parent_id} onclick={reparent}>Move Space</Button>
+      <Button variant="primary" disabled={disabled || moving.parent_id === moving.space.parent_id} onclick={reparent}>{t("spaces.move")}</Button>
     {:else if confirmation}
-      <p>Delete “{confirmation.name}” and its direct item references? Child Spaces move to its parent. Chats, messages and media stay unchanged.</p>
-      <Button variant="ghost" danger disabled={disabled} onclick={remove}>Delete Space</Button>
+      <p>{t("spaces.delete_confirm", { name: confirmation.name })}</p>
+      <Button variant="ghost" danger disabled={disabled} onclick={remove}>{t("spaces.delete")}</Button>
     {/if}
     {#if failure}<p class="error" role="alert">{failure}</p>{/if}
   </dialog>
@@ -270,12 +272,12 @@ import { loadEmojis, recentEmojis, rememberEmoji, searchEmojis, type Emoji } fro
   p { font-size: 12px; }
   .muted { color: var(--muted); }
   ul { margin: 0; padding: 0; list-style: none; }
-  li ul { margin-left: 18px; }
+  li ul { margin-inline-start: 18px; }
   button, summary { font: inherit; cursor: pointer; }
-  .name, .toggle, .actions button { padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text); text-align: left; }
+  .name, .toggle, .actions button { padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text); text-align: start; }
   button[aria-pressed="true"], button:hover { background: var(--raised); }
   .name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-  .name span { margin-right: 6px; }
+  .name span { margin-inline-end: 6px; }
   .name .glyph-icon { display: inline-flex; vertical-align: -2px; }
   .toggle { box-sizing: border-box; width: 24px; flex-shrink: 0; }
   summary { list-style: none; padding: 4px 6px; border-radius: 6px; color: var(--muted); font-size: 14px; line-height: 1; }
@@ -286,7 +288,7 @@ import { loadEmojis, recentEmojis, rememberEmoji, searchEmojis, type Emoji } fro
   details { position: relative; flex: none; }
   details[open] > summary { background: var(--raised); color: var(--text); }
   .actions {
-    position: absolute; right: 0; top: calc(100% + 4px); z-index: 60;
+    position: absolute; inset-inline-end: 0; top: calc(100% + 4px); z-index: 60;
     display: flex; flex-direction: column; min-width: 160px; padding: 6px;
     background: var(--surface); border: 1px solid var(--line-strong);
     border-radius: var(--radius); box-shadow: var(--shadow);
@@ -303,7 +305,7 @@ import { loadEmojis, recentEmojis, rememberEmoji, searchEmojis, type Emoji } fro
   .icon-current button:not(.link):hover:not(:disabled) { border-color: var(--accent); }
   .icon-current button:not(.link)[aria-expanded="true"] { border-color: var(--accent); background: var(--accent-soft); }
   .icon-current .link { padding: 0; border: 0; background: transparent; color: var(--accent-text); font-size: 12px; cursor: pointer; }
-  .icon-popup { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 60; max-height: 260px; overflow-y: auto; padding: 10px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius); box-shadow: var(--shadow); }
+  .icon-popup { position: absolute; inset-inline: 0; top: calc(100% + 4px); z-index: 60; max-height: 260px; overflow-y: auto; padding: 10px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius); box-shadow: var(--shadow); }
   .icon-popup input[type="search"] { margin-bottom: 4px; }
   .icon-popup .muted { margin: 6px 0 0; }
   .icon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(32px, 1fr)); gap: 4px; margin-top: 8px; }
@@ -325,7 +327,7 @@ import { loadEmojis, recentEmojis, rememberEmoji, searchEmojis, type Emoji } fro
   input[type="checkbox"]:hover:not(:disabled) { border-color: var(--accent); }
   input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
-  input[type="checkbox"]:checked::after { content: ""; width: 9px; height: 5px; border-left: 2px solid var(--accent-ink); border-bottom: 2px solid var(--accent-ink); transform: rotate(-45deg) translateY(-1px); }
+  input[type="checkbox"]:checked::after { content: ""; width: 9px; height: 5px; border-inline-start: 2px solid var(--accent-ink); border-bottom: 2px solid var(--accent-ink); transform: rotate(-45deg) translateY(-1px); }
   input[type="checkbox"]:disabled { opacity: 0.55; cursor: default; }
   button:disabled { opacity: .5; cursor: default; }
 </style>

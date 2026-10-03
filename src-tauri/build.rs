@@ -1,4 +1,6 @@
 const COMMANDS: &[&str] = &[
+    "set_native_locale",
+    "database_encryption_status",
     "open_float_chat",
     "float_context",
     "float_subscribe",

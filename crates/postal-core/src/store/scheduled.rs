@@ -1,4 +1,38 @@
 use super::*;
+use crate::message_ref::{MessageFailure, MessageRef};
+
+const FAILURE_FORMAT: &str = "postal_scheduled_failure_v1";
+
+#[derive(Serialize, Deserialize)]
+struct StoredFailure {
+    format: String,
+    failure: MessageFailure,
+}
+
+fn encode_failure(failure: &MessageFailure) -> Result<String> {
+    Ok(serde_json::to_string(&StoredFailure { format: FAILURE_FORMAT.into(), failure: failure.clone() })?)
+}
+
+pub fn decode_scheduled_failure(raw: &str, status: &str) -> MessageFailure {
+    let value = serde_json::from_str::<serde_json::Value>(raw).ok();
+    let marked = value.as_ref().is_some_and(|value| value.get("format").is_some());
+    if value.as_ref().is_some_and(|value| value.get("format").and_then(|value| value.as_str()) == Some(FAILURE_FORMAT)) {
+        if let Some(stored) = value.and_then(|value| serde_json::from_value::<StoredFailure>(value).ok()) {
+            let code = &stored.failure.message.code;
+            if code.starts_with("error.") && code.split('.').skip(1).all(|part| !part.is_empty()
+                && part.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')) {
+                return stored.failure;
+            }
+        }
+    }
+    let code = match (marked, status == "uncertain") {
+        (true, true) => "error.scheduled_failure_unrecognized_uncertain",
+        (true, false) => "error.scheduled_failure_unrecognized",
+        (false, true) => "error.scheduled_failure_legacy_uncertain",
+        (false, false) => "error.scheduled_failure_legacy",
+    };
+    MessageFailure { message: MessageRef::new(code), diagnostic: Some(raw.to_owned()) }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
@@ -20,9 +54,9 @@ pub(crate) struct ScheduledOutbox {
 pub(crate) type ScheduledWorker = super::worker::Worker<ScheduledOutbox>;
 
 impl ScheduledWorker {
-    pub(crate) async fn open(path: &Path) -> Result<Self> {
+    pub(crate) async fn open_with_key(path: &Path, key: Option<crate::database_crypto::DatabaseKey>) -> Result<Self> {
         let path = path.to_owned();
-        Ok(Self::new(tokio::task::spawn_blocking(move || ScheduledOutbox::open(&path)).await??))
+        Ok(Self::new(tokio::task::spawn_blocking(move || ScheduledOutbox::open_with_key(&path, key.as_ref())).await??))
     }
 }
 
@@ -41,10 +75,11 @@ fn migrate(conn: &Connection) -> Result<()> {
 }
 
 fn recover(conn: &Connection) -> Result<()> {
+    let failure = encode_failure(&MessageFailure { message: MessageRef::new("error.scheduled_interrupted"), diagnostic: None })?;
     conn.execute(
         "UPDATE scheduled_messages SET status = 'uncertain',
-            error = 'Sending was interrupted. Delivery may have succeeded; retry manually.'
-         WHERE status = 'sending'", [],
+            error = ?1
+         WHERE status = 'sending'", [failure],
     )?;
     Ok(())
 }
@@ -63,11 +98,17 @@ fn row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScheduledMessage> {
 }
 
 impl ScheduledOutbox {
+    #[cfg(test)]
     pub fn open(path: &Path) -> Result<Self> {
+        Self::open_with_key(path, None)
+    }
+
+    pub fn open_with_key(path: &Path, key: Option<&crate::database_crypto::DatabaseKey>) -> Result<Self> {
         if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
             std::fs::create_dir_all(parent)?;
         }
-        let conn = Connection::open(path).with_context(|| format!("opening scheduled outbox at {}", path.display()))?;
+        let conn = crate::database_crypto::open_database(path, key, rusqlite::OpenFlags::default())
+            .with_context(|| format!("opening scheduled outbox at {}", path.display()))?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         migrate(&conn)?;
         recover(&conn)?;
@@ -102,7 +143,7 @@ impl ScheduledOutbox {
             "UPDATE scheduled_messages SET text = ?2, due_at = ?3, mentions = ?4
              WHERE id = ?1 AND status = 'pending' AND attempted = 0", params![id, text, due_at, serde_json::to_string(&mentions)?],
         )?;
-        anyhow::ensure!(changed == 1, "only unattempted pending messages can be edited");
+        anyhow::ensure!(changed == 1, MessageRef::new("error.scheduled_edit_forbidden"));
         Ok(())
     }
 
@@ -110,7 +151,7 @@ impl ScheduledOutbox {
         let changed = self.conn.lock().unwrap().execute(
             "DELETE FROM scheduled_messages WHERE id = ?1 AND status != 'sending'", [id],
         )?;
-        anyhow::ensure!(changed == 1, "message is already sending or no longer scheduled");
+        anyhow::ensure!(changed == 1, MessageRef::new("error.scheduled_cancel_forbidden"));
         Ok(())
     }
 
@@ -119,7 +160,7 @@ impl ScheduledOutbox {
             "UPDATE scheduled_messages SET status = 'pending', error = NULL
              WHERE id = ?1 AND status IN ('failed', 'uncertain')", [id],
         )?;
-        anyhow::ensure!(changed == 1, "only failed or interrupted messages can be retried");
+        anyhow::ensure!(changed == 1, MessageRef::new("error.scheduled_retry_forbidden"));
         Ok(())
     }
 
@@ -134,7 +175,8 @@ impl ScheduledOutbox {
              RETURNING {COLUMNS}"), params![id, now], row).optional()?)
     }
 
-    pub fn fail_scheduled_message(&self, id: &str, error: &str, uncertain: bool) -> Result<()> {
+    pub fn fail_scheduled_message(&self, id: &str, failure: &MessageFailure, uncertain: bool) -> Result<()> {
+        let error = encode_failure(failure)?;
         self.conn.lock().unwrap().execute(
             "UPDATE scheduled_messages SET status = ?2, error = ?3 WHERE id = ?1 AND status = 'sending'",
             params![id, if uncertain { "uncertain" } else { "failed" }, error],
@@ -146,7 +188,7 @@ impl ScheduledOutbox {
         let changed = self.conn.lock().unwrap().execute(
             "DELETE FROM scheduled_messages WHERE id = ?1 AND status = 'sending'", [id],
         )?;
-        anyhow::ensure!(changed == 1, "scheduled send lost its claim");
+        anyhow::ensure!(changed == 1, MessageRef::new("error.scheduled_claim_lost"));
         Ok(())
     }
 }
@@ -154,6 +196,86 @@ impl ScheduledOutbox {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temporary_path() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("postal-scheduled-failure-{}-{}.db", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()))
+    }
+
+    fn cleanup(path: &Path) {
+        for suffix in ["", "-wal", "-shm"] { let _ = std::fs::remove_file(format!("{}{suffix}", path.display())); }
+    }
+
+    #[test]
+    fn scheduled_failure_v1_survives_restart_with_code_params_diagnostic_and_state() {
+        let path = temporary_path();
+        let failure = MessageFailure::from(anyhow::Error::new(MessageRef::new("error.scheduled_delivery_uncertain")
+            .with_param("status", "503").with_param("retry_after_seconds", serde_json::Number::from(30)))
+            .context("synthetic transport acknowledgement failure"));
+        let stored;
+        {
+            let store = ScheduledOutbox::open(&path).unwrap();
+            store.schedule_message("one", "1@lid", "synthetic", &[], 1).unwrap();
+            store.claim_scheduled_message("one", 1).unwrap().unwrap();
+            store.fail_scheduled_message("one", &failure, true).unwrap();
+            stored = store.scheduled_messages().unwrap()[0].error.clone().unwrap();
+            assert_eq!(serde_json::from_str::<serde_json::Value>(&stored).unwrap()["format"], FAILURE_FORMAT);
+        }
+        let store = ScheduledOutbox::open(&path).unwrap();
+        let row = store.scheduled_messages().unwrap().remove(0);
+        assert_eq!(row.error.as_deref(), Some(stored.as_str()));
+        assert_eq!(decode_scheduled_failure(row.error.as_ref().unwrap(), &row.status), failure);
+        assert_eq!(row.status, "uncertain");
+        assert!(row.attempted);
+        assert!(store.claim_scheduled_message("one", 2).unwrap().is_none());
+        drop(store);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn scheduled_failure_legacy_malformed_and_future_records_remain_unchanged_on_restart() {
+        let path = temporary_path();
+        let records = ["legacy untranslated failure",
+            r#"{"format":"postal_scheduled_failure_v1","failure":{"code":"error.example","params":{"nested":{}}}}"#,
+            r#"{"format":"postal_scheduled_failure_v2","failure":{"code":"error.future","params":{}}}"#,
+            r#"{"format":"postal_scheduled_failure_v1","failure":"#];
+        {
+            let store = ScheduledOutbox::open(&path).unwrap();
+            for (index, raw) in records.iter().enumerate() {
+                let id = index.to_string();
+                store.schedule_message(&id, "1@lid", "synthetic", &[], index as i64).unwrap();
+                store.conn.lock().unwrap().execute("UPDATE scheduled_messages SET status = 'failed', attempted = 1, error = ?2 WHERE id = ?1",
+                    params![id, raw]).unwrap();
+            }
+        }
+        let store = ScheduledOutbox::open(&path).unwrap();
+        let rows = store.scheduled_messages().unwrap();
+        assert_eq!(rows.len(), records.len());
+        for (row, raw) in rows.iter().zip(records) {
+            assert_eq!(row.error.as_deref(), Some(raw));
+            let failure = decode_scheduled_failure(raw, &row.status);
+            assert_eq!(failure.diagnostic.as_deref(), Some(raw));
+            assert!(matches!(failure.message.code.as_str(), "error.scheduled_failure_legacy" | "error.scheduled_failure_unrecognized"));
+            assert_eq!(row.status, "failed");
+            assert!(row.attempted);
+        }
+        drop(store);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn scheduled_failure_unknown_formats_keep_uncertainty_and_invalid_codes_keep_raw_detail() {
+        for raw in [r#"{"format":"postal_scheduled_failure_v3"}"#,
+            r#"{"format":"postal_scheduled_failure_v1","failure":{"code":"bad key","params":{}}}"#,
+            r#"{"format":"postal_scheduled_failure_v1","failure":{"code":"error.","params":{}}}"#] {
+            let failure = decode_scheduled_failure(raw, "uncertain");
+            assert_eq!(failure.message.code, "error.scheduled_failure_unrecognized_uncertain");
+            assert_eq!(failure.diagnostic.as_deref(), Some(raw));
+        }
+        let failure = decode_scheduled_failure("legacy cause", "uncertain");
+        assert_eq!(failure.message.code, "error.scheduled_failure_legacy_uncertain");
+        assert_eq!(failure.diagnostic.as_deref(), Some("legacy cause"));
+    }
 
     #[test]
     fn scheduled_outbox_never_sends_early_and_retries_keep_the_id() {
@@ -167,7 +289,7 @@ mod tests {
         assert!(store.claim_scheduled_message("second", 100).unwrap().is_none());
         assert!(store.cancel_scheduled_message("first").is_err());
         assert!(store.update_scheduled_message("first", "changed", 200).is_err());
-        store.fail_scheduled_message("first", "synthetic failure", true).unwrap();
+        store.fail_scheduled_message("first", &MessageFailure::from(anyhow::anyhow!("synthetic failure")), true).unwrap();
         assert!(store.claim_scheduled_message("first", 101).unwrap().is_none());
         store.retry_scheduled_message("first").unwrap();
         assert!(store.update_scheduled_message("first", "changed", 200).is_err());
@@ -179,7 +301,8 @@ mod tests {
         ).unwrap();
         assert!(store.complete_scheduled_message(&row.id).is_err());
         assert_eq!(store.scheduled_messages().unwrap()[0].status, "sending");
-        store.fail_scheduled_message(&row.id, "sent; local confirmation failed", true).unwrap();
+        store.fail_scheduled_message(&row.id, &MessageFailure { message: MessageRef::new("error.scheduled_delivery_uncertain"),
+            diagnostic: Some("sent; local confirmation failed".into()) }, true).unwrap();
         assert_eq!(store.scheduled_messages().unwrap()[0].status, "uncertain");
         store.retry_scheduled_message(&row.id).unwrap();
         store.claim_scheduled_message(&row.id, 101).unwrap().unwrap();
@@ -206,7 +329,9 @@ mod tests {
         let store = ScheduledOutbox::open(&path).unwrap();
         let rows = store.scheduled_messages().unwrap();
         assert_eq!(rows[0].status, "uncertain");
-        assert!(rows[0].error.as_ref().unwrap().contains("Delivery may have succeeded"));
+        let failure = decode_scheduled_failure(rows[0].error.as_ref().unwrap(), &rows[0].status);
+        assert_eq!(failure.message.code, "error.scheduled_interrupted");
+        assert!(failure.diagnostic.is_none());
         assert_eq!(rows[1].mentions, ["2@lid"]);
         assert_eq!(store.claim_scheduled_message("missed", 20).unwrap().unwrap().id, "missed");
         assert!(store.claim_scheduled_message("interrupted", 20).unwrap().is_none());

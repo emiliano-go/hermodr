@@ -3,6 +3,8 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { compileModule } from "svelte/compiler";
 import ts from "typescript";
+import { normalizeError } from "../lib/i18n/errors.ts";
+import { uiError } from "../lib/state/localized.ts";
 import type { LabelsState } from "../lib/state/labels.svelte";
 
 const source = readFileSync(new URL("../lib/state/labels.svelte.ts", import.meta.url), "utf8");
@@ -24,8 +26,8 @@ function fixture() {
   let enqueue = (run: Run) => run(new AbortController().signal);
   const invoke = (command: string, args: Record<string, unknown>) => { calls.push({ command, args }); return handler(command, args); };
   const crypto = { randomUUID: () => { const id = `${uuids.length ? "b" : "a"}2345678-1234-1234-1234-123456789abc`; uuids.push(id); return id; } };
-  const State = new Function("invoke", "composer", "messages", "session", "crypto", `${compiled}\nreturn LabelsState;`)
-    (invoke, { enqueue: (run: Run) => enqueue(run) }, messages, session, crypto) as new () => LabelsState;
+  const State = new Function("invoke", "composer", "messages", "session", "crypto", "normalizeError", "uiError", `${compiled}\nreturn LabelsState;`)
+    (invoke, { enqueue: (run: Run) => enqueue(run) }, messages, session, crypto, normalizeError, uiError) as new () => LabelsState;
   const state = new State(); state.account = session.activeAccount;
   return { state, session, messages, calls, uuids,
     handle: (next: typeof handler) => { handler = next; }, queue: (next: typeof enqueue) => { enqueue = next; } };
@@ -74,12 +76,12 @@ test("bulk labeling stops at first failure, reloads partial successes and preser
   });
   await assert.rejects(f.state.applyMessages("17", ["first", "second", "third"].map((id) => ({ chat: "synthetic-chat", id })), true), (error) => error === failure);
   assert.deepEqual(f.calls.map(({ command, args }) => [command, args.messageId]), [["label_message", "first"], ["label_message", "second"], ["labels_view", undefined]]);
-  assert.deepEqual(f.state.view, partial); assert.equal(f.state.error, String(failure)); assert.equal(f.state.busy, false);
+  assert.deepEqual(f.state.view, partial); assert.equal(f.state.error, "Operation failed."); assert.equal(JSON.parse(f.state.diagnostic!).message, failure.message); assert.equal(f.state.busy, false);
 
   f.calls.length = 0;
   f.handle((command) => { throw command === "labels_view" ? new Error("synthetic reload failed") : failure; });
   await assert.rejects(f.state.applyChat("17", "synthetic-chat", true), (error) => error === failure);
-  assert.equal(f.state.error, String(failure)); assert.equal(f.state.busy, false);
+  assert.equal(f.state.error, "Operation failed."); assert.equal(JSON.parse(f.state.diagnostic!).message, failure.message); assert.equal(f.state.busy, false);
 });
 
 test("bulk labeling never reloads a new account and stale recovery cannot install its error", async () => {

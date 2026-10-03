@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { compileModule } from "svelte/compiler";
 import ts from "typescript";
 import { targetKey } from "../lib/spaces/spaces.ts";
+import { normalizeError } from "../lib/i18n/errors.ts";
 import type { SpacesState } from "../lib/spaces/spaces.svelte.ts";
 import type { SpaceAction, SpaceResolution, SpaceSnapshot, SpaceTarget } from "../lib/utils/wire.ts";
 
@@ -24,8 +25,8 @@ function fixture() {
     : command === "export_space_metadata" ? '{"version":1}' : snapshot();
   const invoke = (command: string, args: any) => { calls.push({ command, args }); return handle(command, args); };
   let uuid = 0;
-  const State = new Function("invoke", "session", "messages", "targetKey", "structuredClone", "crypto", `${compiled}\nreturn SpacesState;`)
-    (invoke, session, messages, targetKey, structuredClone, { randomUUID: () => `local-uuid-${++uuid}` }) as new () => SpacesState;
+  const State = new Function("invoke", "session", "messages", "targetKey", "structuredClone", "crypto", "normalizeError", `${compiled}\nreturn SpacesState;`)
+    (invoke, session, messages, targetKey, structuredClone, { randomUUID: () => `local-uuid-${++uuid}` }, normalizeError) as new () => SpacesState;
   const state = new State();
   return { state, session, messages, calls, handle: (next: typeof handle) => { handle = next; } };
 }
@@ -116,7 +117,8 @@ test("metadata export/import stays scoped and failed writes preserve existing co
   f.handle(() => { throw new Error("Invalid metadata"); });
   await assert.rejects(f.state.importMetadata("invalid"), /Invalid metadata/);
   assert.equal(f.state.snapshot, before);
-  assert.equal(f.state.error, "Error: Invalid metadata");
+  assert.equal(f.state.error?.code, "error.operation_failed");
+  assert.match(f.state.error?.diagnostic ?? "", /Invalid metadata/);
   assert.equal(f.state.busy, false);
   const exported = deferred<string>(); f.handle(() => exported.promise);
   const pending = f.state.exportMetadata(), rejected = assert.rejects(pending, /Account changed/);

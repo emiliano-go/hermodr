@@ -233,3 +233,16 @@ fn response_order_metadata_and_clock_survive_restart_and_full_backup() {
     assert!(current(&restored).unwrap().revision > state.revision);
     drop(restored); std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn rsvp_validation_preserves_typed_reason_and_existing_state() {
+    let store = open();
+    let error = store.fill_event_secret(CHAT, ID, &[WHO.into()], &[7; 31]).unwrap_err();
+    let reference = error.downcast_ref::<MessageRef>().unwrap();
+    assert_eq!(reference.code, "error.event_secret_length");
+    assert_eq!(serde_json::to_value(reference).unwrap()["params"]["expected_bytes"], 32);
+    let error = store.apply_event_rsvp(CHAT, ID, WHO, &update("going", Some(-1), "source", None)).unwrap_err();
+    assert_eq!(error.downcast_ref::<MessageRef>().unwrap().code, "error.event_timestamp_guests");
+    assert!(current(&store).is_none());
+    assert_eq!(token_id("").unwrap_err().downcast_ref::<MessageRef>().unwrap().code, "error.event_source_id");
+}

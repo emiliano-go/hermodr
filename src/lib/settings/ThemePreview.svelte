@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from "$lib/i18n/localizer";
   import Button from "$lib/ui/Button.svelte";
   import ChatHeader from "$lib/chat/ChatHeader.svelte";
   import ChatSidebar from "$lib/chat/ChatSidebar.svelte";
@@ -47,8 +48,8 @@
         <section class="conversation">
           <ChatHeader
             ongallery={() => {}}
-            {selectedChat} isGroup={true} title="Design team" avatar={null}
-            typingNow={null} subtitle="Ana, Diego, Laura, You" groupContext={null} presenceText={null}
+            {selectedChat} isGroup={true} title={t("settings.preview_team")} avatar={null}
+            typingNow={null} subtitle={`Ana, Diego, Laura, ${t("chat.you")}`} groupContext={null} presenceText={null}
             mentionTotal={1} mentionCursor={0} pinned={null}
             ongroupinfo={noop} onsearch={noop} onpings={noop} onsettings={noop}
             onjumpmention={noop} onpinnedjump={noop} onclearchat={noop} ondeletechat={noop}
@@ -76,12 +77,12 @@
         <MessageMenuPanel left={640} top={180} items={menuItems}
           reactions={["👍", "❤️", "😂", "😮", "😢", "🙏"]} current="❤️" onreact={noop} onmore={noop} onclose={noop} />
       {:else if scene === "dialog"}
-        <ConfirmDialog label="Delete message" title="Delete message?"
-          hint="Delete it for everyone in this chat, or only from your devices." onclose={noop}>
+        <ConfirmDialog label={t("chat.delete_message")} title={t("chat.delete_message_question")}
+          hint={t("chat.delete_message_hint")} onclose={noop}>
           {#snippet actions()}
-            <Button variant="ghost" danger onclick={noop}>Delete for everyone</Button>
-            <Button variant="ghost" danger onclick={noop}>Delete for me</Button>
-            <Button variant="ghost" onclick={noop}>Cancel</Button>
+            <Button variant="ghost" danger onclick={noop}>{t("chat.delete_everyone")}</Button>
+            <Button variant="ghost" danger onclick={noop}>{t("chat.delete_for_me")}</Button>
+            <Button variant="ghost" onclick={noop}>{t("ui.cancel")}</Button>
           {/snippet}
         </ConfirmDialog>
       {/if}

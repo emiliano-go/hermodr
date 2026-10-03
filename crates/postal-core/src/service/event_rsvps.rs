@@ -1,4 +1,5 @@
 use super::*;
+use crate::message_ref::MessageRef;
 use crate::store::{event_rsvp_pending::PendingEventRsvp, event_rsvps::EventRsvpUpdate};
 use buffa::Message as _;
 
@@ -11,7 +12,7 @@ pub(super) fn validate_public_target(row: &StoredMessage) -> Result<()> {
             && !row.spoiler
             && !row.is_unavailable()
             && row.system.kind.is_none(),
-        "Event is unavailable or private."
+        MessageRef::new("error.event_unavailable")
     );
     Ok(())
 }
@@ -27,27 +28,27 @@ pub(super) async fn event_for_action(
         .events
         .into_iter()
         .find(|event| event.id == id)
-        .ok_or_else(|| anyhow::anyhow!("Event details are unavailable."))
+        .ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.event_details")))
 }
 
 fn validate_event(event: &crate::store::NewEvent) -> Result<()> {
-    anyhow::ensure!(!event.name.trim().is_empty(), "Event name cannot be empty.");
+    anyhow::ensure!(!event.name.trim().is_empty(), MessageRef::new("error.event_name"));
     anyhow::ensure!(
         !event.invitation && event.invitation_id.is_none(),
-        "Event invitations are read-only."
+        MessageRef::new("error.event_invitation_read_only")
     );
     if let Some((start, end)) = event.start.zip(event.end) {
-        anyhow::ensure!(end >= start, "Event end must not precede its start.");
+        anyhow::ensure!(end >= start, MessageRef::new("error.event_time_order"));
     }
     Ok(())
 }
 
 pub(super) fn validate_create(event: &crate::store::NewEvent) -> Result<()> {
     validate_event(event)?;
-    anyhow::ensure!(!event.canceled, "New events cannot start canceled.");
+    anyhow::ensure!(!event.canceled, MessageRef::new("error.event_create_canceled"));
     anyhow::ensure!(
         event.has_reminder.is_none() && event.reminder_offset_sec.is_none(),
-        "Changing event reminders is not supported by this protocol version."
+        MessageRef::new("error.event_reminder_unsupported")
     );
     Ok(())
 }
@@ -59,12 +60,12 @@ pub(super) fn validate_edit(
     validate_event(event)?;
     anyhow::ensure!(
         !current.invitation && current.invitation_id.is_none(),
-        "Event invitations are read-only."
+        MessageRef::new("error.event_invitation_read_only")
     );
     anyhow::ensure!(
         current.has_reminder == event.has_reminder
             && current.reminder_offset_sec == event.reminder_offset_sec,
-        "Changing event reminders is not supported by this protocol version."
+        MessageRef::new("error.event_reminder_unsupported")
     );
     Ok(())
 }
@@ -114,25 +115,25 @@ pub(super) fn validate_response(
     use wa::message::event_response_message::EventResponseType;
     anyhow::ensure!(
         event.can_respond && !event.canceled && !event.invitation && event.invitation_id.is_none(),
-        "This event cannot be answered on this device."
+        MessageRef::new("error.event_reply_unavailable")
     );
     let answer = match response {
         "going" => EventResponseType::GOING,
         "maybe" => EventResponseType::MAYBE,
         "not_going" => EventResponseType::NOT_GOING,
         "" | "clear" => {
-            anyhow::bail!("Clearing an RSVP is not supported by this protocol version.")
+            anyhow::bail!(MessageRef::new("error.event_clear_unsupported"))
         }
-        _ => anyhow::bail!("Unknown event response."),
+        _ => anyhow::bail!(MessageRef::new("error.event_response")),
     };
     anyhow::ensure!(
         guests.is_none_or(|count| count >= 0),
-        "Extra guest count cannot be negative."
+        MessageRef::new("error.event_guests_negative")
     );
     if guests.is_some_and(|count| count > 0) {
         anyhow::ensure!(
             event.extra_guests_allowed == Some(true),
-            "This response cannot include extra guests."
+            MessageRef::new("error.event_guests_disallowed")
         );
     }
     Ok(answer)
@@ -153,15 +154,15 @@ fn response_snapshot(
     use wa::message::event_response_message::EventResponseType;
     anyhow::ensure!(
         !source_id.is_empty() && source_id.len() <= 256,
-        "Invalid RSVP source identifier."
+        MessageRef::new("error.event_source_id")
     );
     anyhow::ensure!(
         response.extra_guest_count.is_none_or(|count| count >= 0),
-        "Invalid RSVP extra guest count."
+        MessageRef::new("error.event_guests_invalid")
     );
     anyhow::ensure!(
         response.timestamp_ms.is_none_or(|time| time > 0),
-        "Invalid RSVP timestamp."
+        MessageRef::new("error.event_timestamp")
     );
     let state = match response.response {
         Some(EventResponseType::GOING) => "going",
@@ -185,7 +186,7 @@ pub(crate) async fn namespace_forms(
     let bare = jid.to_non_ad();
     anyhow::ensure!(
         (bare.is_pn() || bare.is_lid()) && !bare.user.is_empty(),
-        "Invalid RSVP participant."
+        MessageRef::new("error.event_participant")
     );
     let pair = if let Some(client) = client {
         if let Some(entry) = client.get_lid_pn_entry(&bare).await? {
@@ -221,14 +222,14 @@ pub(crate) fn decrypt_snapshot(
     responders: &[Jid],
     cipher: &wa::message::EncEventResponseMessage,
 ) -> Result<RsvpSnapshot> {
-    anyhow::ensure!(secret.len() == 32, "Event vote key must be 32 bytes.");
+    anyhow::ensure!(secret.len() == 32, MessageRef::new("error.event_key_length").with_param("expected_bytes", serde_json::Number::from(32)));
     anyhow::ensure!(
         !event_id.is_empty()
             && creators
                 .iter()
                 .chain(responders)
                 .all(|jid| (jid.is_pn() || jid.is_lid()) && !jid.user.is_empty()),
-        "Invalid RSVP identity."
+        MessageRef::new("error.event_identity")
     );
     anyhow::ensure!(
         cipher
@@ -236,10 +237,10 @@ pub(crate) fn decrypt_snapshot(
             .as_option()
             .and_then(|key| key.id.as_deref())
             == Some(event_id),
-        "RSVP references another event."
+        MessageRef::new("error.event_reference")
     );
     let payload = authenticated_payload(event_id, secret, creators, responders, cipher)
-        .ok_or_else(|| anyhow::anyhow!("Event RSVP could not be authenticated."))?;
+        .ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.event_authentication")))?;
     response_snapshot(
         source_id,
         wa::message::EventResponseMessage::decode_from_slice(&payload)?,

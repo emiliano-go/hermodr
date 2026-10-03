@@ -1,16 +1,18 @@
 <script lang="ts">
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
+  import { t } from "$lib/i18n/localizer";
   import { invoke } from "$lib/utils/ipc";
   let { accountId, chat }: { accountId: string; chat: string } = $props();
   let value = $state("");
   let busy = $state(false);
-  let error = $state("");
+  let error = $state<LocalizedError | string>("");
   let generation = 0;
   $effect(() => {
     const token = ++generation;
     value = ""; busy = true; error = "";
     void invoke<boolean | null>("chat_auto_transcribe", { accountId, chat }).then(
       (enabled) => { if (token === generation) value = enabled === null ? "" : String(enabled); },
-      (failure) => { if (token === generation) error = String(failure); },
+      (failure) => { if (token === generation) error = normalizeError(failure); },
     ).finally(() => { if (token === generation) busy = false; });
   });
   async function change(next: string) {
@@ -19,19 +21,19 @@
     try {
       await invoke("set_chat_auto_transcribe", { accountId, chat, enabled: next === "" ? null : next === "true" });
       if (token === generation) value = next;
-    } catch (failure) { if (token === generation) error = String(failure); }
+    } catch (failure) { if (token === generation) error = normalizeError(failure); }
     finally { if (token === generation) busy = false; }
   }
 </script>
 
-<label>Auto-transcribe voice notes
+<label>{t("settings.transcribe_auto")}
   <select {value} disabled={busy} onchange={(event) => change(event.currentTarget.value)}>
-    <option value="">Follow global setting</option>
-    <option value="true">On</option>
-    <option value="false">Off</option>
+    <option value="">{t("settings.follow_global")}</option>
+    <option value="true">{t("ui.on")}</option>
+    <option value="false">{t("ui.off")}</option>
   </select>
 </label>
-<p>Waits for downloaded audio. Cloud providers require consent in transcription settings.</p>
+<p>{t("settings.transcribe_override_hint")}</p>
 {#if error}<p role="alert">{error}</p>{/if}
 
 <style>

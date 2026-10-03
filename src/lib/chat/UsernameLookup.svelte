@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
+  import { t } from "$lib/i18n/localizer";
   import { onMount, untrack } from "svelte";
   import type { UsernameLookupResult } from "$lib/utils/wire";
 
@@ -20,7 +22,7 @@
   let usernameKey = $state("");
   let result = $state<UsernameLookupResult | null>(null);
   let busy = $state(false);
-  let error = $state<string | null>(null);
+  let error = $state<LocalizedError | string | null>(null);
 
   function current() {
     return !closed && account === openedAccount && generation === openedGeneration;
@@ -61,7 +63,7 @@
         if (found.kind === "notFound") usernameKey = "";
       }
     } catch (failure) {
-      if (active()) error = String(failure);
+      if (active()) error = normalizeError(failure);
     } finally {
       if (current() && request === revision) busy = false;
     }
@@ -93,24 +95,24 @@
 <dialog bind:this={dialog} aria-labelledby="username-lookup-title"
   oncancel={(event) => { event.preventDefault(); close(); }}>
   <header>
-    <h2 id="username-lookup-title">Find username</h2>
-    <button type="button" class="close" aria-label="Close username lookup" onclick={close}>×</button>
+    <h2 id="username-lookup-title">{t("contact.username_find")}</h2>
+    <button type="button" class="close" aria-label={t("contact.username_close")} onclick={close}>×</button>
   </header>
   <form onsubmit={(event) => { event.preventDefault(); void lookup(); }} aria-busy={busy}>
-    <label for="username-lookup-query">Username</label>
+    <label for="username-lookup-query">{t("contact.username")}</label>
     <input bind:this={input} id="username-lookup-query" value={query}
       oninput={(event) => changeQuery(event.currentTarget.value)} autocomplete="off" autocapitalize="none"
-      spellcheck="false" placeholder="@username" required />
+      spellcheck="false" placeholder={t("contact.username_example")} required />
     {#if result?.kind === "keyRequired"}
-      <p class="status" role="status">This username requires a key. Ask the person for their username key.</p>
-      <label for="username-lookup-key">Username key</label>
+      <p class="status" role="status">{t("contact.username_key_hint")}</p>
+      <label for="username-lookup-key">{t("contact.username_key")}</label>
       <input id="username-lookup-key" type="password" value={usernameKey}
         oninput={(event) => changeKey(event.currentTarget.value)} autocomplete="off" autocapitalize="none" spellcheck="false" />
     {:else if result?.kind === "notFound"}
-      <p class="status" role="status">No account found for this username.</p>
+      <p class="status" role="status">{t("contact.username_empty")}</p>
     {/if}
     {#if error}<p class="error" role="alert">{error}</p>{/if}
-    <footer><button type="submit" disabled={busy || !query.trim()}>{busy ? "Finding…" : "Find username"}</button></footer>
+    <footer><button type="submit" disabled={busy || !query.trim()}>{busy ? t("contact.username_finding") : t("contact.username_find")}</button></footer>
   </form>
 </dialog>
 

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { LocalizedError, normalizeError } from "$lib/i18n/errors";
+  import { t } from "$lib/i18n/localizer";
   import type { Snippet } from "svelte";
   import { invoke } from "$lib/utils/ipc";
   import Embed from "$lib/messages/cards/Embed.svelte";
@@ -18,7 +20,7 @@
   } = $props();
 
   let contacts = $state<ParsedContact[]>([]);
-  let error = $state("");
+  let error = $state<LocalizedError | string | null>("");
   let attempt = $state(0);
   let pending = $state<string | null>(null);
   let revision = 0;
@@ -34,7 +36,7 @@
     if (!id || hidden || message.revoked || message.deleted) return;
     invoke<[string, string][]>("message_contacts", { account: id, chat, id: messageId, revealSpoiler: message.spoiler && spoilerRevealed }).then((cards) => {
       if (epoch === revision) contacts = parseContactCards(cards);
-    }).catch((failure) => { if (epoch === revision) error = String(failure); });
+    }).catch((failure) => { if (epoch === revision) error = normalizeError(failure); });
     return () => { ++revision; };
   });
 
@@ -44,31 +46,31 @@
     pending = jid;
     error = "";
     try { await onopenchat(jid); }
-    catch (failure) { if (epoch === revision) error = String(failure); }
+    catch (failure) { if (epoch === revision) error = normalizeError(failure); }
     finally { if (epoch === revision) pending = null; }
   }
 </script>
 
 <Embed label="👤 Contact">
   {#if hidden}
-    <span>{message.spoiler && !spoilerRevealed ? "Spoiler message" : message.revoked || message.deleted ? "Contact message removed" : isUnavailable(message) ? "Contact message unavailable" : "View once contact"}</span>
+    <span>{message.spoiler && !spoilerRevealed ? t("content.spoiler_message") : message.revoked || message.deleted ? t("content.contact_message_removed") : isUnavailable(message) ? t("content.contact_message_unavailable") : t("content.view_once_contact")}</span>
   {:else if contacts.length}
     {#each contacts as contact, index (index)}
       <div class="contact">
-        <strong>{contact.name}</strong>
+        <strong><bdi dir="auto">{contact.name}</bdi></strong>
         {#each contact.phones as phone (phone)}
           {@const jid = contactPhoneJid(phone)}
           <div class="phone"><span>{jid ? phoneLabel(jid.split("@")[0]) ?? phone : phone}</span>
-            {#if jid && onopenchat}<button type="button" disabled={!!pending} onclick={() => open(jid)} aria-label={`Message ${contact.name} at ${phone}`}>Message</button>{/if}</div>
+            {#if jid && onopenchat}<button type="button" disabled={!!pending} onclick={() => open(jid)} aria-label={t("content.message_value_at_value", { param0: (contact.name), param1: (phone) })}>{t("content.message")}</button>{/if}</div>
         {/each}
       </div>
     {/each}
   {:else if children}
     {@render children()}
   {:else}
-    <span class="fallback">{message.text}</span>
+    <span class="fallback"><bdi dir="auto">{message.text}</bdi></span>
   {/if}
-  {#if error}<span class="error" role="alert">{error}</span><button type="button" class="retry" onclick={() => attempt++}>Reload contact</button>{/if}
+  {#if error}<span class="error" role="alert">{error}</span><button type="button" class="retry" onclick={() => attempt++}>{t("content.reload_contact")}</button>{/if}
   {#if meta}<span class="meta">{@render meta()}</span>{/if}
 </Embed>
 

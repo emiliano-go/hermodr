@@ -1,11 +1,13 @@
 <script lang="ts">
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
+  import { t, formatNumber } from "$lib/i18n/localizer";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { invoke } from "$lib/utils/ipc";
   import Icon from "$lib/ui/Icon.svelte";
   import { changeText, historyReceivers, historyResultText } from "$lib/utils/group-actions";
   import { members as contactMembers } from "$lib/state/members.svelte";
   import { session } from "$lib/state/session.svelte";
-  import type { GroupHistoryOffer, GroupHistoryResult, GroupMemberAddResult, Member, SearchResult } from "$lib/utils/models";
+  import type { ParticipantChange, GroupHistoryOffer, GroupHistoryResult, GroupMemberAddResult, Member, SearchResult } from "$lib/utils/models";
 
   /** Picks people to add to a group, from the account's contacts. */
   let {
@@ -37,9 +39,10 @@
   let searching = $state(false);
   let selected = $state<Record<string, true>>({});
   let busy = $state(false);
-  let error = $state<string | null>(null);
-  let outcomes = $state<{ jid: string; name: string; text: string; bad: boolean }[] | null>(null);
+  let error = $state<LocalizedError | string | null>(null);
+  let outcomes = $state<{ jid: string; name: string; change: ParticipantChange; bad: boolean }[] | null>(null);
   let offer = $state<GroupHistoryOffer | null>(null);
+  let offerError = $state<LocalizedError | null>(null);
   let shareHistory = $state(false);
   let history = $state<GroupHistoryResult | null>(null);
   let retrying = $state(false);
@@ -55,7 +58,7 @@
     const account = session.activeAccount;
     const revision = ++generation;
     let active = true;
-    offer = null;
+    offer = null; offerError = null;
     shareHistory = false;
     history = null;
     outcomes = null;
@@ -70,7 +73,8 @@
       })
       .catch((e) => {
         if (active && current(target, account, revision)) {
-          offer = { enabled: false, reason: String(e), max_messages: 0, time_window_seconds: 0 };
+          offer = { enabled: false, reason: null, max_messages: 0, time_window_seconds: 0 };
+          offerError = normalizeError(e);
         }
       });
     return () => { active = false; ++generation; };
@@ -114,7 +118,7 @@
           error = null;
         }
       } catch (e) {
-        if (active && current(target, account, revision)) error = String(e);
+        if (active && current(target, account, revision)) error = normalizeError(e);
       } finally {
         if (active && current(target, account, revision)) searching = false;
       }
@@ -152,7 +156,7 @@
       const reported = result.participants.map((change) => ({
         jid: change.jid,
         name: labels.get(change.jid) ?? change.jid,
-        text: changeText(change) ?? "Added.",
+        change,
         bad: !change.ok && !change.pending,
       }));
       selected = {};
@@ -165,7 +169,7 @@
         onclose();
       }
     } catch (e) {
-      if (current(target, account, revision)) error = String(e);
+      if (current(target, account, revision)) error = normalizeError(e);
     } finally {
       if (current(target, account, revision)) busy = false;
     }
@@ -184,7 +188,7 @@
       const result = await onretryhistory(retryId);
       if (current(target, account, revision)) history = result;
     } catch (e) {
-      if (current(target, account, revision)) error = String(e);
+      if (current(target, account, revision)) error = normalizeError(e);
     } finally {
       if (current(target, account, revision)) { busy = false; retrying = false; }
     }
@@ -204,7 +208,7 @@
   function windowLabel(seconds: number) {
     const [unit, size] = seconds % 86400 === 0 ? ["day", 86400] : seconds % 3600 === 0 ? ["hour", 3600] : ["second", 1];
     const count = seconds / Number(size);
-    return `${count.toLocaleString()} ${unit}${count === 1 ? "" : "s"}`;
+    return formatNumber(count, { style: "unit", unit, unitDisplay: "long" });
   }
 </script>
 
@@ -215,15 +219,15 @@
   class="backdrop"
   role="presentation"
   onclick={(e) => e.target === e.currentTarget && close()}>
-  <div class="dialog" role="dialog" aria-modal="true" aria-label="Add participants to {title}">
+  <div class="dialog" role="dialog" aria-modal="true" aria-label={t("group.add_participants_label", { name: title })}>
     <header>
-      <h2>Add to {title}</h2>
-      <button class="close" aria-label="Close" disabled={busy} onclick={close}><Icon name="x" size={18} /></button>
+      <h2>{t("group.add_to", { name: title })}</h2>
+      <button class="close" aria-label={t("ui.close")} disabled={busy} onclick={close}><Icon name="x" size={18} /></button>
     </header>
     <label class="search">
       <Icon name="search" size={15} />
       <!-- svelte-ignore a11y_autofocus -->
-      <input placeholder="Search contacts" bind:value={query} disabled={busy || outcomes !== null} autofocus />
+      <input dir="auto" placeholder={t("contact.search")} bind:value={query} disabled={busy || outcomes !== null} autofocus />
     </label>
     {#if error}<p class="error">{error}</p>{/if}
     {#if outcomes}
@@ -231,7 +235,7 @@
         {#each outcomes as outcome (outcome.jid)}
           <li class:bad={outcome.bad}>
             <span class="label">{outcome.name}</span>
-            <span class="note">{outcome.text}</span>
+            <span class="note">{changeText(outcome.change) ?? t("group.member_added")}</span>
           </li>
         {/each}
       </ul>
@@ -253,22 +257,23 @@
                 checked={!!selected[result.jid]}
                 onchange={() => toggle(result.jid)}
                 onclick={(e) => e.stopPropagation()}
-                aria-label="Select {contactMembers.displayName(result.name, result.jid)}" />
+                aria-label={t("group.select_contact", { name: contactMembers.displayName(result.name, result.jid) })} />
             </button>
           </li>
         {/each}
       </ul>
       {#if query.trim() && !searching && shown.length === 0}
-        <p class="empty">Nobody matches, or everyone here is already a member.</p>
+        <p class="empty">{t("group.add_no_matches")}</p>
       {/if}
-      {#if searching}<p class="empty">Searching…</p>{/if}
+      {#if searching}<p class="empty">{t("ui.searching")}</p>{/if}
     {/if}
     {#if history}
       <div class="history-result" role="status">
-        <p class="note">History: {historyResultText(history)}</p>
+        <p class="note">{t("group.history_result", { result: history.message_ref ? t(history.message_ref.code, history.message_ref.params) : historyResultText(history) })}</p>
+        {#if history.diagnostic}<p class="note" dir="auto">{history.diagnostic}</p>{/if}
         {#if history.retry_id}
           <button class="button" disabled={busy} onclick={retryHistory}>
-            {retrying ? "Retrying history…" : "Retry history"}
+            {retrying ? t("group.history_retrying") : t("chat.history_retry")}
           </button>
         {/if}
       </div>
@@ -276,22 +281,22 @@
       <div class="history-offer">
         <label>
           <input type="checkbox" bind:checked={shareHistory} disabled={busy || !offer?.enabled} />
-          Share recent history with selected people
+          {t("group.history_share_selected")}
         </label>
         <p class="note">
-          {#if !offer}Checking history sharing availability…
-          {:else if offer.enabled}Up to {offer.max_messages} messages from the last {windowLabel(offer.time_window_seconds)}.
-          {:else}{offer.reason ?? "History sharing is unavailable."}{/if}
+          {#if !offer}{t("group.history_checking")}
+          {:else if offer.enabled}{t("group.history_offer", { messages: offer.max_messages, window: windowLabel(offer.time_window_seconds) })}
+          {:else}{offerError?.message ?? (offer.reason_ref ? t(offer.reason_ref.code, offer.reason_ref.params) : offer.reason ? normalizeError(offer.reason).message : t("group.history_unavailable"))}{/if}
         </p>
       </div>
     {/if}
     <footer>
       {#if !outcomes}
         <button class="button primary" disabled={busy || picked.length === 0} onclick={add}>
-          {busy ? "Adding…" : `Add${picked.length > 0 ? ` ${picked.length}` : ""}`}
+          {busy ? t("ui.adding") : picked.length > 0 ? t("group.add_count", { count: picked.length }) : t("group.add_action")}
         </button>
       {/if}
-      <button class="button" disabled={busy} onclick={close}>Done</button>
+      <button class="button" disabled={busy} onclick={close}>{t("ui.done")}</button>
     </footer>
   </div>
 </div>
@@ -382,7 +387,7 @@
     background: transparent;
     color: var(--text);
     font: inherit;
-    text-align: left;
+    text-align: start;
     cursor: pointer;
   }
   .row:hover {

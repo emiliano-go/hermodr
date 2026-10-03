@@ -18,7 +18,8 @@ test("group metadata keeps the acknowledged result when the later refresh fails"
   assert.deepEqual(calls, ["write", "ack", "read"]);
   assert.equal(saved, true);
   assert.equal(result.snapshot, null);
-  assert.match(result.refreshError!, /offline/);
+  assert.equal(result.refreshError?.code, "error.operation_failed");
+  assert.match(result.refreshError?.diagnostic ?? "", /offline/);
   let reloaded = false;
   await assert.rejects(saveGroupMetadata(async () => { throw new Error("not an admin"); }, async () => {
     reloaded = true; return snapshot;

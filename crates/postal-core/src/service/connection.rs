@@ -155,11 +155,8 @@ pub(super) fn cache_config_for(retention: &DiskRetention) -> CacheConfig {
 /// Rows with no message timestamp, or with the "never expires" marker, are left
 /// untouched: their age cannot be established, and discarding them could break
 /// decryption for a message we still keep.
-pub(super) fn reclaim_oversized_secrets(
-    session_path: &Path,
-    retention: &DiskRetention,
-    store: &MessageStore,
-) -> Result<usize> {
+fn reclaim_oversized_secrets_with_key(session_path: &Path, retention: &DiskRetention, store: &MessageStore,
+    key: Option<&crate::database_crypto::DatabaseKey>) -> Result<usize> {
     let Some(hours) = retention.max_age_hours.value() else {
         return Ok(0);
     };
@@ -167,7 +164,7 @@ pub(super) fn reclaim_oversized_secrets(
         return Ok(0);
     }
 
-    let conn = rusqlite::Connection::open(session_path)?;
+    let conn = crate::database_crypto::open_database(session_path, key, rusqlite::OpenFlags::default())?;
     let has_table: i64 = conn.query_row(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'msg_secrets'",
         [],
@@ -280,7 +277,8 @@ fn log_start(config: &ServiceConfig) {
 async fn reclaim_secrets(store: &StoreWorker, config: &ServiceConfig) {
     let session_path = config.session_path.clone();
     let retention = config.retention;
-    match store.run(move |store| reclaim_oversized_secrets(&session_path, &retention, store)).await {
+    let key = config.database_key.clone();
+    match store.run(move |store| reclaim_oversized_secrets_with_key(&session_path, &retention, store, key.as_ref())).await {
         Ok(0) => {}
         Ok(removed) => log::info!("reclaimed {removed} stale decryption secret(s)"),
         Err(e) => log::warn!("could not reclaim stale decryption secrets: {e}"),
@@ -433,9 +431,14 @@ impl SessionState {
         } else {
             HistoryPolicy::default()
         };
+        let mut storage_config = whatsapp_rust::store::SqliteStoreConfig::default();
+        if let Some(key) = &config.database_key {
+            let initialize = key.session_init();
+            storage_config = storage_config.with_connection_init(move |connection| initialize(connection));
+        }
         Ok(Bot::builder()
             .with_watched_ab_props(super::diagnostics::boolean_props())
-            .with_backend(SqliteStore::new(config.session_path.to_string_lossy().as_ref()).await?)
+            .with_backend(SqliteStore::with_config(config.session_path.to_string_lossy().as_ref(), storage_config).await?)
             .with_history_sync_admission(policy)
             .with_device_props(pairing_props(config.request_full_history, config.android_pair))
             .with_cache_config(cache_config_for(&config.retention))
@@ -497,6 +500,7 @@ impl SessionState {
                 let names_resynced = self.names_resynced.clone();
                 let store = store.clone();
                 let session_path = config.session_path.clone();
+                let database_key = config.database_key.clone();
                 let sync_progress = self.sync_progress.clone();
                 let initial_gate_done = self.initial_gate_done.clone();
                 move |client| {
@@ -508,6 +512,7 @@ impl SessionState {
                     let names_resynced = names_resynced.clone();
                     let store = store.clone();
                     let session_path = session_path.clone();
+                    let database_key = database_key.clone();
                     let sync_progress = sync_progress.clone();
                     let initial_gate_done = initial_gate_done.clone();
                     async move {
@@ -520,7 +525,7 @@ impl SessionState {
                             spawn_initial_gate(events.clone(), sync_progress.clone());
                         }
                         if !names_resynced.swap(true, Ordering::SeqCst) {
-                            spawn_address_book_resync(client.clone(), events.clone(), store.clone(), session_path.clone());
+                            spawn_address_book_resync(client.clone(), events.clone(), store.clone(), session_path.clone(), database_key.clone());
                         }
                         if sync_favorites {
                             let label_client = client.clone();
@@ -584,11 +589,12 @@ fn spawn_address_book_resync(
     events: broadcast::Sender<ServiceEvent>,
     store: StoreWorker,
     session_path: std::path::PathBuf,
+    key: Option<crate::database_crypto::DatabaseKey>,
 ) {
     tokio::spawn(async move {
         match client.resync_app_state_collection(WAPatchName::CriticalUnblockLow).await {
             Ok(_) => {
-                store.run(move |store| { backfill_lid_names(&session_path, store); Ok(()) }).await.logged();
+                store.run(move |store| { backfill_lid_names(&session_path, store, key.as_ref()); Ok(()) }).await.logged();
                 if let Some(count) = store.saved_name_count().await.observed() {
                     log::info!("address book: {count} saved name(s)");
                     if count > 0 {
@@ -714,15 +720,16 @@ impl WhatsAppService {
     /// startup, so a receiver created afterwards would miss it; the returned one
     /// is guaranteed to see every event from the beginning.
     pub async fn start(config: ServiceConfig) -> Result<(Self, broadcast::Receiver<ServiceEvent>)> {
+        crate::database_crypto::check_database_path(&config.session_path, config.database_key.as_ref())?;
         log_start(&config);
-        let store = StoreWorker::open(&config.messages_path).await?;
+        let store = StoreWorker::open_with_key(&config.messages_path, config.database_key.clone()).await?;
         let scheduled_path = if config.one_time_only { Path::new(":memory:") } else { &config.scheduled_path };
-        let scheduled = crate::store::scheduled::ScheduledWorker::open(scheduled_path).await?;
+        let scheduled = crate::store::scheduled::ScheduledWorker::open_with_key(scheduled_path, config.database_key.clone()).await?;
         let disk_retention = Arc::new(DiskRetentionManager::new(config.retention));
-        let aliases = AliasWorker::open(&config.aliases_path).await?;
+        let aliases = AliasWorker::open_with_key(&config.aliases_path, config.database_key.clone()).await?;
         let (events, initial_rx) = broadcast::channel(256);
         let favorites_path = if config.one_time_only { Path::new(":memory:") } else { &config.favorites_path };
-        let favorites = Favorites::open(favorites_path, events.clone()).await?;
+        let favorites = Favorites::open_with_key(favorites_path, events.clone(), config.database_key.clone()).await?;
         let pins = Pins::open(&store, events.clone()).await?;
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
 
@@ -846,7 +853,8 @@ impl WhatsAppService {
     /// reconnects, instead of leaving every later call to time out.
     pub fn note_error(&self, error: &impl std::fmt::Display) {
         let text = error.to_string();
-        let dead = text.contains("timed out")
+        let dead = text == "error.not_connected"
+            || text.contains("timed out")
             || text.contains("not connected")
             || text.contains("Socket")
             || text.contains("disconnected");

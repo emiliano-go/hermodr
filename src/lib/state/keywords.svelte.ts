@@ -1,14 +1,22 @@
 import { invoke } from "$lib/utils/ipc";
 import { keywordHidden, keywordHighlighted, loadKeywordRules, saveKeywordRules,
   type KeywordMessage, type KeywordRules, type KeywordStorage } from "$lib/utils/keywords";
+import { LocalizedError, normalizeError } from "../i18n/errors.ts";
+import { uiError } from "./localized.ts";
 
 export class KeywordsState {
   account = $state<string | null>(null);
   rules = $state<KeywordRules>({ highlight: [], hide: [] });
   revision = $state(0);
   counts = $state.raw<Record<string, number>>({});
-  error = $state<string | null>(null);
-  countError = $state<string | null>(null);
+  #error = $state<LocalizedError | null>(null);
+  get error(): string | null { return this.#error?.message ?? null; }
+  set error(value: unknown) { this.#error = value == null ? null : normalizeError(value); }
+  get diagnostic() { return this.#error?.diagnostic; }
+  #countError = $state<LocalizedError | null>(null);
+  get countError(): string | null { return this.#countError?.message ?? null; }
+  set countError(value: unknown) { this.#countError = value == null ? null : normalizeError(value); }
+  get countDiagnostic() { return this.#countError?.diagnostic; }
   private generation = 0;
   private request = 0;
 
@@ -23,11 +31,11 @@ export class KeywordsState {
     this.countError = null;
     const loaded = account ? loadKeywordRules(account, this.storage) : { rules: { highlight: [], hide: [] }, error: null };
     this.rules = loaded.rules;
-    this.error = loaded.error;
+    this.error = loaded.error ? uiError("error.state.keyword_load", {}, loaded.error) : null;
   }
 
   save(account: string, rules: KeywordRules): boolean {
-    if (account !== this.account) { this.error = "Account changed before saving keyword rules."; return false; }
+    if (account !== this.account) { this.error = uiError("error.state.keyword_scope"); return false; }
     try {
       const saved = saveKeywordRules(account, rules, this.storage);
       this.rules = saved;
@@ -37,7 +45,7 @@ export class KeywordsState {
       this.error = this.countError = null;
       return true;
     } catch (error) {
-      this.error = `Could not save keyword rules. ${String(error)}`;
+      this.error = uiError("error.state.keyword_save", {}, error);
       return false;
     }
   }
@@ -56,7 +64,7 @@ export class KeywordsState {
         highlight: [...this.rules.highlight], hide: [...this.rules.hide] });
       if (current()) { this.counts = counts; this.countError = null; }
     } catch (error) {
-      if (current()) { this.counts = {}; this.countError = `Could not refresh keyword badges. ${String(error)}`; }
+      if (current()) { this.counts = {}; this.countError = uiError("error.state.keyword_counts", {}, error); }
     }
   }
 }

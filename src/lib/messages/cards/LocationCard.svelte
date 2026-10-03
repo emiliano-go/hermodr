@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t, formatRelative, formatNumber } from "$lib/i18n/localizer";
   import type { BubbleApi, LiveLocation, StoredMessage } from "$lib/utils/models";
   import { mediaSrc } from "$lib/media/MediaViewer.svelte";
   import Icon from "$lib/ui/Icon.svelte";
@@ -32,18 +33,18 @@
   });
 
   function ago(seconds: number) {
-    if (seconds < 5) return "just now";
-    if (seconds < 60) return `${seconds}s ago`;
-    if (seconds < 3600) return `${Math.round(seconds / 60)} min ago`;
-    if (seconds < 86400) return `${Math.round(seconds / 3600)} h ago`;
-    return `${Math.round(seconds / 86400)} d ago`;
+    if (seconds < 5) return t("content.just_now");
+    if (seconds < 60) return formatRelative(-seconds, "second");
+    if (seconds < 3600) return formatRelative(-Math.round(seconds / 60), "minute");
+    if (seconds < 86400) return formatRelative(-Math.round(seconds / 3600), "hour");
+    return formatRelative(-Math.round(seconds / 86400), "day");
   }
   const updated = $derived(ago(Math.max(0, Math.floor(now / 1000) - live.updated_at)));
   const endsIn = $derived.by(() => {
     if (live.expires_at === null || ended) return null;
     const left = live.expires_at - Math.floor(now / 1000);
     if (left <= 0) return null;
-    return left >= 3600 ? `${Math.round(left / 3600)} h` : `${Math.max(1, Math.round(left / 60))} min`;
+    return left >= 3600 ? t("content.value_h", { param0: (Math.round(left / 3600)) }) : t("content.value_min", { param0: (Math.max(1, Math.round(left / 60))) });
   });
 
   const coords = $derived(`${live.lat.toFixed(5)}, ${live.lng.toFixed(5)}`);
@@ -51,7 +52,7 @@
   const kmh = $derived(live.speed !== null && live.speed >= 0.5 ? Math.round(live.speed * 3.6) : null);
   const COMPASS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
   const heading = $derived(
-    live.heading === null ? null : `${COMPASS[Math.round(live.heading / 22.5) % 16]} · ${Math.round(live.heading)}°`,
+    live.heading === null ? null : `${t("content.compass_" + (COMPASS[Math.round(live.heading / 22.5) % 16]?.toLowerCase() ?? "unknown"))} · ${formatNumber(Math.round(live.heading))}°`,
   );
 
   async function copyCoords() {
@@ -64,9 +65,9 @@
 </script>
 
 <div class="loc" class:ended>
-  <button class="map" title="Open in Maps" onclick={() => api.onopenurl(mapsUrl)}>
+  <button class="map" title={t("content.open_in_maps")} onclick={() => api.onopenurl(mapsUrl)}>
     {#if message.media_thumb}
-      <img src={mediaSrc(message.media_thumb)} alt="Map" />
+      <img src={mediaSrc(message.media_thumb)} alt={t("content.map")} />
     {:else}
       <span class="map-empty"><Icon name="pin" size={22} /></span>
     {/if}
@@ -74,8 +75,8 @@
   </button>
   <div class="body">
     <div class="head">
-      <span class="state">{ended ? "Live location ended" : "Live location"}</span>
-      <span class="age">updated {updated}{#if endsIn} · ends in {endsIn}{/if}</span>
+      <span class="state">{ended ? t("content.live_location_ended") : t("content.live_location")}</span>
+      <span class="age">{t("content.updated")} {updated}{#if endsIn}{t("content.ends_in")} {endsIn}{/if}</span>
     </div>
     {#if caption}
       <MessageText
@@ -88,14 +89,14 @@
         onopenurl={api.onopenurl} />
     {/if}
     <div class="facts">
-      <span>{coords}</span>
-      {#if live.accuracy !== null}<span>±{live.accuracy} m</span>{/if}
-      {#if kmh !== null}<span>{kmh} km/h</span>{/if}
+      <span><bdi dir="ltr">{coords}</bdi></span>
+      {#if live.accuracy !== null}<span>±{formatNumber(live.accuracy)} {t("content.m")}</span>{/if}
+      {#if kmh !== null}<span>{formatNumber(kmh)} {t("content.km_h")}</span>{/if}
       {#if heading !== null}<span>{heading}</span>{/if}
     </div>
     <div class="actions">
-      <button onclick={() => api.onopenurl(mapsUrl)}>Open in Maps</button>
-      <button onclick={copyCoords}>Copy coordinates</button>
+      <button onclick={() => api.onopenurl(mapsUrl)}>{t("content.open_in_maps")}</button>
+      <button onclick={copyCoords}>{t("content.copy_coordinates")}</button>
     </div>
   </div>
 </div>
@@ -132,7 +133,7 @@
   }
   .map-pin {
     position: absolute;
-    right: 6px;
+    inset-inline-end: 6px;
     bottom: 6px;
     display: grid;
     place-items: center;
@@ -188,7 +189,7 @@
   .age {
     font-size: 11.5px;
     color: var(--muted);
-    text-align: right;
+    text-align: end;
   }
   .facts {
     display: flex;

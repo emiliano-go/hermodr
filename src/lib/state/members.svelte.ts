@@ -10,6 +10,8 @@ import { displayName as phoneName, isPlaceholder } from "$lib/utils/phone";
 import { messages } from "./messages.svelte";
 import { session } from "./session.svelte";
 import type { ContactIdentity } from "$lib/utils/wire";
+import { LocalizedError, normalizeError } from "../i18n/errors.ts";
+import { formatDate, formatTime, t } from "../i18n/localizer.ts";
 
 export class MembersState {
   /** Replaced wholesale on load; raw so a 500-member roster is not proxied. */
@@ -61,10 +63,10 @@ export class MembersState {
   groupContext = $derived.by(() => {
     const chatGroup = this.chatGroup;
     if (!chatGroup) return null;
-    if (chatGroup.community) return "Community";
-    const parent = chatGroup.parent_name ?? (chatGroup.parent ? "a community" : null);
-    if (chatGroup.announcements) return parent ? `Announcements · ${parent}` : "Announcements";
-    return parent ? `In ${parent}` : null;
+    if (chatGroup.community) return t("group.community");
+    const parent = chatGroup.parent_name ?? (chatGroup.parent ? t("group.community") : null);
+    if (chatGroup.announcements) return parent ? t("state.announcements_in", { name: parent }) : t("group.announcements");
+    return parent ? t("state.group_in", { name: parent }) : null;
   });
 
   /** Every address form for a member, so lookups do not scan the roster per render. */
@@ -135,8 +137,8 @@ export class MembersState {
 
   /** Author shown on a quote; our own messages read "You". */
   quoteAuthor(jid: string | null) {
-    if (!jid) return "Message";
-    return jid === "@me" ? "You" : this.senderName(jid);
+    if (!jid) return t("chat.message");
+    return jid === "@me" ? t("chat.you") : this.senderName(jid);
   }
 
   /** Resolves a label using stored contact provenance. */
@@ -180,11 +182,11 @@ export class MembersState {
    * `null` once it is stored: the profile card shows the reason beside the
    * field, where a whole-app banner for a mistyped alias would be out of place.
    */
-  async addAlias(jid: string, alias: string): Promise<string | null> {
+  async addAlias(jid: string, alias: string): Promise<LocalizedError | null> {
     try {
       await invoke("add_contact_alias", { jid, alias });
     } catch (e) {
-      return String(e);
+      return normalizeError(e);
     }
     await this.loadAliases();
     return null;
@@ -303,20 +305,20 @@ export class MembersState {
 
   /** Label for a media message with no caption, used in reply previews. */
   replyPreviewText(message: StoredMessage) {
-    if (message.spoiler) return "[Spoiler]";
+    if (message.spoiler) return t("state.spoiler_preview");
     // Media stores a "[image]" style placeholder when it has no caption.
     if (message.text && !message.text.startsWith("[")) {
       return plain(message.text, (user) => this.mentionName(user));
     }
     switch (message.media_kind) {
       case "image":
-        return "Photo";
+        return t("media.photo");
       case "video":
-        return "Video";
+        return t("media.video");
       case "audio":
-        return "Voice message";
+        return t("media.voice");
       case "document":
-        return "Document";
+        return t("media.document");
       default:
         return "";
     }
@@ -389,29 +391,25 @@ export class MembersState {
   presenceLabel(chat: string) {
     const seen = this.presence[chat];
     if (!seen) return null;
-    if (seen.online) return "online";
+    if (seen.online) return t("state.online");
     if (!seen.last_seen) return null;
     const date = new Date(seen.last_seen * 1000);
-    const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const time = formatTime(seen.last_seen, { hour: "2-digit", minute: "2-digit" });
     const days = Math.floor((Date.now() - date.getTime()) / 86_400_000);
-    const day =
-      new Date().toDateString() === date.toDateString()
-        ? "today"
-        : days < 2
-          ? "yesterday"
-          : date.toLocaleDateString([], { day: "numeric", month: "short" });
-    return `last seen ${day} at ${time}`;
+    if (new Date().toDateString() === date.toDateString()) return t("state.last_seen_today", { time });
+    if (days < 2) return t("state.last_seen_yesterday", { time });
+    return t("state.last_seen_date", { date: formatDate(seen.last_seen, { day: "numeric", month: "short" }), time });
   }
 
   typingLabel(chat: string) {
     const who = this.typing[chat];
     if (!who?.length) return null;
-    const verb = who.some((t) => t.state === "recording") ? "recording audio" : "typing";
-    if (!chat.endsWith("@g.us")) return `${verb}…`;
-    if (who.length > 1) return `${who.length} people are ${verb}…`;
+    const mode = who.some((t) => t.state === "recording") ? "recording" : "typing";
+    if (!chat.endsWith("@g.us")) return t(`state.${mode}`);
+    if (who.length > 1) return t(`state.people_${mode}`, { count: who.length });
     const person = this.memberOf(who[0].sender);
     const name = person && !isPlaceholder(person.name) ? person.name : null;
-    return `${this.displayName(name, who[0].sender)} is ${verb}…`;
+    return t(`state.person_${mode}`, { name: this.displayName(name, who[0].sender) });
   }
 
   async loadChatGroup(chat: string, isCurrent: () => boolean) {

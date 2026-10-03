@@ -37,14 +37,14 @@
   const parsed = $derived(blocks(toWire(text)));
 </script>
 
-{#snippet runs(nodes: Inline[])}{#each nodes as n, i (i)}{#if n.kind === "text"}{n.text}{:else if n.kind === "link"}<a
+{#snippet runs(nodes: Inline[])}{#each nodes as n, i (i)}{#if n.kind === "text"}<bdi dir="auto">{n.text}</bdi>{:else if n.kind === "link"}<a
       class="link"
       href={n.url}
       onclick={(e) => {
         e.preventDefault();
         onopenurl(n.url);
-      }}>{n.url}</a
-    >{:else if n.kind === "code"}<code class="inline-code">{n.text}</code>{:else if n.kind === "mention"}{@render
+      }}><bdi dir="auto">{n.url}</bdi></a
+    >{:else if n.kind === "code"}<code class="inline-code"><bdi dir="auto">{n.text}</bdi></code>{:else if n.kind === "mention"}{@render
       mentionPill(n.user)}{:else if n.kind === "bold"}<strong
       >{@render runs(n.children)}</strong
     >{:else if n.kind === "italic"}<em>{@render runs(n.children)}</em>{:else}<s
@@ -64,13 +64,13 @@
       cls="mention-initials"
       iconFallback
       iconSize={11}
-    />@{target.name}</button
+    />@<bdi dir="auto">{target.name}</bdi></button
   >{/snippet}
 
 {#snippet lines(list: Inline[][])}{#each list as line, i (i)}{#if i > 0}<br />{/if}{@render runs(line)}{/each}{/snippet}
 
 <span class="text"
-  >{#each parsed as block, i (i)}{#if block.kind === "pre"}<pre class="pre">{block.text}</pre
+  >{#each parsed as block, i (i)}{#if block.kind === "pre"}<pre class="pre"><bdi dir="auto">{block.text}</bdi></pre
       >{:else if block.kind === "quote"}<span class="quote-block">{@render lines(block.lines)}</span
       >{:else if block.kind === "list"}{#if block.ordered}<ol class="fmt-list">
           {#each block.items as item, j (j)}<li>{@render runs(item)}</li>{/each}
@@ -136,13 +136,13 @@
   .quote-block {
     display: block;
     margin: 2px 0;
-    padding-left: 8px;
-    border-left: 3px solid color-mix(in srgb, var(--text) 30%, transparent);
+    padding-inline-start: 8px;
+    border-inline-start: 3px solid color-mix(in srgb, var(--text) 30%, transparent);
     color: var(--muted);
   }
   .fmt-list {
     margin: 2px 0;
-    padding-left: 20px;
+    padding-inline-start: 20px;
     white-space: normal;
   }
 </style>

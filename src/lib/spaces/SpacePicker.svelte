@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
+  import { t } from "$lib/i18n/localizer";
   import { onMount, untrack } from "svelte";
   import Button from "$lib/ui/Button.svelte";
   import type { SpaceInboxFilters, SpaceItem, SpaceTarget } from "$lib/utils/wire";
@@ -6,7 +8,7 @@
 
   let { account, generation, spaceId, existing, catalog, loading = false, error = null, onadd, onclose }: {
     account: string | null; generation: number; spaceId: string; existing: SpaceItem[]; catalog: SpaceCandidate[];
-    loading?: boolean; error?: string | null;
+    loading?: boolean; error?: LocalizedError | string | null;
     onadd: (targets: SpaceTarget[]) => Promise<void>; onclose: () => void;
   } = $props();
   let dialog: HTMLDialogElement;
@@ -16,7 +18,7 @@
   let selected = $state.raw<SpaceTarget[]>([]);
   let searchQuery = $state(""), searchChat = $state("");
   let filters = $state<SpaceInboxFilters>(emptyInboxFilters());
-  let working = $state(false), failure = $state("");
+  let working = $state(false), failure = $state<LocalizedError | string>("");
   const current = () => !closed && account === openedAccount && generation === openedGeneration && spaceId === openedSpace;
   const disabled = $derived(!account || working || !current());
   const assigned = $derived(new Set(existing.filter((item) => item.space_id === spaceId).map((item) => targetKey(item.target))));
@@ -77,62 +79,62 @@
   async function save() {
     if (disabled) return;
     const targets = structuredClone(selected.filter((target) => !assigned.has(targetKey(target))));
-    if (!targets.length) { failure = "Choose items that are not already in this Space."; return; }
+    if (!targets.length) { failure = normalizeError({ kind: "postal_error", code: "error.space_items_existing", params: {} }); return; }
     const revision = ++request;
     working = true;
     failure = "";
     try { await onadd(targets); if (current() && revision === request) close(); }
-    catch (cause) { if (current() && revision === request) failure = String(cause); }
+    catch (cause) { if (current() && revision === request) failure = normalizeError(cause); }
     finally { if (current() && revision === request) working = false; }
   }
 </script>
 
-<dialog bind:this={dialog} aria-label="Add items to Space" oncancel={(event) => { event.preventDefault(); close(); }}>
-  <header><h2>Add items to Space</h2><Button variant="icon" icon="x" aria-label="Close Space picker" onclick={close} /></header>
-  <p class="muted">Adds local references. Existing chats and WhatsApp settings stay unchanged.</p>
-  <label>Item type <select bind:value={kind} disabled={disabled}>
-    {#each Object.entries(SPACE_KINDS) as [value, label]}<option value={value}>{label}</option>{/each}
+<dialog bind:this={dialog} aria-label={t("spaces.picker_title")} oncancel={(event) => { event.preventDefault(); close(); }}>
+  <header><h2>{t("spaces.picker_title")}</h2><Button variant="icon" icon="x" aria-label={t("spaces.picker_close")} onclick={close} /></header>
+  <p class="muted">{t("spaces.picker_hint")}</p>
+  <label>{t("spaces.item_type")} <select bind:value={kind} disabled={disabled}>
+    {#each Object.entries(SPACE_KINDS) as [value, label]}<option value={value}>{t(label)}</option>{/each}
   </select></label>
-  <input type="search" aria-label="Find local items" placeholder="Find local items" bind:value={query} disabled={disabled} />
+  <input type="search" dir="auto" aria-label={t("spaces.find_items")} placeholder={t("spaces.find_items")} bind:value={query} disabled={disabled} />
   <ul class="catalog" aria-busy={loading}>
     {#each shown as row (targetKey(row.target))}
       {@const key = targetKey(row.target)}
       <li><label><input type="checkbox" checked={picked.has(key) || assigned.has(key)} disabled={disabled || assigned.has(key)}
         onchange={() => toggle(row.target)} /><span>{row.title}{#if row.detail}<small>{row.detail}</small>{/if}</span></label>
-        {#if assigned.has(key)}<small class="muted">Already in this Space</small>{/if}</li>
+        {#if assigned.has(key)}<small class="muted">{t("spaces.already_added")}</small>{/if}</li>
     {/each}
   </ul>
-  {#if loading}<p class="muted" role="status">Loading local items…</p>
-  {:else if !shown.length}<p class="muted">No matching items in the local catalog.</p>{/if}
+  {#if loading}<p class="muted" role="status">{t("spaces.items_loading")}</p>
+  {:else if !shown.length}<p class="muted">{t("spaces.no_matches")}</p>{/if}
   {#if kind === "saved_search"}
-    <fieldset><legend>Save a search</legend>
-      <label>Search query <input bind:value={searchQuery} disabled={disabled} /></label>
-      <label>Search in <select bind:value={searchChat} disabled={disabled}><option value="">All local messages</option>
+    <fieldset><legend>{t("spaces.save_search")}</legend>
+      <label>{t("spaces.query")} <input dir="auto" bind:value={searchQuery} disabled={disabled} /></label>
+      <label>{t("spaces.search_in")} <select bind:value={searchChat} disabled={disabled}><option value="">{t("spaces.all_messages")}</option>
         {#each chats as chat (chat.jid)}<option value={chat.jid}>{chat.title}</option>{/each}</select></label>
-      <button disabled={disabled || !searchQuery.trim()} onclick={addSearch}>Add search to selection</button>
+      <button disabled={disabled || !searchQuery.trim()} onclick={addSearch}>{t("spaces.select_search")}</button>
     </fieldset>
   {:else if kind === "inbox_view"}
-    <fieldset><legend>Save an inbox view</legend>
-      <p class="muted">Match all selected filters.</p>
-      {#each [["unread", "Unread"], ["mentions", "Mentions"], ["labelled", "Labelled"], ["muted", "Muted"], ["archived", "Archived"]] as [key, title]}
+    <fieldset><legend>{t("spaces.save_inbox")}</legend>
+      <p class="muted">{t("spaces.filters_hint")}</p>
+      {#each [["unread", t("chat.unread")], ["mentions", t("chat.mentions")], ["labelled", t("chat.labelled")], ["muted", t("chat.muted")], ["archived", t("chat.archived")]] as [key, title]}
         <label class="check"><input type="checkbox" bind:checked={filters[key as "unread" | "mentions" | "labelled" | "muted" | "archived"]} disabled={disabled} /> {title}</label>
       {/each}
-      <label>Label <select bind:value={filters.label} disabled={disabled}><option value="">Any label</option>
+      <label>{t("labels.label")} <select bind:value={filters.label} disabled={disabled}><option value="">{t("labels.any")}</option>
         {#each labels as label, index (index)}{#if label.target.kind === "label"}<option value={label.target.label_id}>{label.title}</option>{/if}{/each}
       </select></label>
-      <label>Search chats <input bind:value={filters.query} disabled={disabled} /></label>
-      <button disabled={disabled} onclick={addInbox}>Add inbox view to selection</button>
+      <label>{t("chat.search")} <input dir="auto" bind:value={filters.query} disabled={disabled} /></label>
+      <button disabled={disabled} onclick={addInbox}>{t("spaces.select_inbox")}</button>
     </fieldset>
   {/if}
   {#if selected.length}
-    <h3>Selected items</h3><ul class="selected">
+    <h3>{t("spaces.selected_items")}</h3><ul class="selected">
       {#each selected as target (targetKey(target))}<li><span>{catalog.find((row) => targetKey(row.target) === targetKey(target))?.title ?? targetTitle(target)}</span>
-        <button disabled={disabled} aria-label={`Remove ${targetTitle(target)} from selection`} onclick={() => toggle(target)}>Remove</button></li>{/each}
+        <button disabled={disabled} aria-label={t("spaces.remove_selection", { name: targetTitle(target) })} onclick={() => toggle(target)}>{t("ui.remove")}</button></li>{/each}
     </ul>
   {/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if failure}<p class="error" role="alert">{failure}</p>{/if}
-  <footer><Button variant="primary" disabled={disabled || !selected.length} onclick={save}>{working ? "Adding…" : `Add ${selected.length} items`}</Button></footer>
+  <footer><Button variant="primary" disabled={disabled || !selected.length} onclick={save}>{working ? t("ui.adding") : t("spaces.add_count", { count: selected.length })}</Button></footer>
 </dialog>
 
 <style>

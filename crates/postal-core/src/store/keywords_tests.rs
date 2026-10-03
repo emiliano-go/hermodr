@@ -1,5 +1,18 @@
 use super::*;
 
+#[test]
+fn keyword_limits_report_typed_codes_and_exact_scalar_bounds() {
+    for (input, code, max, actual) in [
+        (vec!["word".to_owned(); 51], "error.keyword_list_limit", 50, 51),
+        (vec!["é".repeat(101)], "error.keyword_length_limit", 100, 101),
+    ] {
+        let error = terms(&input).unwrap_err();
+        let message = error.downcast_ref::<MessageRef>().unwrap();
+        assert_eq!(message.code, code);
+        assert_eq!(serde_json::to_value(&message.params).unwrap(), serde_json::json!({ "max": max, "actual": actual }));
+    }
+}
+
 fn row(chat: &str, id: &str, text: &str) -> StoredMessage {
     StoredMessage {
         header: MessageHeader {

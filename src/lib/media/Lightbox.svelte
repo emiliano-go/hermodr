@@ -1,5 +1,6 @@
 <!-- A profile picture shown large: the cached preview at once, the full-size picture when it arrives. -->
 <script lang="ts">
+  import { t } from "$lib/i18n/localizer";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { invoke } from "$lib/utils/ipc";
 
@@ -22,7 +23,7 @@
     onclose();
   }} />
 
-<button class="lightbox" aria-label="Close picture" onclick={onclose}>
+<button class="lightbox" aria-label={t("content.close_picture")} onclick={onclose}>
   <img src={convertFileSrc(full ?? preview)} {alt} />
 </button>
 

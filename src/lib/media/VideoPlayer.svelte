@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { mediaClock } from "$lib/media/clock";
+  import { t } from "$lib/i18n/localizer";
   import { onDestroy } from "svelte";
   import { invoke } from "$lib/utils/ipc";
   import Icon from "$lib/ui/Icon.svelte";
@@ -145,13 +147,7 @@
   const loaded = $derived(duration ? Math.max(0, ...buffered.map((r) => r.end)) / duration : 0);
   const volumeIcon = $derived(muted || volume === 0 ? "volumeX" : volume < 0.5 ? "volumeLow" : "volume");
 
-  function clock(seconds: number) {
-    if (!Number.isFinite(seconds)) return "0:00";
-    const s = Math.floor(seconds % 60).toString().padStart(2, "0");
-    const m = Math.floor(seconds / 60) % 60;
-    const h = Math.floor(seconds / 3600);
-    return h ? `${h}:${m.toString().padStart(2, "0")}:${s}` : `${m}:${s}`;
-  }
+  const clock = (seconds: number) => mediaClock(seconds, true);
 
   function toggle() {
     if (!video) return;
@@ -273,14 +269,14 @@
     onerror={onVideoError}></video>
 
   {#if paused && current === 0}
-    <button class="big-play" aria-label="Play" onclick={toggle}><Icon name="play" size={34} filled /></button>
+    <button class="big-play" aria-label={t("content.play")} onclick={toggle}><Icon name="play" size={34} filled /></button>
   {/if}
 
   {#if preparing}
-    <div class="preparing" role="status"><Spinner /> Preparing video…</div>
+    <div class="preparing" role="status"><Spinner /> {t("content.preparing_video")}</div>
   {/if}
 
-  <div class="controls">
+  <div class="controls" dir="ltr">
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
       class="bar"
@@ -288,31 +284,31 @@
       onpointerdown={onBarDown}
       onpointermove={onBarMove}
       onpointerup={() => (scrubbing = false)}
-      onpointerleave={() => (hover = null)}>
+      onpointerleave={() => (hover = null)} dir="ltr">
       <div class="track">
         <div class="loaded" style="width: {loaded * 100}%"></div>
         <div class="played" style="width: {duration ? (current / duration) * 100 : 0}%"></div>
       </div>
       <div class="knob" style="left: {duration ? (current / duration) * 100 : 0}%"></div>
       {#if hover}
-        <span class="hover-time" style="left: {hover.x}%">{clock(hover.time)}</span>
+        <span class="hover-time" style="left: {hover.x}%"><bdi dir="ltr">{clock(hover.time)}</bdi></span>
       {/if}
     </div>
 
     <div class="row">
-      <button class="control" title={paused ? "Play (k)" : "Pause (k)"} aria-label={paused ? "Play" : "Pause"} onclick={toggle}>
+      <button class="control" title={paused ? t("content.play_k") : t("content.pause_k")} aria-label={paused ? t("content.play") : t("content.pause")} onclick={toggle}>
         <Icon name={paused ? "play" : "pause"} size={20} filled />
       </button>
-      <button class="control" title="Back 10 s (j)" aria-label="Back 10 seconds" onclick={() => seek(current - 10)}>
+      <button class="control" title={t("content.back_10_s_j")} aria-label={t("content.back_10_seconds")} onclick={() => seek(current - 10)}>
         <Icon name="back10" size={18} />
       </button>
-      <button class="control" title="Forward 10 s (l)" aria-label="Forward 10 seconds" onclick={() => seek(current + 10)}>
+      <button class="control" title={t("content.forward_10_s_l")} aria-label={t("content.forward_10_seconds")} onclick={() => seek(current + 10)}>
         <Icon name="forward10" size={18} />
       </button>
 
       {#if !gif}
         <div class="volume">
-          <button class="control" title="Mute (m)" aria-label={muted ? "Unmute" : "Mute"} onclick={() => (muted = !muted)}>
+          <button class="control" title={t("content.mute_m")} aria-label={muted ? t("content.unmute") : t("content.mute")} onclick={() => (muted = !muted)}>
             <Icon name={volumeIcon} size={20} />
           </button>
           <input
@@ -320,15 +316,15 @@
             min="0"
             max="1"
             step="0.01"
-            aria-label="Volume"
+            aria-label={t("content.volume")}
             value={muted ? 0 : volume}
             style="--fill: {(muted ? 0 : volume) * 100}%"
             oninput={(e) => setVolume(Number(e.currentTarget.value))} />
         </div>
       {/if}
 
-      <button class="time" title="Show remaining time" onclick={() => (remaining = !remaining)}>
-        {remaining ? `-${clock(duration - current)}` : clock(current)} / {clock(duration)}
+      <button class="time" title={t("content.show_remaining_time")} onclick={() => (remaining = !remaining)}>
+        {remaining ? `-${clock(duration - current)}` : clock(current)} / <bdi dir="ltr">{clock(duration)}</bdi>
       </button>
 
       <span class="spacer"></span>
@@ -336,8 +332,8 @@
       <div class="speed">
         <button
           class="control rate"
-          title="Playback speed (&lt; &gt;)"
-          aria-label="Playback speed"
+          title={t("content.playback_speed_19k3bf6")}
+          aria-label={t("content.playback_speed")}
           aria-expanded={speedMenu}
           onclick={() => (speedMenu = !speedMenu)}>{rate}×</button>
         {#if speedMenu}
@@ -350,7 +346,7 @@
                 onclick={() => {
                   rate = r;
                   speedMenu = false;
-                }}>{r === 1 ? "Normal" : `${r}×`}</button>
+                }}>{r === 1 ? t("content.normal") : `${r}×`}</button>
             {/each}
           </div>
         {/if}
@@ -358,19 +354,19 @@
       <button
         class="control"
         class:on={looping}
-        title="Loop"
-        aria-label="Loop"
+        title={t("content.loop")}
+        aria-label={t("content.loop")}
         aria-pressed={looping}
         onclick={() => (looping = !looping)}><Icon name="repeat" size={18} /></button>
       {#if typeof document !== "undefined" && document.pictureInPictureEnabled}
-        <button class="control" title="Picture in picture" aria-label="Picture in picture" onclick={togglePip}>
+        <button class="control" title={t("content.picture_in_picture")} aria-label={t("content.picture_in_picture")} onclick={togglePip}>
           <Icon name="pip" size={18} />
         </button>
       {/if}
       <button
         class="control"
-        title={fullscreen ? "Exit full screen (f)" : "Full screen (f)"}
-        aria-label={fullscreen ? "Exit full screen" : "Full screen"}
+        title={fullscreen ? t("content.exit_full_screen_f") : t("content.full_screen_f")}
+        aria-label={fullscreen ? t("content.exit_full_screen") : t("content.full_screen")}
         onclick={toggleFullscreen}><Icon name={fullscreen ? "minimize" : "maximize"} size={18} /></button>
     </div>
   </div>
@@ -493,7 +489,7 @@
     position: absolute;
     width: 12px;
     height: 12px;
-    margin-left: -6px;
+    margin-inline-start: -6px;
     border-radius: 50%;
     background: var(--accent);
     transform: scale(0);
@@ -606,7 +602,7 @@
     color: inherit;
     font: inherit;
     font-size: 13px;
-    text-align: left;
+    text-align: start;
     cursor: pointer;
   }
   .menu button:hover {

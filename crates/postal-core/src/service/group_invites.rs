@@ -1,4 +1,5 @@
 use super::*;
+use crate::message_ref::MessageRef;
 use crate::store::group_audit::GroupAuditKind as AuditKind;
 use whatsapp_rust::wacore::iq::groups::{GroupMetadataOutcome, GroupQueryIq};
 
@@ -8,17 +9,17 @@ impl WhatsAppService {
         let group = invite_group(chat)?;
         if reset {
             let mut metadata = match self.client.execute(GroupQueryIq::new(&group)).await
-                .map_err(|error| anyhow::anyhow!(error.to_string()))? {
+                .map_err(anyhow::Error::from)? {
                 GroupMetadataOutcome::Full(metadata) => whatsapp_rust::GroupMetadata::from(*metadata),
-                GroupMetadataOutcome::NotModified => anyhow::bail!("current group role could not be verified"),
+                GroupMetadataOutcome::NotModified => anyhow::bail!(MessageRef::new("error.group_role_unverified")),
             };
             self.client.groups().resolve_participant_addresses(&mut metadata).await;
-            anyhow::ensure!(self.is_group_admin(&metadata), "only group admins can reset invite links");
+            anyhow::ensure!(self.is_group_admin(&metadata), MessageRef::new("error.group_invite_admin"));
         }
         current()?;
         let response = self.client.groups().get_invite_link(group, reset).await;
         current()?;
-        let link = response.map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let link = response.map_err(anyhow::Error::from)?;
         validate_link(&link)?;
         if reset {
             self.audit_local_group_change(chat, AuditKind::InviteChange, None, None, None, None, None).await.logged();
@@ -34,7 +35,7 @@ impl WhatsAppService {
         current()?;
         let response = self.client.groups().join_with_invite_v4(invite.group, &invite.code, invite.expiration, invite.admin).await;
         current()?;
-        let result = response.map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let result = response.map_err(anyhow::Error::from)?;
         let pending = matches!(result, whatsapp_rust::JoinGroupResult::PendingApproval(_));
         let jid = result.group_jid().to_string();
         if !pending { self.after_group_change(&jid); }
@@ -44,33 +45,33 @@ impl WhatsAppService {
 
 fn invite_group(chat: &str) -> Result<Jid> {
     let group: Jid = chat.parse()?;
-    anyhow::ensure!(group.is_group() && !group.user.is_empty(), "invite target must be a group");
+    anyhow::ensure!(group.is_group() && !group.user.is_empty(), MessageRef::new("error.group_invite_target"));
     Ok(group.to_non_ad())
 }
 
 fn validate_link(link: &str) -> Result<()> {
     anyhow::ensure!(link.strip_prefix("https://chat.whatsapp.com/")
-        .is_some_and(|code| !code.is_empty() && !code.chars().any(char::is_whitespace)), "WhatsApp returned no valid invite link");
+        .is_some_and(|code| !code.is_empty() && !code.chars().any(char::is_whitespace)), MessageRef::new("error.group_invite_link"));
     Ok(())
 }
 
 struct StoredV4Invite { group: Jid, code: String, expiration: i64, admin: Jid }
 
 fn stored_v4_invite(row: &StoredMessage) -> Result<StoredV4Invite> {
-    anyhow::ensure!(!row.header.from_me && !row.local.revoked && !row.local.deleted, "this invitation is no longer available");
-    anyhow::ensure!(row.media.kind.as_deref() == Some("group_invite"), "this message is not a V4 group invitation");
-    let mut bytes = row.media.locator.as_deref().ok_or_else(|| anyhow::anyhow!("this invitation has no original payload; ask for a new invitation"))?;
-    let message = <wa::Message as buffa::Message>::decode(&mut bytes).map_err(|error| anyhow::anyhow!(error.to_string()))?;
-    let invite = message.group_invite_message.as_option().ok_or_else(|| anyhow::anyhow!("the stored invitation payload is missing"))?;
+    anyhow::ensure!(!row.header.from_me && !row.local.revoked && !row.local.deleted, MessageRef::new("error.group_invite_unavailable"));
+    anyhow::ensure!(row.media.kind.as_deref() == Some("group_invite"), MessageRef::new("error.group_invite_type"));
+    let mut bytes = row.media.locator.as_deref().ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.group_invite_original")))?;
+    let message = <wa::Message as buffa::Message>::decode(&mut bytes).map_err(anyhow::Error::from)?;
+    let invite = message.group_invite_message.as_option().ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.group_invite_payload")))?;
     let only_invite = wa::Message { group_invite_message: message.group_invite_message.clone(), ..Default::default() };
-    anyhow::ensure!(buffa::Message::encode_to_vec(&message) == buffa::Message::encode_to_vec(&only_invite), "mixed invitation payload is not supported");
+    anyhow::ensure!(buffa::Message::encode_to_vec(&message) == buffa::Message::encode_to_vec(&only_invite), MessageRef::new("error.group_invite_mixed"));
     let group = invite_group(invite.group_jid.as_deref().unwrap_or_default())?;
     let code = invite.invite_code.clone().filter(|code| !code.is_empty() && code.trim() == code)
-        .ok_or_else(|| anyhow::anyhow!("the invitation has no valid code"))?;
-    let expiration = invite.invite_expiration.ok_or_else(|| anyhow::anyhow!("the invitation expiry is missing"))?;
-    anyhow::ensure!(expiration >= 0, "the invitation expiry is invalid");
+        .ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.group_invite_code")))?;
+    let expiration = invite.invite_expiration.ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.group_invite_expiry_missing")))?;
+    anyhow::ensure!(expiration >= 0, MessageRef::new("error.group_invite_expiry_invalid"));
     let admin: Jid = row.header.sender.parse()?;
-    anyhow::ensure!(!admin.user.is_empty() && (admin.is_pn() || admin.is_lid()), "the inviter address is invalid");
+    anyhow::ensure!(!admin.user.is_empty() && (admin.is_pn() || admin.is_lid()), MessageRef::new("error.group_inviter_address"));
     Ok(StoredV4Invite { group, code, expiration, admin: admin.to_non_ad() })
 }
 

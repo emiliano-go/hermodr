@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { t, formatTime } from "$lib/i18n/localizer";
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
   import { untrack } from "svelte";
   import Icon from "$lib/ui/Icon.svelte";
   import { invoke } from "$lib/utils/ipc";
@@ -7,10 +9,10 @@
   let open = $state(false);
   let watching = $state(false);
   let loading = $state(false);
-  let error = $state("");
+  let error = $state<LocalizedError | string>("");
   let query = $state("");
   let props = $state<Prop[]>([]);
-  let refreshed = $state("");
+  let refreshed = $state<number | null>(null);
   let matching = $derived(props.filter((prop) => `${prop.name} ${prop.code}`.includes(query.trim().toLowerCase())));
 
   async function refresh() {
@@ -18,10 +20,10 @@
     loading = true;
     try {
       props = await invoke<Prop[]>("boolean_props");
-      refreshed = new Date().toLocaleTimeString();
+      refreshed = Date.now() / 1000;
       error = "";
     } catch (e) {
-      error = String(e);
+      error = normalizeError(e);
     } finally {
       loading = false;
     }
@@ -37,21 +39,21 @@
 </script>
 
 <details bind:open>
-  <summary><span>Server feature flags</span><span class="chev"><Icon name="chevronDown" size={16} /></span></summary>
-  <p>Boolean A/B properties received from WhatsApp. Available for diagnostics; Postal does not use these flags to gate features.</p>
+  <summary><span>{t("ui.server_feature_flags")}</span><span class="chev"><Icon name="chevronDown" size={16} /></span></summary>
+  <p>{t("ui.flags_hint")}</p>
   <div class="controls">
-    <button onclick={refresh} disabled={loading}>Refresh flags</button>
-    <label><input type="checkbox" bind:checked={watching} /> Watch every 5 seconds</label>
+    <button onclick={refresh} disabled={loading}>{t("ui.refresh_flags")}</button>
+    <label><input type="checkbox" bind:checked={watching} /> {t("ui.watch_flags")}</label>
   </div>
-  <label class="filter">Filter flags <input type="search" bind:value={query} /></label>
-  {#if error}<p role="alert">{error}{refreshed ? " (Showing previous values.)" : ""}</p>{/if}
-  <p role="status">{matching.length} flags{refreshed ? ` · Updated ${refreshed}` : ""}{matching.length > 100 ? " · Showing first 100; filter to narrow." : ""}</p>
+  <label class="filter">{t("ui.filter_flags")} <input type="search" dir="auto" bind:value={query} /></label>
+  {#if error}<p role="alert">{error}{refreshed ? t("ui.previous_values") : ""}</p>{/if}
+  <p role="status">{t("ui.flags_count", { count: matching.length })}{refreshed ? t("ui.flags_updated", { time: formatTime(refreshed) }) : ""}{matching.length > 100 ? t("ui.first_flags") : ""}</p>
   <div class="table">
     <table>
-      <thead><tr><th>Flag</th><th>Server value</th><th>Default</th></tr></thead>
+      <thead><tr><th>{t("ui.flag")}</th><th>{t("ui.server_value")}</th><th>{t("ui.default")}</th></tr></thead>
       <tbody>
         {#each matching.slice(0, 100) as prop}
-          <tr><td>{prop.name}<small>{prop.code}</small></td><td>{prop.value === null ? "Not received" : String(prop.value)}</td><td>{String(prop.default)}</td></tr>
+          <tr><td>{prop.name}<small>{prop.code}</small></td><td>{prop.value === null ? t("ui.not_received") : String(prop.value)}</td><td>{String(prop.default)}</td></tr>
         {/each}
       </tbody>
     </table>
@@ -62,7 +64,7 @@
   details { margin-top: 1rem; }
   summary { display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; list-style: none; user-select: none; }
   summary::-webkit-details-marker { display: none; }
-  .chev { display: grid; margin-left: auto; color: var(--muted); transition: transform calc(150ms * var(--motion-scale, 1)) var(--ease); }
+  .chev { display: grid; margin-inline-start: auto; color: var(--muted); transition: transform calc(150ms * var(--motion-scale, 1)) var(--ease); }
   details[open] .chev { transform: rotate(180deg); }
   p { color: var(--muted); font-size: .85rem; }
   [role="alert"] { color: var(--danger); }
@@ -72,6 +74,6 @@
   button, input[type="search"] { background: var(--raised); color: var(--text); border: 1px solid var(--line-strong); padding: .5rem; border-radius: .3rem; font: inherit; }
   .table { overflow: auto; max-height: 22rem; }
   table { width: 100%; border-collapse: collapse; font-size: .8rem; }
-  th, td { text-align: left; padding: .4rem; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+  th, td { text-align: start; padding: .4rem; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
   small { display: block; color: var(--muted); }
 </style>

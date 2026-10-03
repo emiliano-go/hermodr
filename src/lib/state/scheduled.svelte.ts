@@ -1,18 +1,23 @@
 import { invoke } from "$lib/utils/ipc";
-import { broadcastSendReason, guardBroadcastSend } from "$lib/utils/broadcast";
+import { broadcastSendError, guardBroadcastSend } from "$lib/utils/broadcast";
 import { session } from "./session.svelte";
 import { chats } from "./chats.svelte";
 import { messages } from "./messages.svelte";
 import { ui } from "./ui.svelte";
+import { LocalizedError, normalizeError } from "../i18n/errors.ts";
+import { uiError } from "./localized.ts";
 
-import type { ScheduledMessage } from "$lib/utils/wire";
-export type { ScheduledMessage } from "$lib/utils/wire";
+import type { ScheduledMessageView } from "$lib/utils/wire";
+export type { ScheduledMessageView as ScheduledMessage } from "$lib/utils/wire";
 
 export class ScheduledState {
-  items = $state<ScheduledMessage[]>([]);
+  items = $state<ScheduledMessageView[]>([]);
   account = $state<string | null>(null);
   open = $state(false);
-  error = $state<string | null>(null);
+  #error = $state<LocalizedError | null>(null);
+  get error(): string | null { return this.#error?.message ?? null; }
+  set error(value: unknown) { this.#error = value == null ? null : normalizeError(value); }
+  get diagnostic() { return this.#error?.diagnostic; }
   private version = 0;
   private busy = false;
 
@@ -30,13 +35,13 @@ export class ScheduledState {
     if (!account) return false;
     const version = this.version;
     try {
-      const items = await invoke<ScheduledMessage[]>("scheduled_messages", { account });
+      const items = await invoke<ScheduledMessageView[]>("scheduled_messages", { account });
       if (version !== this.version || account !== this.account) return false;
       this.items = items;
       this.error = null;
       return true;
     } catch (error) {
-      if (version === this.version && account === this.account) this.error = String(error);
+      if (version === this.version && account === this.account) this.error = error;
       return false;
     }
   }
@@ -50,7 +55,7 @@ export class ScheduledState {
       await this.refresh(account);
       return true;
     } catch (error) {
-      if (account === this.account) { this.error = String(error); ui.fail(error); }
+      if (account === this.account) { this.error = error; ui.fail(error); }
       return false;
     }
   }
@@ -62,18 +67,18 @@ export class ScheduledState {
     const version = this.version;
     const current = () => version === this.version && account === session.activeAccount && session.connected;
     let sent = false;
-    let blocked: string | null = null;
+    let blocked: LocalizedError | null = null;
     try {
       if (!await this.refresh(account) || !current()) return;
       for (const item of this.items) {
         if (item.status !== "pending" || item.due_at > now()) continue;
         if (!current()) break;
-        const reason = broadcastSendReason(item.chat);
+        const reason = broadcastSendError(item.chat);
         if (reason) { blocked = reason; continue; }
         try {
           sent = await enqueue(async (signal) => {
             guardBroadcastSend(item.chat);
-            if (signal.aborted || !current()) throw new Error("Account changed before scheduled send");
+            if (signal.aborted || !current()) throw uiError("error.state.scheduled_scope");
             return await invoke<boolean>("send_scheduled_message", { account, id: item.id });
           }) || sent;
         } catch (error) {
@@ -88,7 +93,7 @@ export class ScheduledState {
         await chats.refreshChats();
       }
     } catch (error) {
-      if (current()) { this.error = String(error); ui.fail(error); }
+      if (current()) { this.error = error; ui.fail(error); }
     } finally {
       if (version === this.version) this.busy = false;
     }

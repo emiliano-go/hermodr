@@ -4,6 +4,8 @@ use tauri::{AppHandle, Manager, State};
 use crate::{AppState, account_store::active_account};
 use std::sync::Arc;
 use postal_core::WhatsAppService;
+use crate::command_error::{CommandError, CommandResult};
+use postal_core::message_ref::MessageRef;
 
 pub(crate) const CHUNK_BYTES: usize = 256 * 1024;
 pub(crate) const MAX_PENDING_ATTACHMENTS: usize = 8;
@@ -42,11 +44,11 @@ impl Pending {
 }
 
 impl Uploads {
-    fn begin(&self, root: &Path, owner: String, name: String, size: u64) -> Result<String, String> {
-        if name.is_empty() || name.len() > 1024 { return Err("invalid attachment name".into()); }
+    fn begin(&self, root: &Path, owner: String, name: String, size: u64) -> CommandResult<String> {
+        if name.is_empty() || name.len() > 1024 { return Err(CommandError::code("error.upload_name_invalid")); }
         let mut pending = self.0.lock().unwrap();
         pending.expire();
-        if pending.entries.len() >= MAX_PENDING_ATTACHMENTS { return Err("too many pending attachments".into()); }
+        if pending.entries.len() >= MAX_PENDING_ATTACHMENTS { return Err(CommandError::new(MessageRef::new("error.upload_pending_limit").with_param("max_items", serde_json::Number::from(MAX_PENDING_ATTACHMENTS)))); }
         fs::create_dir_all(root).map_err(|e| e.to_string())?;
         let root = root.canonicalize().map_err(|e| e.to_string())?;
         if !pending.cleaned {
@@ -72,14 +74,14 @@ impl Uploads {
         Ok(token)
     }
 
-    fn append(&self, owner: &str, token: &str, offset: u64, bytes: &[u8]) -> Result<(), String> {
-        if bytes.len() > CHUNK_BYTES { return Err("attachment chunk is too large".into()); }
+    fn append(&self, owner: &str, token: &str, offset: u64, bytes: &[u8]) -> CommandResult<()> {
+        if bytes.len() > CHUNK_BYTES { return Err(CommandError::new(MessageRef::new("error.upload_chunk_limit").with_param("max_bytes", serde_json::Number::from(CHUNK_BYTES)))); }
         let mut pending = self.0.lock().unwrap();
         pending.expire();
-        let file = pending.entries.get_mut(token).ok_or("unknown attachment upload")?;
-        if file.owner != owner { return Err("attachment belongs to another account".into()); }
+        let file = pending.entries.get_mut(token).ok_or_else(|| CommandError::code("error.upload_unknown"))?;
+        if file.owner != owner { return Err(CommandError::code("error.upload_account_mismatch")); }
         if file.written != offset || offset.checked_add(bytes.len() as u64).is_none_or(|end| end > file.size) {
-            return Err("attachment chunk is out of order or exceeds its size".into());
+            return Err(CommandError::code("error.upload_chunk_order"));
         }
         let mut output = OpenOptions::new().write(true).open(&file.path).map_err(|e| e.to_string())?;
         output.seek(SeekFrom::Start(offset)).map_err(|e| e.to_string())?;
@@ -89,44 +91,44 @@ impl Uploads {
         Ok(())
     }
 
-    pub(crate) fn take(&self, owner: &str, token: &str) -> Result<StagedUpload, String> {
+    pub(crate) fn take(&self, owner: &str, token: &str) -> CommandResult<StagedUpload> {
         let mut pending = self.0.lock().unwrap();
         pending.expire();
-        let file = pending.entries.get(token).ok_or("unknown attachment upload")?;
-        if file.owner != owner { return Err("attachment belongs to another account".into()); }
+        let file = pending.entries.get(token).ok_or_else(|| CommandError::code("error.upload_unknown"))?;
+        if file.owner != owner { return Err(CommandError::code("error.upload_account_mismatch")); }
         if file.written != file.size || fs::metadata(&file.path).map_err(|e| e.to_string())?.len() != file.size {
-            return Err("attachment upload is incomplete".into());
+            return Err(CommandError::code("error.upload_incomplete"));
         }
         Ok(pending.entries.remove(token).expect("checked upload exists"))
     }
 
-    pub(crate) fn take_many(&self, owner: &str, tokens: &[String]) -> Result<Vec<StagedUpload>, String> {
+    pub(crate) fn take_many(&self, owner: &str, tokens: &[String]) -> CommandResult<Vec<StagedUpload>> {
         if tokens.is_empty() || tokens.len() > MAX_PENDING_ATTACHMENTS {
-            return Err("invalid attachment batch size".into());
+            return Err(CommandError::new(MessageRef::new("error.upload_batch_limit").with_param("max_items", serde_json::Number::from(MAX_PENDING_ATTACHMENTS))));
         }
         let mut pending = self.0.lock().unwrap();
         pending.expire();
         for (index, token) in tokens.iter().enumerate() {
-            if tokens[..index].contains(token) { return Err("duplicate attachment upload".into()); }
-            let file = pending.entries.get(token).ok_or("unknown attachment upload")?;
-            if file.owner != owner { return Err("attachment belongs to another account".into()); }
+            if tokens[..index].contains(token) { return Err(CommandError::code("error.upload_duplicate")); }
+            let file = pending.entries.get(token).ok_or_else(|| CommandError::code("error.upload_unknown"))?;
+            if file.owner != owner { return Err(CommandError::code("error.upload_account_mismatch")); }
             if file.written != file.size || fs::metadata(&file.path).map_err(|e| e.to_string())?.len() != file.size {
-                return Err("attachment upload is incomplete".into());
+                return Err(CommandError::code("error.upload_incomplete"));
             }
         }
         Ok(tokens.iter().map(|token| pending.entries.remove(token).expect("checked upload exists")).collect())
     }
 
-    fn cancel_owned(&self, owner: &str, token: &str) -> Result<(), String> {
+    fn cancel_owned(&self, owner: &str, token: &str) -> CommandResult<()> {
         let mut pending = self.0.lock().unwrap();
         if pending.entries.get(token).is_some_and(|file| file.owner != owner) {
-            return Err("attachment belongs to another account".into());
+            return Err(CommandError::code("error.upload_account_mismatch"));
         }
         pending.entries.remove(token);
         Ok(())
     }
 
-    fn complete_begin(&self, owner: &str, token: String, current: Result<(), String>) -> Result<String, String> {
+    fn complete_begin(&self, owner: &str, token: String, current: CommandResult<()>) -> CommandResult<String> {
         if let Err(error) = current {
             self.cancel_owned(owner, &token)?;
             return Err(error);
@@ -138,28 +140,28 @@ impl Uploads {
     fn cancel(&self, token: &str) { self.0.lock().unwrap().entries.remove(token); }
 }
 
-fn check_upload_scope(owner: &str, active: Option<&str>, same_service: bool) -> Result<(), String> {
+fn check_upload_scope(owner: &str, active: Option<&str>, same_service: bool) -> CommandResult<()> {
     if active == Some(owner) && same_service { Ok(()) }
-    else { Err("Attachment account changed during staging.".into()) }
+    else { Err(CommandError::code("error.upload_account_changed")) }
 }
 
-fn upload_current(state: &AppState, owner: &str, expected: &Arc<WhatsAppService>) -> Result<(), String> {
+fn upload_current(state: &AppState, owner: &str, expected: &Arc<WhatsAppService>) -> CommandResult<()> {
     let active = active_account(state);
-    let service = state.account_service(owner)?;
+    let service = state.account_service(owner).map_err(|error| CommandError::code("error.upload_account_changed").with_diagnostic(error))?;
     check_upload_scope(owner, active.as_deref(), Arc::ptr_eq(expected, &service))
 }
 
-fn upload_owner(state: &AppState, account: Option<String>) -> Result<(String, Arc<WhatsAppService>), String> {
-    let active = active_account(state).ok_or("no active account")?;
+fn upload_owner(state: &AppState, account: Option<String>) -> CommandResult<(String, Arc<WhatsAppService>)> {
+    let active = active_account(state).ok_or_else(|| CommandError::code("error.no_active_account"))?;
     let owner = account.unwrap_or_else(|| active.clone());
     check_upload_scope(&owner, Some(&active), true)?;
-    let service = state.account_service(&owner)?;
+    let service = state.account_service(&owner).map_err(|error| CommandError::code("error.upload_account_changed").with_diagnostic(error))?;
     upload_current(state, &owner, &service)?;
     Ok((owner, service))
 }
 
 #[tauri::command]
-pub(crate) async fn begin_upload(app: AppHandle, state: State<'_, AppState>, name: String, size: u64, account_id: Option<String>) -> Result<String, String> {
+pub(crate) async fn begin_upload(app: AppHandle, state: State<'_, AppState>, name: String, size: u64, account_id: Option<String>) -> CommandResult<String> {
     let (owner, service) = upload_owner(&state, account_id)?;
     let root = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("uploads");
     let uploads = state.uploads.clone();
@@ -169,23 +171,23 @@ pub(crate) async fn begin_upload(app: AppHandle, state: State<'_, AppState>, nam
 }
 
 #[tauri::command]
-pub(crate) async fn append_upload(state: State<'_, AppState>, token: String, offset: u64, data: String, account_id: Option<String>) -> Result<(), String> {
-    if token.is_empty() || token.len() > 256 { return Err("invalid attachment upload token".into()); }
-    if data.len() > CHUNK_BYTES.div_ceil(3) * 4 { return Err("attachment chunk is too large".into()); }
+pub(crate) async fn append_upload(state: State<'_, AppState>, token: String, offset: u64, data: String, account_id: Option<String>) -> CommandResult<()> {
+    if token.is_empty() || token.len() > 256 { return Err(CommandError::code("error.upload_token_invalid")); }
+    if data.len() > CHUNK_BYTES.div_ceil(3) * 4 { return Err(CommandError::new(MessageRef::new("error.upload_chunk_limit").with_param("max_bytes", serde_json::Number::from(CHUNK_BYTES)))); }
     let (owner, service) = upload_owner(&state, account_id)?;
     let uploads = state.uploads.clone();
     let captured = owner.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let bytes = BASE64.decode(data).map_err(|e| e.to_string())?;
+        let bytes = BASE64.decode(data).map_err(|error| CommandError::code("error.media_base64_invalid").with_diagnostic(error))?;
         uploads.append(&captured, &token, offset, &bytes)
     }).await.map_err(|e| e.to_string())??;
     upload_current(&state, &owner, &service)
 }
 
 #[tauri::command]
-pub(crate) async fn cancel_upload(state: State<'_, AppState>, token: String, account_id: Option<String>) -> Result<(), String> {
-    let owner = account_id.or_else(|| active_account(&state)).ok_or("no attachment account")?;
-    if owner.is_empty() || owner.len() > 256 || token.is_empty() || token.len() > 256 { return Err("invalid attachment cleanup scope".into()); }
+pub(crate) async fn cancel_upload(state: State<'_, AppState>, token: String, account_id: Option<String>) -> CommandResult<()> {
+    let owner = account_id.or_else(|| active_account(&state)).ok_or_else(|| CommandError::code("error.no_active_account"))?;
+    if owner.is_empty() || owner.len() > 256 || token.is_empty() || token.len() > 256 { return Err(CommandError::code("error.upload_scope_invalid")); }
     let uploads = state.uploads.clone();
     tauri::async_runtime::spawn_blocking(move || uploads.cancel_owned(&owner, &token)).await.map_err(|e| e.to_string())?
 }
@@ -224,10 +226,12 @@ mod tests {
         let uploads = Uploads::default();
         let bytes = vec![23; CHUNK_BYTES + 17];
         let token = uploads.begin(&root, "one".into(), "synthetic.mp4".into(), bytes.len() as u64).unwrap();
-        assert!(uploads.take("one", &token).is_err());
-        assert!(uploads.append("two", &token, 0, &bytes[..10]).is_err());
-        assert!(uploads.append("one", &token, 1, &bytes[..10]).is_err());
-        assert!(uploads.append("one", &token, 0, &bytes).is_err());
+        assert_eq!(uploads.take("one", &token).err().unwrap().message.code, "error.upload_incomplete");
+        assert_eq!(uploads.append("two", &token, 0, &bytes[..10]).unwrap_err().message.code, "error.upload_account_mismatch");
+        assert_eq!(uploads.append("one", &token, 1, &bytes[..10]).unwrap_err().message.code, "error.upload_chunk_order");
+        let large = uploads.append("one", &token, 0, &bytes).unwrap_err();
+        assert_eq!(large.message.code, "error.upload_chunk_limit");
+        assert_eq!(serde_json::to_value(large).unwrap()["params"]["max_bytes"], CHUNK_BYTES);
         uploads.append("one", &token, 0, &bytes[..CHUNK_BYTES]).unwrap();
         assert!(uploads.append("one", &token, 0, &bytes[..10]).is_err());
         assert!(uploads.append("one", &token, CHUNK_BYTES as u64, &[1; 18]).is_err());

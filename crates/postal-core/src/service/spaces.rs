@@ -1,4 +1,5 @@
 use super::*;
+use crate::message_ref::MessageRef;
 use anyhow::Context;
 pub use crate::store::spaces::{CachedSpaceGroup, ResolvedSpaceItem, Space, SpaceAction, SpaceArchive,
     SpaceInboxFilters, SpaceItem, SpaceResolution, SpaceSelection, SpaceSnapshot, SpaceTarget};
@@ -6,9 +7,11 @@ pub use crate::store::spaces::{CachedSpaceGroup, ResolvedSpaceItem, Space, Space
 const MAX_METADATA_BYTES: usize = 64 * 1024 * 1024;
 
 fn decode_archive(json: &str) -> Result<SpaceArchive> {
-    anyhow::ensure!(json.len() <= MAX_METADATA_BYTES, "Space metadata exceeds the import size bound.");
-    let archive: SpaceArchive = serde_json::from_str(json).context("Invalid Space metadata JSON.")?;
-    anyhow::ensure!(archive.version == 1, "Unsupported Space metadata version.");
+    anyhow::ensure!(json.len() <= MAX_METADATA_BYTES, MessageRef::new("error.space_metadata_size")
+        .with_param("max_bytes", serde_json::Number::from(MAX_METADATA_BYTES as u64)).with_param("actual_bytes", serde_json::Number::from(json.len() as u64)));
+    let archive: SpaceArchive = serde_json::from_str(json).with_context(|| MessageRef::new("error.space_metadata_json_invalid"))?;
+    anyhow::ensure!(archive.version == 1, MessageRef::new("error.space_metadata_version")
+        .with_param("version", serde_json::Number::from(archive.version)).with_param("supported", serde_json::Number::from(1)));
     Ok(archive)
 }
 
@@ -38,7 +41,8 @@ impl WhatsAppService {
     pub async fn export_space_metadata(&self) -> Result<String> {
         let archive = self.store.run(MessageStore::export_spaces).await?;
         let json = serde_json::to_string(&archive)?;
-        anyhow::ensure!(json.len() <= MAX_METADATA_BYTES, "Space metadata exceeds the export size bound.");
+        anyhow::ensure!(json.len() <= MAX_METADATA_BYTES, MessageRef::new("error.space_metadata_size")
+            .with_param("max_bytes", serde_json::Number::from(MAX_METADATA_BYTES as u64)).with_param("actual_bytes", serde_json::Number::from(json.len() as u64)));
         Ok(json)
     }
 

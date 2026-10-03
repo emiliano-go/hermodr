@@ -11,6 +11,7 @@
 </script>
 
 <script lang="ts">
+  import { t } from "$lib/i18n/localizer";
   import Icon from "$lib/ui/Icon.svelte";
 
   let {
@@ -38,7 +39,7 @@
         class="reaction"
         class:mine={current === emoji}
         role="menuitem"
-        aria-label="React {emoji}"
+        aria-label={t("content.react_with", { emoji })}
         disabled={!!reactionReason}
         title={reactionReason ?? undefined}
         onclick={() => {
@@ -50,8 +51,8 @@
     <button
       class="reaction more"
       role="menuitem"
-      aria-label="More reactions"
-      title={reactionReason ?? "More reactions"}
+      aria-label={t("content.more_reactions")}
+      title={reactionReason ?? t("content.more_reactions")}
       disabled={!!reactionReason}
       onclick={() => {
         if (reactionReason) return;
@@ -154,7 +155,7 @@
     color: var(--text);
     font: inherit;
     font-size: 14.5px;
-    text-align: left;
+    text-align: start;
     cursor: pointer;
   }
   .item :global(svg) {

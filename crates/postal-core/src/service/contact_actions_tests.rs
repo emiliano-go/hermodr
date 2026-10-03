@@ -19,7 +19,8 @@ fn contact_edit_validates_bare_addresses_and_exact_phone_mapping() {
         "1@newsletter",
         "59891954564",
     ] {
-        assert!(editable_contact(address).is_err(), "{address}");
+        let error = editable_contact(address).unwrap_err();
+        assert_eq!(error.downcast_ref::<crate::message_ref::MessageRef>().unwrap().code, "error.contact_address", "{address}");
     }
     for mapping in [
         None,

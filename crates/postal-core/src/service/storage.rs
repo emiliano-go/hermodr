@@ -97,7 +97,7 @@ fn files_under(root: &Path) -> Result<HashMap<PathBuf, u64>> {
             let kind = entry.file_type()?;
             if kind.is_symlink() { continue; }
             let path = entry.path().canonicalize()?;
-            anyhow::ensure!(path.starts_with(root), "media path escapes its folder");
+            anyhow::ensure!(path.starts_with(root), crate::message_ref::MessageRef::new("error.media_path_denied"));
             if kind.is_dir() { pending.push(path); }
             else if kind.is_file() { files.insert(path, entry.metadata()?.len()); }
         }
@@ -174,7 +174,7 @@ pub(super) fn cleanup_storage(store: &MessageStore, directory: &Path, action: St
         let original = Path::new(&path);
         let source = match original.canonicalize() {
             Ok(source) => {
-                anyhow::ensure!(source.starts_with(&root) && source.is_file(), "attachment is outside the media folder");
+                anyhow::ensure!(source.starts_with(&root) && source.is_file(), crate::message_ref::MessageRef::new("error.media_path_denied"));
                 Some(source)
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
@@ -212,13 +212,13 @@ pub(super) fn cleanup_storage(store: &MessageStore, directory: &Path, action: St
 
 impl WhatsAppService {
     pub async fn storage_report(&self, chat: Option<&str>, order: StorageOrder, offset: usize) -> Result<StorageReport> {
-        let directory = self.media_dir.clone().ok_or_else(|| anyhow::anyhow!("no media folder configured"))?;
+        let directory = self.media_dir.clone().ok_or_else(|| anyhow::anyhow!(crate::message_ref::MessageRef::new("error.media_directory_missing")))?;
         let chat = chat.map(str::to_owned);
         self.store.run(move |store| Ok(storage_report(store, &directory)?.page(chat.as_deref(), order, offset))).await
     }
 
     pub async fn cleanup_storage(&self, action: StorageCleanup) -> Result<CleanupResult> {
-        let directory = self.media_dir.clone().ok_or_else(|| anyhow::anyhow!("no media folder configured"))?;
+        let directory = self.media_dir.clone().ok_or_else(|| anyhow::anyhow!(crate::message_ref::MessageRef::new("error.media_directory_missing")))?;
         let result = self.store.run(move |store| cleanup_storage(store, &directory, action)).await;
         if let Some(chats) = self.store.chats().await.observed() {
             let _ = self.events.send(ServiceEvent::HistoryLoaded { chats: chats.into_iter().map(|chat| chat.chat).collect() });

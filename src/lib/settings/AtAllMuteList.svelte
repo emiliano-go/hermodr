@@ -1,6 +1,7 @@
 <!-- Chats muting @all mentions, each with a button to turn that mute off.
   Shown in Settings → Notifications while the mute-everywhere switch is off. -->
 <script lang="ts">
+  import { t } from "$lib/i18n/localizer";
   import { chats } from "$lib/state/chats.svelte";
 
   const muted = $derived(chats.chats.filter((chat) => chat.mute_at_all));
@@ -17,7 +18,7 @@
 </script>
 
 {#if muted.length === 0}
-  <p class="muted">No chats mute @all mentions.</p>
+  <p class="muted">{t("settings.all_mute_empty")}</p>
 {:else}
   <ul class="mute-list">
     {#each muted as chat (chat.chat)}
@@ -27,7 +28,7 @@
           class="button"
           disabled={busy === chat.chat}
           onclick={() => unmute(chat.chat)}>
-          {busy === chat.chat ? "Unmuting…" : "Unmute @all"}
+          {busy === chat.chat ? t("settings.unmuting") : t("settings.all_unmute")}
         </button>
       </li>
     {/each}

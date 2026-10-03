@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-database-encryption-status"
+description = "Enables the database_encryption_status command without any pre-configured scope."
+commands.allow = ["database_encryption_status"]
+
+[[permission]]
+identifier = "deny-database-encryption-status"
+description = "Denies the database_encryption_status command without any pre-configured scope."
+commands.deny = ["database_encryption_status"]

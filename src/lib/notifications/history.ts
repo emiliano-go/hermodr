@@ -1,3 +1,4 @@
+import { LocalizedError } from "../i18n/errors.ts";
 export const NOTIFICATION_HISTORY_LIMIT = 100;
 
 export type NotificationHistoryEntry = {
@@ -12,7 +13,7 @@ export type NotificationHistoryEntry = {
 };
 
 export type HistoryStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
-export type HistorySnapshot = { entries: NotificationHistoryEntry[]; error: string | null; writable: boolean };
+export type HistorySnapshot = { entries: NotificationHistoryEntry[]; error: LocalizedError | null; writable: boolean };
 
 export function historyKey(account: string) { return `postal.notification-history.v1.${encodeURIComponent(account)}`; }
 
@@ -51,7 +52,7 @@ export function loadHistory(account: string, storage: HistoryStorage): HistorySn
     if (entries.some((entry: NotificationHistoryEntry | null) => !entry)) throw new Error();
     return { entries: capped(entries), error: null, writable: true };
   } catch {
-    return { entries: [], error: "Saved notification history could not be read. New entries are temporary; clear history in Settings to reset it.", writable: false };
+    return { entries: [], error: new LocalizedError({ kind: "postal_error", code: "error.content.saved_notification_history_could_not_be_read_new_entries_are_temporary_c", params: {} }), writable: false };
   }
 }
 
@@ -68,7 +69,7 @@ export function saveHistory(account: string, entries: NotificationHistoryEntry[]
     storage.setItem(historyKey(account), JSON.stringify({ version: 1, account, entries: safe }));
     return { entries: safe, error: null, writable: true };
   } catch {
-    return { entries: safe, error: "Notification history could not be saved. Recent entries are kept only until Postal closes.", writable: true };
+    return { entries: safe, error: new LocalizedError({ kind: "postal_error", code: "error.content.notification_history_could_not_be_saved_recent_entries_are_kept_only_unt", params: {} }), writable: true };
   }
 }
 
@@ -77,6 +78,6 @@ export function clearHistory(account: string, previous: HistorySnapshot, storage
     storage.removeItem(historyKey(account));
     return { entries: [], error: null, writable: true };
   } catch {
-    return { ...previous, error: "Notification history could not be cleared. Try again when local storage is available." };
+    return { ...previous, error: new LocalizedError({ kind: "postal_error", code: "error.content.notification_history_could_not_be_cleared_try_again_when_local_storage_i", params: {} }) };
   }
 }

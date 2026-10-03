@@ -1,13 +1,14 @@
 //! Polls and events: creating them, votes and RSVPs.
 
 use super::*;
+use crate::message_ref::MessageRef;
 
 pub(super) fn validate_vote_target(row: &StoredMessage) -> Result<()> {
     anyhow::ensure!(
         row.media.kind.as_deref() == Some("poll") && row.media.once_kind.is_none()
             && !row.local.deleted && !row.local.revoked && !row.spoiler
             && !row.is_unavailable() && row.system.kind.is_none(),
-        "Poll is unavailable or private."
+        MessageRef::new("error.poll_unavailable")
     );
     Ok(())
 }
@@ -92,7 +93,7 @@ impl WhatsAppService {
             .polls()
             .create(to, question, &options, selectable)
             .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            .map_err(anyhow::Error::from)?;
         let id = result.message_id.clone();
         self.store
             .save_poll(chat, &id, &self.own_jid(), question, &options, multi, Some(&secret)).await?;
@@ -110,7 +111,7 @@ impl WhatsAppService {
         let def = self
             .store
             .poll_secret(chat, id).await?
-            .ok_or_else(|| anyhow::anyhow!("this poll arrived without its key, so it cannot be voted on here"))?;
+            .ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.poll_key_missing")))?;
         secret_edits::vote(&self.store, &self.client, chat, id, &def, &options).await?;
         self.store.set_poll_vote(chat, id, "@me", &options).await?;
         let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
@@ -141,7 +142,7 @@ impl WhatsAppService {
             .events()
             .create(to, params)
             .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            .map_err(anyhow::Error::from)?;
         let id = result.message_id.clone();
         let stored = self.own_message(chat, &id, event.name.clone(), "event", to_self);
         let stored = self.store.insert_message_row(&stored).await?;
@@ -160,10 +161,10 @@ impl WhatsAppService {
         let context = self
             .store
             .event_rsvp_context(chat, id, "@me").await?
-            .ok_or_else(|| anyhow::anyhow!("this event's key never reached this device"))?;
-        anyhow::ensure!(!context.invitation && context.invitation_id.is_none(), "Event invitations are read-only.");
+            .ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.event_key_missing")))?;
+        anyhow::ensure!(!context.invitation && context.invitation_id.is_none(), MessageRef::new("error.event_invitation_read_only"));
         anyhow::ensure!(event.has_reminder == context.event.has_reminder && event.reminder_offset_sec == context.event.reminder_offset_sec,
-            "Event reminder changed while preparing the edit.");
+            MessageRef::new("error.event_reminder_changed"));
         let def = context.secret;
         let own: Vec<String> = [self.client.pn(), self.client.lid()]
             .into_iter()
@@ -172,16 +173,16 @@ impl WhatsAppService {
             .collect();
         let creators = event_rsvps::namespace_forms(&self.store, Some(&self.client), &def.creator.parse::<Jid>()?).await?;
         if !creators.iter().any(|creator|own.contains(&creator.to_string())) {
-            anyhow::bail!("only the event's creator can change it");
+            anyhow::bail!(MessageRef::new("error.event_creator_only"));
         }
         let content = event_rsvps::event_content(&event);
         let timestamp_ms = unix_now() * 1000;
         let result = self.client
             .edit_message_encrypted(to, id, &def.secret, content)
             .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            .map_err(anyhow::Error::from)?;
         let revision = crate::store::EditRevision { timestamp_ms, message_id: result.message_id };
-        anyhow::ensure!(self.store.replace_event_content(chat, id, &event, &revision).await?, "event changed or was removed while sending");
+        anyhow::ensure!(self.store.replace_event_content(chat, id, &event, &revision).await?, MessageRef::new("error.event_send_changed"));
         let updated = self.store.message(chat, id).await?;
         let _ = self.events.send(ServiceEvent::hint(&updated, false));
         let notice = self.store.message(chat, &revision.message_id).await?;
@@ -196,17 +197,17 @@ impl WhatsAppService {
         let current = event_rsvps::event_for_action(&self.store, chat, id).await?;
         let answer = event_rsvps::validate_response(&current, response, extra_guest_count)?;
         let context = self.store.event_rsvp_context(chat, id, "@me").await?
-            .ok_or_else(|| anyhow::anyhow!("This event arrived without its key, so it cannot be answered here."))?;
-        anyhow::ensure!(context.secret.secret.len()==32,"Event vote key must be 32 bytes.");
-        anyhow::ensure!(!context.canceled && !context.invitation && context.invitation_id.is_none(),"This event cannot be answered on this device.");
-        anyhow::ensure!(extra_guest_count.is_none_or(|count|count<=0) || context.extra_guests_allowed,"This event no longer permits extra guests.");
+            .ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.event_reply_key_missing")))?;
+        anyhow::ensure!(context.secret.secret.len()==32,MessageRef::new("error.event_key_length").with_param("expected_bytes", serde_json::Number::from(32)));
+        anyhow::ensure!(!context.canceled && !context.invitation && context.invitation_id.is_none(),MessageRef::new("error.event_reply_unavailable"));
+        anyhow::ensure!(extra_guest_count.is_none_or(|count|count<=0) || context.extra_guests_allowed,MessageRef::new("error.event_guests_changed"));
         let creator: Jid = context.secret.creator.parse()?;
         let request_started_ms=whatsapp_rust::wacore::time::now_millis();
         let sent = self.client
             .events()
             .respond(jid, id, &creator, &context.secret.secret, answer, extra_guest_count)
             .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            .map_err(anyhow::Error::from)?;
         if self.store.commit_event_rsvp_ack_with_bound(chat, id, "@me", &context.prior, response, extra_guest_count, &sent.message_id, Some(request_started_ms)).await? {
             let _ = self.events.send(ServiceEvent::Marks { chat: chat.to_string() });
         }

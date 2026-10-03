@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
+  import { t, formatDate, type MessageParams } from "$lib/i18n/localizer";
   import { untrack } from "svelte";
   import { invoke } from "$lib/utils/ipc";
   import ConfirmDialog from "$lib/ui/ConfirmDialog.svelte";
@@ -6,15 +8,16 @@
   import Spinner from "$lib/ui/Spinner.svelte";
   import { members } from "$lib/state/members.svelte";
   import { storageSize, type StorageReport, type StorageCleanup } from "$lib/utils/storage";
+  const fileKind = (kind: string) => t(({ image: "settings.storage_kind_image", video: "settings.storage_kind_video", audio: "settings.storage_kind_audio", document: "settings.storage_kind_document", sticker: "settings.storage_kind_sticker", gif: "settings.storage_kind_gif" } as Record<string, string>)[kind] ?? "settings.storage_kind_unknown");
   let open = $state(false);
   let report = $state<StorageReport | null>(null);
   let busy = $state(false);
-  let error = $state("");
-  let notice = $state("");
+  let error = $state<LocalizedError | string>("");
+  let notice = $state<import("$lib/utils/wire").CleanupResult | null>(null);
   let chat = $state("");
   let order = $state("largest");
   let offset = $state(0);
-  let pending = $state<{ action: StorageCleanup; title: string } | null>(null);
+  let pending = $state<{ action: StorageCleanup; title: string; params?: MessageParams } | null>(null);
   const usages = $derived((report?.chats ?? []).filter((row) => !chat || row.chat === chat)
     .toSorted((a, b) => b.bytes - a.bytes).slice(0, 100));
 
@@ -27,7 +30,7 @@
         offset = Math.max(0, Math.floor((report.total_files - 1) / 50) * 50);
         report = await invoke<StorageReport>("storage_report", { chat: chat || null, order, offset });
       }
-    } catch (e) { error = String(e); }
+    } catch (e) { error = normalizeError(e); }
     finally { busy = false; }
   }
 
@@ -35,11 +38,11 @@
     if (!pending || busy) return;
     busy = true;
     error = "";
-    notice = "";
+    notice = null;
     try {
       const result = await invoke<import("$lib/utils/wire").CleanupResult>("storage_cleanup", { action: pending.action });
-      notice = `Removed ${result.files} ${result.files === 1 ? "file" : "files"} · ${storageSize(result.bytes)}`;
-    } catch (e) { error = String(e); }
+      notice = result;
+    } catch (e) { error = normalizeError(e); }
     finally { pending = null; await refresh(false); }
   }
 
@@ -47,67 +50,67 @@
 </script>
 
 <details bind:open>
-  <summary><span>Storage Manager</span><span class="chev"><Icon name="chevronDown" size={16} /></span></summary>
-  <p>Local files in the current media folder. Message text and history stay when attachments are removed.</p>
+  <summary><span>{t("settings.storage_manager")}</span><span class="chev"><Icon name="chevronDown" size={16} /></span></summary>
+  <p>{t("settings.storage_hint")}</p>
   {#if error}<p role="alert">{error}</p>{/if}
-  {#if notice}<p role="status">{notice}</p>{/if}
-  <button disabled={busy} onclick={() => refresh()}>{#if busy}<Spinner />{/if} Refresh storage</button>
+  {#if notice}<p role="status">{t("settings.storage_removed", { count: notice.files, size: storageSize(notice.bytes) })}</p>{/if}
+  <button disabled={busy} onclick={() => refresh()}>{#if busy}<Spinner />{/if} {t("settings.storage_refresh")}</button>
   {#if report}
     <dl class="totals">
-      <div><dt>Message database</dt><dd>{storageSize(report.database_bytes)}</dd></div>
-      <div><dt>Attachments</dt><dd>{storageSize(report.attachment_bytes)}</dd></div>
-      <div><dt>Profile picture cache</dt><dd>{storageSize(report.cache_bytes)}</dd></div>
-      <div><dt>Other local files</dt><dd>{storageSize(report.other_bytes)}</dd></div>
+      <div><dt>{t("settings.storage_database")}</dt><dd>{storageSize(report.database_bytes)}</dd></div>
+      <div><dt>{t("settings.storage_attachments")}</dt><dd>{storageSize(report.attachment_bytes)}</dd></div>
+      <div><dt>{t("settings.storage_profiles")}</dt><dd>{storageSize(report.cache_bytes)}</dd></div>
+      <div><dt>{t("settings.storage_other")}</dt><dd>{storageSize(report.other_bytes)}</dd></div>
     </dl>
-    <p>Shared files count once in the attachment total. Other files, including saved sticker originals, are left untouched.</p>
+    <p>{t("settings.storage_count_hint")}</p>
     <div class="controls">
-      <label>Chat
+      <label>{t("chat.chat")}
         <select bind:value={chat} disabled={busy} onchange={() => { offset = 0; void refresh(); }}>
-          <option value="">All chats</option>
+          <option value="">{t("chat.all_chats")}</option>
           {#each report.chats as row (row.chat)}<option value={row.chat}>{members.displayName(row.name, row.chat)}</option>{/each}
         </select>
       </label>
-      <button disabled={busy || !chat} onclick={() => { pending = { action: { kind: "chat_media", chat }, title: "Remove this chat's local attachments?" }; }}>Clean chat media…</button>
-      <button disabled={busy || report.cache_bytes === 0} onclick={() => { pending = { action: { kind: "cache" }, title: "Clear cached profile pictures?" }; }}>Clear cache…</button>
+      <button disabled={busy || !chat} onclick={() => { pending = { action: { kind: "chat_media", chat }, title: "settings.storage_chat_confirm" }; }}>{t("settings.storage_clean_chat")}</button>
+      <button disabled={busy || report.cache_bytes === 0} onclick={() => { pending = { action: { kind: "cache" }, title: "settings.storage_cache_confirm" }; }}>{t("settings.storage_clear_cache")}</button>
     </div>
     <div class="table">
-      <table aria-label="Usage by chat">
-        <thead><tr><th>Chat</th><th>Videos</th><th>Images</th><th>Documents</th><th>Audio</th><th>Total</th></tr></thead>
+      <table aria-label={t("settings.storage_by_chat")}>
+        <thead><tr><th>{t("chat.chat")}</th><th>{t("settings.storage_videos")}</th><th>{t("settings.storage_images")}</th><th>{t("settings.storage_documents")}</th><th>{t("settings.storage_audio")}</th><th>{t("ui.total")}</th></tr></thead>
         <tbody>{#each usages as row (row.chat)}
           <tr><td>{members.displayName(row.name, row.chat)}</td>{#each ["video", "image", "document", "audio"] as kind}<td>{storageSize(row.by_kind[kind] ?? 0)}</td>{/each}<td>{storageSize(row.bytes)}</td></tr>
         {/each}</tbody>
       </table>
     </div>
-    {#if !chat && report.chats.length > 100}<p>Showing the 100 largest chats. Select a chat to see its usage.</p>{/if}
-    <label>Sort files
+    {#if !chat && report.chats.length > 100}<p>{t("settings.storage_largest_hint")}</p>{/if}
+    <label>{t("settings.storage_sort")}
       <select bind:value={order} disabled={busy} onchange={() => { offset = 0; void refresh(); }}>
-        <option value="largest">Largest first</option><option value="oldest">Oldest first</option>
+        <option value="largest">{t("settings.storage_largest_first")}</option><option value="oldest">{t("settings.storage_oldest_first")}</option>
       </select>
     </label>
-    <p>{report.total_files} attachment references · {offset + (report.files.length ? 1 : 0)}–{offset + report.files.length}</p>
+    <p>{t("settings.storage_references", { count: report.total_files, start: offset + (report.files.length ? 1 : 0), end: offset + report.files.length })}</p>
     <ul>{#each report.files as file (`${file.chat}/${file.id}/${file.quoted}`)}
       <li>
-        <div>{file.filename}<small>{file.quoted ? "Quoted " : ""}{file.kind} · {new Date(file.timestamp * 1000).toLocaleDateString()} · {storageSize(file.bytes)}</small>
-          {#if !file.available}<small>Missing or outside current media folder</small>{/if}
+        <div><bdi>{file.filename}</bdi><small>{file.quoted ? t("settings.storage_quoted", { kind: fileKind(file.kind) }) : fileKind(file.kind)} · {formatDate(file.timestamp)} · {storageSize(file.bytes)}</small>
+          {#if !file.available}<small>{t("settings.storage_missing")}</small>{/if}
         </div>
-        <button disabled={busy || !file.available} aria-label={`Delete local ${file.filename}`}
-          onclick={() => { pending = { action: { kind: "attachment", chat: file.chat, id: file.id, quoted: file.quoted }, title: `Remove ${file.filename} from this device?` }; }}>Delete…</button>
+        <button disabled={busy || !file.available} aria-label={t("settings.storage_file_delete", { name: file.filename })}
+          onclick={() => { pending = { action: { kind: "attachment", chat: file.chat, id: file.id, quoted: file.quoted }, title: "settings.storage_file_confirm", params: { name: file.filename } }; }}>{t("ui.delete_more")}</button>
       </li>
     {/each}</ul>
     <div class="controls">
-      <button disabled={busy || offset === 0} onclick={() => { offset -= 50; void refresh(); }}>Previous files</button>
-      <button disabled={busy || offset + 50 >= report.total_files} onclick={() => { offset += 50; void refresh(); }}>Next files</button>
+      <button disabled={busy || offset === 0} onclick={() => { offset -= 50; void refresh(); }}>{t("settings.storage_previous")}</button>
+      <button disabled={busy || offset + 50 >= report.total_files} onclick={() => { offset += 50; void refresh(); }}>{t("settings.storage_next")}</button>
     </div>
   {/if}
 </details>
 
 {#if pending}
-  <ConfirmDialog label="Confirm storage cleanup" title={pending.title}
-    hint="This deletes local files. Messages stay. Downloading an attachment again depends on the original still being available."
+  <ConfirmDialog label={t("settings.storage_confirm_title")} title={t(pending.title, pending.params)}
+    hint={t("settings.storage_confirm_hint")}
     onclose={() => { if (!busy) pending = null; }}>
     {#snippet actions()}
-      <button disabled={busy} onclick={() => { pending = null; }}>Cancel</button>
-      <button disabled={busy} onclick={cleanup}>{busy ? "Removing…" : "Remove local files"}</button>
+      <button disabled={busy} onclick={() => { pending = null; }}>{t("ui.cancel")}</button>
+      <button disabled={busy} onclick={cleanup}>{busy ? t("ui.removing") : t("settings.storage_remove")}</button>
     {/snippet}
   </ConfirmDialog>
 {/if}
@@ -116,7 +119,7 @@
   details { margin-top: 1rem; }
   summary { display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; list-style: none; user-select: none; }
   summary::-webkit-details-marker { display: none; }
-  .chev { display: grid; margin-left: auto; color: var(--muted); transition: transform calc(150ms * var(--motion-scale, 1)) var(--ease); }
+  .chev { display: grid; margin-inline-start: auto; color: var(--muted); transition: transform calc(150ms * var(--motion-scale, 1)) var(--ease); }
   details[open] .chev { transform: rotate(180deg); }
   p, small { font-size: .8rem; color: var(--muted); }
   .totals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem; }
@@ -127,7 +130,7 @@
   button:disabled { opacity: .5; }
   .table { overflow: auto; }
   table { border-collapse: collapse; font-size: .8rem; width: 100%; margin: .8rem 0; }
-  th, td { text-align: left; padding: .35rem; border-bottom: 1px solid var(--line-strong); }
+  th, td { text-align: start; padding: .35rem; border-bottom: 1px solid var(--line-strong); }
   ul { list-style: none; padding: 0; max-height: 22rem; overflow: auto; }
   li { display: flex; justify-content: space-between; align-items: center; gap: .6rem; padding: .6rem 0; border-bottom: 1px solid var(--line-strong); overflow-wrap: anywhere; }
   small { display: block; }

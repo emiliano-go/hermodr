@@ -1,4 +1,5 @@
 use super::*;
+use crate::message_ref::MessageRef;
 
 fn trim_keyword(text: &str) -> &str {
     text.trim_matches(|c: char| (c.is_whitespace() && c != '\u{0085}') || c == '\u{FEFF}')
@@ -7,14 +8,16 @@ fn trim_keyword(text: &str) -> &str {
 fn terms(raw: &[String]) -> Result<Vec<String>> {
     anyhow::ensure!(
         raw.len() <= 50,
-        "Each keyword list supports up to 50 entries."
+        MessageRef::new("error.keyword_list_limit").with_param("max", serde_json::Number::from(50))
+            .with_param("actual", serde_json::Number::from(raw.len() as u64))
     );
     let mut result = Vec::new();
     for term in raw {
         let term = trim_keyword(term);
         anyhow::ensure!(
             term.chars().count() <= 100,
-            "Each keyword can contain up to 100 characters."
+            MessageRef::new("error.keyword_length_limit").with_param("max", serde_json::Number::from(100))
+                .with_param("actual", serde_json::Number::from(term.chars().count() as u64))
         );
         let term = term.to_lowercase();
         if !term.is_empty() && !result.contains(&term) {

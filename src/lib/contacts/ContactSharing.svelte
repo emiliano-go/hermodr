@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { t } from "$lib/i18n/localizer";
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
   import { untrack } from "svelte";
   import { invoke } from "$lib/utils/ipc";
   import { broadcastSendReason, guardBroadcastSend } from "$lib/utils/broadcast";
@@ -22,8 +24,9 @@
   let qr = $state("");
   let pasted = $state("");
   let selected = $state<string[]>([]);
-  let error = $state("");
+  let error = $state<LocalizedError | string>("");
   let result = $state("");
+  let sentCount = $state(0);
   let busy = $state(false);
   let revision = 0;
 
@@ -64,13 +67,13 @@
     try {
       const link = await invoke<string>("own_contact_link", { account: id });
       if (id !== account || epoch !== revision || !connected) return;
-      if (contactLinkJid(link) !== null) throw new Error("WhatsApp returned no contact QR link.");
+      if (contactLinkJid(link) !== null) throw normalizeError({ kind: "postal_error", code: "error.contact_qr_missing", params: {} });
       const svg = await invoke<string>("qr_svg", { value: link });
       if (id !== account || epoch !== revision || !connected) return;
       ownLink = link;
       qr = `data:image/svg+xml,${encodeURIComponent(svg)}`;
     } catch (failure) {
-      if (id === account && epoch === revision) error = String(failure);
+      if (id === account && epoch === revision) error = normalizeError(failure);
     } finally {
       if (id === account && epoch === revision) busy = false;
     }
@@ -85,11 +88,11 @@
       const expected = contactLinkJid(link);
       const jid = await invoke<string>("resolve_contact_link", { account: id, link });
       if (id !== account || epoch !== revision || !connected) return;
-      if (!isContactJid(jid) || (expected !== null && jid !== expected)) throw new Error("Contact link resolved to an invalid contact address.");
+      if (!isContactJid(jid) || (expected !== null && jid !== expected)) throw normalizeError({ kind: "postal_error", code: "error.contact_link_invalid", params: {} });
       await onopenchat(jid);
-      if (id === account && epoch === revision) result = "Chat opened.";
+      if (id === account && epoch === revision) result = "contact.chat_opened";
     } catch (failure) {
-      if (id === account && epoch === revision) error = String(failure);
+      if (id === account && epoch === revision) error = normalizeError(failure);
     } finally {
       if (id === account && epoch === revision) busy = false;
     }
@@ -100,9 +103,9 @@
     if (!id || !link) return;
     try {
       await navigator.clipboard.writeText(link);
-      if (id === account && epoch === revision) result = "Contact link copied.";
+      if (id === account && epoch === revision) result = "contact.link_copied";
     } catch {
-      if (id === account && epoch === revision) error = "Could not copy the link. Select and copy it below.";
+      if (id === account && epoch === revision) error = normalizeError({ kind: "postal_error", code: "error.contact_link_copy", params: {} });
     }
   }
 
@@ -120,48 +123,49 @@
         ? { account, chat, generation } : null, scope, batch);
       if (!ack || epoch !== revision) return;
       selected = [];
-      result = batch.length === 1 ? "Contact sent." : `${batch.length} contacts sent.`;
+      sentCount = batch.length;
+      result = "contact.sent";
     } catch (failure) {
-      if (epoch === revision) error = String(failure);
+      if (epoch === revision) error = normalizeError(failure);
     } finally {
       if (epoch === revision) busy = false;
     }
   }
 </script>
 
-<section aria-label={mode === "links" ? "Contact QR and link" : "Share contacts"}>
+<section aria-label={mode === "links" ? t("contact.qr_and_link") : t("contact.share")}>
   {#if mode === "links"}
-    <h3>Your contact link</h3>
-    {#if qr}<img class="qr" src={qr} alt="QR code for your WhatsApp contact link" />{/if}
+    <h3>{t("contact.your_link")}</h3>
+    {#if qr}<img class="qr" src={qr} alt={t("contact.qr_alt")} />{/if}
     {#if ownLink}
-      <label>Contact link<input value={ownLink} readonly /></label>
-      <button type="button" onclick={copyLink}>Copy link</button>
+      <label>{t("contact.link")}<input dir="ltr" value={ownLink} readonly /></label>
+      <button type="button" onclick={copyLink}>{t("contact.copy_link")}</button>
     {:else if account && connected}
-      <button type="button" disabled={busy} onclick={() => account && loadLink(account)}>{busy ? "Loading contact link…" : "Load contact link"}</button>
+      <button type="button" disabled={busy} onclick={() => account && loadLink(account)}>{busy ? t("contact.link_loading") : t("contact.link_load")}</button>
     {/if}
     <form onsubmit={(event) => { event.preventDefault(); void resolve(); }}>
-      <label>Paste a contact link<input type="url" bind:value={pasted} maxlength="2048" placeholder="https://wa.me/qr/…" required disabled={busy || !account || !connected} /></label>
-      <button type="submit" disabled={busy || !account || !connected || !pasted.trim()}>Open chat</button>
+      <label>{t("contact.link_paste")}<input type="url" dir="ltr" bind:value={pasted} maxlength="2048" placeholder={t("contact.link_example")} required disabled={busy || !account || !connected} /></label>
+      <button type="submit" disabled={busy || !account || !connected || !pasted.trim()}>{t("chat.open")}</button>
     </form>
   {:else}
-    <h3>Share contacts</h3>
-    <p>Only each selected contact's name and phone number will be shared.</p>
-    {#if !contacts.length}<p>No contacts with a known phone number are available.</p>{/if}
+    <h3>{t("contact.share")}</h3>
+    <p>{t("contact.share_hint")}</p>
+    {#if !contacts.length}<p>{t("contact.share_empty")}</p>{/if}
     <fieldset disabled={busy || !account}>
       {#each contacts as contact (contact.phone)}
         <label class="choice"><input type="checkbox" value={contact.phone} bind:group={selected}
           disabled={!selected.includes(contact.phone) && selected.length >= MAX_SHARED_CONTACTS} />
-          <span><strong>{contact.name}</strong><small>{phoneLabel(contact.phone) ?? `+${contact.phone}`}</small></span></label>
+          <span><strong><bdi>{contact.name}</bdi></strong><small><bdi>{phoneLabel(contact.phone) ?? `+${contact.phone}`}</bdi></small></span></label>
       {/each}
     </fieldset>
     {#if broadcastSendReason(chat)}<p role="status">{broadcastSendReason(chat)}</p>{/if}
     <button type="button" disabled={busy || !connected || !canSend || !!broadcastSendReason(chat) || !account || !chat || !onshare || !selected.length} onclick={send}>
-      {busy ? "Sending…" : `Send ${selected.length || "selected"} ${selected.length === 1 ? "contact" : "contacts"}`}
+      {busy ? t("ui.sending") : selected.length ? t("contact.send_count", { count: selected.length }) : t("contact.send_selected")}
     </button>
   {/if}
-  {#if !connected}<p>Connect WhatsApp to share contacts or open a contact link.</p>{/if}
+  {#if !connected}<p>{t("contact.share_connect")}</p>{/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
-  {#if result}<p role="status">{result}</p>{/if}
+  {#if result}<p role="status">{t(result, { count: sentCount })}</p>{/if}
 </section>
 
 <style>

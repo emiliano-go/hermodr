@@ -1,9 +1,10 @@
 <script lang="ts">
+  import { t } from "$lib/i18n/localizer";
   import { onMount } from "svelte";
   import { slashCommandKey, slashCommands, type SlashCommandId, type SlashSelection, type SlashToken } from "$lib/utils/slash-commands";
 
   let { input, token, account, chat, generation, disabled = {
-    location: "Location sending is unavailable.", "keep-in-chat": "Keep in chat is unavailable.",
+    location: t("content.location_sending_is_unavailable"), "keep-in-chat": t("content.keep_in_chat_is_unavailable"),
   }, onchoose, onclose }: {
     input: HTMLTextAreaElement | undefined;
     token: SlashToken;
@@ -62,7 +63,7 @@
 </script>
 
 {#if active}
-  <div id="slash-command-menu" class="slash-menu" role="listbox" aria-label="Slash commands">
+  <div id="slash-command-menu" class="slash-menu" role="listbox" aria-label={t("content.slash_commands")}>
     {#each options as command (command.id)}
       <button type="button" role="option" tabindex="-1" id="slash-command-{command.id}" disabled={!!disabled[command.id]}
         aria-selected={command.id === selected} class:active={command.id === selected}
@@ -71,13 +72,13 @@
         <span class="name">/{command.id}</span><span>{disabled[command.id] ?? command.description}</span>
       </button>
     {/each}
-    {#if options.length === 0}<p>No commands match /{token.query}.</p>{/if}
+    {#if options.length === 0}<p>{t("content.no_commands_match")}{token.query}.</p>{/if}
   </div>
 {/if}
 
 <style>
   .slash-menu { max-height: 280px; overflow-y: auto; padding: 5px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
-  button { display: flex; width: 100%; align-items: center; gap: 16px; padding: 9px 12px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted); text-align: left; font: inherit; cursor: pointer; }
+  button { display: flex; width: 100%; align-items: center; gap: 16px; padding: 9px 12px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted); text-align: start; font: inherit; cursor: pointer; }
   button.active, button:hover:not(:disabled) { background: var(--raised); }
   button:disabled { opacity: .5; cursor: default; }
   .name { min-width: 112px; color: var(--text); }

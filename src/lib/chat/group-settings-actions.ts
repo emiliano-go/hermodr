@@ -1,3 +1,4 @@
+import { normalizeError, type LocalizedError } from "../i18n/errors.ts";
 import type { GroupSettings } from "$lib/utils/wire";
 
 export async function saveGroupMetadata(
@@ -5,7 +6,7 @@ export async function saveGroupMetadata(
   reload: () => Promise<GroupSettings>,
   current: () => boolean,
   acknowledged: () => void,
-): Promise<{ snapshot: GroupSettings | null; refreshError: string | null }> {
+): Promise<{ snapshot: GroupSettings | null; refreshError: LocalizedError | null }> {
   if (!current()) return { snapshot: null, refreshError: null };
   await write();
   if (!current()) return { snapshot: null, refreshError: null };
@@ -14,6 +15,6 @@ export async function saveGroupMetadata(
     const snapshot = await reload();
     return { snapshot: current() ? snapshot : null, refreshError: null };
   } catch (error) {
-    return { snapshot: null, refreshError: current() ? String(error) : null };
+    return { snapshot: null, refreshError: current() ? normalizeError(error) : null };
   }
 }

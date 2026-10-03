@@ -13,10 +13,10 @@
     "test": "node --experimental-strip-types --test \"src/tests/**/*.test.ts\"",
     "check:fn-length": "node scripts/check-rust-function-length.mjs",
     "check:tauri-acl": "node scripts/check-tauri-acl.mjs",
-    "generate:wire": "cargo run --manifest-path src-tauri/Cargo.toml --features wire-types --bin postal-wire-types -- --write",
-    "check:wire": "cargo run --manifest-path src-tauri/Cargo.toml --features wire-types --bin postal-wire-types -- --check",
+    "generate:wire": "node scripts/cargo.mjs run --manifest-path src-tauri/Cargo.toml --features wire-types --bin postal-wire-types -- --write",
+    "check:wire": "node scripts/cargo.mjs run --manifest-path src-tauri/Cargo.toml --features wire-types --bin postal-wire-types -- --check",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-    "tauri": "tauri"
+    "tauri": "node scripts/tauri.mjs"
   },
   "license": "MIT",
   "dependencies": {

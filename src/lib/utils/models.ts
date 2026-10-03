@@ -60,6 +60,7 @@ export type AttachmentRetryContext = {
 };
 
 export type AttachmentRecovery = {
+  diagnostic?: string;
   context: AttachmentRetryContext;
   retryable: PendingMedia[];
   uncertain: PendingMedia[];
@@ -125,6 +126,7 @@ export type BubbleVm = {
   downloading: boolean;
   /** Why the last download failed, shown until it is tried again. */
   downloadError: string | null;
+  downloadDiagnostic?: string | null;
   /** Downloading kept failing, so the retry is no longer offered. */
   downloadGaveUp: boolean;
   /** The message still carries something to draw (text, media, a quote). */
@@ -158,6 +160,7 @@ export type BubbleCtx = {
   forwardedSet: Set<string>;
   downloading: Record<string, true>;
   downloadErrors: Record<string, string>;
+  downloadDiagnostics?: Record<string, string>;
   downloadTries: Record<string, number>;
   replyingToId: string | null;
   highlightedId: string | null;

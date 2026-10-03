@@ -1,4 +1,6 @@
 use super::*;
+use crate::message_ref::MessageRef;
+use anyhow::Context;
 use std::path::Path;
 use crate::store::favorites::FavoriteWorker;
 use whatsapp_rust::{AppStateResyncMode, AppStateResyncReport};
@@ -29,8 +31,8 @@ pub(super) struct Favorites {
 }
 
 fn favorite_jid(chat: &str) -> Result<Jid> {
-    let jid: Jid = chat.parse()?;
-    anyhow::ensure!(!jid.user.is_empty(), "favorite chat address has no user");
+    let jid: Jid = chat.parse().with_context(|| MessageRef::new("error.favorite_address_invalid"))?;
+    anyhow::ensure!(!jid.user.is_empty(), MessageRef::new("error.favorite_address_invalid"));
     Ok(jid)
 }
 
@@ -47,8 +49,14 @@ fn normalize(chats: &[String]) -> Result<Vec<String>> {
 }
 
 impl Favorites {
+    #[cfg(test)]
     pub(super) async fn open(path: &Path, events: broadcast::Sender<ServiceEvent>) -> Result<Self> {
-        let worker = FavoriteWorker::open(path).await?;
+        Self::open_with_key(path, events, None).await
+    }
+
+    pub(super) async fn open_with_key(path: &Path, events: broadcast::Sender<ServiceEvent>,
+        key: Option<crate::database_crypto::DatabaseKey>) -> Result<Self> {
+        let worker = FavoriteWorker::open_with_key(path, key).await?;
         let chats = worker.run(|db| db.list()).await?;
         let current = Arc::new(Mutex::new(Snapshot { revision: 0, chats, replay: None }));
         let (changed, mut changes) = tokio::sync::watch::channel(0);
@@ -76,7 +84,7 @@ impl Favorites {
 
     fn apply(&self, current: &mut Snapshot, chats: Vec<String>, expected: Option<u64>) -> Result<()> {
         if expected.is_some_and(|revision| revision != current.revision) { return Ok(()); }
-        current.revision = current.revision.checked_add(1).ok_or_else(|| anyhow::anyhow!("favorite revision exhausted"))?;
+        current.revision = current.revision.checked_add(1).ok_or_else(|| anyhow::Error::new(MessageRef::new("error.favorite_revision_exhausted")))?;
         current.chats = chats;
         self.changed.send_replace(current.revision);
         Ok(())
@@ -111,7 +119,7 @@ impl Favorites {
     async fn ensure_synced(&self, client: &Arc<Client>) -> Result<()> {
         self.synced.store(false, Ordering::Release);
         let ready = client.resync_app_state([WAPatchName::RegularHigh], AppStateResyncMode::Incremental).await?;
-        anyhow::ensure!(requested_synced(&ready), "Favorite chats are still synchronizing; try again once connected.");
+        anyhow::ensure!(requested_synced(&ready), MessageRef::new("error.favorites_sync_pending"));
         self.begin_snapshot();
         let result = self.read_snapshot(client).await;
         let complete = self.complete_snapshot(result.is_ok(), result.as_ref().ok());
@@ -124,19 +132,20 @@ impl Favorites {
 
     async fn read_snapshot(&self, client: &Arc<Client>) -> Result<HashState> {
         let report = client.resync_app_state([WAPatchName::RegularHigh], AppStateResyncMode::Snapshot).await?;
-        anyhow::ensure!(requested_synced(&report), "Favorite chats are still synchronizing; try again once connected.");
-        let baseline = recovery::baseline(client).await?;
+        anyhow::ensure!(requested_synced(&report), MessageRef::new("error.favorites_sync_pending"));
+        let baseline = recovery::baseline(client).await.with_context(|| MessageRef::new("error.favorites_recovery_unavailable"))?;
         let snapshot = self.snapshot();
-        let replay = snapshot.replay.as_ref().ok_or_else(|| anyhow::anyhow!("favorite snapshot was not started"))?;
-        anyhow::ensure!(!replay.invalid, "Favorite chats contained an invalid update.");
+        let replay = snapshot.replay.as_ref().ok_or_else(|| anyhow::Error::new(MessageRef::new("error.favorite_snapshot_missing")))?;
+        anyhow::ensure!(!replay.invalid, MessageRef::new("error.favorite_update_invalid"));
         if replay.chats.is_some() { return Ok(baseline); }
-        let (proof, baseline) = recovery::recover(client, &self.capture, &baseline).await?;
+        let (proof, baseline) = recovery::recover(client, &self.capture, &baseline).await
+            .with_context(|| MessageRef::new("error.favorites_recovery_failed"))?;
         let mut current = self.current.lock().unwrap();
-        anyhow::ensure!(current.revision == snapshot.revision, "Favorite chats changed during recovery; try again.");
-        let replay = current.replay.as_mut().ok_or_else(|| anyhow::anyhow!("favorite snapshot was not started"))?;
-        anyhow::ensure!(!replay.invalid, "Favorite chats contained an invalid update.");
+        anyhow::ensure!(current.revision == snapshot.revision, MessageRef::new("error.favorites_changed"));
+        let replay = current.replay.as_mut().ok_or_else(|| anyhow::Error::new(MessageRef::new("error.favorite_snapshot_missing")))?;
+        anyhow::ensure!(!replay.invalid, MessageRef::new("error.favorite_update_invalid"));
         if let Some(chats) = &replay.chats {
-            anyhow::ensure!(*chats == proof.chats, "Favorite chats changed during recovery; try again.");
+            anyhow::ensure!(*chats == proof.chats, MessageRef::new("error.favorites_changed"));
         }
         replay.chats = Some(proof.chats);
         Ok(baseline)
@@ -144,11 +153,11 @@ impl Favorites {
 
     fn complete_snapshot(&self, synced: bool, baseline: Option<&HashState>) -> Result<()> {
         let mut current = self.current.lock().unwrap();
-        let replay = current.replay.take().ok_or_else(|| anyhow::anyhow!("favorite snapshot was not started"))?;
+        let replay = current.replay.take().ok_or_else(|| anyhow::Error::new(MessageRef::new("error.favorite_snapshot_missing")))?;
         let verified = baseline.is_some_and(|state| state.has_baseline() && state.bootstrapped
             && !state.mac_mismatch_fatal && replay.chats.is_some());
         anyhow::ensure!(synced && verified && !replay.invalid,
-            "Favorite chats could not be fully synchronized. Existing favorites were kept; try again once connected.");
+            MessageRef::new("error.favorites_sync_incomplete"));
         self.apply(&mut current, replay.live.or(replay.chats).unwrap_or_default(), None)
     }
 }
@@ -221,7 +230,7 @@ impl WhatsAppService {
         if desired == snapshot.chats { return self.favorites.flush().await; }
         let timestamp = i64::try_from(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis())?;
         self.client.send_app_state_action(&whatsapp_rust::schemas::FAVORITES, &[], &action(&desired, timestamp)).await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            .map_err(anyhow::Error::new)?;
         self.favorites.observe(&desired, Some(snapshot.revision))?;
         self.favorites.flush().await?;
         let _ = self.events.send(ServiceEvent::FavoritesChanged);

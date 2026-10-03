@@ -1,4 +1,5 @@
 use super::*;
+use crate::message_ref::MessageRef;
 use whatsapp_rust::wacore_binary::Jid;
 
 pub(super) const PUBLIC_EVENT: &str = "m.media_kind='event' AND m.deleted=0 AND m.revoked=0 AND m.spoiler=0
@@ -65,13 +66,14 @@ pub(crate) fn migrate(conn: &Connection) -> Result<()> {
 
 fn responder(conn: &Connection, value: &str) -> Result<String> {
     if value == "@me" { return Ok(value.to_owned()); }
-    let jid: Jid = value.parse()?;
-    anyhow::ensure!(!jid.user.is_empty() && (jid.is_pn() || jid.is_lid()), "Invalid event responder.");
+    let jid: Jid = value.parse::<Jid>().map_err(|error|
+        anyhow::Error::new(MessageRef::new("error.event_responder")).context(error.to_string()))?;
+    anyhow::ensure!(!jid.user.is_empty() && (jid.is_pn() || jid.is_lid()), MessageRef::new("error.event_responder"));
     Ok(names::canonical_chat(conn, &jid.to_non_ad().to_string())?.into_owned())
 }
 
 fn token_id(value: &str) -> Result<()> {
-    anyhow::ensure!(!value.is_empty() && value.len() <= 256 && !value.chars().any(char::is_control), "Invalid RSVP source ID.");
+    anyhow::ensure!(!value.is_empty() && value.len() <= 256 && !value.chars().any(char::is_control), MessageRef::new("error.event_source_id"));
     Ok(())
 }
 
@@ -179,10 +181,10 @@ fn fresher(previous: &RowState, update: &EventRsvpUpdate) -> bool {
 
 impl MessageStore {
     pub(crate) fn fill_event_secret(&self, chat: &str, id: &str, approved_creators: &[String], secret: &[u8]) -> Result<bool> {
-        anyhow::ensure!(secret.len() == 32, "Invalid event secret length.");
+        anyhow::ensure!(secret.len() == 32, MessageRef::new("error.event_secret_length").with_param("expected_bytes", serde_json::Number::from(32)));
         anyhow::ensure!(!approved_creators.is_empty() && approved_creators.len() <= 32
             && approved_creators.iter().all(|creator| !creator.is_empty() && creator.len() <= 256
-                && !creator.chars().any(char::is_control)), "Invalid approved event creators.");
+                && !creator.chars().any(char::is_control)), MessageRef::new("error.event_approved_creators"));
         let conn = self.conn.lock().unwrap();
         let chat = names::canonical_chat(&conn, chat)?;
         let creators = serde_json::to_string(approved_creators)?;
@@ -196,7 +198,7 @@ impl MessageStore {
     pub(crate) fn apply_event_rsvp(&self, chat: &str, event: &str, who: &str, update: &EventRsvpUpdate) -> Result<bool> {
         token_id(&update.source_id)?;
         anyhow::ensure!(update.timestamp_ms.is_none_or(|time| time >= 0) && update.extra_guest_count.is_none_or(|guests| guests >= 0),
-            "Invalid RSVP timestamp or guest count.");
+            MessageRef::new("error.event_timestamp_guests"));
         let mut conn = self.conn.lock().unwrap(); let tx = conn.savepoint()?;
         let chat = names::canonical_chat(&tx, chat)?.into_owned(); let who = responder(&tx, who)?;
         if !public_parent(&tx, &chat, event)? { return Ok(false); }
@@ -231,7 +233,7 @@ impl MessageStore {
             params![chat, event], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
         let Some((creator, Some(secret))) = row else { return Ok(None) };
         if secret.len() != 32 { return Ok(None); }
-        let metadata = metadata(&tx, &chat, event)?.ok_or_else(|| anyhow::anyhow!("Event metadata disappeared."))?;
+        let metadata = metadata(&tx, &chat, event)?.ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.event_metadata_missing")))?;
         reconcile_event(&tx, &chat, event)?;
         let prior = read_state(&tx, &chat, event, &who)?.map(EventRsvpToken);
         tx.commit()?;
@@ -250,7 +252,7 @@ impl MessageStore {
         response: &str, guests: Option<i32>, source_id: &str, request_started_ms: Option<i64>) -> Result<bool> {
         token_id(source_id)?;
         anyhow::ensure!(!known_response(response).is_empty() && guests.is_none_or(|guests| guests >= 0)
-            && request_started_ms.is_none_or(|time| time >= 0), "Invalid own RSVP.");
+            && request_started_ms.is_none_or(|time| time >= 0), MessageRef::new("error.event_own_response"));
         let mut conn = self.conn.lock().unwrap(); let tx = conn.savepoint()?;
         let chat = names::canonical_chat(&tx, chat)?.into_owned(); let who = responder(&tx, who)?;
         if !public_parent(&tx, &chat, event)? { return Ok(false); }

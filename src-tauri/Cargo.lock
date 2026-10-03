@@ -2890,6 +2890,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1d20bef17f513b9b3004532233187769cd072d790971f4e4da0e346eb6401e8"
 dependencies = [
  "cc",
+ "openssl-sys",
  "pkg-config",
  "vcpkg",
 ]
@@ -3739,6 +3740,7 @@ dependencies = [
  "dirs 6.0.0",
  "dunce",
  "env_logger",
+ "getrandom 0.4.3",
  "gtk",
  "image",
  "keyring",
@@ -3770,6 +3772,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "buffa",
+ "diesel",
  "image",
  "log",
  "opus-pure",
@@ -3785,6 +3788,7 @@ dependencies = [
  "url",
  "whatsapp-rust",
  "windows 0.61.3",
+ "zeroize",
 ]
 
 [[package]]
@@ -6764,7 +6768,6 @@ dependencies = [
  "diesel",
  "diesel_migrations",
  "gloo-timers",
- "libsqlite3-sys",
  "log",
  "scheduled-thread-pool",
  "serde_json",

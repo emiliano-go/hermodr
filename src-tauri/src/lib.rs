@@ -17,6 +17,10 @@ mod account_store;
 mod accounts;
 mod archive;
 mod connection;
+mod command_error;
+mod database_keys;
+mod database_encryption;
+mod native_locale;
 mod settings;
 mod chats;
 mod messages;
@@ -112,6 +116,8 @@ impl AppState {
 macro_rules! postal_commands {
     () => {
         tauri::generate_handler![
+            database_encryption::database_encryption_status,
+            native_locale::set_native_locale,
             floating::open_float_chat,
             floating::float_context,
             floating::float_subscribe,
@@ -417,9 +423,11 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         Err(error) => log::warn!("could not read start-on-login state: {error}"),
     }
     let accounts = load_accounts(app.handle());
+    database_encryption::initialize(app.handle(), &settings, &accounts);
     migrate_media(app.handle(), &accounts);
     app.manage(transcription::TranscriptionState::load(app.handle())?);
     app.manage(floating::FloatingChats::default());
+    app.manage(native_locale::NativeLocale::default());
 
     app.manage(AppState {
         account_service: Mutex::new(None),

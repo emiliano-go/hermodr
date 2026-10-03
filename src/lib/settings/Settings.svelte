@@ -56,6 +56,10 @@
   import BlockedContacts from "$lib/settings/BlockedContacts.svelte";
   import AtAllMuteList from "$lib/settings/AtAllMuteList.svelte";
   import { session } from "$lib/state/session.svelte";
+  import { locale } from "$lib/i18n/locale.svelte";
+  import { t, localeNames, type LocalePreference } from "$lib/i18n/localizer";
+  import { messageText, normalizeError, type LocalizedError } from "$lib/i18n/errors";
+  import type { DatabaseEncryptionStatus, MessageRef } from "$lib/utils/wire";
   import { limitValue, parseLimit } from "$lib/utils/retention";
   import type { NotifPermission } from "$lib/utils/notifications";
   import {
@@ -131,6 +135,19 @@
   } = $props();
 
   let picker: HTMLInputElement | undefined = $state();
+  let encryption = $state<DatabaseEncryptionStatus | null>(null);
+  let encryptionLoadError = $state<unknown>(null);
+  $effect(() => {
+    if (section !== "privacy") return;
+    const account = active;
+    let current = true;
+    encryption = null;
+    encryptionLoadError = null;
+    void invoke<DatabaseEncryptionStatus>("database_encryption_status").then((status) => {
+      if (current && account === active && status.active_account === account) encryption = status;
+    }).catch((error) => { if (current && account === active) encryptionLoadError = error; });
+    return () => { current = false; };
+  });
   /** The account whose removal is waiting for confirmation. */
   let removing = $state<string | null>(null);
   let pictureBusy = $state(false);
@@ -143,23 +160,23 @@
   let spaceJson = $state("");
   let spaceImport = $state("");
   let spaceBusy = $state(false);
-  let spaceError = $state("");
+  let spaceError = $state<LocalizedError | null>(null);
 
   async function exportSpaces() {
     if (!onspaceexport || spaceBusy) return;
     spaceBusy = true;
-    spaceError = "";
+    spaceError = null;
     try { spaceJson = await onspaceexport(); }
-    catch (cause) { spaceError = String(cause); }
+    catch (cause) { spaceError = normalizeError(cause); }
     finally { spaceBusy = false; }
   }
 
   async function importSpaces() {
     if (!onspaceimport || spaceBusy || !spaceImport.trim()) return;
     spaceBusy = true;
-    spaceError = "";
+    spaceError = null;
     try { await onspaceimport(spaceImport); spaceImport = ""; }
-    catch (cause) { spaceError = String(cause); }
+    catch (cause) { spaceError = normalizeError(cause); }
     finally { spaceBusy = false; }
   }
 
@@ -192,7 +209,7 @@
       pictureVersion += 1;
       onpicture();
     } catch (e) {
-      profileError = String(e);
+      profileError = normalizeError(e);
     } finally {
       pictureBusy = false;
       if (picker) picker.value = "";
@@ -201,25 +218,25 @@
 
   // Profile and WhatsApp privacy live on the account, so they wait for pairing.
   const NAV = $derived<{ id: Section; label: string; group: string }[]>([
-    ...(me ? [{ id: "profile" as Section, label: "My profile", group: "User settings" }] : []),
-    ...(me ? [{ id: "linked" as Section, label: "Linked devices", group: "User settings" }] : []),
-    ...(me ? [{ id: "blocked" as Section, label: "Blocked contacts", group: "User settings" }] : []),
-    ...(me ? [{ id: "contacts" as Section, label: "Contact QR & links", group: "User settings" }] : []),
-    { id: "accounts", label: "My accounts", group: "User settings" },
-    ...(me ? [{ id: "whatsapp" as Section, label: "WhatsApp privacy", group: "User settings" }] : []),
-    { id: "privacy", label: "Storage & history", group: "Data & device" },
-    { id: "chats", label: "Chats", group: "Messaging" },
-    { id: "spaces", label: "Spaces", group: "Messaging" },
-    { id: "notifications", label: "Notifications", group: "Messaging" },
-    { id: "device", label: "Device", group: "Data & device" },
-    { id: "media", label: "Media", group: "Messaging" },
-    { id: "transcription", label: "Transcription", group: "Messaging" },
-    { id: "startup", label: "Startup", group: "App settings" },
-    { id: "plugins", label: "Plugins", group: "Postal" },
-    { id: "keybinds", label: "Keybinds", group: "App settings" },
-    { id: "appearance", label: "Customization", group: "App settings" },
-    { id: "advanced", label: "Advanced", group: "Postal" },
-    { id: "about", label: "About", group: "Postal" },
+    ...(me ? [{ id: "profile" as Section, label: t("settings.main.profile"), group: t("settings.main.user_group") }] : []),
+    ...(me ? [{ id: "linked" as Section, label: t("settings.main.linked"), group: t("settings.main.user_group") }] : []),
+    ...(me ? [{ id: "blocked" as Section, label: t("settings.main.blocked"), group: t("settings.main.user_group") }] : []),
+    ...(me ? [{ id: "contacts" as Section, label: t("settings.main.contacts"), group: t("settings.main.user_group") }] : []),
+    { id: "accounts", label: t("settings.main.accounts"), group: t("settings.main.user_group") },
+    ...(me ? [{ id: "whatsapp" as Section, label: t("settings.main.whatsapp"), group: t("settings.main.user_group") }] : []),
+    { id: "privacy", label: t("settings.main.privacy"), group: t("settings.main.data_group") },
+    { id: "chats", label: t("settings.main.chats"), group: t("settings.main.messaging_group") },
+    { id: "spaces", label: t("settings.main.spaces"), group: t("settings.main.messaging_group") },
+    { id: "notifications", label: t("settings.main.notifications"), group: t("settings.main.messaging_group") },
+    { id: "device", label: t("settings.main.device"), group: t("settings.main.data_group") },
+    { id: "media", label: t("settings.main.media"), group: t("settings.main.messaging_group") },
+    { id: "transcription", label: t("settings.main.transcription"), group: t("settings.main.messaging_group") },
+    { id: "startup", label: t("settings.main.startup"), group: t("settings.main.app_group") },
+    { id: "plugins", label: t("settings.main.plugins"), group: t("settings.main.postal") },
+    { id: "keybinds", label: t("settings.main.keybinds"), group: t("settings.main.app_group") },
+    { id: "appearance", label: t("settings.main.appearance"), group: t("settings.main.app_group") },
+    { id: "advanced", label: t("settings.main.advanced"), group: t("settings.main.postal") },
+    { id: "about", label: t("settings.main.about"), group: t("settings.main.postal") },
   ]);
   $effect(() => {
     if (!NAV.some((n) => n.id === section)) section = "accounts";
@@ -230,16 +247,16 @@
   const dirty = $derived(JSON.stringify(draft) !== JSON.stringify(settings));
   let saving = $state(false);
   let desktopStatus = $state<import("$lib/utils/wire").DesktopStatus | null>(null);
-  let desktopError = $state("");
+  let desktopError = $state<LocalizedError | null>(null);
   $effect(() => {
     if (section !== "startup") return;
     void settings.start_on_login;
     let current = true;
     desktopStatus = null;
-    desktopError = "";
+    desktopError = null;
     invoke<import("$lib/utils/wire").DesktopStatus>("get_desktop_status")
       .then((status) => { if (current) desktopStatus = status; })
-      .catch((error) => { if (current) desktopError = String(error); });
+      .catch((error) => { if (current) desktopError = normalizeError(error); });
     return () => { current = false; };
   });
 
@@ -261,8 +278,15 @@
     if (!once.pairing) oncePhoneMode = false;
   });
 
-  const activeLabel = $derived(accounts.find((a) => a.id === active)?.label ?? "Not signed in");
+  const activeLabel = $derived(accounts.find((a) => a.id === active)?.label ?? t("settings.main.not_signed_in"));
   const number = $derived(me ? `+${me.split("@")[0]}` : null);
+  function localizedMessage(message: MessageRef): string {
+    return messageText(message);
+  }
+  function bindingLabel(action: Action): string {
+    const names: Record<string, string> = { Space: "space", Enter: "enter", Tab: "tab", Backspace: "backspace", Del: "delete", Esc: "escape" };
+    return keyLabel(keybinds[action]).split("+").map((key) => names[key] ? t(`settings.main.key_${names[key]}`) : key).join("+");
+  }
 
   async function save() {
     saving = true;
@@ -283,10 +307,10 @@
 
   /** Hours per unit of the "keep messages for" field; a month counts as 30 days. */
   const AGE_UNITS: [number, string][] = [
-    [1, "hours"],
-    [24, "days"],
-    [168, "weeks"],
-    [720, "months"],
+    [1, "settings.main.hours"],
+    [24, "settings.main.days"],
+    [168, "settings.main.weeks"],
+    [720, "settings.main.months"],
   ];
   let ageUnit = $state(
     untrack(() => {
@@ -300,7 +324,7 @@
     ageUnit = unit;
   }
   let clearingHistory = $state(false);
-  let backfillError = $state<string | null>(null);
+  let backfillError = $state<LocalizedError | null>(null);
 
   // Desktop notification permission lives with the OS, not in our settings,
   // so it is shown, not edited. Delivered through the native plugin: the
@@ -333,7 +357,7 @@
   // The account's profile lives on WhatsApp's servers, so it is fetched when a
   // section that shows it opens and written back field by field.
   let profile = $state<Profile | null>(null);
-  let profileError = $state<string | null>(null);
+  let profileError = $state<LocalizedError | null>(null);
   let nameDraft = $state("");
   let aboutDraft = $state("");
   let profileSaved = $state(false);
@@ -382,7 +406,7 @@
         aboutDraft = p.about ?? "";
         profileSeenVersion = version;
       }).catch((e) => {
-        if (currentProfile(account, epoch) && request === profileRequest) profileError = String(e);
+        if (currentProfile(account, epoch) && request === profileRequest) profileError = normalizeError(e);
       }).finally(() => {
         if (currentProfile(account, epoch) && request === profileRequest) profileLoading = false;
       });
@@ -413,7 +437,7 @@
       profileSaved = true;
       setTimeout(() => { if (currentProfile(account, epoch)) profileSaved = false; }, 1500);
     } catch (e) {
-      if (currentProfile(account, epoch)) profileError = String(e);
+      if (currentProfile(account, epoch)) profileError = normalizeError(e);
     } finally {
       if (currentProfile(account, epoch)) profileBusy = false;
     }
@@ -421,18 +445,18 @@
 
   // "My contacts except…" needs a contact picker; set it on the phone until then.
   const AUDIENCE: [string, string][] = [
-    ["all", "Everyone"],
-    ["contacts", "My contacts"],
-    ["none", "Nobody"],
+    ["all", "settings.main.everyone"],
+    ["contacts", "settings.main.my_contacts"],
+    ["none", "settings.main.nobody"],
   ];
   const PRIVACY: { category: string; label: string; options: [string, string][] }[] = [
-    { category: "last", label: "Last seen", options: AUDIENCE },
-    { category: "online", label: "Online", options: [["all", "Everyone"], ["match_last_seen", "Same as last seen"]] },
-    { category: "profile", label: "Profile photo", options: AUDIENCE },
-    { category: "status", label: "About", options: AUDIENCE },
-    { category: "groupadd", label: "Who can add me to groups", options: AUDIENCE.slice(0, 2) },
-    { category: "calladd", label: "Who can call me", options: [["all", "Everyone"], ["known", "People I know"]] },
-    { category: "readreceipts", label: "Read receipts", options: [["all", "On"], ["none", "Off"]] },
+    { category: "last", label: "settings.main.last_seen", options: AUDIENCE },
+    { category: "online", label: "settings.main.online", options: [["all", "settings.main.everyone"], ["match_last_seen", "settings.main.same_last_seen"]] },
+    { category: "profile", label: "settings.main.profile_photo", options: AUDIENCE },
+    { category: "status", label: "settings.main.profile_about", options: AUDIENCE },
+    { category: "groupadd", label: "settings.main.group_add", options: AUDIENCE.slice(0, 2) },
+    { category: "calladd", label: "settings.main.call_add", options: [["all", "settings.main.everyone"], ["known", "settings.main.people_known"]] },
+    { category: "readreceipts", label: "settings.main.read_receipts", options: [["all", "settings.main.on"], ["none", "settings.main.off"]] },
   ];
 
   async function setPrivacy(category: string, value: string) {
@@ -448,7 +472,7 @@
     } catch (e) {
       if (currentProfile(account, epoch)) {
         cached.privacy[category] = previous;
-        profileError = String(e);
+        profileError = normalizeError(e);
       }
     } finally {
       if (currentProfile(account, epoch)) profileBusy = false;
@@ -456,7 +480,7 @@
   }
 </script>
 
-<Panel label="Settings" nav={NAV} bind:section {onclose}>
+<Panel label={t("settings.main.settings")} nav={NAV} bind:section {onclose}>
   {#snippet header()}
       <div class="me">
         {#if meAvatar}
@@ -465,71 +489,67 @@
           <span class="me-avatar placeholder">{activeLabel.slice(0, 1).toUpperCase()}</span>
         {/if}
         <span class="me-text">
-          <span class="me-name">{activeLabel}</span>
-          <span class="me-sub">{number ?? "Pairing"}</span>
+          <span class="me-name"><bdi dir="auto">{activeLabel}</bdi></span>
+          <span class="me-sub">{#if number}<bdi dir="ltr">{number}</bdi>{:else}{t("settings.main.pairing")}{/if}</span>
         </span>
       </div>
   {/snippet}
 
   {#snippet pageHead()}
     {#if section === "linked"}
-      <h2>Linked devices</h2>
+      <h2>{t("settings.main.linked")}</h2>
     {:else if section === "blocked"}
-      <h2>Blocked contacts</h2>
+      <h2>{t("settings.main.blocked")}</h2>
     {:else if section === "contacts"}
-      <h2>Contact QR & links</h2>
+      <h2>{t("settings.main.contacts")}</h2>
     {:else if section === "transcription"}
-      <h2>Transcription</h2>
+      <h2>{t("settings.main.transcription")}</h2>
     {:else if section === "profile"}
-      <h2>My profile</h2>
-      <p class="lede">How you appear to others on WhatsApp.</p>
+      <h2>{t("settings.main.profile")}</h2>
+      <p class="lede">{t("settings.main.profile_hint")}</p>
     {:else if section === "whatsapp"}
-      <h2>WhatsApp privacy</h2>
-      <p class="lede">Account settings stored by WhatsApp, the same ones your phone shows.</p>
+      <h2>{t("settings.main.whatsapp")}</h2>
+      <p class="lede">{t("settings.main.whatsapp_hint")}</p>
     {:else if section === "accounts"}
-      <h2>My accounts</h2>
-      <p class="lede">Every account keeps its own session, history and settings.</p>
+      <h2>{t("settings.main.accounts")}</h2>
+      <p class="lede">{t("settings.main.accounts_hint")}</p>
     {:else if section === "privacy"}
-      <h2>Storage & history</h2>
+      <h2>{t("settings.main.privacy")}</h2>
       <p class="lede">
-        The RAM window and disk archive have separate limits. Evicting a message from RAM
-        leaves it available on disk. Disk limits below delete stored messages.
+        {t("settings.main.privacy_hint")}
       </p>
     {:else if section === "chats"}
-      <h2>Chats</h2>
+      <h2>{t("settings.main.chats")}</h2>
     {:else if section === "spaces"}
-      <h2>Spaces</h2>
-      <p class="lede">Local views on this device. Back up their definitions below.</p>
+      <h2>{t("settings.main.spaces")}</h2>
+      <p class="lede">{t("settings.main.spaces_hint")}</p>
     {:else if section === "notifications"}
-      <h2>Notifications</h2>
-      <p class="lede">Desktop notifications for new direct messages and group messages.</p>
+      <h2>{t("settings.main.notifications")}</h2>
+      <p class="lede">{t("settings.main.notifications_hint")}</p>
     {:else if section === "device"}
-      <h2>Android companion</h2>
+      <h2>{t("settings.main.companion")}</h2>
       <p class="lede">
-        View-once photos, videos and voice notes only reach this device through a second,
-        Android-style link. It is not a second inbox: it wakes when a one-time message arrives,
-        fetches it into this chat, then goes dormant. It never replaces your main link and
-        never unlinks anything from your phone.
+        {t("settings.main.companion_hint")}
       </p>
     {:else if section === "media"}
-      <h2>Media</h2>
+      <h2>{t("settings.main.media")}</h2>
     {:else if section === "plugins"}
-      <h2>Plugins</h2>
-      <p class="lede">Installed plugins are native programs. Enable only plugins you trust. Restart Postal to discover newly installed plugins.</p>
+      <h2>{t("settings.main.plugins")}</h2>
+      <p class="lede">{t("settings.main.plugins_hint")}</p>
     {:else if section === "startup"}
-      <h2>Startup</h2>
+      <h2>{t("settings.main.startup")}</h2>
     {:else if section === "keybinds"}
-      <h2>Keybinds</h2>
-      <p class="lede">Composer shortcuts. Click a shortcut, then press the keys you want.</p>
+      <h2>{t("settings.main.keybinds")}</h2>
+      <p class="lede">{t("settings.main.keybinds_hint")}</p>
     {:else if section === "appearance"}
-      <h2>Customization</h2>
-      <p class="lede">Themes and CSS extensions apply instantly and are saved on this device.</p>
+      <h2>{t("settings.main.appearance")}</h2>
+      <p class="lede">{t("settings.main.appearance_hint")}</p>
     {:else if section === "advanced"}
-      <h2>Advanced</h2>
-      <p class="lede">Developer-oriented options. These only change logging.</p>
+      <h2>{t("settings.main.advanced")}</h2>
+      <p class="lede">{t("settings.main.advanced_hint")}</p>
     {:else}
-      <h2>About</h2>
-      <p class="lede">A native WhatsApp client that speaks the protocol directly.</p>
+      <h2>{t("settings.main.about")}</h2>
+      <p class="lede">{t("settings.main.about_hint")}</p>
     {/if}
   {/snippet}
 
@@ -537,14 +557,14 @@
           <BlockedContacts account={active} connected={session.connected} onload={onblockedload} onunblock={onunblockcontact} />
         {:else if section === "contacts"}
           <ContactSharing account={active} connected={session.connected} generation={messages.accountGeneration}
-            onopenchat={async (jid) => { if (!onopencontact) throw new Error("Chat navigation is unavailable."); await onopencontact(jid); }} />
+            onopenchat={async (jid) => { if (!onopencontact) throw normalizeError({ kind: "postal_error", code: "error.settings_chat_navigation_unavailable", params: {} }); await onopencontact(jid); }} />
         {:else if section === "profile"}
           {#if profile}
             <div class="profile-card">
               <div class="picture">
                 <button
                   class="picture-edit"
-                  title="Change profile photo"
+                  title={t("settings.main.change_photo")}
                   disabled={pictureBusy}
                   onclick={() => picker?.click()}>
                   {#if meAvatar}
@@ -557,12 +577,12 @@
                   {/if}
                   <span class="picture-overlay">
                     <Icon name="image" size={20} />
-                    {pictureBusy ? "Uploading…" : "Change photo"}
+                    {pictureBusy ? t("settings.main.uploading") : t("settings.main.change_photo_short")}
                   </span>
                 </button>
                 {#if meAvatar}
                   <button class="link-button small" disabled={pictureBusy} onclick={() => setPicture(null)}>
-                    Remove photo
+                    {t("settings.main.remove_photo")}
                   </button>
                 {/if}
                 <input
@@ -577,20 +597,20 @@
               </div>
               <div class="profile-fields">
                 <label class="field-label">
-                  Name
-                  <input class="field" maxlength="25" bind:value={nameDraft} disabled={profileBusy} />
+                  {t("settings.main.name")}
+                  <input class="field" dir="auto" maxlength="25" bind:value={nameDraft} disabled={profileBusy} />
                 </label>
                 <label class="field-label">
-                  About
-                  <textarea class="field" rows="3" maxlength="139" bind:value={aboutDraft} disabled={profileBusy}></textarea>
+                  {t("settings.main.profile_about")}
+                  <textarea class="field" dir="auto" rows="3" maxlength="139" bind:value={aboutDraft} disabled={profileBusy}></textarea>
                 </label>
                 {#if profile.username}
                   <div class="field-label">
-                    Username
+                    {t("settings.main.username")}
                     <span class="readonly">
-                      @{profile.username}{#if profile.username_reserved}<span class="tag">Reserved</span>{/if}
+                      <bdi dir="ltr">@{profile.username}</bdi>{#if profile.username_reserved}<span class="tag">{t("settings.main.reserved")}</span>{/if}
                     </span>
-                    <span class="setting-desc">Usernames are managed on your phone.</span>
+                    <span class="setting-desc">{t("settings.main.username_hint")}</span>
                   </div>
                 {/if}
               </div>
@@ -599,31 +619,27 @@
               <button
                 class="button primary"
                 disabled={profileBusy || pictureBusy || (nameDraft === profile.name && aboutDraft === (profile.about ?? ""))}
-                onclick={saveProfile}>{profileBusy ? "Saving…" : profileSaved ? "Saved" : "Save profile"}</button>
+                onclick={saveProfile}>{profileBusy ? t("settings.main.saving") : profileSaved ? t("settings.main.saved") : t("settings.main.save_profile")}</button>
             </div>
           {:else if !profileError}
-            <p class="muted">Loading your profile…</p>
+            <p class="muted">{t("settings.main.profile_loading")}</p>
           {/if}
-          {#if profileError}<p class="error-text">{profileError}</p>{/if}
+          {#if profileError}<p class="error-text"><bdi>{localizedMessage(profileError.descriptor)}</bdi></p>{/if}
         {:else if section === "whatsapp"}
           <label class="setting">
             <div>
-              <span class="setting-title">Send typing indicator</span>
+              <span class="setting-title">{t("settings.main.send_typing")}</span>
               <span class="setting-desc">
-                Others see "typing…" while you write. Off, you still see theirs. The default for every
-                chat; the eye beside a chat's message box overrides it there.
+                {t("settings.main.send_typing_hint")}
               </span>
             </div>
             <input class="switch" type="checkbox" bind:checked={draft.send_typing} />
           </label>
           <label class="setting">
             <div>
-              <span class="setting-title">Send read and played receipts</span>
+              <span class="setting-title">{t("settings.main.send_receipts")}</span>
               <span class="setting-desc">
-                Off, nobody learns you read a message, heard a voice note or opened view-once media,
-                in groups too. Unlike WhatsApp's own read receipts setting below, you keep seeing
-                other people's. The default for every chat; the eye beside a chat's message box
-                overrides it there.
+                {t("settings.main.send_receipts_hint")}
               </span>
             </div>
             <input class="switch" type="checkbox" bind:checked={draft.send_receipts} />
@@ -632,25 +648,25 @@
             {#each PRIVACY as item (item.category)}
               {@const value = profile.privacy[item.category] ?? ""}
               <div class="setting">
-                <span class="setting-title">{item.label}</span>
+                <span class="setting-title">{t(item.label)}</span>
                 <select
                   class="field"
                   {value}
                   disabled={profileBusy}
                   onchange={(e) => setPrivacy(item.category, e.currentTarget.value)}>
                   {#each item.options as [option, label] (option)}
-                    <option value={option}>{label}</option>
+                    <option value={option}>{t(label)}</option>
                   {/each}
                   {#if value && !item.options.some(([o]) => o === value)}
-                    <option value={value}>Custom (set on your phone)</option>
+                    <option value={value}>{t("settings.main.custom_phone")}</option>
                   {/if}
                 </select>
               </div>
             {/each}
           {:else if !profileError}
-            <p class="muted">Loading your settings…</p>
+            <p class="muted">{t("settings.main.settings_loading")}</p>
           {/if}
-          {#if profileError}<p class="error-text">{profileError}</p>{/if}
+          {#if profileError}<p class="error-text"><bdi>{localizedMessage(profileError.descriptor)}</bdi></p>{/if}
         {:else if section === "accounts"}
           <div class="card">
             {#each accounts as account (account.id)}
@@ -662,83 +678,89 @@
                 {/if}
                 <input
                   class="field"
+                  dir="auto"
                   value={account.label}
-                  aria-label="Account name"
+                  aria-label={t("settings.main.account_name")}
                   onchange={(e) => onrename(account.id, e.currentTarget.value)} />
                 {#if account.id === active}
-                  <span class="tag">Active</span>
+                  <span class="tag">{t("settings.main.active")}</span>
                 {:else}
-                  <button class="button" onclick={() => onswitch(account.id)}>Switch</button>
+                  <button class="button" onclick={() => onswitch(account.id)}>{t("settings.main.switch")}</button>
                 {/if}
                 <button
                   class="remove-account"
-                  title="Remove account"
-                  aria-label="Remove {account.label}"
+                  title={t("settings.main.remove_account")}
+                  aria-label={t("settings.main.remove_named_account", { name: account.label })}
                   onclick={() => (removing = account.id)}><Icon name="trash" size={16} /></button>
               </div>
               {#if removing === account.id}
                 <div class="remove-confirm" role="alert">
                   <span>
-                    Remove <strong>{account.label}</strong>? Its session and history on this computer are
-                    deleted; the phone keeps everything.
+                    {t("settings.main.remove_account_prefix")}<strong><bdi dir="auto">{account.label}</bdi></strong>{t("settings.main.remove_account_suffix")}
                   </span>
-                  <button class="button" onclick={() => (removing = null)}>Cancel</button>
+                  <button class="button" onclick={() => (removing = null)}>{t("settings.main.cancel")}</button>
                   <button
                     class="button danger"
                     onclick={() => {
                       removing = null;
                       onremove(account.id);
-                    }}>Remove</button>
+                    }}>{t("settings.main.remove")}</button>
                 </div>
               {/if}
             {/each}
           </div>
           <div class="actions-row">
-            <button class="button primary" onclick={onadd}><Icon name="plus" size={15} /> Add account</button>
+            <button class="button primary" onclick={onadd}><Icon name="plus" size={15} /> {t("settings.main.add_account")}</button>
           </div>
         {:else if section === "privacy"}
+          <label class="setting">
+            <div><span class="setting-title">{t("settings.encrypt_databases")}</span>
+              <span class="setting-desc">{t("settings.encrypt_databases_description")}</span></div>
+            <input class="switch" type="checkbox" bind:checked={draft.encrypt_databases} />
+          </label>
+          {#if encryption?.error}<p class="error" role="alert"><bdi>{localizedMessage(encryption.error)}</bdi></p>{/if}
+          {#if encryption?.diagnostic}<details><summary>{t("settings.encryption_diagnostics")}</summary><pre dir="ltr">{encryption.diagnostic}</pre></details>{/if}
+          {#if encryptionLoadError}<p class="error" role="alert">{t("settings.encryption_status_failed")} <bdi>{localizedMessage(normalizeError(encryptionLoadError).descriptor)}</bdi></p>{/if}
+          {#if encryption}<p class="setting-desc" role="status">{t(encryption.active_account_encrypted === null ? "settings.encryption_unknown" : encryption.active_account_encrypted ? "settings.encryption_active" : "settings.encryption_inactive")}</p>{/if}
+          {#if encryption && draft.encrypt_databases !== encryption.enabled_at_start}<p class="setting-desc">{t("settings.encryption_restart")}</p>{/if}
           <div class="setting">
             <div>
-              <span class="setting-title">Messages in RAM</span>
-              <span class="setting-desc">Messages kept in memory per conversation: 50–2,000. Default: 150. Older pages load from disk before asking your phone.</span>
+              <span class="setting-title">{t("settings.main.ram_messages")}</span>
+              <span class="setting-desc">{t("settings.main.ram_messages_hint", { min: 50, max: 2000, count: 150 })}</span>
             </div>
-            <input class="field number" type="number" min="50" max="2000" step="1" aria-label="Messages in RAM"
+            <input class="field number" type="number" min="50" max="2000" step="1" aria-label={t("settings.main.ram_messages")}
               value={draft.message_window_size} oninput={(e) => {
                 if (e.currentTarget.validity.valid && e.currentTarget.value) draft.message_window_size = Number(e.currentTarget.value);
               }} />
           </div>
           <label class="setting">
             <div>
-              <span class="setting-title">Keep history on this computer</span>
+              <span class="setting-title">{t("settings.main.keep_history")}</span>
               <span class="setting-desc">
-                Off keeps messages in memory only: they show while Postal runs and are gone when it
-                quits. Applies the next time Postal starts; clear history below to remove what is
-                already saved.
+                {t("settings.main.keep_history_hint")}
               </span>
             </div>
             <input class="switch" type="checkbox" bind:checked={draft.keep_history} />
           </label>
           <div class="setting stack">
             <div>
-              <span class="setting-title">History folder (cold storage)</span>
+              <span class="setting-title">{t("settings.main.history_folder")}</span>
               <span class="setting-desc">
-                Where the full message archive is kept. Empty uses the app data folder. Applies the
-                next time Postal starts: the existing archive is moved there. Leave both disk limits
-                below blank to keep everything.
+                {t("settings.main.history_folder_hint")}
               </span>
             </div>
             <input
               class="field wide"
-              placeholder="App data folder"
+              dir="ltr"
+              placeholder={t("settings.main.app_data_folder")}
               value={draft.history_dir ?? ""}
               oninput={(e) => (draft.history_dir = e.currentTarget.value || null)} />
           </div>
           <div class="setting">
             <div>
-              <span class="setting-title">Keep messages on disk for</span>
+              <span class="setting-title">{t("settings.main.disk_duration")}</span>
               <span class="setting-desc">
-                Older messages are deleted after a live message batch, and the space is freed.
-                New installations have no disk limit. Leave blank for no limit.
+                {t("settings.main.disk_duration_hint")}
               </span>
             </div>
             <span class="unit-field">
@@ -747,7 +769,7 @@
                 type="number"
                 min="1"
                 value={limitValue(draft.retention.max_age_hours) === null ? "" : limitValue(draft.retention.max_age_hours)! / ageUnit}
-                aria-label="Retention duration"
+                aria-label={t("settings.main.retention_duration")}
                 oninput={(e) => {
                   if (e.currentTarget.validity.badInput) return;
                   const amount = hoursField(e.currentTarget.value);
@@ -755,16 +777,16 @@
                 }} />
               <select class="field" value={ageUnit} onchange={(e) => setAgeUnit(Number(e.currentTarget.value))}>
                 {#each AGE_UNITS as [unit, label] (unit)}
-                  <option value={unit}>{label}</option>
+                  <option value={unit}>{t(label)}</option>
                 {/each}
               </select>
             </span>
           </div>
           <div class="setting">
             <div>
-              <span class="setting-title">Messages per chat on disk</span>
+              <span class="setting-title">{t("settings.main.disk_messages")}</span>
               <span class="setting-desc">
-                Only the newest are kept when a disk cap is set. Leave blank to keep the archive unlimited.
+                {t("settings.main.disk_messages_hint")}
               </span>
             </div>
             <input
@@ -772,93 +794,83 @@
               type="number"
               min="1"
               value={limitValue(draft.retention.max_messages_per_chat) ?? ""}
-              aria-label="Messages per chat"
+              aria-label={t("settings.main.messages_per_chat")}
               oninput={(e) => {
                 if (!e.currentTarget.validity.badInput) draft.retention.max_messages_per_chat = parseLimit(String(hoursField(e.currentTarget.value) ?? ""));
               }} />
           </div>
           <label class="setting">
             <div>
-              <span class="setting-title">Request full history when pairing</span>
+              <span class="setting-title">{t("settings.main.request_full_history")}</span>
               <span class="setting-desc">
-                The next link requests up to 10,000 days of history; your phone may supply less.
-                This can take time and disk space. Disk retention above still applies independently.
-                Off accepts recent history only; older messages remain available on demand.
+                {t("settings.main.request_full_history_hint", { count: 10000 })}
               </span>
             </div>
             <input class="switch" type="checkbox" bind:checked={draft.request_full_history} />
           </label>
           <div class="setting">
             <div>
-              <span class="setting-title">Download all history now</span>
+              <span class="setting-title">{t("settings.main.download_history")}</span>
               <span class="setting-desc">
-                Asks your phone for every chat's older messages, page by page, for an account that is
-                already linked. Keep the phone online; progress shows at the bottom.
-                Disk retention still applies. Set both disk limits to unlimited to keep all fetched history.
-                {backfillError ?? ""}
+                {t("settings.main.download_history_hint")}
+                {#if backfillError}<bdi>{localizedMessage(backfillError.descriptor)}</bdi>{/if}
               </span>
             </div>
             <button
               class="button"
               onclick={() => {
                 backfillError = null;
-                invoke("backfill_history").catch((e) => (backfillError = String(e)));
-              }}>Download</button>
+                invoke("backfill_history").catch((e) => (backfillError = normalizeError(e)));
+              }}>{t("settings.main.download")}</button>
           </div>
           <div class="setting">
             <div>
-              <span class="setting-title">Clear message history</span>
+              <span class="setting-title">{t("settings.main.clear_message_history")}</span>
               <span class="setting-desc">
-                Deletes every message stored on this computer. Names and chat settings stay; the phone
-                keeps everything.
+                {t("settings.main.clear_message_history_hint")}
               </span>
             </div>
             {#if clearingHistory}
               <span class="unit-field">
-                <button class="button" onclick={() => (clearingHistory = false)}>Cancel</button>
+                <button class="button" onclick={() => (clearingHistory = false)}>{t("settings.main.cancel")}</button>
                 <button
                   class="button danger"
                   onclick={() => {
                     clearingHistory = false;
                     onclearhistory();
-                  }}>Delete all</button>
+                  }}>{t("settings.main.delete_all")}</button>
               </span>
             {:else}
-              <button class="button danger" onclick={() => (clearingHistory = true)}>Clear history</button>
+              <button class="button danger" onclick={() => (clearingHistory = true)}>{t("settings.main.clear_history")}</button>
             {/if}
           </div>
           <ArchiveManager />
         {:else if section === "chats"}
-          <h3>Keyword rules</h3>
+          <h3>{t("settings.main.keyword_rules")}</h3>
           <KeywordSettings account={active} />
           <label class="setting">
             <div>
-              <span class="setting-title">Keep chats archived</span>
+              <span class="setting-title">{t("settings.main.keep_archived")}</span>
               <span class="setting-desc">
-                On: a new message leaves the chat in the Archived list. Off: the chat moves back to
-                your main list as soon as a message arrives.
+                {t("settings.main.keep_archived_hint")}
               </span>
             </div>
             <input class="switch" type="checkbox" bind:checked={draft.keep_archived} />
           </label>
           <label class="setting">
             <div>
-              <span class="setting-title">Pause chat reordering while hovering</span>
+              <span class="setting-title">{t("settings.main.freeze_hover")}</span>
               <span class="setting-desc">
-                On: the chat list keeps its order while the pointer is over it, so a new
-                message cannot move the chat under your cursor. Previews and unread counts
-                still update; the new order applies when the pointer leaves or you open a
-                chat. Off: the list reorders immediately.
+                {t("settings.main.freeze_hover_hint")}
               </span>
             </div>
             <input class="switch" type="checkbox" bind:checked={draft.freeze_chat_list_on_hover} />
           </label>
           <label class="setting">
             <div>
-              <span class="setting-title">Show chat preview on hover</span>
+              <span class="setting-title">{t("settings.main.chat_preview")}</span>
               <span class="setting-desc">
-                On: hovering a chat shows its recent messages in a popup.
-                Off: no popup.
+                {t("settings.main.chat_preview_hint")}
               </span>
             </div>
             <input class="switch" type="checkbox" bind:checked={draft.chat_preview} />
@@ -866,44 +878,42 @@
         {:else if section === "spaces"}
           <div class="setting">
             <div>
-              <span class="setting-title">Export metadata</span>
+              <span class="setting-title">{t("settings.main.export_metadata")}</span>
               <span class="setting-desc">
-                Copy this device's local Space definitions and references as JSON.
-                WhatsApp data stays unchanged.
+                {t("settings.main.export_metadata_hint")}
               </span>
             </div>
             <button class="button" disabled={!spacesReady || spaceBusy} onclick={exportSpaces}>
-              {spaceBusy ? "Working…" : "Export"}
+              {spaceBusy ? t("settings.main.working") : t("settings.main.export")}
             </button>
           </div>
           {#if spaceJson}
             <label class="setting stack">
-              <div><span class="setting-title">Exported metadata</span></div>
-              <textarea class="field" rows="8" readonly value={spaceJson}></textarea>
+              <div><span class="setting-title">{t("settings.main.exported_metadata")}</span></div>
+              <textarea class="field" dir="ltr" rows="8" readonly value={spaceJson}></textarea>
             </label>
           {/if}
           <div class="setting stack">
             <div>
-              <span class="setting-title">Import metadata</span>
+              <span class="setting-title">{t("settings.main.import_metadata")}</span>
               <span class="setting-desc">
-                Adds local Space definitions and references. WhatsApp data stays unchanged.
+                {t("settings.main.import_metadata_hint")}
               </span>
             </div>
-            <textarea class="field" rows="8" placeholder="Paste Space metadata JSON" bind:value={spaceImport} disabled={spaceBusy}></textarea>
+            <textarea class="field" dir="ltr" rows="8" placeholder={t("settings.main.metadata_placeholder")} bind:value={spaceImport} disabled={spaceBusy}></textarea>
             <div class="actions-row">
               <button class="button" disabled={!spacesReady || spaceBusy || !spaceImport.trim()} onclick={importSpaces}>
-                {spaceBusy ? "Importing…" : "Import"}
+                {spaceBusy ? t("settings.main.importing") : t("settings.main.import")}
               </button>
             </div>
           </div>
-          {#if spaceError}<p class="error-text" role="alert">{spaceError}</p>{/if}
+          {#if spaceError}<p class="error-text" role="alert"><bdi>{localizedMessage(spaceError.descriptor)}</bdi></p>{/if}
         {:else if section === "notifications"}
           <label class="setting">
             <div>
-              <span class="setting-title">Enable notifications</span>
+              <span class="setting-title">{t("settings.main.enable_notifications")}</span>
               <span class="setting-desc">
-                Off silences every chat, immediately. Muted chats never notify, whether this is
-                on or off; unmute one from its menu in the chat list.
+                {t("settings.main.enable_notifications_hint")}
               </span>
             </div>
             <input
@@ -918,19 +928,18 @@
           </label>
           <p class="lede">
             {#if settings.notifications_enabled === false}
-              Notifications are off — new messages will not ping you.
+              {t("settings.main.notifications_off")}
             {:else if notifPermission === "granted"}
-              Notifications are on for every chat except muted ones.
+              {t("settings.main.notifications_on")}
             {:else}
-              Notifications are on here, but the system has not allowed them yet — see below.
+              {t("settings.main.notifications_pending")}
             {/if}
           </p>
           <label class="setting">
             <div>
-              <span class="setting-title">Mute @all mentions in every chat</span>
+              <span class="setting-title">{t("settings.main.mute_all")}</span>
               <span class="setting-desc">
-                On: @all mentions stay silent everywhere; direct mentions still ping.
-                Off: each chat decides for itself — chats muting @all are listed below.
+                {t("settings.main.mute_all_hint")}
               </span>
             </div>
             <input class="switch" type="checkbox" bind:checked={draft.mute_all_at_all} />
@@ -938,67 +947,64 @@
           {#if !draft.mute_all_at_all}
             <div class="setting stack">
               <div>
-                <span class="setting-title">Chats muting @all</span>
-                <span class="setting-desc">Turn the mute off again for one chat.</span>
+                <span class="setting-title">{t("settings.main.chats_muting_all")}</span>
+                <span class="setting-desc">{t("settings.main.chats_muting_all_hint")}</span>
               </div>
               <AtAllMuteList />
             </div>
           {/if}
           <div class="setting">
             <div>
-              <span class="setting-title">System permission</span>
+              <span class="setting-title">{t("settings.main.system_permission")}</span>
               <span class="setting-desc">
                 {#if notifPermission === "unsupported"}
-                  This system does not support desktop notifications.
+                  {t("settings.main.notifications_unsupported")}
                 {:else if notifPermission === "granted"}
-                  Allowed. Notifications appear when a new message arrives in another chat.
+                  {t("settings.main.notifications_allowed")}
                 {:else if notifPermission === "denied"}
-                  Blocked. Postal cannot ask again from here: re-enable it in the system
-                  settings (GNOME Settings → Notifications → Postal; macOS System Settings →
-                  Notifications; Windows Settings → Notifications), then press Recheck.
+                  {t("settings.main.notifications_denied")}
                 {:else}
-                  Not decided yet. Press Allow and the system asks once.
+                  {t("settings.main.notifications_prompt")}
                 {/if}
               </span>
             </div>
             {#if notifPermission === "prompt"}
               <button class="button" disabled={notifBusy} onclick={requestNotifPermission}>
-                {notifBusy ? "Asking…" : "Allow"}
+                {notifBusy ? t("settings.main.asking") : t("settings.main.allow")}
               </button>
             {:else if notifPermission === "denied"}
               <button class="button" disabled={notifBusy} onclick={refreshNotifPermission}>
-                {notifBusy ? "Checking…" : "Recheck"}
+                {notifBusy ? t("settings.main.checking") : t("settings.main.recheck")}
               </button>
             {:else if notifPermission === "granted"}
-              <button class="button" onclick={() => void sendTestNotification()}>Test</button>
+              <button class="button" onclick={() => void sendTestNotification()}>{t("settings.main.test")}</button>
             {/if}
           </div>
           <div class="setting">
-            <div><span class="setting-title">Notification history</span><span class="setting-desc">Up to 100 recent events, stored locally for this account.</span></div>
+            <div><span class="setting-title">{t("settings.main.notification_history")}</span><span class="setting-desc">{t("settings.main.notification_history_hint", { count: 100 })}</span></div>
             <button class="button" disabled={!active || $notificationHistory.account !== active
               || (!$notificationHistory.entries.length && !$notificationHistory.error && $notificationHistory.writable)}
               onclick={() => {
                 const account = active;
                 if (account) notificationHistory.clear(account, () => account === active && account === session.activeAccount);
-              }}>Clear notification history</button>
+              }}>{t("settings.main.clear_notification_history")}</button>
           </div>
           <NotificationHistory account={active} connected={session.connected} onjump={async (account, chat, id) => {
-            if (account !== active || account !== session.activeAccount) throw new Error("account changed");
-            if (!onnotificationjump) throw new Error("Message navigation is unavailable.");
+            if (account !== active || account !== session.activeAccount) throw normalizeError({ kind: "postal_error", code: "error.settings_account_changed", params: {} });
+            if (!onnotificationjump) throw normalizeError({ kind: "postal_error", code: "error.settings_message_navigation_unavailable", params: {} });
             await onnotificationjump(account, chat, id);
           }} />
         {:else if section === "device"}
           {#if !once.paired}
             <p class="lede">
-              Pair the companion once before it can be enabled. The pairing link is only kept open
-              while the QR is on screen.
+              {t("settings.main.companion_pair_hint")}
             </p>
             {#if once.pairing}
               <div class="setting stack">
                 <div>
-                  <span class="setting-title">Waiting for pairing</span>
+                  <span class="setting-title">{t("settings.main.waiting_pairing")}</span>
                   <span class="setting-desc">
-                    In WhatsApp, open Settings → Linked devices → Link a device, then scan.
+                    {t("settings.main.pairing_steps")}
                   </span>
                 </div>
                 {#if oncePhoneMode}
@@ -1025,26 +1031,24 @@
                   {/if}
                   <PhoneLink onactivate={() => (oncePhoneMode = true)} />
                 {/if}
-                <button class="button" onclick={() => once.cancelPair()}>Cancel</button>
+                <button class="button" onclick={() => once.cancelPair()}>{t("settings.main.cancel")}</button>
               </div>
             {:else}
               <button class="button" onclick={() => once.pair()} disabled={!draft.keep_history}>
-                Pair Android companion
+                {t("settings.main.pair_companion")}
               </button>
               {#if !draft.keep_history}
                 <p class="muted setting-desc">
-                  Turn on "Download and keep history" first: both links share one message store.
+                  {t("settings.main.companion_history_required")}
                 </p>
               {/if}
             {/if}
           {:else}
             <label class="setting">
               <div>
-                <span class="setting-title">Run Android companion</span>
+                <span class="setting-title">{t("settings.main.run_companion")}</span>
                 <span class="setting-desc">
-                  Downloads and keeps one-time media the main link cannot fetch, waking up only when
-                  one arrives. Needs "Download and keep history" on, since both links share one
-                  message store.
+                  {t("settings.main.run_companion_hint")}
                 </span>
               </div>
               <input
@@ -1054,38 +1058,38 @@
                 disabled={!draft.keep_history} />
             </label>
             <p class="muted setting-desc">
-              Linked. {settings.android_instance ? "Unchecking stops it without unlinking; the link is kept for next time." : "Checking wakes it only when a one-time message arrives."}
+              {t(settings.android_instance ? "settings.main.companion_linked_enabled" : "settings.main.companion_linked_disabled")}
             </p>
           {/if}
           {#if settings.android_instance || once.pairing}
             <div class="setting stack">
               <div>
-                <span class="setting-title">Status</span>
+                <span class="setting-title">{t("settings.main.status")}</span>
                 <span class="setting-desc">
                   {once.pairing && !once.paired
                     ? once.connected
-                      ? "Linked, finishing up…"
-                      : "Waiting for pairing."
+                      ? t("settings.main.companion_finishing")
+                      : t("settings.main.companion_waiting")
                     : once.connected
-                      ? "Fetching one-time media."
+                      ? t("settings.main.companion_fetching")
                       : once.running
-                        ? "Waking up…"
-                        : "Dormant — wakes when a one-time message arrives."}
+                        ? t("settings.main.companion_waking")
+                        : t("settings.main.companion_dormant")}
                 </span>
               </div>
             </div>
           {/if}
         {:else if section === "media"}
-          <h2>Stickers</h2>
+          <h2>{t("settings.main.stickers")}</h2>
           <StickerSync account={active} generation={messages.accountGeneration} connected={session.connected} version={stickerEvents.version} showPacks
             onload={(owner) => invoke<StickerLibrary>("sticker_library", { accountId: owner.account })}
             onresync={(owner) => invoke<StickerResyncReport>("resync_stickers", { accountId: owner.account })}
             onsynced={() => stickerEvents.touch()} />
           <label class="setting">
-            <div><span class="setting-title">Default upload quality</span>
-              <span class="setting-desc">Standard limits photos to 1600 pixels and videos to 480p. HD keeps the original file. Choose again for each attachment before sending.</span></div>
-            <select bind:value={draft.media_quality} aria-label="Default upload quality">
-              <option value="standard">Standard</option><option value="hd">HD (original)</option>
+            <div><span class="setting-title">{t("settings.main.upload_quality")}</span>
+              <span class="setting-desc">{t("settings.main.upload_quality_hint", { pixels: 1600, resolution: 480 })}</span></div>
+            <select bind:value={draft.media_quality} aria-label={t("settings.main.upload_quality")}>
+              <option value="standard">{t("settings.main.standard")}</option><option value="hd">{t("settings.main.hd")}</option>
             </select>
           </label>
           <div class="setting stack">
@@ -1096,28 +1100,29 @@
           </div>
           <label class="setting">
             <div>
-              <span class="setting-title">Warn when a video goes out without a preview</span>
-              <span class="setting-desc">Happens when the video cannot be decoded locally.</span>
+              <span class="setting-title">{t("settings.main.video_preview_warning")}</span>
+              <span class="setting-desc">{t("settings.main.video_preview_warning_hint")}</span>
             </div>
             <input class="switch" type="checkbox" bind:checked={draft.warn_missing_video_preview} />
           </label>
           <div class="setting stack">
             <div>
-              <span class="setting-title">Download folder</span>
-              <span class="setting-desc">Empty uses the app cache. Applies the next time Postal starts.</span>
+              <span class="setting-title">{t("settings.main.download_folder")}</span>
+              <span class="setting-desc">{t("settings.main.download_folder_hint")}</span>
             </div>
             <input
               class="field wide"
-              placeholder="App cache folder"
+              dir="ltr"
+              placeholder={t("settings.main.app_cache_folder")}
               value={draft.media_dir ?? ""}
               oninput={(e) => (draft.media_dir = e.currentTarget.value || null)} />
           </div>
           <div class="setting">
             <div>
-              <span class="setting-title">Clear downloaded media</span>
-              <span class="setting-desc">Deletes the files and profile pictures; messages are kept.</span>
+              <span class="setting-title">{t("settings.main.clear_downloaded_media")}</span>
+              <span class="setting-desc">{t("settings.main.clear_downloaded_media_hint")}</span>
             </div>
-            <button class="button danger" onclick={onflush}>Clear media</button>
+            <button class="button danger" onclick={onflush}>{t("settings.main.clear_media")}</button>
           </div>
           <StorageManager />
         {:else if section === "linked"}
@@ -1132,19 +1137,18 @@
           <PluginManager />
         {:else if section === "startup"}
           <label class="setting">
-            <div><span class="setting-title">Start on login</span><span class="setting-desc">Launch Postal when you sign into this computer.</span></div>
+            <div><span class="setting-title">{t("settings.main.start_on_login")}</span><span class="setting-desc">{t("settings.main.start_on_login_hint")}</span></div>
             <input class="switch" type="checkbox" bind:checked={draft.start_on_login} />
           </label>
           {#if desktopStatus}
-            <p class="setting-desc">Start on login is currently {desktopStatus.start_on_login ? "enabled" : "disabled"}.</p>
-            <p class="setting-desc">{desktopStatus.shortcut_registered ? "Ctrl+Alt+P shows or hides Postal from other apps." : "Ctrl+Alt+P is unavailable. Another app may be using this shortcut."}</p>
-          {:else if desktopError}<p role="alert">{desktopError}</p>{/if}
+            <p class="setting-desc">{t(desktopStatus.start_on_login ? "settings.main.start_on_login_enabled" : "settings.main.start_on_login_disabled")}</p>
+            <p class="setting-desc"><bdi>{t(desktopStatus.shortcut_registered ? "settings.main.shortcut_registered" : "settings.main.shortcut_unavailable", { keys: "Ctrl+Alt+P" })}</bdi></p>
+          {:else if desktopError}<p role="alert"><bdi>{localizedMessage(desktopError.descriptor)}</bdi></p>{/if}
           <label class="setting">
             <div>
-              <span class="setting-title">Skip the loading screen</span>
+              <span class="setting-title">{t("settings.main.skip_loading")}</span>
               <span class="setting-desc">
-                On shows the chat UI immediately while messages sync in the background.
-                Off waits until the initial catch-up is applied.
+                {t("settings.main.skip_loading_hint")}
               </span>
             </div>
             <input class="switch" type="checkbox" bind:checked={draft.skip_loading_screen} />
@@ -1153,11 +1157,11 @@
           {#each ACTIONS as action (action.id)}
             <div class="setting">
               <div>
-                <span class="setting-title">{action.label}</span>
+                <span class="setting-title">{t(`settings.main.keybind.${action.id}.label`)}</span>
                 <span class="setting-desc">
-                  {action.description}
+                  {t(`settings.main.keybind.${action.id}.description`)}
                   {#if keyConflicts.has(action.id)}
-                    <strong class="conflict">Conflicts with another shortcut</strong>
+                    <strong class="conflict">{t("settings.main.key_conflict")}</strong>
                   {/if}
                 </span>
               </div>
@@ -1166,65 +1170,74 @@
                   class="button"
                   class:capturing={capturing === action.id}
                   onclick={() => (capturing = capturing === action.id ? null : action.id)}>
-                  {capturing === action.id ? "Press keys…" : keyLabel(keybinds[action.id])}
+                  {#if capturing === action.id}{t("settings.main.press_keys")}{:else}<bdi dir="ltr">{bindingLabel(action.id)}</bdi>{/if}
                 </button>
                 {#if !isDefault(action.id)}
                   <Button
                     variant="ghost"
-                    title="Reset to default"
-                    aria-label="Reset {action.label} to default"
-                    onclick={() => resetBinding(action.id)}>Reset</Button>
+                    title={t("settings.main.reset_default")}
+                    aria-label={t("settings.main.reset_named_default", { action: t(`settings.main.keybind.${action.id}.label`) })}
+                    onclick={() => resetBinding(action.id)}>{t("settings.main.reset")}</Button>
                 {/if}
               </div>
             </div>
           {/each}
           <div class="setting">
             <div>
-              <span class="setting-title">Show or hide Postal</span>
+              <span class="setting-title">{t("settings.main.show_hide")}</span>
               <span class="setting-desc">
-                System-wide shortcut that works even while Postal is hidden, so the operating system owns it and it cannot be rebound here.
+                {t("settings.main.show_hide_hint")}
                 {#if desktopStatus && !desktopStatus.shortcut_registered}
-                  Currently unavailable: another app may be using this shortcut.
+                  {t("settings.main.shortcut_conflict")}
                 {/if}
               </span>
             </div>
             <div class="keybind">
-              <button class="button" disabled title="System shortcuts cannot be rebound">Ctrl+Alt+P</button>
+              <button class="button" disabled title={t("settings.main.system_shortcut_fixed")}><bdi dir="ltr">Ctrl+Alt+P</bdi></button>
             </div>
           </div>
           <div class="setting">
             <div>
-              <span class="setting-title">Reset all keybinds</span>
-              <span class="setting-desc">Restores every shortcut to its default.</span>
+              <span class="setting-title">{t("settings.main.reset_keybinds")}</span>
+              <span class="setting-desc">{t("settings.main.reset_keybinds_hint")}</span>
             </div>
-            <button class="button danger" onclick={resetBindings}>Reset all</button>
+            <button class="button danger" onclick={resetBindings}>{t("settings.main.reset_all")}</button>
           </div>
         {:else if section === "appearance"}
+          <label class="setting">
+            <div><span class="setting-title">{t("settings.language")}</span>
+              <span class="setting-desc">{t("settings.language_description")}</span></div>
+            <select class="field" aria-label={t("settings.language")} value={locale.preference}
+              oninput={(event) => void locale.setPreference(event.currentTarget.value as LocalePreference)}>
+              <option value="system">{t("settings.language_system")}</option>
+              <option value="en">{localeNames.en}</option><option value="ar">{localeNames.ar}</option>
+            </select>
+          </label>
+          {#if locale.error}<p class="error" role="alert">{locale.errorText}</p>{/if}
           <div class="customization"><Customization /></div>
         {:else if section === "advanced"}
           <label class="setting">
             <div>
-              <span class="setting-title">Verbose WhatsApp logs</span>
+              <span class="setting-title">{t("settings.main.verbose_logs")}</span>
               <span class="setting-desc">
-                Log the library's keepalive pings, transport frames and link probes, which is what
-                makes a stalled connection diagnosable. Applies the next time Postal starts.
+                {t("settings.main.verbose_logs_hint")}
               </span>
             </div>
             <input class="switch" type="checkbox" bind:checked={draft.verbose_whatsapp_logs} />
           </label>
         {:else}
           <div class="setting">
-            <span class="setting-title">Postal</span>
-            <span class="muted">{version ? `Version ${version}` : ""}</span>
+            <span class="setting-title">{t("settings.main.postal")}</span>
+            <span class="muted"><bdi>{version ? t("settings.main.version", { version }) : ""}</bdi></span>
           </div>
           <div class="setting">
             <div>
-              <span class="setting-title">Log file</span>
+              <span class="setting-title">{t("settings.main.log_file")}</span>
               <span class="setting-desc">
-                What the app did, failed commands and crashes. Attach it when reporting a bug.
+                {t("settings.main.log_file_hint")}
               </span>
             </div>
-            <button class="button" onclick={() => invoke("open_log").catch(() => {})}>Open log</button>
+            <button class="button" onclick={() => invoke("open_log").catch(() => {})}>{t("settings.main.open_log")}</button>
           </div>
           <BooleanProps />
         {/if}
@@ -1232,9 +1245,9 @@
   {#snippet footer()}
       {#if dirty}
         <div class="unsaved" role="status">
-          <span>You have unsaved changes.</span>
-          <button class="link-button" onclick={reset}>Reset</button>
-          <button class="button primary" disabled={saving} onclick={save}>Save changes</button>
+          <span>{t("settings.main.unsaved")}</span>
+          <button class="link-button" onclick={reset}>{t("settings.main.reset")}</button>
+          <button class="button primary" disabled={saving} onclick={save}>{t("settings.main.save_changes")}</button>
         </div>
       {/if}
   {/snippet}
@@ -1285,7 +1298,7 @@
   }
   .account + .account,
   .remove-confirm + .account {
-    border-top: 1px solid var(--line);
+    border-block-start: 1px solid var(--line);
   }
   .remove-account {
     display: grid;
@@ -1310,7 +1323,8 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 10px 14px 12px 60px;
+    padding-block: 10px 12px;
+    padding-inline: 60px 14px;
     font-size: 13px;
     color: var(--muted);
   }
@@ -1434,13 +1448,13 @@
   }
   .unsaved {
     position: absolute;
-    left: 24px;
-    right: 24px;
-    bottom: 20px;
+    inset-inline: 24px;
+    inset-block-end: 20px;
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 10px 12px 10px 16px;
+    padding-block: 10px;
+    padding-inline: 16px 12px;
     background: var(--chat-bg);
     border: 1px solid var(--line-strong);
     border-radius: var(--radius);

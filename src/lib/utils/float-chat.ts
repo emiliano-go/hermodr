@@ -1,19 +1,19 @@
 import type { FloatContext, MessagePage, StoredMessage } from "./wire.ts";
 import { plain } from "./format.ts";
 import { compareMessages, cursorOf } from "./message-window.ts";
-import { UNAVAILABLE_LABEL, UNAVAILABLE_EXPLANATION } from "./notices.ts";
+import { t } from "../i18n/localizer.ts";
 import { captionOf, MEDIA_LABELS, CARD_LABELS } from "./message.ts";
 
 export const FLOAT_HISTORY_LIMIT = 500;
 
 export function floatContent(message: StoredMessage) {
-  if (message.system_kind === "UNAVAILABLE_MESSAGE") return { text: `${UNAVAILABLE_LABEL}. ${UNAVAILABLE_EXPLANATION}`, media: null, notice: true };
-  if (message.deleted || message.revoked) return { text: "Message deleted", media: null, notice: true };
-  if (message.spoiler) return { text: "Spoiler", media: null, notice: true };
-  if (message.media_kind === "view_once" || message.media_once_kind) return { text: "", media: "One-time media", notice: false };
-  if (message.system_kind) return { text: "System notice", media: null, notice: true };
+  if (message.system_kind === "UNAVAILABLE_MESSAGE") return { text: `${t("message.unavailable")}. ${t("message.unavailable_explanation")}`, media: null, notice: true };
+  if (message.deleted || message.revoked) return { text: t("message.deleted"), media: null, notice: true };
+  if (message.spoiler) return { text: t("message.spoiler"), media: null, notice: true };
+  if (message.media_kind === "view_once" || message.media_once_kind) return { text: "", media: t("message.view_once"), notice: false };
+  if (message.system_kind) return { text: t("message.system_notice"), media: null, notice: true };
   const kind = message.media_kind;
-  return { text: plain(captionOf(message)), media: kind ? MEDIA_LABELS[kind] ?? CARD_LABELS[kind] ?? (kind === "poll" ? "Poll" : kind === "event" ? "Event" : kind) : null, notice: false };
+  return { text: plain(captionOf(message)), media: kind ? MEDIA_LABELS[kind] ?? CARD_LABELS[kind] ?? (kind === "poll" ? t("message.poll") : kind === "event" ? t("message.event") : t("message.unsupported")) : null, notice: false };
 }
 
 export function mergeFloatPage(rows: readonly StoredMessage[], page: MessagePage, chat: string, older = false): StoredMessage[] {

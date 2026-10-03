@@ -12,6 +12,17 @@ fn space_metadata_decoder_rejects_unknown_fields_versions_and_trailing_data() {
 }
 
 #[test]
+fn space_metadata_failures_keep_typed_reason_version_and_parser_context() {
+    let error = decode_archive(r#"{"version":2,"snapshot":{"spaces":[],"items":[]}}"#).unwrap_err();
+    let message = error.downcast_ref::<MessageRef>().unwrap();
+    assert_eq!(message.code, "error.space_metadata_version");
+    assert_eq!(serde_json::to_value(&message.params).unwrap(), serde_json::json!({ "version": 2, "supported": 1 }));
+    let error = decode_archive("{").unwrap_err();
+    assert_eq!(error.downcast_ref::<MessageRef>().unwrap().code, "error.space_metadata_json_invalid");
+    assert!(error.chain().count() > 1);
+}
+
+#[test]
 fn space_targets_and_actions_keep_wire_discriminants_and_nested_filter_keys() {
     let targets = [
         r#"{"kind":"chat","jid":"1@s.whatsapp.net"}"#,

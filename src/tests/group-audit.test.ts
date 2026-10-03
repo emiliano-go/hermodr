@@ -1,15 +1,35 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
-import { AUDIT_KINDS, auditEntryLabel, auditFilters, mergeAuditEntries } from "../lib/utils/group-audit.ts";
+import { AUDIT_KINDS, auditEntryLabel, auditEntryRequested, auditFilters, mergeAuditEntries } from "../lib/utils/group-audit.ts";
+import { installLocaleProvider, loadCatalog } from "../lib/i18n/localizer.ts";
 import type { AuditEntry } from "../lib/utils/group-audit.ts";
 
 test("local message controls remain sent requests while observed events keep their kind", () => {
+  assert.equal(auditEntryRequested({ kind: "message_pin", source: "local" }), true);
+  assert.equal(auditEntryRequested({ kind: "message_pin", source: "message" }), false);
+  assert.equal(auditEntryRequested({ kind: "subject", source: "local" }), false);
   assert.equal(auditEntryLabel({ kind: "message_pin", source: "local" }), "Pin request sent");
   assert.equal(auditEntryLabel({ kind: "message_delete", source: "local" }), "Delete request sent");
   assert.equal(auditEntryLabel({ kind: "member_tag", source: "local" }), "Member tag request sent");
   assert.equal(auditEntryLabel({ kind: "message_pin", source: "message" }), "message pin");
   assert.equal(auditEntryLabel({ kind: "subject", source: "local" }), "subject");
+});
+
+test("localized audit labels cannot change request classification or native filter values", async () => {
+  const catalog = await loadCatalog("ar");
+  const restore = installLocaleProvider(() => ({ locale: "ar", catalog }));
+  try {
+    assert.match(auditEntryLabel({ kind: "message_pin", source: "local" }), /أُرسل طلب/);
+    assert.doesNotMatch(auditEntryLabel({ kind: "message_pin", source: "local" }), /request sent/);
+    assert.equal(auditEntryRequested({ kind: "message_pin", source: "local" }), true);
+    assert.equal(auditEntryRequested({ kind: "subject", source: "local" }), false);
+    assert.equal(auditEntryRequested({ kind: "message_pin", source: "history" }), false);
+    const filters = auditFilters("message_pin", "123@lid", "2024-02-29", "2024-02-29").filters;
+    assert.equal(filters?.kind, "message_pin");
+    assert.equal(filters?.actor, "123@lid");
+    assert.equal(filters?.since, new Date("2024-02-29T00:00:00").getTime() / 1000);
+  } finally { restore(); }
 });
 
 test("audit date filters validate calendar dates and include complete local end day", () => {

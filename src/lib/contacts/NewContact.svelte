@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from "$lib/i18n/localizer";
   import { onMount } from "svelte";
   import ContactEditor from "./ContactEditor.svelte";
   let { account, connected, onsaved, onclose }: {
@@ -15,8 +16,8 @@
   });
 </script>
 
-<dialog bind:this={dialog} aria-label="New contact" oncancel={close}>
-  <header><h2>Add a contact</h2><button type="button" aria-label="Close" onclick={close}>×</button></header>
+<dialog bind:this={dialog} aria-label={t("contact.new")} oncancel={close}>
+  <header><h2>{t("contact.add")}</h2><button type="button" aria-label={t("ui.close")} onclick={close}>×</button></header>
   <ContactEditor {account} {connected} onsaved={saved} />
 </dialog>
 

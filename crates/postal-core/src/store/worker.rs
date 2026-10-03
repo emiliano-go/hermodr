@@ -46,9 +46,14 @@ impl StoreWorker {
         }).await
     }
 
+    #[cfg(test)]
     pub(crate) async fn open(path: &Path) -> Result<Self> {
+        Self::open_with_key(path, None).await
+    }
+
+    pub(crate) async fn open_with_key(path: &Path, key: Option<crate::database_crypto::DatabaseKey>) -> Result<Self> {
         let path = path.to_path_buf();
-        Ok(Self::new(tokio::task::spawn_blocking(move || MessageStore::open(&path)).await??))
+        Ok(Self::new(tokio::task::spawn_blocking(move || MessageStore::open_with_key(&path, key.as_ref())).await??))
     }
 
     pub(crate) async fn batch(&self) -> StoreBatch {
@@ -67,9 +72,9 @@ impl StoreWorker {
 }
 
 impl AliasWorker {
-    pub(crate) async fn open(path: &Path) -> Result<Self> {
+    pub(crate) async fn open_with_key(path: &Path, key: Option<crate::database_crypto::DatabaseKey>) -> Result<Self> {
         let path = path.to_path_buf();
-        Ok(Self::new(tokio::task::spawn_blocking(move || AliasStore::open(&path)).await??))
+        Ok(Self::new(tokio::task::spawn_blocking(move || AliasStore::open_with_key(&path, key.as_ref())).await??))
     }
 }
 

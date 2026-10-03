@@ -79,10 +79,10 @@ async fn partial_sequence_separates_before_send_failure_from_uncertain_item() {
             calls.borrow_mut().push(index);
             async move {
                 if index == 2 {
-                    return Err(if uncertain { AlbumSendFailure::Uncertain("item-2".into(), "transport interrupted".into()) }
-                        else { AlbumSendFailure::Before("local save failed before transport".into()) });
+                    return Err(if uncertain { AlbumSendFailure::Uncertain("item-2".into(), anyhow::anyhow!("transport interrupted")) }
+                        else { AlbumSendFailure::Before(anyhow::anyhow!(MessageRef::new("error.album_account_changed"))) });
                 }
-                Ok(AlbumSendAttempt { id: format!("item-{index}"), warnings: vec![format!("warning-{index}")], stop: None })
+                Ok(AlbumSendAttempt { id: format!("item-{index}"), warnings: vec![format!("warning-{index}")], warning_messages: Vec::new(), stop: None })
             }
         }, &mut result).await;
         assert_eq!(calls.into_inner(), vec![0, 1, 2]);
@@ -94,6 +94,9 @@ async fn partial_sequence_separates_before_send_failure_from_uncertain_item() {
         assert_eq!(result.account_id, "synthetic-account");
         assert_eq!(result.chat, "15550000001@s.whatsapp.net");
         assert!(result.error.is_some());
+        let failure = result.failure.as_ref().unwrap();
+        assert_eq!(failure.message.code, if uncertain { "error.operation_failed" } else { "error.album_account_changed" });
+        assert_eq!(failure.diagnostic.is_some(), uncertain);
     }
 }
 
@@ -103,21 +106,29 @@ async fn account_fence_after_written_item_preserves_sent_prefix_without_retry() 
     let mut result = result();
     send_album_sequence(4, |index| {
         calls.borrow_mut().push(index);
-        async move { Ok(AlbumSendAttempt { id: format!("item-{index}"), warnings: Vec::new(),
-            stop: (index == 1).then(|| "account changed after transport".into()) }) }
+        async move { Ok(AlbumSendAttempt { id: format!("item-{index}"), warnings: vec![format!("legacy warning {index}")],
+            warning_messages: vec![MessageFailure { message: MessageRef::new("warning.album_preview_missing")
+                .with_param("index", serde_json::Number::from(index + 1)), diagnostic: None }],
+            stop: (index == 1).then(|| anyhow::anyhow!(MessageRef::new("error.album_account_changed"))) }) }
     }, &mut result).await;
     assert_eq!(calls.into_inner(), vec![0, 1]);
     assert_eq!(result.sent_ids, vec!["item-0", "item-1"]);
     assert_eq!(result.next_index, 2);
     assert_eq!(result.uncertain_index, None);
+    assert_eq!(result.failure.as_ref().unwrap().message.code, "error.album_account_changed");
     assert_eq!(result.account_id, "synthetic-account");
+    let json = serde_json::to_value(result).unwrap();
+    assert_eq!(json["warnings"][1], "legacy warning 1");
+    assert_eq!(json["warning_messages"][1]["code"], "warning.album_preview_missing");
+    assert_eq!(json["warning_messages"][1]["params"]["index"], 2);
+    assert!(json["warning_messages"][1].get("diagnostic").is_none());
 }
 
 #[tokio::test]
 async fn successful_sequence_keeps_order_and_serializes_explicit_outcome_fields() {
     let mut result = result();
     send_album_sequence(3, |index| async move {
-        Ok(AlbumSendAttempt { id: format!("item-{index}"), warnings: Vec::new(), stop: None })
+        Ok(AlbumSendAttempt { id: format!("item-{index}"), warnings: Vec::new(), warning_messages: Vec::new(), stop: None })
     }, &mut result).await;
     assert_eq!(result.sent_ids, vec!["item-0", "item-1", "item-2"]);
     assert_eq!(result.next_index, 3);

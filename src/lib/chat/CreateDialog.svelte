@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
+  import { t } from "$lib/i18n/localizer";
   import { untrack } from "svelte";
   import { fade, scale } from "svelte/transition";
   import { motion } from "$lib/utils/theme.svelte";
@@ -43,10 +45,10 @@
   let location = $state(untrack(() => initial?.location ?? ""));
   let link = $state(untrack(() => initial?.link ?? ""));
   let extraGuestsAllowed = $state<boolean | null>(untrack(() => initial ? initial.extra_guests_allowed ?? null : false));
-  const heading = $derived(kind === "poll" ? quiz ? "Create quiz" : "Create poll" : initial ? "Edit event" : "Create event");
+  const heading = $derived(kind === "poll" ? quiz ? t("chat.quiz_create") : t("chat.poll_create") : initial ? t("chat.event_edit") : t("chat.event_create"));
 
   let busy = $state(false);
-  let failed = $state<string | null>(null);
+  let failed = $state<LocalizedError | string | null>(null);
 
   const filled = $derived(options.map((o) => o.text.trim()).filter(Boolean));
   const quizDraft = $derived(prepareQuiz(question, options, correctRow));
@@ -88,9 +90,9 @@
 
   function eventTimeError(start: string, end: string, event: ChatEvent | null) {
     const from = seconds(start, event?.start), to = seconds(end, event?.end);
-    if (from != null && !Number.isSafeInteger(from) || to != null && !Number.isSafeInteger(to)) return "Enter valid event times.";
-    if (to != null && from == null) return "Set a start time before an end time.";
-    if (from != null && to != null && to < from) return "The end must be at or after the start.";
+    if (from != null && !Number.isSafeInteger(from) || to != null && !Number.isSafeInteger(to)) return t("chat.event_time_invalid");
+    if (to != null && from == null) return t("chat.event_time_start_required");
+    if (from != null && to != null && to < from) return t("chat.event_time_order");
     return null;
   }
 
@@ -121,7 +123,7 @@
       );
       if (current()) onclose();
     } catch (e) {
-      if (current()) failed = String(e);
+      if (current()) failed = normalizeError(e);
     } finally {
       if (current()) busy = false;
     }
@@ -143,74 +145,74 @@
     onsubmit={(e) => (e.preventDefault(), submit())}>
     <header>
       <h2>{heading}</h2>
-      <button type="button" class="close" aria-label="Close" onclick={onclose}><Icon name="x" size={18} /></button>
+      <button type="button" class="close" aria-label={t("ui.close")} onclick={onclose}><Icon name="x" size={18} /></button>
     </header>
 
     {#if kind === "poll"}
       <label class="field-label">
-        Question
+        {t("chat.poll_question")}
         <!-- svelte-ignore a11y_autofocus -->
-        <input class="field" maxlength="255" bind:value={question} placeholder="Ask a question" autofocus />
+        <input class="field" maxlength="255" dir="auto" bind:value={question} placeholder={t("chat.poll_question_placeholder")} autofocus />
       </label>
-      <label class="check-row"><input type="checkbox" bind:checked={quiz} disabled={busy} /> Quiz (one correct answer)</label>
-      <span class="field-label">Options</span>
-      {#if quiz}<span class="field-label">Mark one correct answer.</span>{/if}
+      <label class="check-row"><input type="checkbox" bind:checked={quiz} disabled={busy} /> {t("chat.quiz_option")}</label>
+      <span class="field-label">{t("chat.poll_options")}</span>
+      {#if quiz}<span class="field-label">{t("chat.quiz_mark_hint")}</span>{/if}
       {#each options as row, i (row.id)}
         <div class="option-row">
-          {#if quiz}<input type="radio" name="quiz-correct" bind:group={correctRow} value={row.id} disabled={busy || !row.text.trim()} aria-label="Correct answer: option {i + 1}" />{/if}
-          <input class="field" maxlength="100" bind:value={row.text} placeholder="Option {i + 1}" disabled={busy} />
+          {#if quiz}<input type="radio" name="quiz-correct" bind:group={correctRow} value={row.id} disabled={busy || !row.text.trim()} aria-label={t("chat.quiz_correct_option", { count: i + 1 })} />{/if}
+          <input class="field" maxlength="100" bind:value={row.text} dir="auto" placeholder={t("chat.poll_option_placeholder", { count: i + 1 })} disabled={busy} />
           {#if options.length > 2 && row.text.trim()}
-            <button type="button" class="remove" aria-label="Remove option {i + 1}" disabled={busy} onclick={() => removeOption(row.id)}>
+            <button type="button" class="remove" aria-label={t("chat.poll_option_remove", { count: i + 1 })} disabled={busy} onclick={() => removeOption(row.id)}>
               <Icon name="x" size={14} />
             </button>
           {/if}
         </div>
       {/each}
-      {#if filled.length !== new Set(filled).size}<p class="error">Options must be different.</p>{/if}
-      {#if quiz && quizDraft.correctIndex === null}<p class="error" role="status">Choose one correct answer.</p>{/if}
+      {#if filled.length !== new Set(filled).size}<p class="error">{t("chat.poll_distinct")}</p>{/if}
+      {#if quiz && quizDraft.correctIndex === null}<p class="error" role="status">{t("chat.quiz_choose")}</p>{/if}
       {#if !quiz}
       <label class="check-row">
         <input type="checkbox" bind:checked={multi} />
-        Allow multiple answers
+        {t("chat.poll_multiple")}
       </label>
       {/if}
     {:else}
       <label class="field-label">
-        Name
+        {t("ui.name")}
         <!-- svelte-ignore a11y_autofocus -->
-        <input class="field" maxlength="100" bind:value={name} placeholder="Event name" autofocus disabled={busy} />
+        <input class="field" maxlength="100" dir="auto" bind:value={name} placeholder={t("chat.event_name")} autofocus disabled={busy} />
       </label>
       <label class="field-label">
-        Description
-        <textarea class="field" rows="3" maxlength="2048" bind:value={description} disabled={busy}></textarea>
+        {t("contact.description")}
+        <textarea class="field" rows="3" maxlength="2048" dir="auto" bind:value={description} disabled={busy}></textarea>
       </label>
       <div class="when">
-        <label class="field-label">Starts <input class="field" type="datetime-local" step="1" bind:value={start} disabled={busy} /></label>
-        <label class="field-label">Ends <input class="field" type="datetime-local" step="1" bind:value={end} disabled={busy} /></label>
+        <label class="field-label">{t("chat.event_starts")} <input class="field" type="datetime-local" step="1" bind:value={start} disabled={busy} /></label>
+        <label class="field-label">{t("chat.event_ends")} <input class="field" type="datetime-local" step="1" bind:value={end} disabled={busy} /></label>
       </div>
       <label class="field-label">
-        Location
-        <input class="field" bind:value={location} placeholder="Optional" disabled={busy} />
+        {t("chat.event_location")}
+        <input class="field" dir="auto" bind:value={location} placeholder={t("ui.optional_placeholder")} disabled={busy} />
       </label>
       <label class="field-label">
-        Call link
-        <input class="field" type="url" bind:value={link} placeholder="Optional" disabled={busy} />
+        {t("chat.event_call_link")}
+        <input class="field" type="url" dir="ltr" bind:value={link} placeholder={t("ui.optional_placeholder")} disabled={busy} />
       </label>
       <label class="check-row"><input type="checkbox" checked={extraGuestsAllowed === true} disabled={busy}
-        onchange={(event) => { extraGuestsAllowed = event.currentTarget.checked; }} /> Allow extra guests</label>
-      {#if extraGuestsAllowed === null}<span class="hint">Original guest allowance is unavailable; leaving this untouched preserves it.</span>{/if}
-      {#if initial?.has_reminder != null}<span class="hint">Reminder: {initial.has_reminder ? "Enabled" : "None"}</span>{/if}
-      {#if initial?.reminder_offset_sec != null}<span class="hint">Reminder offset: {initial.reminder_offset_sec} seconds</span>{/if}
-      {#if initial?.has_reminder === true && initial.reminder_offset_sec == null}<span class="hint">Reminder offset unavailable.</span>{/if}
-      <span class="hint">Reminder settings cannot be changed from this device.</span>
+        onchange={(event) => { extraGuestsAllowed = event.currentTarget.checked; }} /> {t("chat.event_extra_guests")}</label>
+      {#if extraGuestsAllowed === null}<span class="hint">{t("chat.event_guests_unknown")}</span>{/if}
+      {#if initial?.has_reminder != null}<span class="hint">{t("chat.event_reminder", { state: t(initial.has_reminder ? "ui.enabled" : "ui.none") })}</span>{/if}
+      {#if initial?.reminder_offset_sec != null}<span class="hint">{t("chat.event_reminder_offset", { count: initial.reminder_offset_sec })}</span>{/if}
+      {#if initial?.has_reminder === true && initial.reminder_offset_sec == null}<span class="hint">{t("chat.event_reminder_offset_unknown")}</span>{/if}
+      <span class="hint">{t("chat.event_reminder_read_only")}</span>
       {#if timingError}<p class="error" role="alert">{timingError}</p>{/if}
     {/if}
 
     {#if failed}<p class="error" role="alert">{failed}</p>{/if}
     <div class="actions">
-      <Button variant="ghost" type="button" onclick={onclose}>Cancel</Button>
+      <Button variant="ghost" type="button" onclick={onclose}>{t("ui.cancel")}</Button>
       <Button variant="primary" type="submit" disabled={!valid || busy}
-        >{busy ? (initial ? "Saving…" : "Sending…") : initial ? "Save" : "Send"}</Button
+        >{busy ? (initial ? t("ui.saving") : t("ui.sending")) : initial ? t("ui.save") : t("ui.send")}</Button
       >
     </div>
   </form>

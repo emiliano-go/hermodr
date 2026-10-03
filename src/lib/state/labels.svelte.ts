@@ -3,6 +3,8 @@ import type { LabelsView } from "$lib/utils/wire";
 import { composer } from "./composer.svelte";
 import { messages } from "./messages.svelte";
 import { session } from "./session.svelte";
+import { LocalizedError, normalizeError } from "../i18n/errors.ts";
+import { uiError } from "./localized.ts";
 
 export class LabelsState {
   account = $state<string | null>(null);
@@ -10,7 +12,10 @@ export class LabelsState {
   loaded = $state(false);
   loading = $state(false);
   busy = $state(false);
-  error = $state<string | null>(null);
+  #error = $state<LocalizedError | null>(null);
+  get error(): string | null { return this.#error?.message ?? null; }
+  set error(value: unknown) { this.#error = value == null ? null : normalizeError(value); }
+  get diagnostic() { return this.#error?.diagnostic; }
   private request = 0;
   private refreshTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -53,7 +58,7 @@ export class LabelsState {
       const view = await invoke<LabelsView>("labels_view", { accountId: account });
       if (current()) { this.view = view; this.loaded = true; }
     } catch (error) {
-      if (current()) this.error = String(error);
+      if (current()) this.error = error;
     } finally {
       if (current()) this.loading = false;
     }
@@ -63,20 +68,20 @@ export class LabelsState {
     const account = session.activeAccount;
     const generation = messages.accountGeneration;
     const current = () => account === session.activeAccount && generation === messages.accountGeneration && this.account === account;
-    if (!account || !current() || this.busy || !session.connected) throw new Error("Labels are unavailable for this account.");
+    if (!account || !current() || this.busy || !session.connected) throw uiError("error.state.labels_unavailable");
     this.busy = true;
     this.error = null;
     try {
       await composer.enqueue(async (signal) => {
         for (const item of Array.isArray(args) ? args : [args]) {
-          if (signal.aborted || !session.connected || !current()) throw new Error("Account changed or disconnected before label operation.");
+          if (signal.aborted || !session.connected || !current()) throw uiError("error.state.label_scope");
           await invoke(command, { ...item, accountId: account });
         }
       });
-      if (!current()) throw new Error("Account changed during label operation.");
+      if (!current()) throw uiError("error.state.label_scope");
       await this.refresh();
     } catch (error) {
-      if (current()) { await this.refresh(); if (current()) this.error = String(error); }
+      if (current()) { await this.refresh(); if (current()) this.error = error; }
       throw error;
     } finally {
       if (current()) this.busy = false;

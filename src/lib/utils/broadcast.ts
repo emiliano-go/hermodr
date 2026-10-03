@@ -1,3 +1,5 @@
+import { uiError } from "../state/localized.ts";
+
 export const BROADCAST_SEND_REASON = "Sending to broadcast lists is not supported.";
 
 export function isBroadcastList(chat: string | null | undefined): boolean {
@@ -5,10 +7,14 @@ export function isBroadcastList(chat: string | null | undefined): boolean {
 }
 
 export function broadcastSendReason(chat: string | null | undefined): string | null {
-  return isBroadcastList(chat) ? BROADCAST_SEND_REASON : null;
+  return broadcastSendError(chat)?.message ?? null;
+}
+
+export function broadcastSendError(chat: string | null | undefined) {
+  return isBroadcastList(chat) ? uiError("error.state.broadcast_send") : null;
 }
 
 export function guardBroadcastSend(chat: string | null | undefined): void {
-  const reason = broadcastSendReason(chat);
-  if (reason) throw new Error(reason);
+  const failure = broadcastSendError(chat);
+  if (failure) throw failure;
 }

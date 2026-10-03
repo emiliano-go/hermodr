@@ -1,4 +1,5 @@
 use super::*;
+use crate::message_ref::MessageRef;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "wire-types", derive(ts_rs::TS))]
@@ -57,15 +58,15 @@ impl MessageStore {
     pub(crate) fn set_quick_reply(
         &self, id: &str, reply: Option<QuickReply>, timestamp: i64,
     ) -> Result<bool> {
-        anyhow::ensure!(!id.is_empty() && timestamp >= 0, "invalid quick-reply update");
+        anyhow::ensure!(!id.is_empty() && timestamp >= 0, MessageRef::new("error.quick_reply_update_invalid"));
         let deleted = reply.is_none();
         let reply = reply.unwrap_or_else(|| QuickReply {
             id: id.to_owned(), shortcut: String::new(), message: String::new(),
             keywords: Vec::new(), count: 0, associated_label_ids: Vec::new(),
         });
-        anyhow::ensure!(reply.id == id, "quick-reply id changed during update");
+        anyhow::ensure!(reply.id == id, MessageRef::new("error.quick_reply_id_changed"));
         anyhow::ensure!(deleted || (!reply.shortcut.is_empty() && !reply.message.is_empty() && reply.count >= 0),
-            "quick reply requires a shortcut, message and nonnegative count");
+            MessageRef::new("error.quick_reply_content_invalid"));
         let keywords = serde_json::to_string(&reply.keywords)?;
         let labels = serde_json::to_string(&reply.associated_label_ids)?;
         Ok(self.conn.lock().unwrap().execute(

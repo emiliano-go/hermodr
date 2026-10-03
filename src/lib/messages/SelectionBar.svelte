@@ -1,5 +1,6 @@
 <!-- Replaces the composer while messages are picked for a bulk action. -->
 <script lang="ts">
+  import { t } from "$lib/i18n/localizer";
   import Icon from "$lib/ui/Icon.svelte";
 
   let {
@@ -37,26 +38,26 @@
 <svelte:window onkeydown={(e) => e.key === "Escape" && oncancel()} />
 
 <div class="selection-bar">
-  <button class="icon" aria-label="Cancel selection" title="Cancel" onclick={oncancel}>
+  <button class="icon" aria-label={t("content.cancel_selection")} title={t("content.cancel")} onclick={oncancel}>
     <Icon name="x" size={18} />
   </button>
-  <span class="count">{count} selected</span>
-  <button class="action" disabled={count === 0 || busy} onclick={() => run(onlabel)}>Labels</button>
+  <span class="count">{t("content.selected_count", { count })}</span>
+  <button class="action" disabled={count === 0 || busy} onclick={() => run(onlabel)}>{t("content.labels")}</button>
   <button class="forward" disabled={count === 0 || busy} onclick={onforward}>
-    <Icon name="forward" size={16} /> Forward
+    <Icon name="forward" size={16} /> {t("content.forward")}
   </button>
   <button class="action" disabled={count === 0 || busy} onclick={() => run(oncopy)}>
-    <Icon name="copy" size={16} /> Copy
+    <Icon name="copy" size={16} /> {t("content.copy")}
   </button>
   <button class="action" disabled={count === 0 || busy} onclick={() => run(onstar)}>
-    <Icon name="star" size={16} /> {allStarred ? "Unstar" : "Star"}
+    <Icon name="star" size={16} /> {allStarred ? t("content.unstar") : t("content.star")}
   </button>
   <button class="action" disabled={count === 0 || busy || !!reactionReason} title={reactionReason ?? undefined}
     onclick={(event) => { if (!busy && !reactionReason) onreact(event); }}>
-    <Icon name="smile" size={16} /> React
+    <Icon name="smile" size={16} /> {t("content.react")}
   </button>
   <button class="delete" disabled={count === 0 || busy} onclick={ondelete}>
-    <Icon name="trash" size={16} /> Delete
+    <Icon name="trash" size={16} /> {t("content.delete")}
   </button>
 </div>
 

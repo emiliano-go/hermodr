@@ -45,12 +45,12 @@
     {#if label}<span class="embed-label">{label}</span>{/if}
     {#if title}
       {#if onopen}
-        <button type="button" class="embed-title link" title={tooltip} onclick={onopen}>{title}</button>
+        <button type="button" class="embed-title link" title={tooltip} onclick={onopen}><bdi dir="auto">{title}</bdi></button>
       {:else}
-        <span class="embed-title">{title}</span>
+        <span class="embed-title"><bdi dir="auto">{title}</bdi></span>
       {/if}
     {/if}
-    {#if text}<span class="embed-text">{text}</span>{/if}
+    {#if text}<span class="embed-text"><bdi dir="auto">{text}</bdi></span>{/if}
     {@render children?.()}
   </span>
   {#if image}
@@ -87,11 +87,11 @@
     box-sizing: border-box;
     background: rgba(0, 0, 0, 0.18);
     border: 0;
-    border-left: 4px solid var(--embed-color, var(--accent));
+    border-inline-start: 4px solid var(--embed-color, var(--accent));
     border-radius: 4px;
     color: inherit;
     font: inherit;
-    text-align: left;
+    text-align: start;
   }
   .embed.wide {
     flex-direction: column;
@@ -118,7 +118,7 @@
     font-size: 15px;
     font-weight: 600;
     line-height: 20px;
-    text-align: left;
+    text-align: start;
   }
   .embed-title.link {
     color: var(--link);

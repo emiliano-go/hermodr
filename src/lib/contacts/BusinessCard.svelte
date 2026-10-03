@@ -1,4 +1,6 @@
 <script lang="ts">
+  import type { LocalizedError } from "$lib/i18n/errors";
+  import { t } from "$lib/i18n/localizer";
   import type { MemberProfileLive } from "$lib/utils/wire";
   import { memberBusinessHours, memberFieldText } from "$lib/utils/member-sheet";
   import { quickReplyScopeMatches, type QuickReplyScope } from "$lib/utils/quick-replies";
@@ -6,7 +8,7 @@
   let { account, chat, generation, requestKey, dataScope, field: incomingField = null, loading = false, error = null,
     connected = false, onrefresh }: {
     account: string | null; chat: string; generation: number; requestKey: string | number; dataScope: QuickReplyScope | null;
-    field?: MemberProfileLive["business"] | null; loading?: boolean; error?: string | null; connected?: boolean;
+    field?: MemberProfileLive["business"] | null; loading?: boolean; error?: LocalizedError | string | null; connected?: boolean;
     onrefresh?: (scope: QuickReplyScope) => void;
   } = $props();
 
@@ -20,29 +22,29 @@
   }
 </script>
 
-<section aria-label="Business information">
-  <header><h3>Business information</h3>
-    {#if onrefresh}<button type="button" disabled={!account || !chat || !connected || loading} onclick={refresh}>Refresh</button>{/if}
+<section aria-label={t("contact.business_information")}>
+  <header><h3>{t("contact.business_information")}</h3>
+    {#if onrefresh}<button type="button" disabled={!account || !chat || !connected || loading} onclick={refresh}>{t("ui.refresh")}</button>{/if}
   </header>
-  {#if ready && loading}<p class="muted" role="status">Loading business information…</p>{/if}
+  {#if ready && loading}<p class="muted" role="status">{t("contact.business_loading")}</p>{/if}
   {#if ready && error}<p class="error" role="alert">{error}</p>{/if}
-  {#if !connected && ready}<p class="muted">Offline. Stored business information may be outdated.</p>{/if}
+  {#if !connected && ready}<p class="muted">{t("contact.business_offline")}</p>{/if}
   <p class:error={field?.state === "error"} class="summary" role={field?.state === "error" ? "alert" : "status"}>
-    {memberFieldText(field, () => field?.value?.name || "Available")}
+    {memberFieldText(field, () => field?.value?.name || t("ui.available"))}
   </p>
   {#if business}
     <dl>
-      {#if business.description}<dt>Description</dt><dd>{business.description}</dd>{/if}
-      <dt>Address</dt><dd>{business.address || "Not provided"}</dd>
-      <dt>Categories</dt><dd>{business.categories.join(", ") || "Not provided"}</dd>
-      <dt>Hours</dt><dd>
-        {#if business.hours === null}Not provided
-        {:else if business.hours.length === 0}No hours provided
+      {#if business.description}<dt>{t("contact.description")}</dt><dd dir="auto">{business.description}</dd>{/if}
+      <dt>{t("contact.address")}</dt><dd dir="auto">{business.address || t("ui.not_provided")}</dd>
+      <dt>{t("contact.categories")}</dt><dd dir="auto">{business.categories.join(", ") || t("ui.not_provided")}</dd>
+      <dt>{t("contact.hours")}</dt><dd>
+        {#if business.hours === null}{t("ui.not_provided")}
+        {:else if business.hours.length === 0}{t("contact.no_hours")}
         {:else}<ul>{#each business.hours as hours}<li>{memberBusinessHours(hours)}</li>{/each}</ul>{/if}
       </dd>
-      {#if business.timezone}<dt>Time zone</dt><dd>{business.timezone}</dd>{/if}
-      {#if business.email}<dt>Email</dt><dd>{business.email}</dd>{/if}
-      {#if business.websites.length}<dt>Websites</dt><dd>{business.websites.join(", ")}</dd>{/if}
+      {#if business.timezone}<dt>{t("contact.time_zone")}</dt><dd dir="auto">{business.timezone}</dd>{/if}
+      {#if business.email}<dt>{t("contact.email")}</dt><dd dir="auto">{business.email}</dd>{/if}
+      {#if business.websites.length}<dt>{t("contact.websites")}</dt><dd dir="auto">{business.websites.join(", ")}</dd>{/if}
     </dl>
   {/if}
 </section>

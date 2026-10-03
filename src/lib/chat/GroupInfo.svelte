@@ -1,4 +1,6 @@
 <script lang="ts" module>
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
+  import { t, formatDate } from "$lib/i18n/localizer";
   import type { Participant as Member, GroupInfo as GroupInfoData, AdminReport } from "$lib/utils/wire";
   export type { Member, GroupInfoData, AdminReport };
 </script>
@@ -30,6 +32,7 @@
     title,
     info,
     error,
+    groupInfoDiagnostic = null,
     avatars,
     pinned,
     onavatar,
@@ -65,7 +68,8 @@
     jid: string;
     title: string;
     info: GroupInfoData | null;
-    error: string | null;
+    error: LocalizedError | string | null;
+    groupInfoDiagnostic?: string | null;
     avatars: Record<string, string | null>;
     pinned: boolean;
     onavatar: (jid: string) => void;
@@ -118,7 +122,7 @@
   $effect(() => { if (info) inviteAdmin = info.admin ? inviteOwner : null; });
   let tagDraft = $state<string | null>(null);
   let tagBusy = $state(false);
-  let tagError = $state<string | null>(null);
+  let tagError = $state<LocalizedError | string | null>(null);
   const tagValue = $derived(tagDraft ?? self?.label ?? "");
 
   async function saveTag() {
@@ -128,7 +132,7 @@
       await onlabel(tagValue.trim());
       tagDraft = null;
     } catch (e) {
-      tagError = String(e);
+      tagError = normalizeError(e);
     } finally {
       tagBusy = false;
     }
@@ -138,37 +142,37 @@
   let section = $state<Section>("overview");
   let settingsBusy = $state(false);
   const nav = $derived<{ id: Section; label: string; group: string }[]>([
-    { id: "overview", label: "Overview", group: title },
-    { id: "settings", label: "Settings", group: title },
-    ...(onloadAudit ? [{ id: "audit" as Section, label: "Audit log", group: title }] : []),
+    { id: "overview", label: t("ui.overview"), group: title },
+    { id: "settings", label: t("settings.title"), group: title },
+    ...(onloadAudit ? [{ id: "audit" as Section, label: t("group.audit_log"), group: title }] : []),
     {
       id: "members",
-      label: info ? `Members (${info.participants.length})` : "Members",
+      label: info ? t("group.members_count", { count: info.participants.length }) : t("group.members"),
       group: title,
     },
-    ...(self?.admin ? [{ id: "reports" as Section, label: "Reports", group: "Admin" }] : []),
-    ...(info?.admin ? [{ id: "requests" as Section, label: "Join requests", group: "Admin" }] : []),
+    ...(self?.admin ? [{ id: "reports" as Section, label: t("group.reports"), group: t("group.admin") }] : []),
+    ...(info?.admin ? [{ id: "requests" as Section, label: t("group.requests"), group: t("group.admin") }] : []),
   ]);
 
   let reports = $state<AdminReport[] | null>(null);
-  let reportsError = $state<string | null>(null);
+  let reportsError = $state<LocalizedError | string | null>(null);
   $effect(() => {
     if (section !== "reports" || reports !== null) return;
     onreports()
       .then((r) => (reports = r))
-      .catch((e) => (reportsError = String(e)));
+      .catch((e) => (reportsError = normalizeError(e)));
   });
 
   /** The add-members rule is saving. */
   let addModeBusy = $state(false);
   async function setMembersAdd(allow: boolean) {
     addModeBusy = true;
-    memberError = null;
+    memberError = null; memberRefusals = [];
     try {
       await onmembersadd(allow);
       if (info) info.members_can_add = allow;
     } catch (e) {
-      memberError = String(e);
+      memberError = normalizeError(e);
     } finally {
       addModeBusy = false;
     }
@@ -180,7 +184,9 @@
   let selecting = $state(false);
   let selected = $state<Record<string, true>>({});
   let memberBusy = $state(false);
-  let memberError = $state<string | null>(null);
+  let memberRefusals = $state<ParticipantChange[]>([]);
+  const refusal = $derived(memberRefusals.map(changeText).filter(Boolean).join(" "));
+  let memberError = $state<LocalizedError | string | null>(null);
   let confirmRemove = $state(false);
   const selectedList = $derived(Object.keys(selected));
 
@@ -196,15 +202,14 @@
     const jids = selectedList;
     if (jids.length === 0) return;
     memberBusy = true;
-    memberError = null;
+    memberError = null; memberRefusals = [];
     try {
       const changes = await action(jids);
-      const refusals = changes.map(changeText).filter((text): text is string => !!text);
-      if (refusals.length > 0) memberError = refusals.join(" ");
+      memberRefusals = changes;
       selected = {};
       selecting = false;
     } catch (e) {
-      memberError = String(e);
+      memberError = normalizeError(e);
     } finally {
       memberBusy = false;
     }
@@ -217,7 +222,7 @@
       await onallowreports(allow);
       if (info) info.allow_admin_reports = allow;
     } catch (e) {
-      reportsError = String(e);
+      reportsError = normalizeError(e);
     } finally {
       allowBusy = false;
     }
@@ -250,8 +255,8 @@
   );
   const groups = $derived(
     [
-      { title: "Admins", list: members.filter((m) => m.admin) },
-      { title: "Members", list: members.filter((m) => !m.admin) },
+      { title: t("group.admins"), list: members.filter((m) => m.admin) },
+      { title: t("group.members"), list: members.filter((m) => !m.admin) },
     ].filter((g) => g.list.length > 0),
   );
 
@@ -290,67 +295,66 @@
   {/if}
 {/snippet}
 
-<Panel label="Group info" {nav} bind:section onclose={() => { if (!settingsBusy) onclose(); }}>
+<Panel label={t("group.info")} {nav} bind:section onclose={() => { if (!settingsBusy) onclose(); }}>
   {#snippet header()}
     <div class="head">
       {@render avatar(jid, title, 44)}
       <span class="head-text">
-        <span class="head-name">{title}</span>
-        <span class="head-sub">Group · {info ? `${info.participants.length} members` : "…"}</span>
+        <span class="head-name"><bdi>{title}</bdi></span>
+        <span class="head-sub">{t("group.group")} · {info ? t("group.member_count", { count: info.participants.length }) : "…"}</span>
       </span>
     </div>
   {/snippet}
 
+  {#if error && groupInfoDiagnostic}<details class="diagnostic"><summary>{t("error.technical_details")}</summary><pre dir="auto">{groupInfoDiagnostic}</pre></details>{/if}
   {#if section === "overview" && session.activeAccount && inviteAdmin === inviteOwner}
     <div class="setting stack"><GroupInviteLinks chat={jid} canReset onload={oninviteload} onreset={oninvitereset} /></div>
   {/if}
   {#if section === "audit" && onloadAudit}
     <GroupAudit {account} group={jid} requestKey={auditRevision} onload={onloadAudit}
       onjump={(_group, id) => onjump(id)} namer={(jid) => namer(null, jid)}
-      formatTime={(at) => new Date(at * 1000).toLocaleString()} />
+      formatTime={(at) => formatDate(at, { dateStyle: "medium", timeStyle: "short" })} />
   {:else if section === "settings" && account}
-    <h2>Group settings</h2>
+    <h2>{t("group.settings")}</h2>
     {#key JSON.stringify([account, jid])}
       <GroupSettings chat={jid} {account} onload={onsettingsload} onchange={onsettingchange} onpicture={onpicturechange}
         onbusy={(busy) => settingsBusy = busy} />
     {/key}
   {:else if section === "requests"}
     {#if info && !info.admin}
-      <p class="error-text">Only group admins can manage join requests.</p>
+      <p class="error-text">{t("group.requests_admin_only")}</p>
     {:else}
       <GroupRequests chat={jid} {namer} onload={onrequests} onchange={onrequestchange} />
     {/if}
   {:else if !info}
     {#if error}
-      <h2>Could not load this group</h2>
+      <h2>{t("group.load_failed")}</h2>
       <p class="lede">{error}</p>
-      <div class="actions-row"><button class="button primary" onclick={onretry}>Retry</button></div>
+      <div class="actions-row"><button class="button primary" onclick={onretry}>{t("ui.retry")}</button></div>
     {:else}
-      <p class="muted">Loading group info…</p>
+      <p class="muted">{t("group.loading")}</p>
     {/if}
   {:else if section === "overview"}
     <div class="hero">
       <button
         class="hero-picture"
-        title={avatars[jid] ? "View picture" : undefined}
+        title={avatars[jid] ? t("contact.view_picture") : undefined}
         disabled={!avatars[jid]}
         onclick={() => (enlarged = avatars[jid] ?? null)}>{@render avatar(jid, title, 96)}</button>
       <div>
-        <h2>{info.subject ?? title}</h2>
+        <h2><bdi>{info.subject ?? title}</bdi></h2>
         <span class="muted">
-          {info.community ? "Community" : info.announcements ? "Announcements" : "Group"} · {info.participants
-            .length} members{#if info.parent_name}{" · "}in {info.parent_name}{/if}{#if info.created_at}{" · "}created
-            {new Date(info.created_at * 1000).toLocaleDateString()}{/if}{#if info.owner}{" · "}owned by
+          {info.community ? t("group.community") : info.announcements ? t("group.announcements") : t("group.group")} · {t("group.member_count", { count: info.participants.length })}{#if info.parent_name}{" · "}{t("group.in_parent")} <bdi>{info.parent_name}</bdi>{/if}{#if info.created_at}{" · "}{t("group.created_on", { date: formatDate(info.created_at) })}{/if}{#if info.owner}{" · "}{t("group.owned_by")}
             {#if info.owner_jid}{@const owner = info.owner_jid}<button
                 class="owner"
-                onclick={(e) => onprofile(owner, info.owner ?? owner, e)}>{info.owner}</button
+                onclick={(e) => onprofile(owner, info.owner ?? owner, e)}><bdi>{info.owner}</bdi></button
               >{:else}{info.owner}{/if}{/if}
         </span>
       </div>
     </div>
 
     {#if info.description}
-      <h3>Description</h3>
+      <h3>{t("contact.description")}</h3>
       <p class="description">
         {#each linkParts(info.description) as part}{#if /^https?:\/\//.test(part)}<a
               href={part}
@@ -364,31 +368,31 @@
 
     <div class="setting">
       <div>
-        <span class="setting-title">Who can send</span>
+        <span class="setting-title">{t("group.who_send")}</span>
         <span class="setting-desc">
           {info.community
-            ? "Nobody writes in the community itself; its groups hold the conversations."
+            ? t("group.community_send_hint")
             : info.announce
-              ? `Only admins${info.admin ? ", including you" : ""}.`
-              : "Everyone in the group."}
+              ? t(info.admin ? "group.send_admins_you" : "group.send_admins")
+              : t("group.everyone")}
         </span>
       </div>
     </div>
     <div class="setting">
       <div>
-        <span class="setting-title">Who can edit the group's info</span>
-        <span class="setting-desc">{info.locked ? "Only admins." : "Everyone in the group."}</span>
+        <span class="setting-title">{t("group.who_edit")}</span>
+        <span class="setting-desc">{info.locked ? t("group.admin_only") : t("group.everyone")}</span>
       </div>
     </div>
     <div class="setting">
       <div>
-        <span class="setting-title">Who can add members</span>
+        <span class="setting-title">{t("group.who_add")}</span>
         <span class="setting-desc">
           {info.members_can_add
             ? info.admin
-              ? "Everyone in the group."
-              : "Everyone in the group, including you."
-            : "Only admins."}
+              ? t("group.everyone")
+              : t("group.everyone_you")
+            : t("group.admin_only")}
         </span>
       </div>
       {#if info.admin}
@@ -397,7 +401,7 @@
           type="checkbox"
           checked={info.members_can_add}
           disabled={addModeBusy}
-          aria-label="Members may add people"
+          aria-label={t("group.members_add")}
           onchange={(e) => setMembersAdd(e.currentTarget.checked)} />
       {/if}
     </div>
@@ -409,21 +413,21 @@
     {/if}
     <div class="setting stack">
       <div>
-        <span class="setting-title">Your tag in this group</span>
-        <span class="setting-desc">Shown under your name on your messages here. Leave empty to remove it.</span>
+        <span class="setting-title">{t("group.your_tag")}</span>
+        <span class="setting-desc">{t("group.tag_hint")}</span>
       </div>
       <div class="tag-row">
         <input
           class="field"
           maxlength="30"
-          placeholder="Add a tag"
+          placeholder={t("group.tag_placeholder")}
           value={tagValue}
           oninput={(e) => (tagDraft = e.currentTarget.value)}
           onkeydown={(e) => e.key === "Enter" && saveTag()} />
         <button
           class="tag-add"
-          title={self?.label ? "Save tag" : "Add tag"}
-          aria-label={self?.label ? "Save tag" : "Add tag"}
+          title={self?.label ? t("group.tag_save") : t("group.tag_add")}
+          aria-label={self?.label ? t("group.tag_save") : t("group.tag_add")}
           disabled={tagBusy || tagValue.trim() === (self?.label ?? "")}
           onclick={saveTag}><Icon name={self?.label ? "check" : "plus"} size={16} /></button>
       </div>
@@ -432,8 +436,8 @@
 
     <label class="setting">
       <div>
-        <span class="setting-title">Pin chat</span>
-        <span class="setting-desc">Keeps it at the top of the list, on every linked device.</span>
+        <span class="setting-title">{t("chat.pin_chat")}</span>
+        <span class="setting-desc">{t("chat.pin_hint")}</span>
       </div>
       <input class="switch" type="checkbox" checked={pinned} onchange={onpin} />
     </label>
@@ -441,8 +445,8 @@
     {#if info.admin || self?.admin}
     <label class="setting">
       <div>
-        <span class="setting-title">Reports to admins</span>
-        <span class="setting-desc">Lets members report messages to this group's admins, not to WhatsApp.</span>
+        <span class="setting-title">{t("group.admin_reports")}</span>
+        <span class="setting-desc">{t("group.admin_reports_hint")}</span>
       </div>
       <input
         class="switch"
@@ -453,14 +457,14 @@
     </label>
     {/if}
   {:else if section === "reports"}
-    <h2>Reported messages</h2>
-    <p class="lede">Messages members reported to the admins. Only admins see this.</p>
+    <h2>{t("group.reported_messages")}</h2>
+    <p class="lede">{t("group.reported_hint")}</p>
     {#if reportsError}
       <p class="error-text">{reportsError}</p>
     {:else if reports === null}
-      <p class="muted">Loading reports…</p>
+      <p class="muted">{t("group.reports_loading")}</p>
     {:else if reports.length === 0}
-      <p class="muted">Nothing has been reported.</p>
+      <p class="muted">{t("group.reports_empty")}</p>
     {:else}
       <ul class="reports">
         {#each reports as report (report.id)}
@@ -468,14 +472,14 @@
             {#if report.message}
               <button class="report-message" onclick={() => onjump(report.id)}>
                 <span class="report-author">{namer(report.message.sender_name, report.message.sender)}</span>
-                <span class="report-text">{report.message.text}</span>
+                <span class="report-text" dir="auto">{report.message.text}</span>
               </button>
             {:else}
-              <span class="muted">This message is not on this device.</span>
+              <span class="muted">{t("group.report_message_missing")}</span>
             {/if}
             <span class="muted">
-              Reported by {report.reporters
-                .map(([who, at]) => `${namer(null, who)} (${new Date(at * 1000).toLocaleString()})`)
+              {t("group.reported_by")} {report.reporters
+                .map(([who, at]) => `${namer(null, who)} (${formatDate(at, { dateStyle: "medium", timeStyle: "short" })})`)
                 .join(", ")}
             </span>
           </li>
@@ -484,34 +488,34 @@
     {/if}
   {:else}
     <div class="members-head">
-      <h2>Members</h2>
+      <h2>{t("group.members")}</h2>
       {#if info.admin}
         <button
           class="link-button"
           onclick={() => {
             selecting = !selecting;
             selected = {};
-            memberError = null;
-          }}>{selecting ? "Done" : "Select"}</button>
+            memberError = null; memberRefusals = [];
+          }}>{selecting ? t("ui.done") : t("ui.select")}</button>
       {/if}
       {#if info.admin || info.members_can_add}
         <button class="button" onclick={() => (adding = true)}>
-          <Icon name="plus" size={14} /> Add
+          <Icon name="plus" size={14} /> {t("ui.add")}
         </button>
       {/if}
     </div>
-    {#if memberError}<p class="error-text">{memberError}</p>{/if}
+    {#if memberError || refusal}<p class="error-text">{memberError || refusal}</p>{/if}
     {#if selecting && selectedList.length > 0}
       <div class="member-actions">
-        <span class="muted">{selectedList.length} selected</span>
-        <button class="button" disabled={memberBusy} onclick={() => runMemberAction(onpromote)}>Make admin</button>
-        <button class="button" disabled={memberBusy} onclick={() => runMemberAction(ondemote)}>Dismiss as admin</button>
-        <button class="button danger" disabled={memberBusy} onclick={() => (confirmRemove = true)}>Remove</button>
+        <span class="muted">{t("group.selected_count", { count: selectedList.length })}</span>
+        <button class="button" disabled={memberBusy} onclick={() => runMemberAction(onpromote)}>{t("group.make_admin")}</button>
+        <button class="button" disabled={memberBusy} onclick={() => runMemberAction(ondemote)}>{t("group.dismiss_admin")}</button>
+        <button class="button danger" disabled={memberBusy} onclick={() => (confirmRemove = true)}>{t("ui.remove")}</button>
       </div>
     {/if}
     <label class="member-search">
       <Icon name="search" size={15} />
-      <input placeholder="Search by name, number or username" bind:value={query} />
+      <input placeholder={t("group.search_members")} dir="auto" bind:value={query} />
     </label>
     {#each groups as group (group.title)}
       <h3 class="member-group">{group.title} <span>{group.list.length}</span></h3>
@@ -530,15 +534,15 @@
                 type="checkbox"
                 checked={!!selected[member.jid]}
                 disabled={member.isSelf || member.owner}
-                aria-label="Select {member.display}"
+                aria-label={t("group.select_member", { name: member.display })}
                 onchange={() => toggleSelect(member.jid)} />
             {/if}
             {@render avatar(member.jid, member.display, 38)}
             <span class="member-text">
               <span class="member-name">
                 <button class="member-display" onclick={(event) => onprofile(member.jid, member.display, event)}
-                  aria-label="Open member sheet for {member.display}">{member.display}</button>
-                {#if member.isSelf}<span class="you">You</span>{/if}
+                  aria-label={t("group.open_member", { name: member.display })}>{member.display}</button>
+                {#if member.isSelf}<span class="you">{t("chat.you")}</span>{/if}
               </span>
               {#if member.label}
                 <span class="member-tag">{member.label}</span>
@@ -547,22 +551,22 @@
               {/if}
             </span>
             {#if member.owner}
-              <span class="role owner">Owner</span>
+              <span class="role owner">{t("group.owner_badge")}</span>
             {:else if member.admin}
-              <span class="role">Admin</span>
+              <span class="role">{t("group.admin")}</span>
             {/if}
             {#if !member.isSelf}
               <button
                 class="message"
-                title="Message"
-                aria-label="Message {member.display}"
+                title={t("chat.message")}
+                aria-label={t("contact.message_name", { name: member.display })}
                 onclick={() => onmessage(member.jid)}><Icon name="message" size={16} /></button>
             {/if}
           </li>
         {/each}
       </ul>
     {:else}
-      <p class="muted">No members match.</p>
+      <p class="muted">{t("group.members_no_matches")}</p>
     {/each}
   {/if}
 </Panel>
@@ -582,9 +586,9 @@
 
 {#if confirmRemove}
   <ConfirmDialog
-    label="Remove from group"
-    title={`Remove ${selectedList.length} member${selectedList.length === 1 ? "" : "s"}?`}
-    hint="They leave the group on every linked device. You can add them again later."
+    label={t("group.remove_member")}
+    title={t("group.remove_question", { count: selectedList.length })}
+    hint={t("group.remove_hint")}
     onclose={() => (confirmRemove = false)}>
     {#snippet actions()}
       <button
@@ -592,8 +596,8 @@
         onclick={() => {
           confirmRemove = false;
           void runMemberAction(onremove);
-        }}>Remove</button>
-      <button onclick={() => (confirmRemove = false)}>Cancel</button>
+        }}>{t("ui.remove")}</button>
+      <button onclick={() => (confirmRemove = false)}>{t("ui.cancel")}</button>
     {/snippet}
   </ConfirmDialog>
 {/if}
@@ -772,12 +776,12 @@
     gap: 2px;
     padding: 8px 10px;
     border: 0;
-    border-left: 3px solid var(--danger);
+    border-inline-start: 3px solid var(--danger);
     border-radius: 6px;
     background: var(--surface);
     color: var(--text);
     font: inherit;
-    text-align: left;
+    text-align: start;
     cursor: pointer;
   }
   .report-author {
@@ -854,7 +858,7 @@
     background: none;
     color: inherit;
     font: inherit;
-    text-align: left;
+    text-align: start;
     cursor: pointer;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -897,7 +901,7 @@
   }
   .tag-row .field {
     flex: 1;
-    padding-right: 44px;
+    padding-inline-end: 44px;
   }
   .owner {
     padding: 0;
@@ -913,7 +917,7 @@
   .tag-add {
     position: absolute;
     top: 50%;
-    right: 6px;
+    inset-inline-end: 6px;
     transform: translateY(-50%);
     display: grid;
     place-items: center;
@@ -954,4 +958,5 @@
   .message:hover {
     color: var(--text);
   }
+  .diagnostic pre { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>

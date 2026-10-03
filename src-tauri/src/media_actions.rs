@@ -4,6 +4,7 @@ use tauri::{State, WebviewWindow};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::DialogExt;
 use crate::{AppState, desktop::shell_open};
+use crate::command_error::{CommandError, CommandResult};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -13,22 +14,22 @@ pub(crate) enum MediaAction { CopyImage, Save, Open }
 #[tauri::command]
 pub(crate) async fn message_media_action(
     window: WebviewWindow, state: State<'_, AppState>, chat: String, id: String, action: MediaAction,
-) -> Result<(), String> {
-    let service = state.service()?;
-    let message = service.media_for_export(&chat, &id).await.map_err(|e| e.to_string())?;
-    let directory = service.media_dir().ok_or("no media folder is configured")?;
+) -> CommandResult<()> {
+    let service = state.service().map_err(|error| CommandError::code("error.not_connected").with_diagnostic(error))?;
+    let message = service.media_for_export(&chat, &id).await?;
+    let directory = service.media_dir().ok_or_else(|| CommandError::code("error.media_directory_missing"))?;
     tauri::async_runtime::spawn_blocking(move || {
-        let source = export_path(&directory, message.media.path.as_deref().ok_or("media download produced no file")?)?;
+        let source = export_path(&directory, message.media.path.as_deref().ok_or_else(|| CommandError::code("error.media_download_missing"))?)?;
         match action {
             MediaAction::CopyImage => {
                 if !matches!(message.media.kind.as_deref(), Some("image" | "sticker")) {
-                    return Err("only images can be copied to the clipboard".into());
+                    return Err(CommandError::code("error.media_clipboard_image_only"));
                 }
                 let image = clipboard_image(&source)?;
-                window.clipboard().write_image(&image).map_err(|e| e.to_string())
+                window.clipboard().write_image(&image).map_err(CommandError::operation_failed)
             }
             MediaAction::Save => {
-                let name = source.file_name().ok_or("media file has no name")?.to_string_lossy();
+                let name = source.file_name().ok_or_else(|| CommandError::code("error.media_file_name_missing"))?.to_string_lossy();
                 let selected = window.dialog().file().set_parent(&window)
                     .set_file_name(name.as_ref()).blocking_save_file();
                 if let Some(selected) = selected {
@@ -39,21 +40,21 @@ pub(crate) async fn message_media_action(
                 }
                 Ok(())
             }
-            MediaAction::Open => shell_open(source.as_os_str()),
+            MediaAction::Open => shell_open(source.as_os_str()).map_err(CommandError::from),
         }
     }).await.map_err(|e| e.to_string())?
 }
 
-fn export_path(directory: &Path, source: &str) -> Result<PathBuf, String> {
+fn export_path(directory: &Path, source: &str) -> CommandResult<PathBuf> {
     let directory = dunce::canonicalize(directory).map_err(|e| e.to_string())?;
     let source = dunce::canonicalize(source).map_err(|e| e.to_string())?;
     if !source.starts_with(directory) || !source.is_file() {
-        return Err("attachment is outside the media folder or is not a file".into());
+        return Err(CommandError::code("error.media_path_denied"));
     }
     Ok(source)
 }
 
-fn clipboard_image(path: &Path) -> Result<tauri::image::Image<'static>, String> {
+fn clipboard_image(path: &Path) -> CommandResult<tauri::image::Image<'static>> {
     let rgba = decode_first_frame(path)?.into_rgba8();
     let (width, height) = rgba.dimensions();
     Ok(tauri::image::Image::new_owned(rgba.into_raw(), width, height))
@@ -61,7 +62,7 @@ fn clipboard_image(path: &Path) -> Result<tauri::image::Image<'static>, String> 
 
 /// A still image from `path`: the `image` crate first, and for an animated WebP
 /// it may refuse, the first frame decoded by ffmpeg.
-fn decode_first_frame(path: &Path) -> Result<image::DynamicImage, String> {
+fn decode_first_frame(path: &Path) -> CommandResult<image::DynamicImage> {
     let mut reader = image::ImageReader::open(path).map_err(|e| e.to_string())?
         .with_guessed_format().map_err(|e| e.to_string())?;
     let mut limits = image::Limits::default();
@@ -72,8 +73,8 @@ fn decode_first_frame(path: &Path) -> Result<image::DynamicImage, String> {
     if let Ok(decoded) = reader.decode() {
         return Ok(decoded);
     }
-    let frame = first_frame(path).ok_or("could not decode the image")?;
-    image::load_from_memory(&frame).map_err(|e| e.to_string())
+    let frame = first_frame(path).ok_or_else(|| CommandError::code("error.media_image_decode_failed"))?;
+    image::load_from_memory(&frame).map_err(CommandError::operation_failed)
 }
 
 /// The first frame of a video or animated WebP as PNG, via ffmpeg when present.

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
+  import { t } from "$lib/i18n/localizer";
   import { onMount, untrack } from "svelte";
   import { members } from "$lib/state/members.svelte";
   import { plain } from "$lib/utils/format";
@@ -30,8 +32,8 @@
   let loading = $state(true);
   let searching = $state(false);
   let busy = $state(false);
-  let catalogError = $state<string | null>(null);
-  let error = $state<string | null>(null);
+  let catalogError = $state<LocalizedError | string | null>(null);
+  let error = $state<LocalizedError | string | null>(null);
 
   const recent = $derived.by((): QuickChat[] => [...chats].sort((a, b) => b.last_message_at - a.last_message_at).map((chat) => ({
     jid: chat.chat, name: chat.display_name ?? chat.chat.split("@")[0], number: chat.chat.split("@")[0],
@@ -47,7 +49,7 @@
       const label = chats.find((chat) => chat.chat === message.chat)?.display_name ?? message.chat.split("@")[0];
       return { key: JSON.stringify([message.chat, message.id]), chat: message.chat, messageId: message.id,
         label, title: members.displayName(label, message.chat), kind: "message",
-        snippet: message.spoiler ? "[Spoiler]" : messageSnippet(plain(message.text, (user) => members.mentionName(user)), query),
+        snippet: message.spoiler ? t("chat.spoiler") : messageSnippet(plain(message.text, (user) => members.mentionName(user)), query),
       };
     }),
   ] : []);
@@ -57,7 +59,7 @@
     input.focus();
     void onload().then((found) => {
       if (current()) { directory = found; selected = 0; }
-    }).catch((failure) => { if (current()) catalogError = String(failure); })
+    }).catch((failure) => { if (current()) catalogError = normalizeError(failure); })
       .finally(() => { if (current()) loading = false; });
     return () => { mounted = false; dialog.close(); };
   });
@@ -77,7 +79,7 @@
         const found = await onmessages(value);
         if (active && current()) { messages = found.slice(0, 50); messageQuery = value; }
       } catch (failure) {
-        if (active && current()) error = `Could not search messages: ${String(failure)}`;
+        if (active && current()) error = normalizeError({ kind: "postal_error", code: "error.quick_search", params: {}, diagnostic: normalizeError(failure).diagnostic });
       } finally {
         if (active && current()) searching = false;
       }
@@ -97,7 +99,7 @@
       await onchoose(target);
       if (current()) close();
     } catch (failure) {
-      if (current()) error = String(failure);
+      if (current()) error = normalizeError(failure);
     } finally { if (current()) busy = false; }
   }
 
@@ -122,32 +124,32 @@
 <dialog bind:this={dialog} aria-labelledby="quick-switcher-title" onkeydown={key}
   oncancel={(event) => { event.preventDefault(); close(); }}>
   <header>
-    <h2 id="quick-switcher-title">Quick switcher</h2>
-    <button type="button" class="close" aria-label="Close quick switcher" onclick={close}>×</button>
+    <h2 id="quick-switcher-title">{t("nav.quick_switcher")}</h2>
+    <button type="button" class="close" aria-label={t("nav.quick_close")} onclick={close}>×</button>
   </header>
-  <input bind:this={input} bind:value={query} role="combobox" aria-label="Find chats and messages"
+  <input bind:this={input} bind:value={query} role="combobox" aria-label={t("nav.quick_find")}
     aria-autocomplete="list" aria-expanded="true" aria-controls="quick-switcher-results"
     aria-activedescendant={rows[selected] ? `quick-switcher-option-${selected}` : undefined}
-    placeholder="Find chats, contacts, groups, channels or messages" disabled={busy} />
-  <p class="heading">{query.trim() ? "Chats and messages" : "Recent chats"}</p>
-  <ul bind:this={list} id="quick-switcher-results" role="listbox" aria-label="Quick switcher results" aria-busy={loading || searching}>
+    placeholder={t("nav.quick_hint")} disabled={busy} />
+  <p class="heading">{query.trim() ? t("nav.chats_messages") : t("nav.recent_chats")}</p>
+  <ul bind:this={list} id="quick-switcher-results" role="listbox" aria-label={t("nav.quick_results")} aria-busy={loading || searching}>
     {#each rows as row, index (row.key)}
       <li role="presentation">
         <button id={`quick-switcher-option-${index}`} type="button" role="option" tabindex="-1"
           aria-selected={selected === index} class:active={selected === index} disabled={busy}
           onmouseenter={() => (selected = index)} onclick={() => void choose(row)}>
-          <span class="label">{row.title}</span><span class="kind">{row.kind}</span>
+          <span class="label"><bdi>{row.title}</bdi></span><span class="kind">{row.kind}</span>
           {#if row.snippet}<span class="snippet">{row.snippet}</span>{/if}
         </button>
       </li>
     {/each}
   </ul>
-  {#if loading || searching}<p class="status" role="status">{searching ? "Searching messages…" : "Loading contacts…"}</p>{/if}
-  {#if !rows.length && !loading && !searching}<p class="status">{query.trim() ? "No matches found." : "No recent chats yet."}</p>{/if}
-  {#if catalogError}<p class="error" role="alert">Could not load contacts: {catalogError}</p>{/if}
+  {#if loading || searching}<p class="status" role="status">{searching ? t("nav.messages_searching") : t("contact.loading")}</p>{/if}
+  {#if !rows.length && !loading && !searching}<p class="status">{query.trim() ? t("ui.no_matches") : t("nav.recent_empty")}</p>{/if}
+  {#if catalogError}<p class="error" role="alert">{t("nav.contacts_load_error", { error: normalizeError(catalogError).message })}</p>{/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
-  <footer><span>↑ ↓ Move</span><span>Enter Open</span><span>Esc Close</span>
-    {#if onusername}<button type="button" class="username" disabled={busy} onclick={onusername}>Find username</button>{/if}
+  <footer><span>{t("nav.quick_move_keys")}</span><span>{t("nav.quick_open_key")}</span><span>{t("nav.quick_close_key")}</span>
+    {#if onusername}<button type="button" class="username" disabled={busy} onclick={onusername}>{t("contact.username_find")}</button>{/if}
   </footer>
 </dialog>
 
@@ -161,7 +163,7 @@
   input { box-sizing: border-box; width: 100%; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; }
   .heading { margin: 12px 4px 6px; color: var(--muted); font-size: 12px; }
   ul { max-height: min(420px, 55vh); margin: 0; padding: 0; overflow-y: auto; list-style: none; }
-  li button { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; box-sizing: border-box; width: 100%; padding: 10px 12px; border: 0; border-radius: 6px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+  li button { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; box-sizing: border-box; width: 100%; padding: 10px 12px; border: 0; border-radius: 6px; background: transparent; color: var(--text); font: inherit; text-align: start; cursor: pointer; }
   li button.active { background: var(--raised); }
   .label, .snippet { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .kind, .snippet, footer, .status { color: var(--muted); font-size: 12px; }
@@ -170,5 +172,5 @@
   .status, .error { margin: 10px 4px; }
   .error { color: var(--danger); font-size: 12px; }
   footer { display: flex; gap: 18px; margin-top: 12px; }
-  .username { margin-left: auto; border: 0; padding: 0; color: var(--text); background: transparent; font: inherit; cursor: pointer; }
+  .username { margin-inline-start: auto; border: 0; padding: 0; color: var(--text); background: transparent; font: inherit; cursor: pointer; }
 </style>

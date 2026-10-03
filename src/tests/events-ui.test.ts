@@ -8,6 +8,9 @@ import { parse } from "svelte/compiler";
 import { createServer } from "vite";
 import { quizScopeMatches } from "../lib/utils/quiz-poll.ts";
 import { broadcastSendReason } from "../lib/utils/broadcast.ts";
+import { LocalizedError, normalizeError } from "../lib/i18n/errors.ts";
+import { formatDate, formatTime, t } from "../lib/i18n/localizer.ts";
+import { untrack } from "svelte";
 
 const event = () => ({ id: "event", name: "Synthetic event", description: "Details", start: 1791153017, end: 1791265529,
   location: "Place", link: null, canceled: false, invitation: false, invitation_id: null as string | null, pinned: true,
@@ -24,13 +27,21 @@ function deferred() {
   return { promise, resolve, reject };
 }
 function methods(path: string, context: Record<string, any>, derived: string[]) {
+  Object.assign(context, { t, normalizeError, LocalizedError, localeDate: formatDate, localeTime: formatTime, untrack });
   const source = readFileSync(new URL(path, import.meta.url), "utf8"), script = source.match(/<script[^>]*>([\s\S]*?)<\/script>/)![1];
   const tree = ts.createSourceFile("component.ts", script, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const declarations = tree.statements.filter(ts.isVariableStatement).flatMap((node) => node.declarationList.declarations);
   const body = tree.statements.filter(ts.isFunctionDeclaration).map((node) => node.getText(tree));
+  const bindings = [...derived];
   for (const name of ["answers", "pad"]) {
     const node = declarations.find((node) => node.name.getText(tree) === name);
-    if (node) body.push(`var ${name} = ${node.initializer!.getText(tree)};`);
+    if (node) {
+      let initializer = node.initializer!;
+      if (ts.isCallExpression(initializer) && initializer.expression.getText(tree) === "$derived") {
+        body.push(`var get_${name} = () => (${initializer.arguments[0].getText(tree)});`);
+        bindings.push(name);
+      } else body.push(`var ${name} = ${initializer.getText(tree)};`);
+    }
   }
   for (const name of derived) {
     const node = declarations.find((node) => node.name.getText(tree) === name)?.initializer;
@@ -42,8 +53,8 @@ function methods(path: string, context: Record<string, any>, derived: string[]) 
   const scope = effects.find((node) => node.getText(tree).includes("generation++") || node.getText(tree).includes("++generation"));
   assert.ok(scope && ts.isExpressionStatement(scope) && ts.isCallExpression(scope.expression));
   body.push(`var resetScope = ${scope.expression.arguments[0].getText(tree)};`);
+  for (const name of bindings) Object.defineProperty(context, name, { configurable: true, get: () => context[`get_${name}`]() });
   runInNewContext(ts.transpileModule(body.join("\n"), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
-  for (const name of derived) Object.defineProperty(context, name, { get: () => context[`get_${name}`]() });
   return context;
 }
 function card() {
@@ -93,7 +104,7 @@ test("clear, invalid guests, keyless, invitation, canceled and broadcast events 
 
 test("current event errors remain visible and retry clears them", async () => {
   const f = card(); f.c.onrespond = async () => { throw new Error("Synthetic RSVP failure"); };
-  await f.c.respond("going"); assert.equal(f.c.failed, "Error: Synthetic RSVP failure"); assert.equal(f.c.busy, false);
+  await f.c.respond("going"); assert.ok(f.c.failed instanceof LocalizedError); assert.equal(f.c.failed.code, "error.operation_failed"); assert.match(f.c.failed.diagnostic ?? "", /Synthetic RSVP failure/); assert.equal(f.c.busy, false);
   f.c.onrespond = async () => {}; await f.c.respond("maybe"); assert.equal(f.c.failed, "");
 });
 
@@ -114,7 +125,7 @@ test("account, chat, generation, event and unmount discard stale event reply com
 
 test("cancel uses same event error guard and current response groups update from native snapshots", async () => {
   const f = card(); await f.c.run(async () => { throw new Error("Synthetic cancel failure"); });
-  assert.equal(f.c.failed, "Error: Synthetic cancel failure");
+  assert.ok(f.c.failed instanceof LocalizedError); assert.equal(f.c.failed.code, "error.operation_failed"); assert.match(f.c.failed.diagnostic ?? "", /Synthetic cancel failure/);
   assert.deepEqual(Array.from(f.c.groups, (group: any) => group.rows.length), [1, 1, 1]);
   f.c.event.responses.push({ responder: "new@lid", response: "going", extra_guest_count: 1, timestamp_ms: 3 });
   assert.deepEqual(Array.from(f.c.groups, (group: any) => [group.rows.length, group.guests]), [[2, 3], [1, 0], [1, 0]]);
@@ -148,7 +159,7 @@ test("event validation blocks malformed, reversed and end-only times without los
 
 test("event submit failures retain draft and obsolete scope cannot close newer editor", async () => {
   const current = form(); current.c.oncreate = async () => { throw new Error("Synthetic edit failure"); }; await current.c.submit();
-  assert.equal(current.c.failed, "Error: Synthetic edit failure"); assert.equal(current.c.name, " Updated "); assert.equal(current.closes(), 0);
+  assert.ok(current.c.failed instanceof LocalizedError); assert.equal(current.c.failed.code, "error.operation_failed"); assert.match(current.c.failed.diagnostic ?? "", /Synthetic edit failure/); assert.equal(current.c.name, " Updated "); assert.equal(current.closes(), 0);
   for (const change of ["account", "chat", "generation", "request", "close"]) for (const fail of [false, true]) {
     const f = form(), save = deferred(); f.c.oncreate = () => save.promise;
     const pending = f.c.submit();
@@ -173,7 +184,7 @@ test("event card renders full named attendees, all counts, own answer, guests an
       onrespond: async () => { throw new Error("SSR must not reply"); }, onopenurl: () => {} } }).body;
     const text = body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
     assert.deepEqual(names, ["actual@lid", "12025550101@s.whatsapp.net"]);
-    assert.ok(text.includes("1 going") && text.includes("1 maybe") && text.includes("1 can't go"));
+    assert.ok(text.includes("1 Going") && text.includes("1 Maybe") && text.includes("1 Can't go"));
     assert.ok(text.includes("Your response: Going") && text.includes("2 extra guests") && text.includes("Guest count unavailable"));
     assert.ok(/Saved &lt;LID(?:>|&gt;)/.test(body) && body.includes("Phone name") && body.includes("Pinned event"));
     assert.ok(body.includes("This event was canceled") && body.includes("Attendees"));

@@ -1,16 +1,18 @@
 <script lang="ts">
+  import { t } from "$lib/i18n/localizer";
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
   import { untrack } from "svelte";
-  import { AUDIT_KINDS, auditEntryLabel, auditFilters, mergeAuditEntries } from "$lib/utils/group-audit";
+  import { AUDIT_KINDS, auditEntryRequested, auditEntryLabel, auditFilters, mergeAuditEntries } from "$lib/utils/group-audit";
   import type { GroupAuditCursor } from "$lib/utils/wire";
   import type { AuditEntry, AuditFilters, AuditPage, AuditScope } from "$lib/utils/group-audit";
 
-  let { account, group, requestKey, onload, onjump, namer, formatTime, actor = "", member = null, title = "Group audit" }: {
+  let { account, group, requestKey, onload, onjump, namer, formatTime, actor = "", member = null, title = null }: {
     account: string | null;
     group: string;
     requestKey: string | number;
     actor?: string;
     member?: string | null;
-    title?: string;
+    title?: string | null;
     onload: (scope: AuditScope, filters: AuditFilters, cursor: GroupAuditCursor | null) => Promise<AuditPage>;
     onjump: (group: string, messageId: string) => void;
     namer: (jid: string) => string;
@@ -25,7 +27,7 @@
   let cursor = $state.raw<GroupAuditCursor | null>(null);
   let loaded = $state(false);
   let loading = $state(false);
-  let error = $state("");
+  let error = $state<LocalizedError | string>("");
   let generation = 0;
   const checked = $derived(auditFilters(kind, actorDraft, from, to));
 
@@ -54,45 +56,45 @@
     try {
       const page = await onload(scope, filters, pageCursor);
       if (!current()) return;
-      if (page.entries.some((entry) => entry.chat !== scope.group)) throw new Error("Audit response belongs to another group.");
+      if (page.entries.some((entry) => entry.chat !== scope.group)) throw normalizeError({ kind: "postal_error", code: "error.group_audit_scope", params: {} });
       rows = older ? mergeAuditEntries(rows, page.entries) : page.entries;
       cursor = page.has_more ? page.next_cursor : null;
       loaded = true;
-    } catch (cause) { if (current()) error = String(cause); }
+    } catch (cause) { if (current()) error = normalizeError(cause); }
     finally { if (current()) loading = false; }
   }
 </script>
 
-<section class="audit" aria-label={title}>
-  <header><h3>{title}</h3><button disabled={!account || loading || !checked.filters} onclick={() => load(false)}>Refresh</button></header>
-  <p class="muted">Changes recorded on this device. Earlier changes may be missing.</p>
+<section class="audit" aria-label={title ?? t("group.audit")}>
+  <header><h3>{title ?? t("group.audit")}</h3><button disabled={!account || loading || !checked.filters} onclick={() => load(false)}>{t("ui.refresh")}</button></header>
+  <p class="muted">{t("group.audit_hint")}</p>
   <div class="filters">
-    <label>Kind <select aria-label="Kind" bind:value={kind}><option value="">All kinds</option>{#each AUDIT_KINDS as value}<option {value}>{value.replaceAll("_", " ")}</option>{/each}</select></label>
-    <label>Actor address <input bind:value={actorDraft} placeholder="All actors" /></label>
-    <label>From <input type="date" bind:value={from} /></label>
-    <label>To <input type="date" bind:value={to} /></label>
+    <label>{t("group.audit_kind")} <select aria-label={t("group.audit_kind")} bind:value={kind}><option value="">{t("group.audit_all_kinds")}</option>{#each AUDIT_KINDS as value}<option {value}>{t(`group.audit_kind_${value}`)}</option>{/each}</select></label>
+    <label>{t("group.audit_actor_address")} <input bind:value={actorDraft} dir="ltr" placeholder={t("group.audit_all_actors")} /></label>
+    <label>{t("ui.from")} <input type="date" bind:value={from} /></label>
+    <label>{t("ui.to")} <input type="date" bind:value={to} /></label>
   </div>
-  {#if !account}<p role="status">Select an account to read group audit.</p>
+  {#if !account}<p role="status">{t("group.audit_select_account")}</p>
   {:else if checked.error}<p class="error" role="alert">{checked.error}</p>
   {:else}
-    {#if loading}<p class="muted" role="status">Loading audit…</p>{/if}
+    {#if loading}<p class="muted" role="status">{t("group.audit_loading")}</p>{/if}
     {#if error}<p class="error" role="alert">{error}</p>{/if}
-    {#if loaded && !loading && !error && rows.length === 0}<p class="muted" role="status">No recorded changes match these filters.</p>{/if}
+    {#if loaded && !loading && !error && rows.length === 0}<p class="muted" role="status">{t("group.audit_empty")}</p>{/if}
     <ol>
       {#each rows as entry (entry.id)}
         <li>
-          <div class="row-head"><time>{entry.timestamp !== null ? formatTime(entry.timestamp) : `Observed ${formatTime(entry.observed_at)}`}</time><span>{entry.actor ? namer(entry.actor) : "Actor not recorded"}</span></div>
+          <div class="row-head"><time>{entry.timestamp !== null ? formatTime(entry.timestamp) : t("group.audit_observed", { time: formatTime(entry.observed_at) })}</time><span>{entry.actor ? namer(entry.actor) : t("group.audit_actor_missing")}</span></div>
           <p>{auditEntryLabel(entry)}{entry.target ? ` · ${entry.target.includes("@") ? namer(entry.target) : entry.target}` : ""}</p>
-          <dl><dt>Before</dt><dd>{entry.old_value === null ? "Not recorded" : entry.old_value || "(empty)"}</dd>
-            <dt>{auditEntryLabel(entry).endsWith("request sent") ? "Requested" : "After"}</dt><dd>{entry.new_value === null ? "Not recorded" : entry.new_value || "(empty)"}</dd></dl>
-          <small>Source: {entry.source === "stored" ? "retained notice" : entry.source}{entry.old_source ? ` · Previous value from ${entry.old_source === "cached" ? "cached group info" : "the protocol"}` : ""}{entry.timestamp === null ? " · Event time not recorded" : ""}</small>
-          {#if entry.jump_available && entry.message_id}<button onclick={() => onjump(group, entry.message_id!)}>Open message</button>
-          {:else if entry.message_id}<small>Message link unavailable locally.</small>{/if}
+          <dl><dt>{t("group.audit_before")}</dt><dd dir="auto">{entry.old_value === null ? t("ui.not_recorded") : entry.old_value || "(empty)"}</dd>
+            <dt>{auditEntryRequested(entry) ? t("group.audit_requested") : t("group.audit_after")}</dt><dd>{entry.new_value === null ? t("ui.not_recorded") : entry.new_value || "(empty)"}</dd></dl>
+          <small>{t("group.audit_source_label", { source: t(({ stored: "group.audit_source_stored", notification: "group.audit_source_notification", message: "group.audit_source_message", history: "group.audit_source_history", local: "group.audit_source_local" } as Record<string, string>)[entry.source] ?? "group.audit_source_unknown") })}{entry.old_source ? t("group.audit_previous_source", { source: t(entry.old_source === "cached" ? "group.audit_previous_cached" : "group.audit_previous_protocol") }) : ""}{entry.timestamp === null ? t("group.audit_time_missing") : ""}</small>
+          {#if entry.jump_available && entry.message_id}<button onclick={() => onjump(group, entry.message_id!)}>{t("chat.open_message")}</button>
+          {:else if entry.message_id}<small>{t("group.audit_message_unavailable")}</small>{/if}
         </li>
       {/each}
     </ol>
-    {#if cursor !== null}<button disabled={loading} onclick={() => load(true)}>Load older changes</button>
-    {:else if loaded && rows.length > 0}<p class="muted" role="status">End of stored audit.</p>{/if}
+    {#if cursor !== null}<button disabled={loading} onclick={() => load(true)}>{t("group.audit_older")}</button>
+    {:else if loaded && rows.length > 0}<p class="muted" role="status">{t("group.audit_end")}</p>{/if}
   {/if}
 </section>
 

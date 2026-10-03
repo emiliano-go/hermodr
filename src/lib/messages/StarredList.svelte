@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { formatDate as localeDate, formatTime as localeTime } from "$lib/i18n/localizer";
+  import { t } from "$lib/i18n/localizer";
   import type { StarredItem } from "$lib/utils/models";
   import { fade, scale } from "svelte/transition";
   import { motion } from "$lib/utils/theme.svelte";
@@ -27,8 +29,8 @@
   function when(ts: number) {
     const date = new Date(ts * 1000);
     return new Date().toDateString() === date.toDateString()
-      ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-      : date.toLocaleDateString();
+      ? localeTime((date).getTime() / 1000, { hour: "2-digit", minute: "2-digit" })
+      : localeDate((date).getTime() / 1000, { dateStyle: "short" });
   }
 </script>
 
@@ -40,32 +42,32 @@
   role="presentation"
   transition:fade|global={{ duration: motion(140) }}
   onclick={(e) => e.target === e.currentTarget && onclose()}>
-  <div class="dialog" role="dialog" aria-modal="true" aria-label="Starred messages" transition:scale|global={{ start: 0.96, duration: motion(160) }}>
+  <div class="dialog" role="dialog" aria-modal="true" aria-label={t("content.starred_messages")} transition:scale|global={{ start: 0.96, duration: motion(160) }}>
     <header>
-      <h2>Starred messages</h2>
-      <button class="close" aria-label="Close" onclick={onclose}><Icon name="x" size={18} /></button>
+      <h2>{t("content.starred_messages")}</h2>
+      <button class="close" aria-label={t("content.close")} onclick={onclose}><Icon name="x" size={18} /></button>
     </header>
     <label class="search">
       <Icon name="search" size={15} />
       <!-- svelte-ignore a11y_autofocus -->
-      <input placeholder="Search starred messages" bind:value={query} autofocus />
+      <input placeholder={t("content.search_starred_messages")} bind:value={query} autofocus />
     </label>
     <ul>
       {#if items === null}
-        <li class="empty">Loading…</li>
+        <li class="empty">{t("content.loading")}</li>
       {:else if shown.length === 0}
-        <li class="empty">{items.length === 0 ? "Star a message from its menu to keep it here." : "Nothing matches."}</li>
+        <li class="empty">{items.length === 0 ? t("content.star_a_message_from_its_menu_to_keep_it_here") : t("content.nothing_matches")}</li>
       {/if}
       {#each shown as item (`${item.chat}/${item.id}`)}
         <li class="item">
           <button class="row" onclick={() => onopen(item)}>
             <span class="head">
-              <span class="who">{item.author} <span class="where">in {item.where}</span></span>
+              <span class="who"><bdi dir="auto">{item.author}</bdi> <span class="where">{t("content.in")} {item.where}</span></span>
               <span class="when">{when(item.timestamp)}</span>
             </span>
-            <span class="text">{item.text}</span>
+            <span class="text"><bdi dir="auto">{item.text}</bdi></span>
           </button>
-          <button class="unstar" title="Unstar" aria-label="Unstar" onclick={() => onunstar(item)}>
+          <button class="unstar" title={t("content.unstar")} aria-label={t("content.unstar")} onclick={() => onunstar(item)}>
             <Icon name="star" size={15} filled />
           </button>
         </li>
@@ -173,7 +175,7 @@
     background: transparent;
     color: var(--text);
     font: inherit;
-    text-align: left;
+    text-align: start;
     cursor: pointer;
   }
   .row:hover {

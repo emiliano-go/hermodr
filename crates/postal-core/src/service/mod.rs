@@ -51,7 +51,7 @@ mod labels;
 mod group_audit;
 mod member_profiles;
 mod quick_replies;
-pub use member_profiles::{MemberProfile, MemberProfileLive};
+pub use member_profiles::{MemberProfile, MemberProfileLive, MemberProfileLiveView};
 mod diagnostics;
 mod storage;
 mod archive;
@@ -535,6 +535,7 @@ pub struct AdminReport {
 /// How the service should behave for one account.
 #[derive(Debug, Clone)]
 pub struct ServiceConfig {
+    pub database_key: Option<crate::database_crypto::DatabaseKey>,
     /// Session database (protocol and crypto state).
     pub session_path: PathBuf,
     /// Message store database.
@@ -576,6 +577,7 @@ impl ServiceConfig {
     pub fn under(data_dir: impl Into<PathBuf>) -> Self {
         let data_dir = data_dir.into();
         Self {
+            database_key: None,
             session_path: data_dir.join("session.db"),
             messages_path: data_dir.join("messages.db"),
             scheduled_path: data_dir.join("scheduled.db"),

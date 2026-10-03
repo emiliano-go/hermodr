@@ -1,4 +1,5 @@
 use super::*;
+use crate::message_ref::{MessageFailure, MessageRef};
 use crate::store::group_audit::GroupAuditKind as AuditKind;
 use std::collections::HashSet;
 use whatsapp_rust::wacore::iq::groups::{
@@ -29,6 +30,9 @@ pub struct GroupCreateResult {
     pub subject: String,
     pub participants: Vec<GroupCreateParticipant>,
     pub warnings: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(feature = "wire-types", ts(as = "Option<Vec<MessageFailure>>", optional))]
+    pub warning_refs: Vec<MessageFailure>,
 }
 
 impl WhatsAppService {
@@ -55,39 +59,39 @@ impl WhatsAppService {
 
     pub async fn create_group(&self, subject: &str, jids: &[String], current: impl Fn() -> Result<()> + Send) -> Result<GroupCreateResult> {
         current()?;
-        anyhow::ensure!(self.is_connected(), "not connected yet");
+        anyhow::ensure!(self.is_connected(), MessageRef::new("error.not_connected"));
         let (subject, selected) = creation_input(subject, jids)?;
         let mut participants = Vec::new();
         let mut seen = HashSet::new();
         for requested in selected {
-            anyhow::ensure!(!self.is_self_jid(&requested), "you are already included as the group creator");
+            anyhow::ensure!(!self.is_self_jid(&requested), MessageRef::new("error.group_creator_selected"));
             let resolved = contacts::resolve_chat(Some(&self.client), &self.store, &requested).await;
             current()?;
             let phone = creation_address(&resolved)?;
-            anyhow::ensure!(phone.is_pn(), "phone number mapping is unavailable for {requested}");
-            anyhow::ensure!(!self.is_self_jid(&phone), "you are already included as the group creator");
+            anyhow::ensure!(phone.is_pn(), MessageRef::new("error.group_creation_phone").with_param("address", requested.to_string()));
+            anyhow::ensure!(!self.is_self_jid(&phone), MessageRef::new("error.group_creator_selected"));
             if seen.insert(phone.clone()) { participants.push((requested, phone)); }
         }
         let options = GroupCreateOptions::new(&subject).with_participants(participants.iter()
             .map(|(_, phone)| GroupParticipantOptions::new(phone.clone())).collect());
         current()?;
         let created = self.client.groups().create_group(options).await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            .map_err(anyhow::Error::from)?;
         let jid = created.metadata.id.to_non_ad();
-        anyhow::ensure!(jid.is_group() && !jid.user.is_empty(), "WhatsApp returned an invalid created group address");
+        anyhow::ensure!(jid.is_group() && !jid.user.is_empty(), MessageRef::new("error.group_created_address"));
         let mut result = GroupCreateResult {
             jid: jid.to_string(), subject: created.metadata.subject.unwrap_or(subject),
-            participants: creation_outcomes(&participants, &HashSet::new(), &HashSet::new()), warnings: Vec::new(),
+            participants: creation_outcomes(&participants, &HashSet::new(), &HashSet::new()), warnings: Vec::new(), warning_refs: Vec::new(),
         };
         let timestamp = created.metadata.creation_time.and_then(|value| i64::try_from(value).ok())
             .unwrap_or_else(|| std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|value| value.as_secs() as i64).unwrap_or(0));
         if let Err(error) = self.store.save_created_group(&result.jid, &result.subject, timestamp).await {
-            result.warnings.push(format!("Group created on WhatsApp, but could not be saved locally: {error}"));
+            creation_warning(&mut result, "warning.group_local_save", format!("Group created on WhatsApp, but could not be saved locally: {error}"), Some(format!("{error:#}")));
         }
         self.after_group_change(&result.jid);
         self.audit_local_group_change(&result.jid, AuditKind::Create, None, None, None, None, Some(&result.subject)).await.logged();
         if let Err(error) = current() {
-            result.warnings.push(format!("Group created; participant membership was not verified: {error}"));
+            creation_warning(&mut result, "warning.group_membership_unverified", format!("Group created; participant membership was not verified: {error}"), Some(format!("{error:#}")));
             return Ok(result);
         }
         self.verify_created_members(&jid, &participants, &mut result).await;
@@ -98,11 +102,11 @@ impl WhatsAppService {
         let metadata = match self.client.execute(GroupQueryIq::new(jid)).await {
             Ok(GroupMetadataOutcome::Full(metadata)) => *metadata,
             Ok(GroupMetadataOutcome::NotModified) => {
-                result.warnings.push("Group created; WhatsApp did not return a fresh member list.".into());
+                creation_warning(result, "warning.group_roster_unavailable", "Group created; WhatsApp did not return a fresh member list.".into(), None);
                 return;
             }
             Err(error) => {
-                result.warnings.push(format!("Group created; participant membership could not be verified: {error}"));
+                creation_warning(result, "warning.group_membership_unverified", format!("Group created; participant membership could not be verified: {error}"), Some(format!("{error:#}")));
                 return;
             }
         };
@@ -121,26 +125,35 @@ impl WhatsAppService {
                         if let Ok(jid) = creation_address(&resolved) { pending.insert(jid); }
                     }
                 }
-                Err(error) => result.warnings.push(format!("Pending join requests could not be checked: {error}")),
+                Err(error) => creation_warning(result, "warning.group_requests_unverified", format!("Pending join requests could not be checked: {error}"), Some(format!("{error:#}"))),
             }
         }
         result.participants = creation_outcomes(selected, &members, &pending);
     }
 }
 
+fn creation_warning(result: &mut GroupCreateResult, code: &str, legacy: String, diagnostic: Option<String>) {
+    result.warnings.push(legacy);
+    result.warning_refs.push(MessageFailure { message: MessageRef::new(code), diagnostic });
+}
+
 fn creation_address(value: &str) -> Result<Jid> {
-    let jid: Jid = value.parse()?;
+    let jid: Jid = value.parse::<Jid>().map_err(|error| anyhow::Error::new(
+        MessageRef::new("error.participant_address")
+    ).context(error.to_string()))?;
     anyhow::ensure!(!jid.user.is_empty() && jid.user.chars().all(|value| value.is_ascii_digit())
-        && (jid.is_pn() || jid.is_lid()), "invalid participant address");
+        && (jid.is_pn() || jid.is_lid()), MessageRef::new("error.participant_address"));
     Ok(jid.to_non_ad())
 }
 
 fn creation_input(subject: &str, jids: &[String]) -> Result<(String, Vec<Jid>)> {
     let subject = subject.trim();
-    anyhow::ensure!(!subject.is_empty(), "enter a group subject");
-    let subject = GroupSubject::new(subject).map_err(|error| anyhow::anyhow!(error.to_string()))?.into_string();
+    anyhow::ensure!(!subject.is_empty(), MessageRef::new("error.group_subject_required"));
+    let subject = GroupSubject::new(subject).map_err(|error| anyhow::Error::new(
+        MessageRef::new("error.group_subject_invalid")
+    ).context(error.to_string()))?.into_string();
     // ponytail: pinned SDK group limit; use server props if larger groups are needed.
-    anyhow::ensure!(!jids.is_empty() && jids.len() < GROUP_SIZE_LIMIT, "select between 1 and {} people", GROUP_SIZE_LIMIT - 1);
+    anyhow::ensure!(!jids.is_empty() && jids.len() < GROUP_SIZE_LIMIT, MessageRef::new("error.group_creation_count").with_param("limit", serde_json::Number::from(GROUP_SIZE_LIMIT - 1)));
     let mut seen = HashSet::new();
     let mut selected = Vec::new();
     for value in jids {
@@ -169,7 +182,10 @@ mod tests {
         assert!(creation_input("  ", std::slice::from_ref(&person)).is_err());
         assert!(creation_input(&"🦀".repeat(100), std::slice::from_ref(&person)).is_ok());
         assert!(creation_input(&"🦀".repeat(101), std::slice::from_ref(&person)).is_err());
-        assert!(creation_input("Group", &[]).is_err());
+        let error = creation_input("Group", &[]).unwrap_err();
+        let reference = error.downcast_ref::<MessageRef>().unwrap();
+        assert_eq!(reference.code, "error.group_creation_count");
+        assert_eq!(serde_json::to_value(reference).unwrap()["params"]["limit"], GROUP_SIZE_LIMIT - 1);
         assert!(creation_input("Group", &vec![person.clone(); GROUP_SIZE_LIMIT]).is_err());
         for value in ["@s.whatsapp.net", "1@g.us", "1@newsletter", "status@broadcast", "name@lid", "bad"] {
             assert!(creation_input("Group", &[value.into()]).is_err());
@@ -191,5 +207,20 @@ mod tests {
         assert!(matches!(outcomes[2].state, GroupCreateParticipantState::Unconfirmed));
         let unknown = creation_outcomes(&selected, &HashSet::new(), &HashSet::new());
         assert!(unknown.iter().all(|value| matches!(value.state, GroupCreateParticipantState::Unconfirmed)));
+    }
+    #[test]
+    fn creation_warnings_keep_acknowledged_group_and_legacy_wire_fields() {
+        let mut result = GroupCreateResult {
+            jid: "100@g.us".into(), subject: "Synthetic group".into(),
+            participants: Vec::new(), warnings: Vec::new(), warning_refs: Vec::new(),
+        };
+        assert!(serde_json::to_value(&result).unwrap().get("warning_refs").is_none());
+        creation_warning(&mut result, "warning.group_local_save", "legacy warning".into(), Some("synthetic SQL detail".into()));
+        let value = serde_json::to_value(&result).unwrap();
+        assert_eq!(value["jid"], "100@g.us");
+        assert_eq!(value["warnings"][0], "legacy warning");
+        assert_eq!(value["warning_refs"][0]["code"], "warning.group_local_save");
+        assert_eq!(value["warning_refs"][0]["diagnostic"], "synthetic SQL detail");
+        assert!(result.participants.is_empty());
     }
 }

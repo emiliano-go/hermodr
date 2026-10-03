@@ -1,3 +1,4 @@
+import { normalizeError, type LocalizedError } from "../i18n/errors.ts";
 import { invoke } from "$lib/utils/ipc";
 import type { SpaceAction, SpaceResolution, SpaceSelection, SpaceSnapshot, SpaceTarget } from "$lib/utils/wire";
 import { messages } from "$lib/state/messages.svelte";
@@ -12,7 +13,7 @@ export class SpacesState {
   loaded = $state(false);
   loading = $state(false);
   busy = $state(false);
-  error = $state<string | null>(null);
+  error = $state<LocalizedError | null>(null);
   keywordCounts: () => Record<string, number> = () => ({});
   private generation = -1;
   private epoch = 0;
@@ -63,7 +64,7 @@ export class SpacesState {
       const selection = structuredClone(this.selected);
       const resolution = await invoke<SpaceResolution>("resolve_spaces", { accountId: account, selection, keywordCounts });
       if (current()) this.resolution = resolution;
-    } catch (failure) { if (current()) this.error = String(failure); }
+    } catch (failure) { if (current()) this.error = normalizeError(failure); }
     finally { if (current()) this.loading = false; }
   }
 
@@ -84,27 +85,27 @@ export class SpacesState {
     try {
       const resolution = await invoke<SpaceResolution>("resolve_spaces", { accountId: scope.account, selection, keywordCounts });
       if (current()) this.resolution = resolution;
-    } catch (failure) { if (current()) this.error = String(failure); }
+    } catch (failure) { if (current()) this.error = normalizeError(failure); }
     finally { if (current()) this.loading = false; }
   }
 
   private async write(command: "spaces_action" | "import_space_metadata", args: Record<string, unknown>) {
     const scope = this.scope();
-    if (!scope.current() || this.busy) throw new Error("Spaces are unavailable for this account.");
+    if (!scope.current() || this.busy) throw normalizeError({ kind: "postal_error", code: "error.spaces_unavailable", params: {} });
     this.request++;
     this.loading = false;
     this.busy = true;
     this.error = null;
     try {
       const snapshot = await invoke<SpaceSnapshot>(command, { ...args, accountId: scope.account });
-      if (!scope.current()) throw new Error("Account changed during Space operation.");
+      if (!scope.current()) throw normalizeError({ kind: "postal_error", code: "error.spaces_account_operation", params: {} });
       this.request++;
       this.snapshot = snapshot;
       this.loaded = true;
       this.keepSelection();
       await this.resolve();
     } catch (failure) {
-      if (scope.current()) this.error = String(failure);
+      if (scope.current()) this.error = normalizeError(failure);
       throw failure;
     } finally { if (scope.current()) this.busy = false; }
   }
@@ -114,7 +115,7 @@ export class SpacesState {
   async add(spaceId: string, targets: SpaceTarget[]) {
     const scope = this.scope(), captured = structuredClone(targets);
     for (const target of captured) {
-      if (!scope.current()) throw new Error("Account changed during Space operation.");
+      if (!scope.current()) throw normalizeError({ kind: "postal_error", code: "error.spaces_account_operation", params: {} });
       if (this.snapshot.items.some((item) => item.space_id === spaceId && targetKey(item.target) === targetKey(target))) continue;
       await this.mutate({ kind: "add_item", id: crypto.randomUUID(), space_id: spaceId, target });
     }
@@ -122,9 +123,9 @@ export class SpacesState {
 
   async exportMetadata(): Promise<string> {
     const scope = this.scope();
-    if (!scope.current()) throw new Error("Spaces are unavailable for this account.");
+    if (!scope.current()) throw normalizeError({ kind: "postal_error", code: "error.spaces_unavailable", params: {} });
     const json = await invoke<string>("export_space_metadata", { accountId: scope.account });
-    if (!scope.current()) throw new Error("Account changed during Space export.");
+    if (!scope.current()) throw normalizeError({ kind: "postal_error", code: "error.spaces_account_export", params: {} });
     return json;
   }
 

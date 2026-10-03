@@ -27,6 +27,7 @@ async fn main() -> Result<()> {
     };
 
     let config = ServiceConfig {
+        database_key: None,
         session_path: data_dir.join("session.db"),
         messages_path: data_dir.join("messages.db"),
         scheduled_path: data_dir.join("scheduled.db"),

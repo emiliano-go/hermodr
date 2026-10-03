@@ -47,7 +47,7 @@ fn stale_begin_cleanup_removes_only_its_owned_token() {
     let old = uploads.begin(&root, "captured".into(), "old.jpg".into(), 0).unwrap();
     let foreign = uploads.begin(&root, "changed".into(), "foreign.jpg".into(), 0).unwrap();
     let fresh = uploads.begin(&root, "captured".into(), "fresh.jpg".into(), 0).unwrap();
-    assert!(uploads.complete_begin("captured", fresh.clone(), Err("account changed".into())).is_err());
+    assert!(uploads.complete_begin("captured", fresh.clone(), Err(crate::command_error::CommandError::code("error.account_changed"))).is_err());
     let pending = uploads.0.lock().unwrap();
     assert!(!pending.entries.contains_key(&fresh));
     assert!(pending.entries.contains_key(&old));

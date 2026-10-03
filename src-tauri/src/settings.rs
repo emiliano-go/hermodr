@@ -40,6 +40,8 @@ pub struct UiSettings {
     /// Whether messages are kept on disk. Off keeps them in memory for this run only.
     #[serde(default = "default_true")]
     pub keep_history: bool,
+    #[serde(default)]
+    pub encrypt_databases: bool,
     /// Skip the initial-sync loading screen and show the chat UI immediately.
     /// Off holds the loading screen until the initial backlog is applied.
     #[serde(default)]
@@ -99,6 +101,7 @@ impl Default for UiSettings {
             send_typing: true,
             send_receipts: true,
             keep_history: true,
+            encrypt_databases: false,
             skip_loading_screen: false,
             start_on_login: false,
             keep_archived: true,
@@ -177,9 +180,11 @@ pub(crate) fn get_settings(app: AppHandle, state: State<'_, AppState>) -> UiSett
 /// Toggling the Android companion only records the wish: the companion manager
 /// wakes or puts the instance to sleep, without touching the main link.
 #[tauri::command]
-pub(crate) async fn set_settings(app: AppHandle, state: State<'_, AppState>, settings: UiSettings) -> Result<(), String> {
+pub(crate) async fn set_settings(app: AppHandle, state: State<'_, AppState>, settings: UiSettings) -> crate::command_error::CommandResult<()> {
+    use crate::command_error::CommandError;
     if !(50..=postal_core::store::MAX_MESSAGE_PAGE).contains(&settings.message_window_size) {
-        return Err("The RAM window must contain 50–2,000 messages".into());
+        return Err(CommandError::new(postal_core::message_ref::MessageRef::new("error.message_window_bounds")
+            .with_param("min", serde_json::Number::from(50)).with_param("max", serde_json::Number::from(postal_core::store::MAX_MESSAGE_PAGE as u64))));
     }
     if let Some(directory) = settings.media_dir.as_deref().filter(|directory| !directory.trim().is_empty()) {
         crate::media_access::validate_directory(&app, std::path::Path::new(directory))?;
@@ -188,18 +193,18 @@ pub(crate) async fn set_settings(app: AppHandle, state: State<'_, AppState>, set
     // A folder the app cannot write would only fail the next start.
     if settings.keep_history {
         if let Some(dir) = settings.history_dir.as_deref().map(str::trim).filter(|dir| !dir.is_empty()) {
-            std::fs::create_dir_all(dir).map_err(|e| format!("The history folder cannot be created: {e}"))?;
+            std::fs::create_dir_all(dir).map_err(|error| CommandError::code("error.history_directory_create").with_diagnostic(error))?;
         }
     }
     // Both links share one store, so the instance cannot run without history;
     // and it is only useful once its own link exists, which pairing creates.
     if instance_changed && settings.android_instance {
         if !settings.keep_history {
-            return Err("The Android companion needs \"Download and keep history\" turned on".into());
+            return Err(CommandError::code("error.companion_history_required"));
         }
         let account = crate::account_store::active_account(&state);
         if !account.is_some_and(|id| crate::connection::once_paired(&state, &id)) {
-            return Err("Pair the Android companion before turning it on".into());
+            return Err(CommandError::code("error.companion_pair_first"));
         }
     }
     let path = settings_path(&app);
@@ -219,10 +224,11 @@ pub(crate) async fn set_settings(app: AppHandle, state: State<'_, AppState>, set
     if let Err(error) = std::fs::write(path, json) {
         if let Some(previous) = previous_actual_startup {
             if let Err(restore) = crate::desktop::apply_start_on_login(&app, previous) {
-                return Err(format!("Saving settings failed: {error}; restoring start-on-login failed: {restore}"));
+                return Err(CommandError::code("error.settings_save_startup_restore")
+                    .with_diagnostic(format!("save: {error}; restore startup: {restore}")));
             }
         }
-        return Err(error.to_string());
+        return Err(CommandError::code("error.settings_save_failed").with_diagnostic(error));
     }
     if let Ok(service) = state.service() {
         service.set_retention(settings.retention);

@@ -1,4 +1,5 @@
 use super::{media::MediaInput, media_files::TemporaryFile};
+use crate::message_ref::MessageRef;
 use anyhow::{Context, Result, bail, ensure};
 use image::{DynamicImage, ImageDecoder, ImageEncoder, ImageFormat, imageops::FilterType};
 use serde::{Deserialize, Serialize};
@@ -47,7 +48,7 @@ pub(super) async fn prepare(
         matches!(kind, "image" | "video")
             && !gif
             && !file_name.to_ascii_lowercase().ends_with(".gif"),
-        "Quality is available for still photos and ordinary videos only"
+        MessageRef::new("error.media_quality_type_invalid")
     );
     if quality == Some(MediaQuality::Hd) {
         return Ok(PreparedMedia {
@@ -93,7 +94,7 @@ fn read_image(input: MediaInput) -> Result<Vec<u8>> {
     };
     ensure!(
         bytes.len() as u64 <= MAX_IMAGE_BYTES,
-        "Photo exceeds the 64 MiB conversion limit"
+        MessageRef::new("error.media_photo_size_limit").with_param("max_bytes", serde_json::Number::from(MAX_IMAGE_BYTES))
     );
     Ok(bytes)
 }
@@ -101,7 +102,7 @@ fn read_image(input: MediaInput) -> Result<Vec<u8>> {
 fn standard_photo(bytes: &[u8]) -> Result<(Vec<u8>, &'static str)> {
     ensure!(
         bytes.len() as u64 <= MAX_IMAGE_BYTES,
-        "Photo exceeds the 64 MiB conversion limit"
+        MessageRef::new("error.media_photo_size_limit").with_param("max_bytes", serde_json::Number::from(MAX_IMAGE_BYTES))
     );
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(8192);
@@ -114,7 +115,7 @@ fn standard_photo(bytes: &[u8]) -> Result<(Vec<u8>, &'static str)> {
                 image::codecs::png::PngDecoder::with_limits(Cursor::new(bytes), limits.clone())?;
             ensure!(
                 !decoder.is_apng()?,
-                "Animated photos cannot use Standard quality"
+                MessageRef::new("error.media_quality_animated_photo")
             );
             Box::new(decoder)
         }
@@ -122,16 +123,16 @@ fn standard_photo(bytes: &[u8]) -> Result<(Vec<u8>, &'static str)> {
             let decoder = image::codecs::webp::WebPDecoder::new(Cursor::new(bytes))?;
             ensure!(
                 !decoder.has_animation(),
-                "Animated photos cannot use Standard quality"
+                MessageRef::new("error.media_quality_animated_photo")
             );
             Box::new(decoder)
         }
-        _ => bail!("Standard photo quality supports JPEG, PNG and still WebP only"),
+        _ => bail!(MessageRef::new("error.media_quality_photo_format")),
     };
     decoder.set_limits(limits)?;
     ensure!(
         decoder.total_bytes() <= 128 * 1024 * 1024,
-        "Photo exceeds the decoded pixel limit"
+        MessageRef::new("error.media_photo_decoded_limit").with_param("max_bytes", serde_json::Number::from(128 * 1024 * 1024))
     );
     let orientation = decoder.orientation()?;
     let icc = decoder.icc_profile()?;
@@ -170,14 +171,14 @@ fn standard_video(input: MediaInput, file_name: String) -> Result<PreparedMedia>
         MediaInput::File(path) => {
             ensure!(
                 std::fs::metadata(&path)?.len() <= MAX_VIDEO_BYTES,
-                "Video exceeds the 512 MiB conversion limit"
+                MessageRef::new("error.media_video_size_limit").with_param("max_bytes", serde_json::Number::from(MAX_VIDEO_BYTES))
             );
             path
         }
         MediaInput::Bytes(bytes) => {
             ensure!(
                 bytes.len() as u64 <= MAX_VIDEO_BYTES,
-                "Video exceeds the 512 MiB conversion limit"
+                MessageRef::new("error.media_video_size_limit").with_param("max_bytes", serde_json::Number::from(MAX_VIDEO_BYTES))
             );
             let (owned, mut file) = TemporaryFile::download(&std::env::temp_dir())?;
             file.write_all(&bytes)?;
@@ -255,34 +256,32 @@ impl Drop for RunningTranscode {
 
 fn transcode(command: &mut Command, output: &Path, timeout: Duration, limit: u64) -> Result<()> {
     let mut process =
-        RunningTranscode(command.spawn().context(
-            "Standard video quality requires ffmpeg with H.264 and AAC encoders on PATH",
-        )?);
+        RunningTranscode(command.spawn().context(MessageRef::new("error.media_video_converter_unavailable"))?);
     let started = Instant::now();
     loop {
         ensure!(
             std::fs::metadata(output)?.len() <= limit,
-            "Converted video exceeds the 512 MiB output limit"
+            MessageRef::new("error.media_video_output_limit").with_param("max_bytes", serde_json::Number::from(limit))
         );
         if let Some(status) = process.0.try_wait()? {
             ensure!(
                 status.success(),
-                "Standard video conversion failed ({status}); ffmpeg must support H.264 and AAC"
+                MessageRef::new("error.media_video_conversion_failed").with_param("exit_code", serde_json::Number::from(status.code().unwrap_or(-1)))
             );
             let length = std::fs::metadata(output)?.len();
             ensure!(
                 length <= limit,
-                "Converted video exceeds the 512 MiB output limit"
+                MessageRef::new("error.media_video_output_limit").with_param("max_bytes", serde_json::Number::from(limit))
             );
             ensure!(
                 length > 0,
-                "Standard video conversion produced an empty file"
+                MessageRef::new("error.media_video_output_empty")
             );
             return Ok(());
         }
         ensure!(
             started.elapsed() < timeout,
-            "Standard video conversion exceeded its time limit"
+            MessageRef::new("error.media_video_conversion_timeout").with_param("seconds", serde_json::Number::from(timeout.as_secs()))
         );
         std::thread::sleep(Duration::from_millis(40));
     }

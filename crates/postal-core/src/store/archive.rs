@@ -249,6 +249,11 @@ fn backup_file(root: &Path, name: &str) -> Result<PathBuf> {
 }
 
 pub fn restore_backup(source: &Path, account: &Path, media: &Path) -> Result<ArchiveReport> {
+    restore_backup_with_key(source, account, media, None)
+}
+
+pub fn restore_backup_with_key(source: &Path, account: &Path, media: &Path,
+    key: Option<&crate::database_crypto::DatabaseKey>) -> Result<ArchiveReport> {
     let source = source.canonicalize()?;
     let manifest: Manifest = read_json(&backup_file(&source, "manifest.json")?, 64 * 1024)?;
     anyhow::ensure!(manifest.format == "postal-local-backup" && manifest.version == 1, "unsupported backup format");
@@ -266,11 +271,11 @@ pub fn restore_backup(source: &Path, account: &Path, media: &Path) -> Result<Arc
     created.create(account)?;
     created.create(media)?;
     let database = account.join("messages.db");
-    let mut imported = Connection::open(&database)?;
+    let mut imported = crate::database_crypto::open_database(&database, key, rusqlite::OpenFlags::default())?;
     super::schema::migrate_to(&imported, version.try_into()?)?;
     copy_tables(&original, &mut imported)?;
     drop(imported);
-    let restored = MessageStore::open(&database)?;
+    let restored = MessageStore::open_with_key(&database, key)?;
     restored.conn.lock().unwrap().execute("UPDATE messages SET history_shareable = 0", [])?;
     let mut count = 0;
     let paths = attachment_paths(&restored.conn.lock().unwrap())?;
@@ -286,7 +291,7 @@ pub fn restore_backup(source: &Path, account: &Path, media: &Path) -> Result<Arc
         rewrite_attachment(&conn, &path, Some(&destination))?;
         count += 1;
     }
-    let alias_store = AliasStore::open(&account.join("aliases.db"))?;
+    let alias_store = AliasStore::open_with_key(&account.join("aliases.db"), key)?;
     for (jid, alias) in aliases { alias_store.add(&[jid], &alias)?; }
     let messages = restored.conn.lock().unwrap().query_row("SELECT COUNT(*) FROM messages", [], |r| r.get::<_, i64>(0))? as u64;
     created.complete();

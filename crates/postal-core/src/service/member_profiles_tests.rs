@@ -106,6 +106,8 @@ fn profile_preserves_legacy_wire_fields_and_saved_provenance() {
         moderation_admin_verified: false,
         moderation_verified_at: None,
         moderation_error: None,
+        moderation_error_ref: None,
+        moderation_diagnostic: None,
     };
     let value = serde_json::to_value(profile).unwrap();
     for key in ["jid", "name", "number", "username", "about", "business"] {
@@ -115,4 +117,46 @@ fn profile_preserves_legacy_wire_fields_and_saved_provenance() {
     assert_eq!(value["local"]["identity"]["push_name"], "Push");
     assert_eq!(value["moderation_admin_verified"], false);
     assert_eq!(value["moderation_verified_at"], serde_json::Value::Null);
+}
+
+#[test]
+fn transient_member_failures_preserve_exact_cache_payload_shape() {
+    let raw = serde_json::json!({
+        "fetched_at": 1, "photo_id": null,
+        "about": {"state":"error","value":"cached","error":"legacy opaque reason","stale":true},
+        "username": {"state":"unavailable","value":null,"error":null,"stale":false},
+        "photo": {"state":"restricted","value":null,"error":"legacy denial","stale":false},
+        "business": {"state":"unavailable","value":null,"error":null,"stale":false},
+        "business_name": {"state":"unavailable","value":null,"error":null,"stale":false},
+        "device_count": {"state":"available","value":2,"error":null,"stale":false}
+    });
+    let snapshot: MemberProfileLive = serde_json::from_value(raw.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&snapshot).unwrap(), raw);
+    let mut fresh = BTreeMap::new();
+    fresh.insert("about".into(), MessageFailure {
+        message: MessageRef::new("error.member_field_query"),
+        diagnostic: Some("synthetic SDK detail".into()),
+    });
+    let view = MemberProfileLiveView::new(snapshot.clone(), fresh);
+    let value = serde_json::to_value(view).unwrap();
+    assert_eq!(value["field_failures"]["about"]["diagnostic"], "synthetic SDK detail");
+    assert_eq!(value["field_failures"]["photo"]["code"], "error.member_field_restricted");
+    assert_eq!(value["field_failures"]["photo"]["diagnostic"], "legacy denial");
+    assert_eq!(value["about"], raw["about"]);
+    assert_eq!(serde_json::to_value(snapshot).unwrap(), raw);
+    assert!(value["field_failures"].get("device_count").is_none());
+}
+
+#[test]
+fn observed_subprotocol_failure_keeps_sdk_detail_without_classifying_copy() {
+    let error: UsyncSubprotocolError = serde_json::from_value(serde_json::json!({
+        "code":429,"text":"synthetic localized SDK detail","backoff":30
+    })).unwrap();
+    let failure = observed_failure(Some(&error)).unwrap();
+    assert_eq!(failure.message.code, "error.member_field_query");
+    let detail: serde_json::Value = serde_json::from_str(failure.diagnostic.as_deref().unwrap()).unwrap();
+    assert_eq!(detail["code"], 429);
+    assert_eq!(detail["backoff"], 30);
+    let missing: UsyncSubprotocolError = serde_json::from_value(serde_json::json!({"code":404})).unwrap();
+    assert!(observed_failure(Some(&missing)).is_none());
 }

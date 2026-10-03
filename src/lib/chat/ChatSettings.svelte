@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
+  import { t, formatNumber } from "$lib/i18n/localizer";
   import type { ChatRetention, RetentionLimit } from "$lib/utils/models";
   import { limitKey, parseLimit } from "$lib/utils/retention";
   import { onMount } from "svelte";
@@ -35,23 +37,23 @@
   } = $props();
 
   const WINDOWS: [string, string][] = [
-    ["inherit", "Default"],
-    ["24", "1 day"],
-    ["168", "1 week"],
-    ["720", "30 days"],
-    ["8760", "1 year"],
-    ["unlimited", "Forever"],
+    ["inherit", "ui.default"],
+    ["24", "chat.retention_day"],
+    ["168", "chat.mute_week"],
+    ["720", "chat.retention_month"],
+    ["8760", "chat.retention_year"],
+    ["unlimited", "chat.retention_forever"],
   ];
   const CAPS: [string, string][] = [
-    ["inherit", "Default"],
+    ["inherit", "ui.default"],
     ["200", "200"],
     ["1000", "1,000"],
     ["5000", "5,000"],
-    ["unlimited", "No limit"],
+    ["unlimited", "chat.retention_unlimited"],
   ];
 
   let loaded = $state(false);
-  let failed = $state<string | null>(null);
+  let failed = $state<LocalizedError | string | null>(null);
   let busy = $state(false);
   let retention = $state<ChatRetention>({ max_age_hours: { kind: "inherit" }, max_messages: { kind: "inherit" }, on_demand: true });
   let unarchive = $state<boolean | null>(null);
@@ -71,7 +73,7 @@
       initial = JSON.stringify([got.retention, got.unarchive]);
       loaded = true;
     } catch (e) {
-      failed = String(e);
+      failed = normalizeError(e);
     }
   });
 
@@ -82,7 +84,7 @@
       await invoke("set_chat_mute_at_all", { chat, muted: target });
       muteAtAll = target;
     } catch (e) {
-      failed = String(e);
+      failed = normalizeError(e);
     } finally {
       muteBusy = false;
     }
@@ -95,12 +97,12 @@
     failed = null;
     try {
       await invoke("set_chat_retention", { chat, retention });
-      if (accountId !== session.activeAccount) throw new Error("account changed");
+      if (accountId !== session.activeAccount) throw normalizeError({ kind: "postal_error", code: "error.chat_settings_account", params: {} });
       await invoke("set_chat_unarchive", { accountId, chat, enabled: unarchive });
       onchange(retention);
       onclose();
     } catch (e) {
-      failed = String(e);
+      failed = normalizeError(e);
     } finally {
       busy = false;
     }
@@ -122,7 +124,7 @@
         class:on={limitKey(value) === option}
         role="radio"
         aria-checked={limitKey(value) === option}
-        onclick={() => set(parseLimit(option))}>{text}</button>
+        onclick={() => set(parseLimit(option))}>{Number.isFinite(Number(option)) && options === CAPS ? formatNumber(Number(option)) : t(text)}</button>
     {/each}
   </div>
 {/snippet}
@@ -137,7 +139,7 @@
     class="dialog"
     role="dialog"
     aria-modal="true"
-    aria-label="Chat settings"
+    aria-label={t("chat.settings")}
     transition:scale|global={{ start: 0.96, duration: motion(160) }}>
     <header>
       {#if picture}
@@ -146,52 +148,52 @@
         <span class="avatar">{initials(title)}</span>
       {/if}
       <div class="heading">
-        <h2>{title}</h2>
-        <span class="sub">Settings on this computer only</span>
+        <h2><bdi>{title}</bdi></h2>
+        <span class="sub">{t("chat.settings_local")}</span>
       </div>
-      <button class="close" aria-label="Close" onclick={onclose}><Icon name="x" size={18} /></button>
+      <button class="close" aria-label={t("ui.close")} onclick={onclose}><Icon name="x" size={18} /></button>
     </header>
 
     <div class="body">
       {#if !loaded && !failed}
-        <p class="muted">Loading…</p>
+        <p class="muted">{t("ui.loading")}</p>
       {:else if loaded}
         <section>
-          <h3><Icon name="clock" size={14} /> Message history</h3>
+          <h3><Icon name="clock" size={14} /> {t("chat.message_history")}</h3>
           <div class="field">
-            <span class="name">Keep messages for</span>
-            <span class="desc">Older ones are removed from this computer, never from your phone.</span>
-            {@render choices(WINDOWS, retention.max_age_hours, (v) => (retention.max_age_hours = v), "Keep messages for")}
+            <span class="name">{t("chat.retention_age")}</span>
+            <span class="desc">{t("chat.retention_age_hint")}</span>
+            {@render choices(WINDOWS, retention.max_age_hours, (v) => (retention.max_age_hours = v), t("chat.retention_age"))}
           </div>
           <div class="field">
-            <span class="name">Keep at most</span>
-              <span class="desc">Only messages within the age and count limits are kept. The chat stays when empty.</span>
-            {@render choices(CAPS, retention.max_messages, (v) => (retention.max_messages = v), "Keep at most")}
+            <span class="name">{t("chat.retention_count")}</span>
+              <span class="desc">{t("chat.retention_count_hint")}</span>
+            {@render choices(CAPS, retention.max_messages, (v) => (retention.max_messages = v), t("chat.retention_count"))}
           </div>
           <label class="toggle-row">
             <span>
-              <span class="name">Load older messages when scrolling up</span>
-              <span class="desc">Asks your phone for about a day at a time. Your phone has to be online.</span>
+              <span class="name">{t("chat.history_on_demand")}</span>
+              <span class="desc">{t("chat.history_on_demand_hint")}</span>
             </span>
             <input class="toggle" type="checkbox" bind:checked={retention.on_demand} />
           </label>
         </section>
 
         <section>
-          <h3><Icon name="settings" size={14} /> Chat behavior</h3>
+          <h3><Icon name="settings" size={14} /> {t("chat.behavior")}</h3>
           <label class="toggle-row">
-            <span class="name">Unarchive on new incoming messages</span>
+            <span class="name">{t("chat.unarchive_incoming")}</span>
             <select value={unarchive === null ? "" : String(unarchive)}
               onchange={(event) => unarchive = event.currentTarget.value === "" ? null : event.currentTarget.value === "true"}>
-              <option value="">Follow global setting ({session.settings.keep_archived ? "off" : "on"})</option>
-              <option value="true">On</option>
-              <option value="false">Off</option>
+              <option value="">{t("chat.unarchive_global", { state: t(session.settings.keep_archived ? "ui.off" : "ui.on") })}</option>
+              <option value="true">{t("ui.on")}</option>
+              <option value="false">{t("ui.off")}</option>
             </select>
           </label>
           <label class="toggle-row">
             <span>
-              <span class="name">Mute @all mentions</span>
-              <span class="desc">Stays silent for @all in this chat. Direct mentions still ping.</span>
+              <span class="name">{t("chat.all_mute")}</span>
+              <span class="desc">{t("chat.all_mute_hint")}</span>
             </span>
             <input class="toggle" type="checkbox" checked={muteAtAll} disabled={muteBusy} onchange={toggleMuteAtAll} />
           </label>
@@ -201,7 +203,7 @@
         </section>
 
         <section>
-          <h3><Icon name="download" size={14} /> Media</h3>
+          <h3><Icon name="download" size={14} /> {t("chat.media")}</h3>
           {#if session.activeAccount}
             <div class="override"><AutoDownloadOverride accountId={session.activeAccount} {chat} /></div>
             <div class="override"><TranscriptionOverride accountId={session.activeAccount} {chat} /></div>
@@ -209,25 +211,25 @@
         </section>
 
         <section>
-          <h3><Icon name="image" size={14} /> Background</h3>
+          <h3><Icon name="image" size={14} /> {t("chat.background")}</h3>
           <ChatWallpaper account={session.activeAccount ?? ""} {chat} />
         </section>
 
         <section>
-          <h3><Icon name="trash" size={14} /> Danger zone</h3>
+          <h3><Icon name="trash" size={14} /> {t("chat.danger_zone")}</h3>
           <div class="danger-row">
             <span class="grow">
-              <span class="name">Clear chat</span>
-              <span class="desc">Removes its messages from this computer. The chat stays. The other side is not affected.</span>
+              <span class="name">{t("chat.clear")}</span>
+              <span class="desc">{t("chat.clear_hint")}</span>
             </span>
-            <button class="choice danger" onclick={onclearchat}>Clear…</button>
+            <button class="choice danger" onclick={onclearchat}>{t("chat.clear_more")}</button>
           </div>
           <div class="danger-row">
             <span class="grow">
-              <span class="name">Delete chat</span>
-              <span class="desc">Removes its messages and the chat from the list. It comes back with the next message. The other side is not affected.</span>
+              <span class="name">{t("chat.delete")}</span>
+              <span class="desc">{t("chat.delete_hint")}</span>
             </span>
-            <button class="choice danger" onclick={ondeletechat}>Delete…</button>
+            <button class="choice danger" onclick={ondeletechat}>{t("ui.delete_more")}</button>
           </div>
         </section>
       {/if}
@@ -235,8 +237,8 @@
     </div>
 
     <footer>
-      <Button variant="ghost" onclick={onclose}>Cancel</Button>
-      <Button variant="primary" disabled={!dirty || busy} onclick={save}>{busy ? "Saving…" : "Save"}</Button>
+      <Button variant="ghost" onclick={onclose}>{t("ui.cancel")}</Button>
+      <Button variant="primary" disabled={!dirty || busy} onclick={save}>{busy ? t("ui.saving") : t("ui.save")}</Button>
     </footer>
   </div>
 </div>
@@ -404,7 +406,7 @@
     content: "";
     position: absolute;
     top: 3px;
-    left: 3px;
+    inset-inline-start: 3px;
     width: 16px;
     height: 16px;
     border-radius: 50%;
@@ -457,4 +459,5 @@
     background: var(--surface);
   }
   /* Footer actions live in $lib/ui/Button.svelte (ghost/primary variants). */
+  :global([dir="rtl"]) .toggle:checked::after { transform: translateX(-16px); }
 </style>

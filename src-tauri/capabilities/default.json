@@ -6,6 +6,8 @@
     "main"
   ],
   "permissions": [
+    "allow-set-native-locale",
+    "allow-database-encryption-status",
     "allow-open-float-chat",
     "allow-group-audit-page",
     "allow-set-member-note",

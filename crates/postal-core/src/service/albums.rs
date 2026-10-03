@@ -1,6 +1,8 @@
 use super::*;
 use super::media::{MediaInput, build_media_message, file_extension, media_kind_for, missing_preview_warning};
 use crate::store::Album;
+use crate::message_ref::{MessageFailure, MessageRef};
+use anyhow::Context;
 use whatsapp_rust::wacore::proto_helpers::wrap_as_album_child;
 
 pub const MAX_ALBUM_ITEMS: usize = 8;
@@ -29,12 +31,16 @@ pub struct AlbumSendResult {
     pub preflight_failed: bool,
     pub warnings: Vec<String>,
     pub error: Option<String>,
+    pub failure: Option<MessageFailure>,
+    pub warning_messages: Vec<MessageFailure>,
 }
 
 impl AlbumSendResult {
     pub fn preflight_failure(account: &str, chat: &str, parent: Option<&str>, error: impl Into<String>) -> Self {
+        let error = error.into();
         Self { account_id: account.into(), chat: chat.into(), parent_id: parent.unwrap_or_default().into(),
-            preflight_failed: true, error: Some(error.into()), ..Default::default() }
+            preflight_failed: true, failure: Some(MessageFailure::from(anyhow::anyhow!(error.clone()))),
+            error: Some(error), ..Default::default() }
     }
 
     fn sent(&mut self, index: usize, id: String) {
@@ -42,20 +48,30 @@ impl AlbumSendResult {
         self.next_index = index + 1;
     }
 
-    fn stopped(&mut self, index: usize, error: impl std::fmt::Display) {
+    fn stopped(&mut self, index: usize, error: anyhow::Error) {
         self.next_index = index;
+        self.failure = Some(MessageFailure::from(&error));
         self.error = Some(error.to_string());
     }
 
-    fn uncertain(&mut self, index: usize, id: String, error: impl std::fmt::Display) {
+    fn uncertain(&mut self, index: usize, id: String, error: anyhow::Error) {
         self.uncertain_index = Some(index);
         self.uncertain_id = Some(id);
         self.stopped(index + 1, error);
     }
 
-    fn note_fanout(&mut self, label: &str, sent: &whatsapp_rust::SendResult) {
+    fn note_fanout(&mut self, index: Option<usize>, sent: &whatsapp_rust::SendResult) {
         if let Some(fanout) = &sent.recipient_fanout {
             if fanout.is_partial() {
+                let mut message = MessageRef::new(match (index.is_some(), fanout.skipped_primary) {
+                    (true, true) => "warning.album_item_partial_fanout_primary",
+                    (true, false) => "warning.album_item_partial_fanout",
+                    (false, true) => "warning.album_parent_partial_fanout_primary",
+                    (false, false) => "warning.album_parent_partial_fanout",
+                }).with_param("omitted_devices", serde_json::Number::from(fanout.addressed - fanout.encrypted));
+                if let Some(index) = index { message = message.with_param("index", serde_json::Number::from(index + 1)); }
+                self.warning_messages.push(MessageFailure { message, diagnostic: None });
+                let label = index.map(|index| format!("item {}", index + 1)).unwrap_or_else(|| "parent".into());
                 self.warnings.push(format!("Album {label} omitted {} recipient device(s){}.",
                     fanout.addressed - fanout.encrypted,
                     if fanout.skipped_primary { "; the primary device was omitted" } else { "" }));
@@ -80,7 +96,7 @@ impl WhatsAppService {
         current: impl Fn() -> Result<()> + Send + Sync,
     ) -> Result<AlbumSendResult> {
         current()?;
-        anyhow::ensure!(!account_id.is_empty() && self.is_connected(), "Album account is not connected.");
+        anyhow::ensure!(!account_id.is_empty() && self.is_connected(), MessageRef::new("error.album_account_unavailable"));
         let target = album_target(chat, reply.as_ref(), &mentions)?;
         let existing = self.album_continuation(chat, parent_id, &current).await?;
         let continuation = existing.is_some();
@@ -89,14 +105,14 @@ impl WhatsAppService {
         let mut result = AlbumSendResult { account_id: account_id.into(), chat: chat.into(), ..Default::default() };
         let parent_key = if existing.is_some() {
             let existing = self.album_continuation(chat, parent_id, &current).await?
-                .ok_or_else(|| anyhow::anyhow!("Album continuation parent disappeared."))?;
+                .ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.album_parent_unavailable")))?;
             result.parent_id = existing.header.id.clone();
             continuation_key(&existing, &existing.header.chat)?
         } else {
             match self.create_album_parent(chat, &target, (images, videos), reply.as_ref(), &current, &mut result).await {
                 Ok(Some(key)) => key,
                 Ok(None) => return Ok(result),
-                Err(error) => { result.preflight_failed = true; result.error = Some(error.to_string()); return Ok(result); }
+                Err(error) => { result.preflight_failed = true; result.stopped(0, error); return Ok(result); }
             }
         };
         send_album_sequence(prepared.len(), |index| {
@@ -110,13 +126,13 @@ impl WhatsAppService {
         &self, chat: &str, parent_id: Option<&str>, current: &impl Fn() -> Result<()>,
     ) -> Result<Option<StoredMessage>> {
         let Some(id) = parent_id else { return Ok(None); };
-        anyhow::ensure!(!id.is_empty() && id.len() <= 256, "Invalid album continuation parent.");
+        anyhow::ensure!(!id.is_empty() && id.len() <= 256, MessageRef::new("error.album_parent_invalid"));
         current()?;
         let parent = self.store.album_parent_for_send(chat, id).await?;
         current()?;
         continuation_key(&parent, &parent.header.chat)?;
         let sender: Jid = parent.header.sender.parse()?;
-        anyhow::ensure!(self.is_self_jid(&sender), "Album continuation parent belongs to another sender.");
+        anyhow::ensure!(self.is_self_jid(&sender), MessageRef::new("error.album_parent_sender_mismatch"));
         Ok(Some(parent))
     }
 
@@ -139,33 +155,37 @@ impl WhatsAppService {
         current()?;
         let stored = match self.store.insert_message_row(&stored).await {
             Ok(stored) => stored,
-            Err(error) => return Err(anyhow::anyhow!(self.album_before_error(&stored, error).await)),
+            Err(error) => return Err(self.album_before_error(&stored, error).await),
         };
         if let Err(error) = current() {
-            return Err(anyhow::anyhow!(self.album_before_error(&stored, error).await));
+            return Err(self.album_before_error(&stored, error).await);
         }
         let sent = match self.client.send_message_with_options(target.clone(), parent,
             whatsapp_rust::SendOptions::default().with_message_id(parent_id)).await {
             Ok(sent) => sent,
             Err(error) if failed_before_transport(&error) => {
                 result.preflight_failed = true;
-                result.error = Some(self.album_before_error(&stored, error).await);
+                result.stopped(0, self.album_before_error(&stored, error).await);
                 return Ok(None);
             }
             Err(error) => {
                 result.parent_uncertain = true;
-                result.error = Some(error.to_string());
+                result.stopped(0, error.into());
                 return Ok(None);
             }
         };
         if let Err(error) = self.store.mark_album_request_written(chat, &stored.header.id).await {
             let message = format!("Album parent was written to transport, but its local write provenance could not be saved: {error}");
             result.warnings.push(message.clone());
-            result.stopped(0, message);
+            let failure = MessageFailure { message: MessageRef::new("warning.album_parent_provenance_failed"), diagnostic: Some(message.clone()) };
+            result.warning_messages.push(failure.clone());
+            result.stopped(0, anyhow::Error::new(failure.message).context(message));
             return Ok(None);
         }
-        result.note_fanout("parent", &sent);
-        if let Some(warning) = self.album_arrival(&stored, self.is_self_jid(&target)).await { result.warnings.push(warning); }
+        result.note_fanout(None, &sent);
+        if let Some((warning, descriptor)) = self.album_arrival(&stored, self.is_self_jid(&target)).await {
+            result.warnings.push(warning); result.warning_messages.push(descriptor);
+        }
         if let Err(error) = current() { result.stopped(0, error); return Ok(None); }
         Ok(Some(sent.message_key()))
     }
@@ -182,7 +202,8 @@ impl WhatsAppService {
             current()?;
             let limit = if kind == "image" { 64 * 1024 * 1024 } else { 512 * 1024 * 1024 };
             anyhow::ensure!(metadata.is_file() && metadata.len() > 0 && metadata.len() <= limit,
-                "Album item exceeds the application media size bound or is empty.");
+                MessageRef::new("error.album_item_size_invalid").with_param("index", serde_json::Number::from(index + 1))
+                    .with_param("max_bytes", serde_json::Number::from(limit)));
             let media = media_quality::prepare(MediaInput::File(item.path), item.name, kind, item.quality, false).await?;
             current()?;
             let extension = file_extension(&media.file_name);
@@ -226,16 +247,24 @@ impl WhatsAppService {
             Err(error) if failed_before_transport(&error) => {
                 return Err(AlbumSendFailure::Before(self.album_before_error(&stored, error).await));
             }
-            Err(error) => return Err(AlbumSendFailure::Uncertain(id.clone(), error.to_string())),
+            Err(error) => return Err(AlbumSendFailure::Uncertain(id.clone(), error.into())),
         };
         let mut warnings = AlbumSendResult::default();
-        warnings.note_fanout(&format!("item {}", index + 1), &sent);
+        warnings.note_fanout(Some(index), &sent);
         if stored.media.path.is_none() {
             warnings.warnings.push(format!("Album item {} has no retained local copy; download it to reopen it.", index + 1));
+            warnings.warning_messages.push(MessageFailure { message: MessageRef::new("warning.album_local_copy_missing")
+                .with_param("index", serde_json::Number::from(index + 1)), diagnostic: None });
         }
-        if let Some(warning) = &item.warning { warnings.warnings.push(format!("Item {}: {warning}", index + 1)); }
-        if let Some(warning) = self.album_arrival(&stored, self.is_self_jid(target)).await { warnings.warnings.push(warning); }
-        Ok(AlbumSendAttempt { id, warnings: warnings.warnings, stop: current().err().map(|error| error.to_string()) })
+        if let Some(warning) = &item.warning {
+            warnings.warnings.push(format!("Item {}: {warning}", index + 1));
+            warnings.warning_messages.push(MessageFailure { message: MessageRef::new("warning.album_preview_missing")
+                .with_param("index", serde_json::Number::from(index + 1)), diagnostic: None });
+        }
+        if let Some((warning, descriptor)) = self.album_arrival(&stored, self.is_self_jid(target)).await {
+            warnings.warnings.push(warning); warnings.warning_messages.push(descriptor);
+        }
+        Ok(AlbumSendAttempt { id, warnings: warnings.warnings, warning_messages: warnings.warning_messages, stop: current().err() })
     }
 
     async fn store_album_child(
@@ -249,30 +278,33 @@ impl WhatsAppService {
         current()?;
         stored.media.path = self.keep_sent_copy(&item.media.input, id, &item.extension).await;
         if let Err(error) = current() {
-            return Err(anyhow::anyhow!(self.album_before_error(&stored, error).await));
+            return Err(self.album_before_error(&stored, error).await);
         }
         // Persist before transport: a local save failure leaves this item provably unsent.
-        let parent_id = parent.id.as_deref().ok_or_else(|| anyhow::anyhow!("Album parent has no id."))?;
+        let parent_id = parent.id.as_deref().ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.album_parent_invalid")))?;
         match self.store.insert_album_child(parent_id, &stored).await {
             Ok(stored) => Ok(stored),
-            Err(error) => Err(anyhow::anyhow!(self.album_before_error(&stored, error).await)),
+            Err(error) => Err(self.album_before_error(&stored, error).await),
         }
     }
 
-    async fn album_arrival(&self, stored: &StoredMessage, to_self: bool) -> Option<String> {
+    async fn album_arrival(&self, stored: &StoredMessage, to_self: bool) -> Option<(String, MessageFailure)> {
         if let Err(error) = restore_self_album_delivery(&self.store, stored, to_self).await {
-            return Some(format!("Album message was written to self, but its local delivery state could not be saved: {error}"));
+            let raw = format!("Album message was written to self, but its local delivery state could not be saved: {error}");
+            return Some((raw, MessageFailure { message: MessageRef::new("warning.album_delivery_state_failed"), diagnostic: Some(format!("{error:#}")) }));
         }
         match self.store.message(&stored.header.chat, &stored.header.id).await {
             Ok(fresh) => { let _ = self.events.send(ServiceEvent::arrival(&fresh)); None }
-            Err(error) => Some(format!("Album message was written to transport, but its local row could not be refreshed: {error}")),
+            Err(error) => Some((format!("Album message was written to transport, but its local row could not be refreshed: {error}"),
+                MessageFailure { message: MessageRef::new("warning.album_local_refresh_failed"), diagnostic: Some(format!("{error:#}")) })),
         }
     }
 
-    async fn album_before_error(&self, stored: &StoredMessage, error: impl std::fmt::Display) -> String {
+    async fn album_before_error(&self, stored: &StoredMessage, error: impl Into<anyhow::Error>) -> anyhow::Error {
+        let error = error.into();
         match self.discard_album_attempt(stored).await {
-            Some(warning) => format!("{error}; {warning}"),
-            None => error.to_string(),
+            Some(warning) => { let raw = format!("{error}; {warning}"); error.context(raw) }
+            None => error,
         }
     }
 
@@ -298,13 +330,14 @@ impl WhatsAppService {
 struct AlbumSendAttempt {
     id: String,
     warnings: Vec<String>,
-    stop: Option<String>,
+    warning_messages: Vec<MessageFailure>,
+    stop: Option<anyhow::Error>,
 }
 
-enum AlbumSendFailure { Before(String), Uncertain(String, String) }
+enum AlbumSendFailure { Before(anyhow::Error), Uncertain(String, anyhow::Error) }
 
 impl AlbumSendFailure {
-    fn before(error: impl std::fmt::Display) -> Self { Self::Before(error.to_string()) }
+    fn before(error: anyhow::Error) -> Self { Self::Before(error) }
 }
 
 async fn send_album_sequence<Step, Attempt>(count: usize, mut step: Step, result: &mut AlbumSendResult)
@@ -316,6 +349,7 @@ where Step: FnMut(usize) -> Attempt,
             Ok(sent) => {
                 result.sent(index, sent.id);
                 result.warnings.extend(sent.warnings);
+                result.warning_messages.extend(sent.warning_messages);
                 if let Some(error) = sent.stop { result.stopped(index + 1, error); return; }
             }
             Err(AlbumSendFailure::Before(error)) => { result.stopped(index, error); return; }
@@ -340,18 +374,19 @@ async fn restore_self_album_delivery(store: &StoreWorker, stored: &StoredMessage
 
 fn album_counts(items: &[AlbumMediaInput], continuation: bool) -> Result<(u32, u32)> {
     anyhow::ensure!(((if continuation { 1 } else { 2 })..=MAX_ALBUM_ITEMS).contains(&items.len()),
-        "New albums require 2 to 8 items; a continuation accepts 1 to 8 (application staging bound).");
+        MessageRef::new("error.album_item_count_invalid").with_param("min_items", serde_json::Number::from(if continuation { 1 } else { 2 }))
+            .with_param("max_items", serde_json::Number::from(MAX_ALBUM_ITEMS)));
     let (mut images, mut videos) = (0, 0);
     for item in items {
         anyhow::ensure!(!item.name.is_empty() && item.name.len() <= 1024
             && item.caption.as_ref().is_none_or(|text| text.len() <= MAX_CAPTION_BYTES)
-            && item.progress.as_ref().is_none_or(|token| !token.is_empty() && token.len() <= 1024), "Invalid album item metadata.");
+            && item.progress.as_ref().is_none_or(|token| !token.is_empty() && token.len() <= 1024), MessageRef::new("error.album_item_metadata_invalid"));
         let extension = file_extension(&item.name);
         let (_, kind) = media_kind_for(&extension);
         match kind {
             "image" if extension != "gif" => images += 1,
             "video" => videos += 1,
-            _ => anyhow::bail!("Albums support ordinary photos and videos only."),
+            _ => anyhow::bail!(MessageRef::new("error.album_media_type_invalid")),
         }
     }
     Ok((images, videos))
@@ -361,27 +396,27 @@ fn continuation_key(parent: &StoredMessage, chat: &str) -> Result<wa::MessageKey
     anyhow::ensure!(parent.header.chat == chat && parent.header.from_me && !parent.header.id.is_empty()
         && !parent.local.deleted && !parent.local.revoked && !parent.spoiler && parent.media.once_kind.is_none()
         && parent.media.kind.as_deref() == Some("album") && parent.system.kind.is_none()
-        && parent.album.as_ref().is_some_and(|album| album.parent_id.is_none()), "Album continuation parent is unavailable or private.");
+        && parent.album.as_ref().is_some_and(|album| album.parent_id.is_none()), MessageRef::new("error.album_parent_unavailable"));
     Ok(wa::MessageKey { remote_jid: Some(parent.header.chat.clone()), from_me: Some(true),
         id: Some(parent.header.id.clone()), participant: None })
 }
 
 fn album_target(chat: &str, reply: Option<&(String, String, String)>, mentions: &[String]) -> Result<Jid> {
-    anyhow::ensure!(chat.len() <= 256, "Album destination is too long.");
+    anyhow::ensure!(chat.len() <= 256, MessageRef::new("error.album_destination_invalid"));
     let target = super::broadcast_lists::writable_target(chat)?;
     anyhow::ensure!(!target.user.is_empty() && (target.is_pn() || target.is_lid() || target.is_group())
-        && target.device == 0 && target.agent == 0 && target.integrator == 0, "Choose a contact or group album destination.");
-    anyhow::ensure!(mentions.len() <= 256, "Album exceeds the application mention bound.");
+        && target.device == 0 && target.agent == 0 && target.integrator == 0, MessageRef::new("error.album_destination_invalid"));
+    anyhow::ensure!(mentions.len() <= 256, MessageRef::new("error.album_mentions_limit").with_param("max_items", serde_json::Number::from(256)));
     for mention in mentions {
-        anyhow::ensure!(mention.len() <= 256, "Album mention is too long.");
-        let jid: Jid = mention.parse()?;
+        anyhow::ensure!(mention.len() <= 256, MessageRef::new("error.album_mention_invalid"));
+        let jid: Jid = mention.parse().context(MessageRef::new("error.album_mention_invalid"))?;
         anyhow::ensure!(!jid.user.is_empty() && (jid.is_pn() || jid.is_lid()) && jid.device == 0
-            && jid.agent == 0 && jid.integrator == 0, "Invalid album mention.");
+            && jid.agent == 0 && jid.integrator == 0, MessageRef::new("error.album_mention_invalid"));
     }
     if let Some((id, sender, text)) = reply {
         anyhow::ensure!(!id.is_empty() && id.len() <= 256 && sender.len() <= 256 && text.len() <= MAX_CAPTION_BYTES,
-            "Invalid album reply target.");
-        let _: Jid = sender.parse()?;
+            MessageRef::new("error.album_reply_invalid"));
+        let _: Jid = sender.parse().context(MessageRef::new("error.album_reply_invalid"))?;
     }
     Ok(target)
 }

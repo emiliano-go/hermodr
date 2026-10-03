@@ -1,4 +1,5 @@
 use super::*;
+use crate::message_ref::MessageRef;
 
 #[derive(Clone)]
 pub(crate) struct QuizDefinition {
@@ -207,7 +208,7 @@ impl MessageStore {
                 && cipher.alt.as_ref().is_none_or(|a| a.len() <= 256)
                 && cipher.iv.len() <= 64
                 && cipher.payload.len() <= 4096,
-            "Invalid quiz vote ciphertext."
+            MessageRef::new("error.quiz_ciphertext")
         );
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.savepoint()?;

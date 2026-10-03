@@ -3,6 +3,8 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { compileModule } from "svelte/compiler";
 import ts from "typescript";
+import { normalizeError } from "../lib/i18n/errors.ts";
+import { uiError } from "../lib/state/localized.ts";
 import { broadcastSendReason, isBroadcastList } from "../lib/utils/broadcast.ts";
 import type { QuickRepliesState } from "../lib/state/quick-replies.svelte";
 
@@ -16,7 +18,7 @@ function fixture() {
   const calls: { command: string; args: any }[] = [];
   let handler: (command: string) => any = () => catalog("Current template");
   const invoke = (command: string, args: any) => { calls.push({ command, args }); return handler(command); };
-  const State = new Function("invoke", "session", "messages", "chats", `${compiled}\nreturn QuickRepliesState;`)(invoke, session, messages, chats) as new () => QuickRepliesState;
+  const State = new Function("invoke", "session", "messages", "chats", "normalizeError", "uiError", `${compiled}\nreturn QuickRepliesState;`)(invoke, session, messages, chats, normalizeError, uiError) as new () => QuickRepliesState;
   return { state: new State(), session, messages, chats, calls, handle: (next: typeof handler) => handler = next };
 }
 
@@ -45,7 +47,7 @@ test("sync completion after a chat switch clears account-owned busy state withou
 
 test("first-read failures keep current request errors reachable without exposing old templates", async () => {
   const f = fixture(); f.handle(() => Promise.reject(new Error("Synthetic cache failure"))); await f.state.refresh();
-  assert.equal(f.state.scope("room")?.account, "synthetic-a"); assert.equal(f.state.error, "Error: Synthetic cache failure");
+  assert.equal(f.state.scope("room")?.account, "synthetic-a"); assert.equal(f.state.error, "Operation failed."); assert.equal(JSON.parse(f.state.diagnostic!).message, "Synthetic cache failure");
   assert.deepEqual(f.state.replies, []); f.state.reset();
 });
 

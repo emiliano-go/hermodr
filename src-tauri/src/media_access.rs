@@ -1,56 +1,58 @@
 use std::{collections::BTreeMap, path::{Path, PathBuf}};
 use tauri::{AppHandle, Manager, State};
 use crate::{AppState, account_store::media_cache_dir, media::READABLE_EXTENSIONS};
+use crate::command_error::{CommandError, CommandResult};
+use postal_core::message_ref::MessageRef;
 
-fn resolved_boundary(path: &Path) -> Result<PathBuf, String> {
-    if !path.is_absolute() { return Err("media folders must use an absolute path".into()); }
+fn resolved_boundary(path: &Path) -> CommandResult<PathBuf> {
+    if !path.is_absolute() { return Err(CommandError::code("error.media_directory_absolute")); }
     let mut parent = path;
     let mut suffix = Vec::new();
     while !parent.exists() {
-        suffix.push(parent.file_name().ok_or("invalid folder")?.to_owned());
-        parent = parent.parent().ok_or("invalid folder")?;
+        suffix.push(parent.file_name().ok_or_else(|| CommandError::code("error.media_directory_invalid"))?.to_owned());
+        parent = parent.parent().ok_or_else(|| CommandError::code("error.media_directory_invalid"))?;
     }
     let mut resolved = dunce::canonicalize(parent).map_err(|error| error.to_string())?;
     for component in suffix.into_iter().rev() { resolved.push(component); }
     Ok(resolved)
 }
 
-fn checked_root(directory: &Path, private: &[PathBuf], fallback: &Path) -> Result<PathBuf, String> {
+fn checked_root(directory: &Path, private: &[PathBuf], fallback: &Path) -> CommandResult<PathBuf> {
     let root = resolved_boundary(directory)?;
     for boundary in private {
         let fallback_allowed = Some(boundary.as_path()) == fallback.parent() && root.starts_with(fallback);
         if (root.starts_with(boundary) || boundary.starts_with(&root)) && !fallback_allowed {
-            return Err("choose a media folder outside account, configuration and upload storage".into());
+            return Err(CommandError::code("error.media_directory_private"));
         }
     }
     Ok(root)
 }
 
-pub(crate) fn validate_directory(app: &AppHandle, directory: &Path) -> Result<PathBuf, String> {
+pub(crate) fn validate_directory(app: &AppHandle, directory: &Path) -> CommandResult<PathBuf> {
     let data = resolved_boundary(&app.path().app_data_dir().map_err(|error| error.to_string())?)?;
     let config = resolved_boundary(&app.path().app_config_dir().map_err(|error| error.to_string())?)?;
     let uploads = resolved_boundary(&app.path().app_cache_dir().map_err(|error| error.to_string())?.join("uploads"))?;
     checked_root(directory, &[data.clone(), config, uploads], &data.join("media"))
 }
 
-pub(crate) fn media_root(app: &AppHandle, state: &AppState) -> Result<PathBuf, String> {
+pub(crate) fn media_root(app: &AppHandle, state: &AppState) -> CommandResult<PathBuf> {
     let running = state.service.lock().unwrap().as_ref().and_then(|service| service.media_dir());
     let configured = running.unwrap_or_else(|| state.settings.lock().unwrap().media_dir.as_deref()
         .filter(|directory| !directory.trim().is_empty()).map(PathBuf::from).unwrap_or_else(|| media_cache_dir(app)));
     validate_directory(app, &configured)
 }
 
-fn authorized_file(root: &Path, path: &str) -> Result<PathBuf, String> {
+fn authorized_file(root: &Path, path: &str) -> CommandResult<PathBuf> {
     let path = Path::new(path);
-    if !path.is_absolute() { return Err("media files must use an absolute path".into()); }
+    if !path.is_absolute() { return Err(CommandError::code("error.media_file_absolute")); }
     let target = dunce::canonicalize(path).map_err(|error| error.to_string())?;
-    if !target.starts_with(root) || !target.is_file() { return Err("file is outside the media folder".into()); }
+    if !target.starts_with(root) || !target.is_file() { return Err(CommandError::code("error.media_path_denied")); }
     let extension = target.extension().and_then(|value| value.to_str()).unwrap_or("").to_ascii_lowercase();
-    if !READABLE_EXTENSIONS.contains(&extension.as_str()) { return Err("unsupported file type".into()); }
+    if !READABLE_EXTENSIONS.contains(&extension.as_str()) { return Err(CommandError::code("error.media_type_unsupported")); }
     Ok(target)
 }
 
-pub(crate) fn readable_file(app: &AppHandle, state: &AppState, path: &str) -> Result<PathBuf, String> {
+pub(crate) fn readable_file(app: &AppHandle, state: &AppState, path: &str) -> CommandResult<PathBuf> {
     authorized_file(&media_root(app, state)?, path)
 }
 
@@ -65,8 +67,8 @@ fn grant_paths(root: &Path, paths: &[String], mut grant: impl FnMut(&Path) -> Re
 }
 
 #[tauri::command(async)]
-pub(crate) fn authorize_media_assets(app: AppHandle, state: State<'_, AppState>, paths: Vec<String>) -> Result<BTreeMap<String, Option<String>>, String> {
-    if paths.len() > 512 { return Err("too many media paths".into()); }
+pub(crate) fn authorize_media_assets(app: AppHandle, state: State<'_, AppState>, paths: Vec<String>) -> CommandResult<BTreeMap<String, Option<String>>> {
+    if paths.len() > 512 { return Err(CommandError::new(MessageRef::new("error.media_paths_limit").with_param("max_items", serde_json::Number::from(512)))); }
     let root = media_root(&app, &state)?;
     Ok(grant_paths(&root, &paths, |path| app.asset_protocol_scope().allow_file(path).map_err(|error| error.to_string())))
 }

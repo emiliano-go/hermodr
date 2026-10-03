@@ -1,10 +1,13 @@
 <script lang="ts">
+  import type { LocalizedError } from "$lib/i18n/errors";
+  import { normalizeError } from "$lib/i18n/errors";
+  import { t, formatDate } from "$lib/i18n/localizer";
   import type { BroadcastList } from "$lib/utils/wire";
 
   let { info, loading, error, nameOf }: {
     info: BroadcastList | null;
     loading: boolean;
-    error: string | null;
+    error: LocalizedError | string | null;
     nameOf: (jid: string) => string;
   } = $props();
 
@@ -17,20 +20,20 @@
   });
 </script>
 
-<section class="broadcast-info" aria-label="Broadcast recipients">
-  <h3>Broadcast recipients</h3>
+<section class="broadcast-info" aria-label={t("chat.broadcast_recipients")}>
+  <h3>{t("chat.broadcast_recipients")}</h3>
   {#if loading}
-    <p role="status">Loading recipient details…</p>
+    <p role="status">{t("chat.broadcast_loading")}</p>
   {:else if error}
-    <p class="error" role="alert">Recipient details unavailable. {error}</p>
+    <p class="error" role="alert">{t("chat.broadcast_unavailable")} {error}</p>
   {:else if !recipients.length}
-    <p role="status">Recipient details unavailable.</p>
+    <p role="status">{t("chat.broadcast_unavailable")}</p>
   {:else}
-    <p class="source">Cached from a received message.
+    <p class="source">{t("chat.broadcast_cached")}
       {#if sourceDate}
-        <time datetime={sourceDate.toISOString()}>{sourceDate.toLocaleString()}</time>
+        <time datetime={sourceDate.toISOString()}>{formatDate(sourceDate.getTime() / 1000, { dateStyle: "medium", timeStyle: "short" })}</time>
       {:else}
-        <span>Message time unavailable.</span>
+        <span>{t("chat.message_time_unavailable")}</span>
       {/if}
     </p>
     <ul>

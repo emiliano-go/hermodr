@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { installLocaleProvider, loadCatalog, t } from "../lib/i18n/localizer.ts";
 import { memberActionReason, memberBusinessHours, memberFieldText, memberFresh, memberLocalMatches, memberNoteError, memberScopeMatches, memberTyping } from "../lib/utils/member-sheet.ts";
 import type { MemberPermissions, MemberAction } from "../lib/utils/member-sheet.ts";
 
@@ -69,8 +70,28 @@ test("live field state distinguishes denied access, query failure and retained s
   assert.equal(memberFieldText({ state: "unavailable", value: null, error: null, stale: false }), "Not provided");
   const denied = memberFieldText({ state: "restricted", value: "must not show", error: "403", stale: false });
   assert.equal(denied, "Access denied by server."); assert.doesNotMatch(denied, /privacy|hidden|must not show/i);
-  assert.equal(memberFieldText({ state: "error", value: "Saved about", error: "Query failed", stale: true }), "Cached value: Saved about. Refresh failed: Query failed");
+  const failure = memberFieldText({ state: "error", value: "Saved about", error: "Query failed", stale: true });
+  assert.equal(failure, `Cached value: Saved about. Refresh failed: ${t("error.member_field_query")}`);
+  assert.doesNotMatch(failure, /Query failed/);
   assert.equal(memberBusinessHours({ day: "Monday", mode: "open", open_minutes: 540, close_minutes: 1020 }), "Monday: open 09:00 to 17:00");
+});
+
+test("Arabic display keeps native weekday codes, time values and stored member data unchanged", async () => {
+  const hours = { day: "mon", mode: "specific_hours", open_minutes: 540, close_minutes: 1020 };
+  const original = { ...hours };
+  const english = memberBusinessHours(hours);
+  const arabic = await loadCatalog("ar");
+  const restore = installLocaleProvider(() => ({ locale: "ar", catalog: arabic }));
+  try {
+    const translated = memberBusinessHours(hours);
+    assert.notEqual(translated, english);
+    assert.match(translated, /الاثنين/);
+    assert.match(translated, /مفتوح/);
+    assert.doesNotMatch(translated, /mon|specific_hours/);
+    assert.match(memberNoteError("notes", -1), /عدد التحذيرات/);
+    assert.match(memberTyping({ state: "composing", expires_at_ms: 11000 }, 10000)!, /جارٍ الكتابة/);
+    assert.deepEqual(hours, original);
+  } finally { restore(); }
 });
 
 test("local note policy counts Unicode characters and matches native warning/NUL limits", () => {
@@ -79,4 +100,23 @@ test("local note policy counts Unicode characters and matches native warning/NUL
   assert.match(memberNoteError("note\0text", 0), /NUL/);
   for (const warnings of [-1, 0.1, 100001, NaN, undefined]) assert.match(memberNoteError("note", warnings), /0 to 100000/);
   assert.equal(memberNoteError("", 0), "");
+});
+
+test("typed field failures follow locale while keeping SDK diagnostics out of labels", async () => {
+  const field = { state: "error" as const, value: "Saved about", error: "legacy opaque detail", stale: true };
+  const failure = { code: "error.operation_failed", params: {}, diagnostic: "synthetic SDK detail" };
+  const original = structuredClone({ field, failure });
+  const english = memberFieldText(field, undefined, failure);
+  assert.ok(english.includes(t(failure.code)));
+  assert.doesNotMatch(english, /legacy opaque detail|synthetic SDK detail/);
+  const arabic = await loadCatalog("ar");
+  const restore = installLocaleProvider(() => ({ locale: "ar", catalog: arabic }));
+  try {
+    const translated = memberFieldText(field, undefined, failure);
+    assert.notEqual(translated, english);
+    assert.ok(translated.includes(t(failure.code)));
+    assert.ok(translated.includes("Saved about"));
+    assert.doesNotMatch(translated, /legacy opaque detail|synthetic SDK detail/);
+    assert.deepEqual({ field, failure }, original);
+  } finally { restore(); }
 });

@@ -1,4 +1,4 @@
-use crate::AppState;
+use crate::{AppState, command_error::{CommandError, CommandResult}};
 use std::sync::Arc;
 use tauri::State;
 
@@ -8,15 +8,15 @@ pub(crate) async fn keyword_mentions(
     account_id: String,
     highlight: Vec<String>,
     hide: Vec<String>,
-) -> Result<std::collections::HashMap<String, i64>, String> {
-    let service = state.account_service(&account_id)?;
+) -> CommandResult<std::collections::HashMap<String, i64>> {
+    let service = state.account_service(&account_id).map_err(|error| CommandError::code("error.account_changed").with_diagnostic(error))?;
     let counts = service
         .keyword_mentions(&highlight, &hide)
         .await
-        .map_err(|error| error.to_string())?;
-    let current = state.account_service(&account_id)?;
+        .map_err(CommandError::from)?;
+    let current = state.account_service(&account_id).map_err(|error| CommandError::code("error.account_changed").with_diagnostic(error))?;
     if !Arc::ptr_eq(&service, &current) {
-        return Err("account changed while counting keyword matches".into());
+        return Err(CommandError::code("error.account_changed"));
     }
     Ok(counts)
 }
@@ -29,15 +29,15 @@ pub(crate) async fn keyword_matches(
     unread_only: bool,
     highlight: Vec<String>,
     hide: Vec<String>,
-) -> Result<Vec<postal_core::store::StoredMessage>, String> {
-    let service = state.account_service(&account_id)?;
+) -> CommandResult<Vec<postal_core::store::StoredMessage>> {
+    let service = state.account_service(&account_id).map_err(|error| CommandError::code("error.account_changed").with_diagnostic(error))?;
     let rows = service
         .keyword_matches(chat.as_deref(), unread_only, &highlight, &hide)
         .await
-        .map_err(|error| error.to_string())?;
-    let current = state.account_service(&account_id)?;
+        .map_err(CommandError::from)?;
+    let current = state.account_service(&account_id).map_err(|error| CommandError::code("error.account_changed").with_diagnostic(error))?;
     if !Arc::ptr_eq(&service, &current) {
-        return Err("account changed while finding keyword matches".into());
+        return Err(CommandError::code("error.account_changed"));
     }
     Ok(rows)
 }

@@ -1,6 +1,7 @@
 <!-- The pairing and loading screen: account chooser, resume progress and the
   QR pairing card. Moved out of +page.svelte. -->
 <script lang="ts">
+  import { t, formatNumber } from "$lib/i18n/localizer";
   import Avatar from "$lib/ui/Avatar.svelte";
   import Button from "$lib/ui/Button.svelte";
   import Icon from "$lib/ui/Icon.svelte";
@@ -80,23 +81,23 @@
   <header class="intro-head">
     <span class="intro-logo"><Logo size={48} /></span>
     <div>
-      <h1>Postal</h1>
-      <span class="intro-tag">WhatsApp, native on your desktop</span>
+      <h1>{t("ui.app_name")}</h1>
+      <span class="intro-tag">{t("settings.pairing_tagline")}</span>
     </div>
     <Button
       variant="icon"
       icon="settings"
       iconSize={18}
-      title="Settings"
-      aria-label="Settings"
+      title={t("settings.title")}
+      aria-label={t("settings.title")}
       cls="intro-settings"
       onclick={onsettings} />
   </header>
 
   {#if choosingAccount}
     <div class="intro-card resume">
-      <h2>Choose an account</h2>
-      <span class="resume-who">Several WhatsApp accounts are linked on this computer.</span>
+      <h2>{t("settings.account_choose")}</h2>
+      <span class="resume-who">{t("settings.accounts_multiple")}</span>
       <div class="account-choices">
         {#each registered as account (account.id)}
           <button class="account-choice" onclick={() => onchoose(account.id)}>
@@ -107,7 +108,7 @@
               cls="choice-avatar"
             />
             <span class="choice-text">
-              <strong>{account.label}</strong>
+              <strong><bdi>{account.label}</bdi></strong>
               <small>{phoneName(null, account.jid!)}</small>
             </span>
             <Icon name="chevronRight" size={16} />
@@ -123,24 +124,24 @@
         seed={linked.id}
         cls="resume-avatar"
       />
-      <h2>{started || connecting || connected ? "Signing in" : "Welcome back"}</h2>
+      <h2>{started || connecting || connected ? t("settings.signing_in") : t("settings.welcome_back")}</h2>
       <span class="resume-who">{linked.label} · {phoneName(null, linked.jid!)}</span>
       {#if started || connecting || connected}
         <div class="resume-progress" role="status">
           <div class="resume-status">
             <span>
               {#if finalizing}
-                Finishing up…
+                {t("settings.finishing")}
               {:else if syncPending > 0}
-                Loading messages…
+                {t("settings.messages_loading")}
               {:else if connected}
-                Loading your messages…
+                {t("settings.your_messages_loading")}
               {:else}
-                Connecting to WhatsApp…
+                {t("settings.connecting")}
               {/if}
             </span>
             {#if syncPending > 0}
-              <span class="resume-count">{Math.min(syncApplied, syncPending)} of {syncPending} · {syncPercent}%</span>
+              <span class="resume-count">{t("settings.sync_count", { applied: Math.min(syncApplied, syncPending), pending: syncPending })} · {formatNumber(syncPercent / 100, { style: "percent", maximumFractionDigits: 0 })}</span>
             {/if}
           </div>
           <div
@@ -153,17 +154,17 @@
             <span style:width={syncPending > 0 ? `${syncPercent}%` : null}></span>
           </div>
           {#if syncTimedOut}
-            <span class="hint">Still syncing in the background…</span>
+            <span class="hint">{t("settings.sync_background")}</span>
           {/if}
         </div>
       {:else}
-        <Button variant="primary" onclick={onconnect}>Connect</Button>
+        <Button variant="primary" onclick={onconnect}>{t("settings.connect")}</Button>
       {/if}
       {#if registered.some((a) => a.id !== linked.id)}
         <div class="account-bar">
           {#each registered as account (account.id)}
             {#if account.id !== linked.id}
-              <button class="account" title="Switch to {account.label}" onclick={() => onswitch(account.id)}>
+              <button class="account" title={t("settings.account_switch_to", { name: account.label })} onclick={() => onswitch(account.id)}>
                 <Avatar
                   src={accountAvatars[account.id] ?? null}
                   label={account.label}
@@ -180,27 +181,27 @@
   {:else}
   <div class="intro-card">
     <section class="intro-steps">
-      <h2>Link this computer</h2>
+      <h2>{t("settings.link_computer")}</h2>
       <ol>
-        <li><span class="num">1</span><span>Open <strong>WhatsApp</strong> on your phone.</span></li>
+        <li><span class="num">1</span><span>{t("settings.phone_open_whatsapp")}</span></li>
         <li>
-          <span class="num">2</span><span>Tap <strong>Menu</strong> or <strong>Settings</strong>, then <strong>Linked devices</strong>.</span>
+          <span class="num">2</span><span>{t("settings.phone_linked_devices")}.</span>
         </li>
-        <li><span class="num">3</span><span>Tap <strong>Link a device</strong>.</span></li>
-        <li><span class="num">4</span><span>Point your phone at this screen to scan the code.</span></li>
+        <li><span class="num">3</span><span>{t("settings.phone_link_device")}.</span></li>
+        <li><span class="num">4</span><span>{t("settings.qr_scan_hint")}</span></li>
       </ol>
       <!-- Each stage lights up as the connection actually reaches it. -->
-      <div class="intro-progress" aria-label="Connection progress">
-        {#each ["Connecting to WhatsApp", "Waiting for your phone", "Linked"] as label, i (label)}
+      <div class="intro-progress" aria-label={t("settings.connection_progress")}>
+        {#each ["settings.connection_step", "settings.wait_phone", "settings.linked"] as label, i (label)}
           <!-- Not `.stage`: the wallpaper layer is drawn behind every `.stage` (+page.svelte). -->
           <span class="phase" class:done={stage > i} class:current={stage === i + 1 || (stage === 0 && i === 0)}>
-            <span class="phase-dot"></span>{label}
+            <span class="phase-dot"></span>{t(label)}
           </span>
         {/each}
       </div>
       {#if registered.length > 0}
         <div class="intro-accounts">
-          <span class="intro-label">Accounts on this computer</span>
+          <span class="intro-label">{t("settings.accounts_local")}</span>
           <div class="account-bar">
             {#each registered as account (account.id)}
               <button
@@ -238,26 +239,25 @@
             oncancelpaircode();
           }} />
       {:else if qrSvg}
-        <div class="qr" aria-label="Pairing QR code">
+        <div class="qr" aria-label={t("settings.qr_label")}>
           {@html qrSvg}
           <span class="qr-logo"><Logo size={44} /></span>
         </div>
-        <p class="hint">The code refreshes by itself. Keep this window open while you scan.</p>
+        <p class="hint">{t("settings.qr_refresh_hint")}</p>
         <PhoneLink onactivate={() => (phoneMode = true)} />
       {:else if started || connecting}
-        <div class="qr qr-loading" aria-label="Preparing a pairing code"><Spinner /></div>
-        <p class="hint">Getting a pairing code from WhatsApp…</p>
+        <div class="qr qr-loading" aria-label={t("settings.qr_preparing")}><Spinner /></div>
+        <p class="hint">{t("settings.qr_loading")}</p>
       {:else}
         <div class="qr qr-idle"><Icon name="message" size={48} /></div>
-        <Button variant="primary" onclick={onconnect}>Start pairing</Button>
+        <Button variant="primary" onclick={onconnect}>{t("settings.pairing_start")}</Button>
       {/if}
     </section>
   </div>
   {/if}
 
   <p class="intro-foot">
-    Your messages stay end-to-end encrypted. History is kept only on this computer, within the limits
-    you set in Settings.
+    {t("settings.pairing_privacy")}
   </p>
 </div>
 
@@ -369,7 +369,7 @@
     background: var(--raised);
     color: var(--text);
     font: inherit;
-    text-align: left;
+    text-align: start;
     cursor: pointer;
     transition:
       background calc(0.15s * var(--motion-scale)),

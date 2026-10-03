@@ -5,9 +5,10 @@
 import { invoke } from "$lib/utils/ipc";
 import type { OnceState, ServiceEvent } from "$lib/utils/models";
 import { ui } from "./ui.svelte";
+import { LocalizedError, normalizeError } from "../i18n/errors.ts";
 
 /** Why the last phone-number attempt produced no code. */
-export type OncePairCodeError = { message: string; throttled: boolean; unavailable: boolean };
+export type OncePairCodeError = { message: string; throttled: boolean; unavailable: boolean; diagnostic?: string };
 
 class OnceInstance {
   paired = $state(false);
@@ -20,7 +21,14 @@ class OnceInstance {
   /** Phone-number linking, an alternative to the QR shown beside it. */
   pairCode = $state<string | null>(null);
   pairCodeExpiresAt = $state<number | null>(null);
-  pairCodeError = $state<OncePairCodeError | null>(null);
+  #pairCodeError = $state<{ failure: LocalizedError; throttled: boolean; unavailable: boolean } | null>(null);
+  get pairCodeError(): OncePairCodeError | null {
+    const error = this.#pairCodeError;
+    return error ? { message: error.failure.message, throttled: error.throttled, unavailable: error.unavailable, diagnostic: error.failure.diagnostic } : null;
+  }
+  set pairCodeError(value: { message: unknown; throttled: boolean; unavailable: boolean } | null) {
+    this.#pairCodeError = value ? { failure: normalizeError(value.message), throttled: value.throttled, unavailable: value.unavailable } : null;
+  }
   pairCodeManual = $state(false);
   pairCodeBusy = $state(false);
   pairingPhone = $state<string | null>(null);
@@ -91,7 +99,7 @@ class OnceInstance {
     try {
       await invoke("request_pair_code", { phone, companion: true });
     } catch (e) {
-      this.pairCodeError = { message: String(e), throttled: false, unavailable: false };
+      this.pairCodeError = { message: e, throttled: false, unavailable: false };
     } finally {
       this.pairCodeBusy = false;
     }

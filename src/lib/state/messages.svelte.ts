@@ -8,6 +8,8 @@ import { ui } from "./ui.svelte";
 import { MessageWindow, DEFAULT_MESSAGE_WINDOW, cursorOf, type MessagePage } from "$lib/utils/message-window";
 import { isUnavailable } from "$lib/utils/message";
 import { keywords } from "./keywords.svelte";
+import { LocalizedError, normalizeError } from "../i18n/errors.ts";
+import { uiError } from "./localized.ts";
 
 const PAGE = 50;
 export const MAX_DOWNLOAD_TRIES = 3;
@@ -110,7 +112,10 @@ export class MessagesState {
   /** Media downloads in flight, so a second click does not start another. */
   downloading = $state<Record<string, true>>({});
   /** Why a message's last download failed, until it is tried again. */
-  downloadErrors = $state<Record<string, string>>({});
+  #downloadErrors = $state<Record<string, LocalizedError>>({});
+  get downloadErrors() { return Object.fromEntries(Object.entries(this.#downloadErrors).map(([id, error]) => [id, error.message])); }
+  get downloadDiagnostics(): Record<string, string> { return Object.fromEntries(Object.entries(this.#downloadErrors)
+    .flatMap(([id, error]) => error.diagnostic === undefined ? [] : [[id, error.diagnostic]])); }
   /** Failed downloads per message; at `MAX_DOWNLOAD_TRIES` the retry is withdrawn. */
   downloadTries = $state<Record<string, number>>({});
   /** View-once copies being recovered from a reply, keyed by that reply. */
@@ -357,7 +362,7 @@ export class MessagesState {
     const tries = this.downloadTries[message.id] ?? 0;
     if (!chat || isUnavailable(message) || this.downloading[message.id] || tries >= MAX_DOWNLOAD_TRIES) return;
     this.downloading[message.id] = true;
-    delete this.downloadErrors[message.id];
+    delete this.#downloadErrors[message.id];
     try {
       await invoke("download_media", { chat, id: message.id });
       if (account !== this.accountSeq) return;
@@ -368,7 +373,7 @@ export class MessagesState {
     } catch (e) {
       // The core already asked the sender to upload it again; what is left is shown on the message.
       if (account !== this.accountSeq) return;
-      this.downloadErrors[message.id] = String(e);
+      this.#downloadErrors[message.id] = normalizeError(e);
       this.downloadTries[message.id] = tries + 1;
       if (!quiet) ui.fail(e);
     } finally {
@@ -380,13 +385,13 @@ export class MessagesState {
   async recoverQuote(chat: string | null, message: StoredMessage): Promise<string | null> {
     if (!chat || isUnavailable(message) || this.recovering[message.id]) return null;
     this.recovering[message.id] = true;
-    delete this.downloadErrors[message.id];
+    delete this.#downloadErrors[message.id];
     try {
       await invoke("recover_quote_media", { chat, id: message.id });
       await this.reloadMessages(chat);
       return this.ordered.find((m) => m.id === message.id)?.reply_to_path ?? null;
     } catch (e) {
-      this.downloadErrors[message.id] = String(e);
+      this.#downloadErrors[message.id] = normalizeError(e);
       ui.fail(e);
       return null;
     } finally {
@@ -479,7 +484,7 @@ export class MessagesState {
       this.recall = null;
       this.olderExhausted = true;
       void this.flushRefresh(chat);
-      if (!auto) ui.fail("Your phone did not answer. It has to be online for older messages to load.");
+      if (!auto) ui.fail(uiError("error.state.history_phone_offline"));
       this.settleRecall();
     }, 15000);
     try {
@@ -554,7 +559,7 @@ export class MessagesState {
     this.settleRecall();
     this.messages = [];
     this.marks = structuredClone(NO_MARKS);
-    this.downloadErrors = {};
+    this.#downloadErrors = {};
     this.downloadTries = {};
     this.downloading = {};
     this.recovering = {};

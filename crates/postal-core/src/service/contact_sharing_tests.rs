@@ -15,6 +15,8 @@ async fn acknowledged_contact_keeps_authorship_and_id_when_local_save_fails() {
     let (result, saved) = save_acknowledged_contact(&readonly, 42, row.clone()).await;
     assert_eq!(result.message_id, "synthetic-ack");
     assert!(saved.is_none());
+    assert_eq!(result.warning_ref.as_ref().unwrap().code, "warning.contact_local_save");
+    assert!(result.diagnostic.as_deref().unwrap().to_ascii_lowercase().contains("readonly"));
     let warning = result.warning.unwrap();
     assert!(warning.starts_with("Contact sent, but local copy could not be saved:"));
     assert!(warning.to_ascii_lowercase().contains("readonly"));
@@ -22,6 +24,7 @@ async fn acknowledged_contact_keeps_authorship_and_id_when_local_save_fails() {
     let (result, saved) = save_acknowledged_contact(&writable, 42, row).await;
     assert_eq!(result.message_id, "synthetic-ack");
     assert!(result.warning.is_none());
+    assert!(result.warning_ref.is_none() && result.diagnostic.is_none());
     assert_eq!(saved.unwrap().header.timestamp, 42);
     assert_eq!(
         writable

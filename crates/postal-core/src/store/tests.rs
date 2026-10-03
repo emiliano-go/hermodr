@@ -237,12 +237,12 @@ fn no_policy_prunes_nothing_and_keeps_everything() {
 #[test]
 fn search_stays_fast_at_fifty_thousand_messages() {
     let s = store(DiskRetention::unlimited());
-    {
-        let _commit = s.batch();
-        for i in 0..50_000 {
-            s.insert_message(&msg("big@s", &i.to_string(), 0, &format!("message number {i}"))).unwrap();
-        }
-    }
+    s.conn.lock().unwrap().execute_batch(
+        "WITH RECURSIVE fixture(n) AS (SELECT 0 UNION ALL SELECT n + 1 FROM fixture WHERE n < 49999)
+         INSERT INTO messages(chat, id, sender, timestamp, from_me, text)
+         SELECT 'big@s', CAST(n AS TEXT), 'sender@s', 0, 0, 'message number ' || n FROM fixture;"
+    ).unwrap();
+    assert_eq!(s.count().unwrap(), 50_000);
     let started = std::time::Instant::now();
     let found = s.search_messages("big@s", "number 49999", 50).unwrap();
     assert_eq!(found.len(), 1);

@@ -9,6 +9,7 @@ import { FLOAT_HISTORY_LIMIT, floatContent, floatDraftKey, mergeFloatPage, readF
 import { cursorOf } from "../lib/utils/message-window.ts";
 import { keywordStorageKey, loadKeywordRules } from "../lib/utils/keywords.ts";
 import type { StoredMessage } from "../lib/utils/wire.ts";
+import { LocalizedError, normalizeError } from "../lib/i18n/errors.ts";
 
 const context = { account_id: "a", chat: "actual@lid", title: "Synthetic chat", connected: true };
 const row = (index: number, patch: Record<string, unknown> = {}): StoredMessage => ({ chat: context.chat, id: String(index), timestamp: index,
@@ -44,7 +45,8 @@ function route() {
     FLOAT_HISTORY_LIMIT, floatDraftKey, mergeFloatPage, readFloatDraft, writeFloatDraft, cursorOf,
     setTimeout: (run: () => void) => { timers.push(run); return timers.length; }, clearTimeout: () => {},
     Channel: class { onmessage?: () => void; constructor() { channels.push(this); } },
-    invoke: async (command: string, args: any) => { calls.push({ command, args }); return await handler(command, args); },
+    LocalizedError, normalizeError,
+    call: async (command: string, args: any) => { calls.push({ command, args }); return await handler(command, args); },
   };
   functions("../routes/float/+page.svelte", c);
   return { c, calls, store, timers, channels, handle: (next: typeof handler) => { handler = next; } };
@@ -86,10 +88,13 @@ test("offline edits persist locally while reply emits no native send", async () 
 
 test("failed sends retain draft and quota failures prevent both send and close", async () => {
   const f = route(); f.handle(() => { throw new Error("Synthetic send failure"); }); await f.c.send();
-  assert.equal(f.c.draft, "  Preserved draft  "); assert.equal(f.c.sendError, "Error: Synthetic send failure"); assert.equal(f.c.sending, false);
+  assert.equal(f.c.draft, "  Preserved draft  "); assert.equal(f.c.sendError.code, "error.operation_failed");
+  assert.ok(f.c.sendError.diagnostic.includes("Synthetic send failure")); assert.equal(f.c.sending, false);
   const blocked = route(); blocked.c.localStorage.setItem = () => { throw new Error("Quota"); };
-  await blocked.c.send(); await blocked.c.close();
-  assert.equal(blocked.calls.length, 0); assert.ok(blocked.c.draftError.includes("Quota"));
+  await blocked.c.send(); assert.equal(blocked.c.draftError.code, "error.float_draft_save");
+  await blocked.c.close();
+  assert.equal(blocked.calls.length, 0); assert.equal(blocked.c.draftError.code, "error.float_close_draft_save");
+  assert.ok(blocked.c.draftError.diagnostic.includes("Quota"));
   const startup = route(); startup.c.context = null; startup.c.draftReady = false; startup.c.draft = "";
   await startup.c.close(); assert.equal(startup.calls[0].command, "close_float_chat");
 });
@@ -101,7 +106,7 @@ test("accepted text is not offered again when history refresh fails", async () =
   });
   await f.c.send(); await tick();
   assert.equal(f.c.draft, ""); assert.equal(readFloatDraft(f.store, context), ""); assert.equal(f.c.sendError, null);
-  assert.ok(f.c.error.includes("history failure")); assert.equal(f.c.context.connected, true);
+  assert.ok(f.c.error.diagnostic.includes("history failure")); assert.equal(f.c.context.connected, true);
   const send = f.calls.find(({ command }) => command === "float_send_text");
   assert.deepEqual({ ...send?.args }, { text: "Preserved draft" });
 });
@@ -133,7 +138,8 @@ test("unmount and retargeted context cannot install another chat or account", as
   const pending = f.c.refresh(); f.c.alive = false; f.c.epoch++; pendingContext.resolve({ ...context, account_id: "b" }); await pending;
   assert.equal(f.c.context.account_id, "a"); assert.equal(f.calls.length, 1);
   const changed = route(); changed.handle(() => ({ ...context, account_id: "b" })); await changed.c.refresh();
-  assert.equal(changed.c.context.account_id, "a"); assert.equal(changed.c.context.connected, false); assert.ok(changed.c.error.includes("target changed"));
+  assert.equal(changed.c.context.account_id, "a"); assert.equal(changed.c.context.connected, false);
+  assert.equal(changed.c.error.code, "error.float_binding_changed");
 });
 
 test("private Channel uses unit invalidation, coalesces reload and only scoped native commands", async () => {
@@ -192,10 +198,11 @@ test("keyword parsing/storage failures are visible and never fall back to reveal
   f.store.setItem(key, JSON.stringify({ version: 1, highlight: [], hide: ["Secret"] })); f.c.loadRules();
   assert.equal(f.c.rulesReady, true);
   f.store.setItem(key, "broken JSON"); f.c.rulesChanged({ key });
-  assert.equal(f.c.rulesReady, false); assert.ok(f.c.keywordError.includes("Could not load keyword rules"));
+  assert.equal(f.c.rulesReady, false); assert.equal(f.c.keywordError.code, "error.float_rules_read");
+  assert.ok(f.c.keywordError.diagnostic.includes("Could not load keyword rules"));
   assert.deepEqual(f.c.rules.hide, ["Secret"]);
   f.c.localStorage.getItem = () => { throw new Error("Denied"); }; f.c.loadRules();
-  assert.equal(f.c.rulesReady, false); assert.ok(f.c.keywordError.includes("Denied")); assert.equal(f.calls.length, 0);
+  assert.equal(f.c.rulesReady, false); assert.ok(f.c.keywordError.diagnostic.includes("Denied")); assert.equal(f.calls.length, 0);
 });
 
 test("floating history hides account keywords, highlights safe visible rows and preserves private fallbacks", async () => {

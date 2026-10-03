@@ -1,5 +1,7 @@
 <!-- A direct chat's contact, in the same full-window panel as group info. -->
 <script lang="ts">
+  import { t } from "$lib/i18n/localizer";
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { invoke } from "$lib/utils/ipc";
   import Icon from "$lib/ui/Icon.svelte";
@@ -39,12 +41,12 @@
   let dataScope = $state.raw<QuickReplyScope | null>(null);
   let refreshVersion = $state(0);
   let loading = $state(false);
-  let profileError = $state("");
+  let profileError = $state<LocalizedError | string>("");
   let failed = $state(false);
   let enlarged = $state(false);
   let section = $state<"overview">("overview");
   let profileGeneration = 0;
-  const nav = $derived([{ id: "overview" as const, label: "Overview", group: title }]);
+  const nav = $derived([{ id: "overview" as const, label: t("ui.overview"), group: title }]);
 
   $effect(() => {
     const id = account, target = jid, online = connected, ownerGeneration = generation, version = refreshVersion, request = ++profileGeneration;
@@ -62,7 +64,7 @@
           profile = value;
           dataScope = { account: id, chat: target, generation: ownerGeneration, requestKey: version };
         }
-      } catch (error) { if (current()) { failed = true; profileError = String(error); } }
+      } catch (error) { if (current()) { failed = true; profileError = normalizeError(error); } }
       finally { if (current()) loading = false; }
     })();
     return () => { ++profileGeneration; };
@@ -93,13 +95,13 @@
   {/if}
 {/snippet}
 
-<Panel label="Contact info" {nav} bind:section {onclose}>
+<Panel label={t("contact.info")} {nav} bind:section {onclose}>
   {#snippet header()}
     <div class="head">
       {@render avatar(44)}
       <span class="head-text">
-        <span class="head-name">{shown}</span>
-        <span class="head-sub">{number ?? "Contact"}</span>
+        <span class="head-name"><bdi>{shown}</bdi></span>
+        <span class="head-sub"><bdi>{number ?? t("contact.contact")}</bdi></span>
       </span>
     </div>
   {/snippet}
@@ -107,7 +109,7 @@
   <div class="hero">
     <button
       class="hero-picture"
-      title={picture ? "View picture" : undefined}
+      title={picture ? t("contact.view_picture") : undefined}
       disabled={!picture}
       onclick={() => (enlarged = true)}>{@render avatar(96)}</button>
     <div>
@@ -121,14 +123,14 @@
     </div>
   </div>
 
-  <h3>About</h3>
-  <p class="about">
+  <h3>{t("contact.about")}</h3>
+  <p class="about" dir="auto">
     {#if profile}
-      {profile.about ?? "Nothing shared, or hidden by their privacy settings."}
+      {profile.about ?? t("contact.profile_hidden")}
     {:else if failed}
-      <span class="muted">Could not reach WhatsApp for their profile.</span>
+      <span class="muted">{t("contact.profile_failed")}</span>
     {:else}
-      <span class="muted">Loading…</span>
+      <span class="muted">{t("ui.loading")}</span>
     {/if}
   </p>
 
@@ -141,11 +143,11 @@
   {/if}
 
   {#if aliases.length > 0}
-    <h3>Aliases</h3>
+    <h3>{t("contact.aliases")}</h3>
     <p class="about">{aliases.map((a) => `@${a}`).join("  ")}</p>
   {/if}
 
-  <h3>Saved contact</h3>
+  <h3>{t("contact.saved_contact")}</h3>
   <ContactEditor {account} {connected} jid={bare(jid)} identity={members.identities[jid] ?? members.identities[bare(jid)] ?? null}
     onsaved={oncontactchange} />
 </Panel>

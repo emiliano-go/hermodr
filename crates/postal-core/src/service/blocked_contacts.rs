@@ -1,5 +1,6 @@
 use super::{WhatsAppService, Result, Serialize, Jid, contact_forms, other_form};
 use crate::store::contact_identity::ContactIdentity;
+use crate::message_ref::MessageRef;
 use whatsapp_rust::wacore::iq::blocklist::UpdateBlocklistSpec;
 
 #[derive(Debug, Clone, Serialize)]
@@ -12,7 +13,7 @@ pub struct BlockedContact {
 
 impl WhatsAppService {
     pub async fn blocked_contacts(&self) -> Result<Vec<BlockedContact>> {
-        anyhow::ensure!(self.is_connected(), "not connected yet");
+        anyhow::ensure!(self.is_connected(), MessageRef::new("error.not_connected"));
         let entries = self.client.blocking().get_blocklist().await?;
         let mut contacts = Vec::new();
         let mut seen = std::collections::HashSet::new();
@@ -26,21 +27,21 @@ impl WhatsAppService {
             let identity = self.store.run(move |store| store.contact_identity(&key)).await?;
             contacts.push(BlockedContact { jid, jids, identity });
         }
-        anyhow::ensure!(self.is_connected(), "not connected yet");
+        anyhow::ensure!(self.is_connected(), MessageRef::new("error.not_connected"));
         Ok(contacts)
     }
 
     pub async fn set_contact_blocked(&self, address: &str, blocked: bool, authorize: impl FnOnce() -> bool) -> Result<()> {
         let target = block_target(address)?;
-        anyhow::ensure!(!self.is_self_jid(&target), "cannot block your own account");
-        anyhow::ensure!(self.is_connected(), "not connected yet");
+        anyhow::ensure!(!self.is_self_jid(&target), MessageRef::new("error.block_self"));
+        anyhow::ensure!(self.is_connected(), MessageRef::new("error.not_connected"));
         update_blocklist(&target, blocked, async {
             Ok(if blocked || target.is_pn() {
                 self.client.get_lid_pn_entry(&target).await?
                     .map(|entry| (Jid::lid(&*entry.lid), Jid::pn(&*entry.phone_number)))
             } else { None })
         }, || authorize() && self.is_connected(), |request| async move {
-            self.client.execute(request).await.map_err(|error| anyhow::anyhow!(error.to_string()))
+            self.client.execute(request).await.map_err(anyhow::Error::from)
         }).await
     }
 }
@@ -52,7 +53,7 @@ where
     F: std::future::Future<Output = Result<()>>,
 {
     let request = block_request(target, blocked, mapping.await?)?;
-    anyhow::ensure!(authorize(), "account changed or disconnected before operation");
+    anyhow::ensure!(authorize(), MessageRef::new("error.account_changed"));
     send(request).await
 }
 
@@ -60,15 +61,15 @@ fn block_target(address: &str) -> Result<Jid> {
     let jid: Jid = address.parse()?;
     anyhow::ensure!((jid.is_pn() || jid.is_lid()) && jid.agent == 0 && jid.integrator == 0
         && !jid.user.is_empty() && jid.user.chars().all(|c| c.is_ascii_digit()),
-        "blocklist target must be a contact");
+        MessageRef::new("error.block_contact"));
     Ok(jid.to_non_ad())
 }
 
 fn block_request(target: &Jid, blocked: bool, mapping: Option<(Jid, Jid)>) -> Result<UpdateBlocklistSpec> {
     if !blocked && target.is_lid() { return Ok(UpdateBlocklistSpec::unblock(target)); }
-    let (lid, pn) = mapping.ok_or_else(|| anyhow::anyhow!("no LID/phone mapping for this contact"))?;
+    let (lid, pn) = mapping.ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.block_mapping_missing")))?;
     anyhow::ensure!(lid.is_lid() && pn.is_pn() && (*target == lid || *target == pn),
-        "blocklist mapping belongs to another contact");
+        MessageRef::new("error.block_mapping_mismatch"));
     Ok(if blocked { UpdateBlocklistSpec::block_with_pn(&lid, &pn) } else { UpdateBlocklistSpec::unblock(&lid) })
 }
 
@@ -115,7 +116,7 @@ mod tests {
             current.set(false);
             Ok(Some((lid.clone(), pn.clone())))
         }, || current.get(), |_| async { writes.set(writes.get() + 1); Ok(()) }).await;
-        assert!(result.unwrap_err().to_string().contains("account changed"));
+        assert_eq!(result.unwrap_err().downcast_ref::<MessageRef>().unwrap().code, "error.account_changed");
         assert_eq!(writes.get(), 0);
         current.set(true);
         let result = update_blocklist(&lid, false, async { Ok(None) }, || current.get(), |_| async {

@@ -4,6 +4,8 @@ import { get } from "svelte/store";
 import { checkedLibrary, clipMetadata, clipName, MAX_SOUND_BYTES, soundFile, soundRecords } from "../lib/soundboard/library.ts";
 import type { SoundRecord, SoundRepository } from "../lib/soundboard/library.ts";
 import { createSoundboard } from "../lib/soundboard/state.ts";
+import { LocalizedError } from "../lib/i18n/errors.ts";
+import { t } from "../lib/i18n/localizer.ts";
 
 const stateGlobal = globalThis as unknown as { $state?: (value: unknown) => unknown };
 const originalState = stateGlobal.$state;
@@ -54,7 +56,12 @@ test("soundboard changes report durability failures and retain saved clips for r
   const repo = repository([record("existing")]), state = createSoundboard(repo.value);
   await state.load(); repo.fail(true);
   assert.equal(await state.add(wav(), "Failed", null), false);
-  assert.equal(get(state).clips[0].id, "existing"); assert.match(get(state).error!, /quota/);
+  assert.equal(get(state).clips[0].id, "existing");
+  const failure = get(state).error;
+  assert.ok(failure instanceof LocalizedError);
+  assert.equal(failure.code, "error.operation_failed");
+  assert.equal(failure.message, t("error.operation_failed"));
+  assert.match(failure.diagnostic ?? "", /quota/);
   assert.equal(await state.remove("existing"), false); assert.equal(repo.rows().length, 1);
   repo.fail(false);
   assert.equal(await state.update("existing", "Renamed", 2), true);
@@ -102,7 +109,11 @@ test("optional clip shortcuts reuse exact keybind matching and reject existing o
   const original = keybinds.editLast;
   try {
     keybinds.editLast = shortcuts.soundBinding(1)!;
-    assert.match(shortcuts.soundShortcutConflict(1, clips, "one")!, /edit last/);
+    const conflict = shortcuts.soundShortcutConflictError(1, clips, "one");
+    assert.ok(conflict instanceof LocalizedError);
+    assert.equal(conflict.code, "error.content.this_shortcut_is_assigned_to_value");
+    assert.equal(conflict.params.action, t("settings.main.keybind.editLast.label"));
+    assert.equal(shortcuts.soundShortcutConflict(1, clips, "one"), conflict.message);
     assert.equal(shortcuts.shortcutClip(event, clips), null);
   } finally { keybinds.editLast = original; }
   assert.equal(shortcuts.soundBinding(0), null); assert.equal(shortcuts.soundBinding(10), null);

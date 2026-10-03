@@ -1,5 +1,6 @@
 <!-- Discord-style full-window panel: searchable section list left, section right. -->
 <script lang="ts" generics="S extends string">
+  import { t } from "$lib/i18n/localizer";
   import type { Snippet } from "svelte";
   import { fade, scale } from "svelte/transition";
   import { motion } from "$lib/utils/theme.svelte";
@@ -54,7 +55,7 @@
 
       <label class="nav-search">
         <Icon name="search" size={14} />
-        <input placeholder="Search" bind:value={query} />
+        <input placeholder={t("ui.search")} bind:value={query} />
       </label>
 
       {#each groups as group (group)}
@@ -71,9 +72,9 @@
     <main>
       <div class="topbar" class:bare={!pageHead}>
         <div class="titles">{@render pageHead?.()}</div>
-        <button class="close" title="Close" aria-label="Close {label}" onclick={onclose}>
+        <button class="close" title={t("ui.close")} aria-label="{t("ui.close")} {label}" onclick={onclose}>
           <Icon name="x" size={18} />
-          <span>ESC</span>
+          <span>{t("ui.escape_key")}</span>
         </button>
       </div>
       <div class="content">{@render children()}</div>
@@ -140,7 +141,7 @@
     color: var(--muted);
   }
   .nav-item {
-    text-align: left;
+    text-align: start;
     background: transparent;
     border: 0;
     border-radius: var(--radius-sm);
@@ -310,7 +311,7 @@
     content: "";
     position: absolute;
     top: 3px;
-    left: 3px;
+    inset-inline-start: 3px;
     width: 18px;
     height: 18px;
     border-radius: 50%;
@@ -361,4 +362,5 @@
     color: var(--danger);
     font-size: 13px;
   }
+  :global([dir="rtl"]) .content :global(.switch:checked::after) { transform: translateX(-16px); }
 </style>

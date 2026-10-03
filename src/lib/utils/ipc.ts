@@ -1,11 +1,13 @@
 import { invoke as call, type InvokeArgs, type InvokeOptions } from "@tauri-apps/api/core";
 import { createMediaAssetPreparer } from "./media-assets";
+import { normalizeError } from "$lib/i18n/errors";
 
 type Level = "error" | "warn" | "info" | "debug";
 
 const prepareMedia = createMediaAssetPreparer((paths) => call<Record<string, string | null>>("authorize_media_assets", { paths }).catch((error) => {
-  log(String(error) === "not connected yet" ? "debug" : "warn", `authorize_media_assets failed: ${error}`);
-  throw error;
+  const failure = normalizeError(error);
+  log(failure.code === "error.not_connected" ? "debug" : "warn", `authorize_media_assets failed: ${failure.diagnostic || failure.code}`);
+  throw failure;
 }));
 
 /** Writes a line to postal.log under the `ui` target. Never throws. */
@@ -19,8 +21,9 @@ export async function invoke<T>(cmd: string, args?: InvokeArgs, options?: Invoke
     return await prepareMedia(cmd, await call<T>(cmd, args, options));
   } catch (e) {
     // Account commands fail this way until the account connects; that is routine.
-    log(String(e) === "not connected yet" ? "debug" : "warn", `${cmd} failed: ${e}`);
-    throw e;
+    const failure = normalizeError(e);
+    log(failure.code === "error.not_connected" ? "debug" : "warn", `${cmd} failed: ${failure.diagnostic || failure.code}`);
+    throw failure;
   }
 }
 

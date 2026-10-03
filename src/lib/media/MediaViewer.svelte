@@ -1,4 +1,5 @@
 <script lang="ts" module>
+  import { formatDate as localeDate, formatTime as localeTime } from "$lib/i18n/localizer";
   import { convertFileSrc } from "@tauri-apps/api/core";
 
   /** Received thumbnails are stored inline as `data:` URIs; anything else is a file. */
@@ -17,6 +18,7 @@
 </script>
 
 <script lang="ts">
+  import { t } from "$lib/i18n/localizer";
   import { tick } from "svelte";
   import { fade } from "svelte/transition";
   import { motion } from "$lib/utils/theme.svelte";
@@ -107,8 +109,8 @@
   function when(ts: number) {
     const date = new Date(ts * 1000);
     const today = new Date().toDateString() === date.toDateString();
-    const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    return today ? `Today at ${time}` : `${date.toLocaleDateString()} at ${time}`;
+    const time = localeTime((date).getTime() / 1000, { hour: "2-digit", minute: "2-digit" });
+    return today ? t("content.today_at_value", { param0: (time) }) : t("content.value_at_value", { param0: (localeDate((date).getTime() / 1000, { dateStyle: "short" })), param1: (time) });
   }
 </script>
 
@@ -120,7 +122,7 @@
     class="viewer"
     role="dialog"
     aria-modal="true"
-    aria-label="Media viewer"
+    aria-label={t("content.media_viewer")}
     tabindex="-1"
     transition:fade={{ duration: motion(140) }}
     onpointerdown={dismiss.down}
@@ -133,31 +135,31 @@
           <span class="avatar placeholder">{item.author.slice(0, 1).toUpperCase()}</span>
         {/if}
         <span class="who-text">
-          <span class="who-name">{item.author}</span>
+          <span class="who-name"><bdi dir="auto">{item.author}</bdi></span>
           <span class="who-time">{when(item.timestamp)}</span>
         </span>
       </div>
       <div class="tools">
         {#if !isVideo && !isAudio}
-          <button class="tool" title="Zoom out" aria-label="Zoom out" disabled={zoom === 1} onclick={() => setZoom(zoom - 0.5)}
+          <button class="tool" title={t("content.zoom_out")} aria-label={t("content.zoom_out")} disabled={zoom === 1} onclick={() => setZoom(zoom - 0.5)}
             ><Icon name="zoomOut" size={20} /></button>
-          <button class="tool" title="Zoom in" aria-label="Zoom in" disabled={zoom === 5} onclick={() => setZoom(zoom + 0.5)}
+          <button class="tool" title={t("content.zoom_in")} aria-label={t("content.zoom_in")} disabled={zoom === 5} onclick={() => setZoom(zoom + 0.5)}
             ><Icon name="zoomIn" size={20} /></button>
         {/if}
-        <button class="tool" title="Go to message" aria-label="Go to message" onclick={() => onjump(item.id)}
+        <button class="tool" title={t("content.go_to_message")} aria-label={t("content.go_to_message")} onclick={() => onjump(item.id)}
           ><Icon name="message" size={20} /></button>
-        <button class="tool" title="Reply" aria-label="Reply" onclick={() => onreply(item.id)}
+        <button class="tool" title={t("content.reply")} aria-label={t("content.reply")} onclick={() => onreply(item.id)}
           ><Icon name="reply" size={20} /></button>
         {#if onopen}
-          <button class="tool" title="Open in default app" aria-label="Open in default app" onclick={() => onopen(item.path)}
+          <button class="tool" title={t("content.open_in_default_app")} aria-label={t("content.open_in_default_app")} onclick={() => onopen(item.path)}
             ><Icon name="external" size={20} /></button>
         {/if}
-        <button class="tool" title="Close (Esc)" aria-label="Close" onclick={onclose}><Icon name="x" size={22} /></button>
+        <button class="tool" title={t("content.close_esc")} aria-label={t("content.close")} onclick={onclose}><Icon name="x" size={22} /></button>
       </div>
     </header>
 
     <div class="stage">
-      <button class="nav prev" aria-label="Previous" disabled={index === 0} onclick={() => step(-1)}>
+      <button class="nav prev" aria-label={t("content.previous")} disabled={index === 0} onclick={() => step(-1)}>
         <Icon name="chevronLeft" size={26} />
       </button>
 
@@ -189,13 +191,13 @@
         {/if}
       {/key}
 
-      <button class="nav next" aria-label="Next" disabled={index === items.length - 1} onclick={() => step(1)}>
+      <button class="nav next" aria-label={t("content.next")} disabled={index === items.length - 1} onclick={() => step(1)}>
         <Icon name="chevronRight" size={26} />
       </button>
     </div>
 
     {#if item.caption}
-      <p class="caption">{item.caption}</p>
+      <p class="caption"><bdi dir="auto">{item.caption}</bdi></p>
     {/if}
 
     <div class="strip" bind:this={strip}>
@@ -203,7 +205,7 @@
         <button
           class="thumb"
           class:active={i === index}
-          aria-label="Show item {i + 1} of {items.length}"
+          aria-label={t("content.viewer_item", { index: i + 1, count: items.length })}
           onclick={() => (index = i)}>
           {#if entry.thumb || !(entry.kind === "video" || entry.kind === "gif" || entry.kind === "round_video")}
             <img src={mediaSrc(entry.thumb ?? entry.path)} alt="" />

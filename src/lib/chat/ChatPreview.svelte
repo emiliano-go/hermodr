@@ -1,4 +1,6 @@
 <script module lang="ts">
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
+  import { t } from "$lib/i18n/localizer";
   import type { StoredMessage } from "$lib/utils/models";
   import { isUnavailable } from "$lib/utils/message";
   import { floatContent as previewContent } from "$lib/utils/float-chat";
@@ -37,8 +39,8 @@
     onsettings?: () => void;
   } = $props();
   let rows = $state<StoredMessage[] | null>(null);
-  let error = $state<string | null>(null);
-  let olderError = $state<string | null>(null);
+  let error = $state<LocalizedError | string | null>(null);
+  let olderError = $state<LocalizedError | string | null>(null);
   let hasMore = $state(false);
   let loadingOlder = $state(false);
   let scroller = $state<HTMLElement>();
@@ -69,7 +71,7 @@
           scroller.scrollTop = scroller.scrollHeight;
         }
       } catch (e) {
-        if (active && chat === jid && account === owner) error = String(e);
+        if (active && chat === jid && account === owner) error = normalizeError(e);
       }
     })();
     return () => { active = false; };
@@ -95,7 +97,7 @@
       // Hold the viewport still while older rows grow above it.
       if (el) el.scrollTop += el.scrollHeight - before;
     } catch (e) {
-      if (chat === jid && account === owner) olderError = String(e);
+      if (chat === jid && account === owner) olderError = normalizeError(e);
     } finally {
       if (chat === jid && account === owner) loadingOlder = false;
     }
@@ -125,7 +127,7 @@
       thumb: message.media_thumb,
       kind: message.media_kind!,
       caption: content.text || content.media || "",
-      author: message.from_me ? "You" : displayName(message.sender_name, message.sender),
+      author: message.from_me ? t("chat.you") : displayName(message.sender_name, message.sender),
       avatar: null,
       timestamp: message.timestamp,
     };
@@ -148,7 +150,7 @@
       duration: message.media_duration,
       avatar: null,
       initials: "",
-      title: message.from_me ? "You" : displayName(message.sender_name, message.sender),
+      get title() { return message.from_me ? t("chat.you") : displayName(message.sender_name, message.sender); },
     });
   }
 
@@ -169,8 +171,8 @@
     id="chat-preview"
     role="dialog"
     aria-modal="false"
-    aria-label={`${name} message preview`}
-    title="Open chat"
+    aria-label={t("chat.preview_label", { name })}
+    title={t("chat.open")}
     tabindex="0"
     {onpointerenter}
     {onpointerleave}
@@ -191,14 +193,14 @@
     style:top={`${Math.max(12, Math.min(y, viewportHeight - 532))}px`}>
     <header>
       <div class="titles">
-        <strong>{name}</strong>
-        <span>Read-only preview</span>
+        <strong><bdi>{name}</bdi></strong>
+        <span>{t("chat.preview_read_only")}</span>
       </div>
       <button
         type="button"
         class="gear"
-        title="Chat preview settings"
-        aria-label="Chat preview settings"
+        title={t("chat.preview_settings")}
+        aria-label={t("chat.preview_settings")}
         onclick={(e) => {
           e.stopPropagation();
           onsettings?.();
@@ -208,16 +210,16 @@
     <div
       class="preview-messages"
       role="region"
-      aria-label="Recent stored messages"
+      aria-label={t("chat.preview_recent")}
       tabindex="0"
       bind:this={scroller}
       onscroll={onPreviewScroll}>
-      {#if error}<p class="status" role="alert">Could not load preview: {error}</p>
-      {:else if rows === null}<p class="status" role="status">Loading…</p>
-      {:else if rows.length === 0}<p class="status">No stored messages</p>
+      {#if error}<p class="status" role="alert">{t("chat.preview_failed", { error: normalizeError(error).message })}</p>
+      {:else if rows === null}<p class="status" role="status">{t("ui.loading")}</p>
+      {:else if rows.length === 0}<p class="status">{t("chat.no_messages")}</p>
       {:else}
-        {#if loadingOlder}<p class="status" role="status">Loading older…</p>{/if}
-        {#if olderError}<p class="status" role="alert">Could not load older messages: {olderError}</p>{/if}
+        {#if loadingOlder}<p class="status" role="status">{t("chat.older_loading")}</p>{/if}
+        {#if olderError}<p class="status" role="alert">{t("chat.preview_older_failed", { error: normalizeError(olderError).message })}</p>{/if}
         <ol>
           {#each rows as message, index (message.id)}
             {@const content = previewContent(message)}
@@ -230,14 +232,14 @@
                   class="sender"
                   class:themed={!message.from_me}
                   style={message.from_me ? undefined : `--hue: ${hue(message.sender)}`}
-                  >{message.from_me ? "You" : displayName(message.sender_name, message.sender)}</b>
+                  >{message.from_me ? t("chat.you") : displayName(message.sender_name, message.sender)}</b>
                 {#if content.media}
                   {#if message.media_kind === "audio" && message.media_path}
                     <button
                       type="button"
                       class="media audio"
                       class:playing={isPlaying(message)}
-                      title={isPlaying(message) ? "Pause voice message" : "Play voice message"}
+                      title={isPlaying(message) ? t("chat.voice_pause") : t("chat.voice_play")}
                       onclick={(e) => {
                         e.stopPropagation();
                         toggleAudio(message);
@@ -249,7 +251,7 @@
                     <button
                       type="button"
                       class="media open"
-                      title="Open in the viewer"
+                      title={t("chat.open_viewer")}
                       onclick={(e) => {
                         e.stopPropagation();
                         viewerId = message.id;
@@ -265,7 +267,7 @@
                     <button
                       type="button"
                       class="media open"
-                      title="Open in the desktop"
+                      title={t("chat.open_desktop")}
                       onclick={(e) => {
                         e.stopPropagation();
                         void openExternal(message.media_path!);
@@ -366,7 +368,7 @@
     background: none;
     color: inherit;
     font: inherit;
-    text-align: left;
+    text-align: start;
     cursor: pointer;
   }
   button.media:hover { background: var(--raised); }
@@ -374,7 +376,7 @@
   button.media img { width: 64px; height: 64px; flex: none; object-fit: cover; border-radius: 6px; }
   .play-badge { display: grid; place-items: center; width: 26px; height: 26px; flex: none; border-radius: 50%; background: var(--accent); color: var(--accent-ink, #fff); }
   .notice { font-style: italic; color: var(--muted); }
-  time { display: block; margin-top: 5px; color: var(--muted); font-size: 0.8em; text-align: right; }
+  time { display: block; margin-top: 5px; color: var(--muted); font-size: 0.8em; text-align: end; }
   .status { padding: 16px 4px; color: var(--muted); overflow-wrap: anywhere; }
   @media (prefers-reduced-transparency: reduce) {
     #chat-preview { background: var(--surface); backdrop-filter: none; }

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { mediaClock } from "$lib/media/clock";
+  import { t } from "$lib/i18n/localizer";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import Icon from "$lib/ui/Icon.svelte";
   import { player } from "$lib/state/player.svelte";
@@ -12,14 +14,11 @@
     player.seek((e.clientX - rect.left) / rect.width);
   }
 
-  function clock(seconds: number) {
-    if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
-    return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
-  }
+  const clock = (seconds: number) => mediaClock(seconds);
 </script>
 
 {#if player.track}
-  <div class="player" role="group" aria-label="Voice message playing">
+  <div class="player" role="group" aria-label={t("content.voice_message_playing")}>
     <div class="line">
       <span class="who">
         {#if player.track.avatar}
@@ -28,9 +27,9 @@
           <span class="blank">{player.track.initials}</span>
         {/if}
       </span>
-      <span class="name" title={player.track.title}>{player.track.title}</span>
-      <button class="rate" title="Playback speed" onclick={() => player.cycleRate()}>{player.rate}×</button>
-      <button class="tool" title="Close player" aria-label="Close player" onclick={() => player.stop()}>
+      <span class="name" title={player.track.title}><bdi dir="auto">{player.track.title}</bdi></span>
+      <button class="rate" title={t("content.playback_speed")} onclick={() => player.cycleRate()}>{player.rate}×</button>
+      <button class="tool" title={t("content.close_player")} aria-label={t("content.close_player")} onclick={() => player.stop()}>
         <Icon name="x" size={16} />
       </button>
     </div>
@@ -39,8 +38,8 @@
         class="tool"
         class:failed={player.failed}
         disabled={player.failed || player.loading}
-        title={player.failed ? "Could not play this file" : player.paused ? "Play" : "Pause"}
-        aria-label={player.paused ? "Play" : "Pause"}
+        title={player.failed ? t("content.could_not_play_this_file") : player.paused ? t("content.play") : t("content.pause")}
+        aria-label={player.paused ? t("content.play") : t("content.pause")}
         onclick={() => player.toggle()}>
         {#if player.failed}!{:else}<Icon name={player.paused ? "play" : "pause"} size={17} filled />{/if}
       </button>
@@ -54,11 +53,11 @@
           seekTo(e);
         }}
         onpointermove={(e) => scrubbing && seekTo(e)}
-        onpointerup={() => (scrubbing = false)}>
+        onpointerup={() => (scrubbing = false)} dir="ltr">
         <span class="fill" style="width: {player.progress * 100}%"></span>
         <span class="knob" style="left: {player.progress * 100}%"></span>
       </div>
-      <span class="time">{clock(player.position)} / {clock(player.duration)}</span>
+      <span class="time" dir="ltr"><bdi dir="ltr">{clock(player.position)}</bdi> / <bdi dir="ltr">{clock(player.duration)}</bdi></span>
     </div>
   </div>
 {/if}

@@ -1,6 +1,9 @@
 <!-- The left bar: search, filter pills, chat rows and the account footer.
   Moved out of +page.svelte. -->
 <script lang="ts">
+  import { t, formatNumber } from "$lib/i18n/localizer";
+  import { locale } from "$lib/i18n/locale.svelte";
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
   import { members } from "$lib/state/members.svelte";
   import { labels } from "$lib/state/labels.svelte";
   import { MEDIA_TYPES, emptyMediaOverrides } from "$lib/utils/auto-download";
@@ -22,10 +25,10 @@
   import { invoke } from "$lib/utils/ipc";
 
   const STATUS_TEXT: Record<string, string> = {
-    offline: "Connecting…",
-    online: "Online",
-    contacts: "Online to contacts",
-    invisible: "Invisible",
+    offline: "settings.status_connecting",
+    online: "settings.status_online",
+    contacts: "settings.status_contacts",
+    invisible: "settings.status_invisible",
   };
 
   let {
@@ -149,9 +152,9 @@
   } = $props();
 
   const MUTES: [string, number][] = [
-    ["Mute for 8 hours", 8 * 3600],
-    ["Mute for 1 week", 7 * 86400],
-    ["Mute always", -1],
+    ["chat.mute_for_eight_hours", 8 * 3600],
+    ["chat.mute_for_week", 7 * 86400],
+    ["chat.mute_always", -1],
   ];
 
   /** Custom labels that repeat a built-in filter chip stay out of the filter row. */
@@ -166,8 +169,8 @@
   let menuAutoDownload = $state<MediaAutoDownloadOverrides>(emptyMediaOverrides());
   const menuDownloadsEnabled = $derived(MEDIA_TYPES.some(([kind]) => menuAutoDownload[kind] ?? globalAutoDownload[kind]));
   let menuLoaded = $state(false);
-  let menuError = $state<string | null>(null);
-  let floatError = $state<string | null>(null);
+  let menuError = $state<LocalizedError | string | null>(null);
+  let floatError = $state<LocalizedError | string | null>(null);
   let floatBusy = $state(false);
   let menuRequest = 0;
   let menuOwner: HTMLElement | null = null;
@@ -318,7 +321,7 @@
       menuLoaded = true;
     } catch (e) {
       if (request !== menuRequest || account !== activeAccount) return;
-      menuError = String(e);
+      menuError = normalizeError(e);
     }
     void layoutMenu();
   }
@@ -343,7 +346,7 @@
       await invoke("open_float_chat", { accountId, chat });
       if (request === menuRequest && accountId === activeAccount) closeChatMenu();
     } catch (error) {
-      if (request === menuRequest && accountId === activeAccount) floatError = String(error);
+      if (request === menuRequest && accountId === activeAccount) floatError = normalizeError(error);
     } finally {
       if (request === menuRequest && accountId === activeAccount) floatBusy = false;
     }
@@ -430,30 +433,30 @@
 
 <aside class="chats">
   <header>
-    <h1 class="title">Chats</h1>
+    <h1 class="title">{t("nav.chats")}</h1>
     <Button
       variant="icon"
       icon="at"
       iconSize={18}
-      title="Mentions"
-      aria-label="Mentions"
+      title={t("chat.mentions")}
+      aria-label={t("chat.mentions")}
       cls="badge-host"
       onclick={onpings}>
       {#if unreadPings > 0}<span class="icon-badge">{unreadPings > 99 ? "99+" : unreadPings}</span>{/if}
     </Button>
-    <Button variant="icon" icon="star" iconSize={18} title="Starred messages" aria-label="Starred messages" onclick={onstarred} />
-    <Button variant="icon" icon="check" iconSize={18} title="Mark all chats as read" aria-label="Mark all chats as read"
+    <Button variant="icon" icon="star" iconSize={18} title={t("chat.starred")} aria-label={t("chat.starred")} onclick={onstarred} />
+    <Button variant="icon" icon="check" iconSize={18} title={t("chat.mark_all_read")} aria-label={t("chat.mark_all_read")}
       disabled={markingAllRead} onclick={onmarkallread} />
-    <Button variant="icon" icon="users" iconSize={18} title="New group" aria-label="New group"
+    <Button variant="icon" icon="users" iconSize={18} title={t("group.new")} aria-label={t("group.new")}
       disabled={!canCreateGroup} onclick={onnewgroup} />
-    <Button variant="icon" icon="user" iconSize={18} title="New contact" aria-label="New contact"
+    <Button variant="icon" icon="user" iconSize={18} title={t("contact.new")} aria-label={t("contact.new")}
       disabled={!canCreateGroup} onclick={onnewcontact} />
   </header>
   {@render spacesContent?.()}
   <label class="search">
     <Icon name="search" size={15} />
     <input
-      placeholder="Search chats and contacts"
+      dir="auto" placeholder={t("nav.search_chats_contacts")}
       bind:value={searchQuery}
       oninput={onsearch}
       autocomplete="off"
@@ -461,20 +464,20 @@
   </label>
   {#if !searchQuery.trim()}
     <div class="filters actions-row">
-      <Button variant="chip" onclick={oninbox}>Inbox</Button>
-      <Button variant="chip" onclick={onlabels}>Manage labels</Button>
+      <Button variant="chip" onclick={oninbox}>{t("chat.inbox")}</Button>
+      <Button variant="chip" onclick={onlabels}>{t("labels.manage")}</Button>
     </div>
     <div class="mini-divider" aria-hidden="true"></div>
-    <div class="filters labels-row" role="tablist" aria-label="Filter chats">
-      <Button variant="chip" selected={chatFilter === "all"} onclick={() => onfilter("all")}>All</Button>
-      <Button variant="chip" selected={chatFilter === "favorites"} onclick={() => onfilter("favorites")}>Favorites</Button>
+    <div class="filters labels-row" role="tablist" aria-label={t("nav.filter_chats")}>
+      <Button variant="chip" selected={chatFilter === "all"} onclick={() => onfilter("all")}>{t("nav.all")}</Button>
+      <Button variant="chip" selected={chatFilter === "favorites"} onclick={() => onfilter("favorites")}>{t("nav.favorites")}</Button>
       <Button
         variant="chip"
         selected={chatFilter === "unread"}
         count={unreadChats > 0 ? unreadChats : undefined}
-        onclick={() => onfilter("unread")}>Unread</Button>
+        onclick={() => onfilter("unread")}>{t("chat.unread")}</Button>
       <Button variant="chip" selected={chatFilter === "groups"} onclick={() => onfilter("groups")}
-        >Groups</Button>
+        >{t("nav.groups")}</Button>
       {#if labels.account === activeAccount}
         {#each labels.view.labels.filter((label) => !BUILT_IN_FILTER_NAMES.has(label.name.trim().toLowerCase())) as label (label.id)}
           <Button
@@ -494,7 +497,7 @@
         aria-pressed={chatFilter === "archived"}
         onclick={() => onfilter(chatFilter === "archived" ? "all" : "archived")}>
         <Icon name="archive" size={18} />
-        <span class="archived-label">{chatFilter === "archived" ? "Back to chats" : "Archived"}</span>
+        <span class="archived-label">{chatFilter === "archived" ? t("nav.back_chats") : t("chat.archived")}</span>
         {#if archivedChats > 0}
           <span class="archived-count">{archivedChats > 99 ? "99+" : archivedChats}</span>
         {/if}
@@ -528,7 +531,7 @@
               {members.displayName(result.name, result.jid)}
             </span>
             <span class="preview">
-              {result.kind}{result.has_messages ? "" : " · no messages yet"}
+              {result.kind}{result.has_messages ? "" : t("chat.no_messages_suffix")}
             </span>
           </div>
         </li>
@@ -556,7 +559,7 @@
           }}
           oncontextmenu={(e) => openChatMenu(e, chat)}
           onkeydown={(e) => {
-            if (e.key === "ArrowRight") {
+            if (e.key === (locale.dir === "rtl" ? "ArrowLeft" : "ArrowRight")) {
               e.preventDefault();
               focusPreview(e.currentTarget, chat, true);
             } else if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
@@ -572,8 +575,8 @@
           <span class="name"
             >{#if chat.pinned}<span class="pin"><Icon name="pin" size={12} /></span>{/if}{#if groupKinds[chat.chat]?.community}<span
                 class="kind"
-                title="Community"><Icon name="users" size={13} /></span
-              >{:else if groupKinds[chat.chat]?.announcements}<span class="kind" title="Community announcements"
+                title={t("group.community")}><Icon name="users" size={13} /></span
+              >{:else if groupKinds[chat.chat]?.announcements}<span class="kind" title={t("group.announcements_label")}
                 ><Icon name="volume" size={13} /></span
               >{/if}{chatLabelOf(chat)}</span>
           <span class="time" class:unread={chat.unread_count > 0}
@@ -581,7 +584,7 @@
           {#if typingLabelOf(chat.chat)}
             <span class="preview typing">{typingLabelOf(chat.chat)}</span>
           {:else if chat.message_count === 0}
-            <span class="preview empty-chat">No stored messages</span>
+            <span class="preview empty-chat">{t("chat.no_messages")}</span>
           {:else}
             {@const author = previewAuthorOf(chat)}
             {@const icon = mediaIconOf(chat.last_media_kind)}
@@ -592,9 +595,9 @@
             >
           {/if}
           {#if labels.account === activeAccount && labels.chatIds(chat.chat).length}
-            <div class="chat-labels" aria-label="Chat labels">
+            <div class="chat-labels" aria-label={t("labels.chat_labels")}>
               {#each labels.view.labels.filter((label) => labels.chatIds(chat.chat).includes(label.id)) as label (label.id)}
-                <span class="chat-label" title={`Label: ${label.name}`}>{label.name}</span>
+                <span class="chat-label" title={t("labels.label_name", { name: label.name })}>{label.name}</span>
               {/each}
             </div>
           {/if}
@@ -602,7 +605,7 @@
             {#if chat.mention_count > 0}
               <button
                 class="badge mention-badge"
-                title="Jump to mention"
+                title={t("chat.jump_mention")}
                 onclick={(e) => {
                   e.stopPropagation();
                   releaseFreeze();
@@ -610,20 +613,20 @@
                 }}>@</button>
             {/if}
             {#if isMuted(chat)}
-              <span class="muted-mark" title="Muted"><Icon name="volume" size={13} /></span>
+              <span class="muted-mark" title={t("chat.muted")}><Icon name="volume" size={13} /></span>
             {/if}
             {#if chat.mute_at_all}
-              <span class="muted-mark at-muted" title="@all mentions muted"><Icon name="at" size={13} /></span>
+              <span class="muted-mark at-muted" title={t("chat.all_muted")}><Icon name="at" size={13} /></span>
             {/if}
             {#if chat.unread_count > 0}
               <span class="badge">{chat.unread_count > 99 ? "99+" : chat.unread_count}</span>
             {:else if chat.marked_unread}
-              <span class="badge" title="Marked unread">&nbsp;</span>
+              <span class="badge" title={t("chat.marked_unread")}>&nbsp;</span>
             {/if}
             <button
               class="pin-toggle"
-              title={chat.pinned ? "Unpin" : "Pin"}
-              aria-label={chat.pinned ? "Unpin" : "Pin"}
+              title={chat.pinned ? t("chat.unpin") : t("chat.pin")}
+              aria-label={chat.pinned ? t("chat.unpin") : t("chat.pin")}
               onclick={(e) => {
                 releaseFreeze();
                 ontogglepin(chat, e);
@@ -635,12 +638,12 @@
     {#if displayedChats.length === 0}
       <li class="empty">
         {chatFilter === "unread"
-          ? "No unread chats."
+          ? t("nav.unread_empty")
           : chatFilter === "archived"
-            ? "No archived chats."
+            ? t("nav.archived_empty")
           : chatFilter === "groups"
-            ? "No groups yet."
-            : "No conversations yet."}
+            ? t("nav.groups_empty")
+            : t("nav.chats_empty")}
       </li>
     {/if}
   </ul>
@@ -650,7 +653,7 @@
   <footer class="user-panel">
     {#if accountMenu}
       <div class="account-menu" role="menu">
-        <span class="menu-label">Accounts</span>
+        <span class="menu-label">{t("settings.accounts")}</span>
         {#each accounts as account (account.id)}
           <Button
             variant="menu"
@@ -673,15 +676,15 @@
           icon="plus"
           iconSize={15}
           role="menuitem"
-          onclick={onaddaccount}>Add account</Button>
+          onclick={onaddaccount}>{t("settings.account_add")}</Button>
         <Button variant="menu" icon="users" iconSize={15} role="menuitem" onclick={() => onsettings("accounts")}>
-          Manage accounts
+          {t("settings.accounts_manage")}
         </Button>
       </div>
     {/if}
     <button
       class="me"
-      title="Switch account"
+      title={t("settings.account_switch")}
       aria-expanded={accountMenu}
       onclick={onmenutoggle}>
       <span class="me-avatar-wrap">
@@ -695,19 +698,19 @@
         <span class="presence {visibility}"></span>
       </span>
       <span class="me-text" title={me ? `+${me.split("@")[0]}` : undefined}>
-        <span class="me-name">{activeLabel}</span>
-        <span class="me-status">{STATUS_TEXT[visibility] ?? visibility}</span>
+        <span class="me-name"><bdi>{activeLabel}</bdi></span>
+        <span class="me-status">{t(STATUS_TEXT[visibility] ?? "settings.status_unknown")}</span>
       </span>
     </button>
     <Button
       variant="icon"
       icon="settings"
       iconSize={19}
-      title="Settings"
-      aria-label="Settings"
+      title={t("settings.title")}
+      aria-label={t("settings.title")}
       onclick={() => onsettings("profile")} />
   </footer>
-  <button type="button" class="resizer" aria-label="Resize chat list" onmousedown={onresize}></button>
+  <button type="button" class="resizer" aria-label={t("nav.resize_chat_list")} onmousedown={onresize}></button>
 </aside>
 
 {#if preview}
@@ -731,13 +734,13 @@
     class="chat-menu"
     role="menu"
     style="left: {Math.min(chatMenu.x, window.innerWidth - 220)}px; top: {Math.min(chatMenu.y, window.innerHeight - 160)}px">
-    {#if menuError}<p role="alert">Could not load chat settings: {menuError}</p>{/if}
-    {#if floatError}<p role="alert">Could not float chat: {floatError}</p>{/if}
+    {#if menuError}<p role="alert">{t("chat.settings_load_failed", { error: normalizeError(menuError).message })}</p>{/if}
+    {#if floatError}<p role="alert">{t("chat.float_failed", { error: normalizeError(floatError).message })}</p>{/if}
     <Button variant="menu" icon="message" iconSize={15} role="menuitem"
       disabled={!activeAccount || floatBusy} onclick={() => floatChat(menuChat.chat)}>
-      {floatBusy ? "Opening…" : "Float chat"}
+      {floatBusy ? t("ui.opening") : t("chat.float")}
     </Button>
-    <div class="quick-row" role="group" aria-label="Quick chat actions">
+    <div class="quick-row" role="group" aria-label={t("chat.quick_actions")}>
       <Button
         variant="icon"
         icon="pin"
@@ -745,8 +748,8 @@
         role="menuitem"
         active={menuChat.pinned}
         pressed={menuChat.pinned}
-        aria-label={menuChat.pinned ? "Unpin" : "Pin"}
-        title={menuChat.pinned ? "Unpin" : "Pin"}
+        aria-label={menuChat.pinned ? t("chat.unpin") : t("chat.pin")}
+        title={menuChat.pinned ? t("chat.unpin") : t("chat.pin")}
         onclick={() => {
           releaseFreeze();
           ontogglepin(menuChat);
@@ -759,8 +762,8 @@
         role="menuitem"
         active={favoriteChats.includes(menuChat.chat)}
         pressed={favoriteChats.includes(menuChat.chat)}
-        aria-label={favoriteChats.includes(menuChat.chat) ? "Remove from favorites" : "Add to favorites"}
-        title={favoriteChats.includes(menuChat.chat) ? "Remove from favorites" : "Add to favorites"}
+        aria-label={favoriteChats.includes(menuChat.chat) ? t("chat.favorite_remove") : t("chat.favorite_add")}
+        title={favoriteChats.includes(menuChat.chat) ? t("chat.favorite_remove") : t("chat.favorite_add")}
         disabled={favoriteBusy || !ontogglefavorite}
         onclick={() => {
           releaseFreeze();
@@ -772,8 +775,8 @@
         icon="edit"
         iconSize={18}
         role="menuitem"
-        aria-label="Labels"
-        title="Labels"
+        aria-label={t("labels.title")}
+        title={t("labels.title")}
         onclick={() => {
           onchatlabels(menuChat.chat);
           closeChatMenu();
@@ -785,8 +788,8 @@
         role="menuitem"
         active={menuChat.unread_count > 0 || menuChat.marked_unread}
         pressed={menuChat.unread_count > 0 || menuChat.marked_unread}
-        aria-label={menuChat.unread_count > 0 || menuChat.marked_unread ? "Mark as read" : "Mark as unread"}
-        title={menuChat.unread_count > 0 || menuChat.marked_unread ? "Mark as read" : "Mark as unread"}
+        aria-label={menuChat.unread_count > 0 || menuChat.marked_unread ? t("chat.mark_as_read") : t("chat.mark_as_unread")}
+        title={menuChat.unread_count > 0 || menuChat.marked_unread ? t("chat.mark_as_read") : t("chat.mark_as_unread")}
         onclick={() => {
           if (menuChat.unread_count > 0) onmarkread(menuChat);
           else onchataction("set_marked_unread", { chat: menuChat.chat, unread: !menuChat.marked_unread });
@@ -803,7 +806,7 @@
         releaseFreeze();
         onchataction("set_archived", { chat: menuChat.chat, archived: !menuChat.archived });
         closeChatMenu();
-      }}>{menuChat.archived ? "Unarchive" : "Archive"}</Button>
+      }}>{menuChat.archived ? t("chat.unarchive") : t("chat.archive")}</Button>
     {#if isMuted(menuChat)}
       <Button
         variant="menu"
@@ -813,7 +816,7 @@
         onclick={() => {
           onchataction("set_muted", { chat: menuChat.chat, until: 0 });
           closeChatMenu();
-        }}>Unmute</Button>
+        }}>{t("chat.unmute")}</Button>
       <Button
         variant="menu"
         icon="at"
@@ -830,7 +833,7 @@
             menuMuteBusy = false;
             closeChatMenu();
           }
-        }}>{menuMuteAtAll ? "Unmute @all mentions" : "Mute @all mentions"}</Button>
+        }}>{menuMuteAtAll ? t("chat.all_unmute") : t("chat.all_mute")}</Button>
     {:else}
       <div
         class="mute-parent"
@@ -844,8 +847,8 @@
         onfocus={openMuteMenu}
         onblur={scheduleMuteClose}>
         <Icon name="volume" size={15} />
-        <span>Mute</span>
-        <Icon name="chevronRight" size={15} />
+        <span>{t("chat.mute")}</span>
+        <Icon name={locale.dir === "rtl" ? "chevronLeft" : "chevronRight"} size={15} />
       </div>
     {/if}
     <Button
@@ -857,7 +860,7 @@
       onclick={() => {
         onchataction("set_chat_auto_download", { chat: menuChat.chat, enabled: !menuDownloadsEnabled });
         closeChatMenu();
-      }}>{menuLoaded ? `${menuDownloadsEnabled ? "Disable" : "Enable"} all media auto-download` : menuError ? "Media settings unavailable" : "Loading media settings…"}</Button>
+      }}>{menuLoaded ? t(menuDownloadsEnabled ? "chat.download_disable_all" : "chat.download_enable_all") : menuError ? t("chat.media_settings_unavailable") : t("chat.media_settings_loading")}</Button>
     <div class="menu-sep" aria-hidden="true"></div>
     <Button
       variant="menu"
@@ -869,7 +872,7 @@
         releaseFreeze();
         closeChatMenu();
         onclearchat(c);
-      }}>Clear chat</Button>
+      }}>{t("chat.clear")}</Button>
     <Button
       variant="menu"
       icon="trash"
@@ -881,12 +884,12 @@
         releaseFreeze();
         closeChatMenu();
         ondeletechat(c);
-      }}>Delete chat</Button>
+      }}>{t("chat.delete")}</Button>
     {#if /@(s\.whatsapp\.net|lid)$/.test(menuChat.chat) && !members.isMe(menuChat.chat)}
       <Button variant="menu" icon="x" iconSize={15} role="menuitem" danger onclick={() => {
         void onblockcontact(menuChat.chat);
         closeChatMenu();
-      }}>Block contact</Button>
+      }}>{t("contact.block_contact")}</Button>
     {/if}
     {#if menuChat.chat.endsWith("@g.us")}
       <Button
@@ -899,8 +902,8 @@
           const c = menuChat;
           releaseFreeze();
           closeChatMenu();
-          if (confirm(`Exit ${c.display_name ?? "this group"}?`)) onchataction("leave_group", { chat: c.chat });
-        }}>Exit group</Button>
+          if (confirm(t("group.exit_question", { name: c.display_name ?? t("group.this_group") }))) onchataction("leave_group", { chat: c.chat });
+        }}>{t("group.exit")}</Button>
     {/if}
   </div>
   {#if muteMenu && muteRow}
@@ -909,7 +912,7 @@
     <div
       class="mute-submenu"
       role="menu"
-      aria-label="Mute options"
+      aria-label={t("chat.mute_options")}
       tabindex="-1"
       style="top: {Math.max(8, Math.min(muteBox.top, window.innerHeight - 150))}px; {muteFlip
         ? `right: ${window.innerWidth - muteBox.left + 8}px`
@@ -928,7 +931,7 @@
             const until = seconds < 0 ? -1 : Math.floor(Date.now() / 1000) + seconds;
             onchataction("set_muted", { chat: menuChat.chat, until });
             closeChatMenu();
-          }}>{label}</Button>
+          }}>{t(label)}</Button>
       {/each}
       <div class="menu-sep" aria-hidden="true"></div>
       <Button
@@ -947,7 +950,7 @@
             menuMuteBusy = false;
             closeChatMenu();
           }
-        }}>{menuMuteAtAll ? "Unmute @all mentions" : "Mute @all mentions"}</Button>
+        }}>{menuMuteAtAll ? t("chat.all_unmute") : t("chat.all_mute")}</Button>
     </div>
   {/if}
 {/if}
@@ -972,7 +975,7 @@
     position: relative;
     overflow: hidden;
     background: var(--bg);
-    border-right: 1px solid var(--line);
+    border-inline-end: 1px solid var(--line);
     display: flex;
     flex-direction: column;
     min-height: 0;
@@ -1000,12 +1003,12 @@
   }
   /* Keeps the mentions button beside the starred one instead of centred. */
   .chats header :global(.badge-host) {
-    margin-left: auto;
+    margin-inline-start: auto;
   }
   .icon-badge {
     position: absolute;
     top: 2px;
-    right: 0;
+    inset-inline-end: 0;
     min-width: 16px;
     height: 16px;
     padding: 0 4px;
@@ -1086,7 +1089,7 @@
     font: inherit;
     font-size: 14.5px;
     font-weight: 600;
-    text-align: left;
+    text-align: start;
     cursor: pointer;
   }
   .archived-entry:hover {
@@ -1136,7 +1139,7 @@
     grid-template-columns: auto 1fr auto;
     grid-template-areas: "avatar name time" "avatar preview badge";
     gap: 2px 15px;
-    text-align: left;
+    text-align: start;
     background: transparent;
     color: inherit;
     border: 0;
@@ -1150,7 +1153,7 @@
   .chat-row::after {
     content: "";
     position: absolute;
-    left: 77px;
+    inset-inline-start: 77px;
     right: 0;
     bottom: 0;
     border-bottom: 1px solid var(--line);
@@ -1173,7 +1176,7 @@
   .pin {
     display: inline-flex;
     vertical-align: -1px;
-    margin-right: 4px;
+    margin-inline-end: 4px;
     color: var(--faint);
   }
   .badge.mention-badge {
@@ -1237,7 +1240,7 @@
   .preview-icon {
     display: inline-flex;
     vertical-align: -2px;
-    margin-right: 4px;
+    margin-inline-end: 4px;
   }
   .preview {
     grid-area: preview;
@@ -1265,7 +1268,7 @@
   .kind {
     display: inline-flex;
     vertical-align: -1px;
-    margin-right: 5px;
+    margin-inline-end: 5px;
     color: var(--muted);
   }
   .empty {
@@ -1295,7 +1298,7 @@
     border-radius: 8px;
     color: inherit;
     font: inherit;
-    text-align: left;
+    text-align: start;
     cursor: pointer;
   }
   .user-panel .me:hover,
@@ -1308,7 +1311,7 @@
   }
   .presence {
     position: absolute;
-    right: -1px;
+    inset-inline-end: -1px;
     bottom: -1px;
     width: 11px;
     height: 11px;
@@ -1351,8 +1354,7 @@
   }
   .account-menu {
     position: absolute;
-    left: 8px;
-    right: 8px;
+    inset-inline: 8px;
     bottom: calc(100% + 6px);
     z-index: 20;
     display: flex;
@@ -1406,7 +1408,7 @@
   }
   .chats .resizer {
     display: block;
-    right: -3px;
+    inset-inline-end: -3px;
   }
   .preview.empty-chat {
     font-style: italic;
@@ -1465,7 +1467,7 @@
   }
   .mute-parent > span {
     flex: 1;
-    text-align: left;
+    text-align: start;
   }
   .mute-parent > :last-child {
     color: var(--muted);

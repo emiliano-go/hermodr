@@ -1,7 +1,10 @@
 <script lang="ts">
+  import { mediaClock } from "$lib/media/clock";
+  import { t } from "$lib/i18n/localizer";
   import { untrack } from "svelte";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import Icon from "$lib/ui/Icon.svelte";
+  import { initials as avatarInitials } from "$lib/utils/avatar";
   import { BARS, player, type VoiceTrack } from "$lib/state/player.svelte";
 
   let {
@@ -60,8 +63,8 @@
       path,
       duration: storedDuration,
       avatar,
-      initials,
-      title,
+      get initials() { return mine ? avatarInitials(t("chat.you")) : initials; },
+      get title() { return mine ? t("chat.you") : title; },
       autoplay: chained,
       onplayed: () => {
         heard = true;
@@ -96,10 +99,7 @@
     player.seek(Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)));
   }
 
-  function clock(seconds: number) {
-    if (!Number.isFinite(seconds)) return "0:00";
-    return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
-  }
+  const clock = (seconds: number) => mediaClock(seconds);
 </script>
 
 <div class="voice" class:heard>
@@ -108,8 +108,8 @@
     class:failed
     onclick={toggle}
     disabled={failed || loading}
-    title={failed ? "Could not play this file" : paused ? "Play" : "Pause"}
-    aria-label={paused ? "Play" : "Pause"}>
+    title={failed ? t("content.could_not_play_this_file") : paused ? t("content.play") : t("content.pause")}
+    aria-label={paused ? t("content.play") : t("content.pause")}>
     {#if failed}!{:else}<Icon name={paused ? "play" : "pause"} size={22} filled />{/if}
   </button>
 
@@ -126,16 +126,16 @@
       onpointermove={(e) => scrubbing && seekTo(e)}
       onpointerup={() => (scrubbing = false)}>
       {#each shape?.peaks ?? Array(BARS).fill(0.15) as peak, i (i)}
-        <span class="bar" class:played={i / BARS < progress} style="height: {Math.round(peak * 100)}%"></span>
+        <span class="bar" class:played={i / BARS < progress} style="height: {Math.round(peak * 100)}%" dir="ltr"></span>
       {/each}
       <span class="knob" style="left: {progress * 100}%"></span>
     </div>
     <!-- Until the file decodes, the length is unknown; 0:00 would read as an empty note. -->
-    <span class="time">{duration || current > 0 ? clock(paused && current === 0 ? duration : current) : "--:--"}</span>
+    <span class="time" dir="ltr">{duration || current > 0 ? clock(paused && current === 0 ? duration : current) : "--:--"}</span>
   </div>
 
   {#if !paused || current > 0}
-    <button class="rate" title="Playback speed" onclick={() => player.cycleRate()}>{rate}×</button>
+    <button class="rate" title={t("content.playback_speed")} onclick={() => player.cycleRate()}>{rate}×</button>
   {:else}
     <span class="who">
       {#if avatar}

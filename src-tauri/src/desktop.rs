@@ -1,5 +1,6 @@
 use tauri::{AppHandle, State};
 use crate::{AppState, account_store::{active_account, config_for}};
+use crate::command_error::{CommandError, CommandResult};
 
 pub(crate) fn apply_start_on_login(app: &AppHandle, enabled: bool) -> Result<(), String> {
     use tauri_plugin_autostart::ManagerExt;
@@ -18,7 +19,7 @@ pub struct DesktopStatus {
 }
 
 #[tauri::command]
-pub(crate) fn get_desktop_status(app: AppHandle) -> Result<DesktopStatus, String> {
+pub(crate) fn get_desktop_status(app: AppHandle) -> CommandResult<DesktopStatus> {
     use tauri_plugin_autostart::ManagerExt;
     use tauri_plugin_global_shortcut::GlobalShortcutExt;
     Ok(DesktopStatus {
@@ -33,7 +34,7 @@ pub(crate) fn get_desktop_status(app: AppHandle) -> Result<DesktopStatus, String
 /// least trusted part of the app, and it must not be able to ask the shell to
 /// open arbitrary files.
 #[tauri::command(async)]
-pub(crate) fn open_path(app: AppHandle, state: State<'_, AppState>, path: String) -> Result<(), String> {
+pub(crate) fn open_path(app: AppHandle, state: State<'_, AppState>, path: String) -> CommandResult<()> {
     let configured = state
         .service
         .lock()
@@ -46,14 +47,13 @@ pub(crate) fn open_path(app: AppHandle, state: State<'_, AppState>, path: String
             config_for(&app, &settings, &account).media_dir
         });
 
-    let dir = configured
-        .and_then(|dir| dunce::canonicalize(dir).ok())
-        .ok_or("no media folder is configured")?;
+    let dir = configured.ok_or_else(|| CommandError::code("error.media_directory_missing"))?;
+    let dir = dunce::canonicalize(dir)?;
     let target = dunce::canonicalize(&path).map_err(|e| e.to_string())?;
     if !target.starts_with(&dir) {
-        return Err("refusing to open a file outside the media folder".into());
+        return Err(CommandError::code("error.media_path_denied"));
     }
-    shell_open(target.as_os_str())
+    shell_open(target.as_os_str()).map_err(CommandError::from)
 }
 
 /// Opens a file or URL with the desktop's default handler.
@@ -89,17 +89,17 @@ pub(crate) fn shell_open(target: &std::ffi::OsStr) -> Result<(), String> {
 
 /// Opens an http(s) URL in the desktop's default browser.
 #[tauri::command]
-pub(crate) fn open_url(url: String) -> Result<(), String> {
+pub(crate) fn open_url(url: String) -> CommandResult<()> {
     if !(url.starts_with("http://") || url.starts_with("https://")) {
-        return Err("only http(s) links are opened".into());
+        return Err(CommandError::code("error.url_scheme_unsupported"));
     }
-    shell_open(url.as_ref())
+    shell_open(url.as_ref()).map_err(CommandError::from)
 }
 
 /// Renders a pairing code as SVG for the UI to display.
 #[tauri::command]
-pub(crate) fn qr_svg(value: String) -> Result<String, String> {
-    postal_core::qr_svg(&value).map_err(|e| e.to_string())
+pub(crate) fn qr_svg(value: String) -> CommandResult<String> {
+    postal_core::qr_svg(&value).map_err(CommandError::operation_failed)
 }
 
 pub(crate) fn is_hyprland() -> bool {

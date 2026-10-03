@@ -1,6 +1,7 @@
 //! Our own profile and presence, and other chats' pictures.
 
 use super::*;
+use crate::message_ref::MessageRef;
 
 impl WhatsAppService {
     /// Tells the chat we are typing, or that we stopped.
@@ -12,7 +13,7 @@ impl WhatsAppService {
         } else {
             chatstate.send_paused(&jid).await
         };
-        sent.map_err(|e| anyhow::anyhow!(e.to_string()))
+        sent.map_err(anyhow::Error::from)
     }
 
     /// Marks us online or away, as WhatsApp Web does on window focus. Typing
@@ -24,7 +25,7 @@ impl WhatsAppService {
         } else {
             presence.set_unavailable().await
         };
-        set.map_err(|e| anyhow::anyhow!(e.to_string()))
+        set.map_err(anyhow::Error::from)
     }
 
     /// Subscribes to a contact's presence, which one-to-one typing needs.
@@ -34,7 +35,7 @@ impl WhatsAppService {
             .presence()
             .subscribe(jid)
             .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))
+            .map_err(anyhow::Error::from)
     }
 
     /// Our own name, about text and privacy settings.
@@ -50,7 +51,7 @@ impl WhatsAppService {
             .client
             .fetch_privacy_settings()
             .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?
+            .map_err(anyhow::Error::from)?
             .settings
             .into_iter()
             .map(|s| (s.category.to_string(), s.value.to_string()))
@@ -77,10 +78,10 @@ impl WhatsAppService {
             profile.remove_profile_picture().await
         } else {
             let jpeg = square_jpeg(&bytes, 640)
-                .ok_or_else(|| anyhow::anyhow!("that file is not an image we can read"))?;
+                .ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.profile_picture_format")))?;
             profile.set_profile_picture(jpeg).await
         };
-        sent.map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        sent.map_err(anyhow::Error::from)?;
         invalidate_avatar_cache(self.media_dir.as_deref(), &self.own_jid());
         Ok(())
     }
@@ -90,7 +91,7 @@ impl WhatsAppService {
             .profile()
             .set_status_text(text)
             .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn set_push_name(&self, name: &str) -> Result<()> {
@@ -98,19 +99,19 @@ impl WhatsAppService {
             .profile()
             .set_push_name(name)
             .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn set_privacy(&self, category: &str, value: &str) -> Result<()> {
         let (category, value) = (PrivacyCategory::from(category), PrivacyValue::from(value));
         if !category.is_valid_value(&value) {
-            anyhow::bail!("{value} is not a valid setting for {category}");
+            anyhow::bail!(MessageRef::new("error.privacy_value").with_param("value", value.to_string()).with_param("category", category.to_string()));
         }
         self.client
             .set_privacy_setting(category, value)
             .await
             .map(|_| ())
-            .map_err(|e| anyhow::anyhow!(e.to_string()))
+            .map_err(anyhow::Error::from)
     }
 
     /// Path to a chat's profile picture, cached for a day in the media folder.
@@ -145,7 +146,7 @@ impl WhatsAppService {
             .contacts()
             .get_profile_picture(&target, !full)
             .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            .map_err(anyhow::Error::from)?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -162,7 +163,7 @@ impl WhatsAppService {
         .await
         .ok()
         .flatten()
-        .ok_or_else(|| anyhow::anyhow!("could not download the profile picture"))?;
+        .ok_or_else(|| anyhow::anyhow!(MessageRef::new("error.profile_picture_download")))?;
         std::fs::write(&path, bytes)?;
         remove_cached_file(&none);
         Ok(Some(path.to_string_lossy().into_owned()))

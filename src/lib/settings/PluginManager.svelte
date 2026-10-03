@@ -1,16 +1,18 @@
 <script lang="ts">
+  import { normalizeError, type LocalizedError } from "$lib/i18n/errors";
+  import { t } from "$lib/i18n/localizer";
   import { onMount } from "svelte";
   import { invoke } from "$lib/utils/ipc";
   import type { PluginInfo as Plugin, PluginsView as View } from "$lib/utils/wire";
   let view = $state<View>({ plugins: [], directory: "", errors: [] });
-  let error = $state("");
-  let loadError = $state("");
+  let error = $state<LocalizedError | string>("");
+  let loadError = $state<LocalizedError | string>("");
   let busy = $state(false);
   let selected = $state<Plugin | null>(null);
   let consent = $state(false);
   async function refresh() {
     try { view = await invoke<View>("list_plugins"); loadError = ""; }
-    catch (failure) { loadError = String(failure); }
+    catch (failure) { loadError = normalizeError(failure); }
   }
   onMount(() => {
     void refresh();
@@ -26,41 +28,41 @@
       selected = null;
       consent = false;
       await refresh();
-    } catch (failure) { error = String(failure); }
+    } catch (failure) { error = normalizeError(failure); }
     finally { busy = false; }
   }
 </script>
 
 <div class="plugins">
-  {#if view.directory}<p class="path">Plugin directory: {view.directory}</p>{/if}
-  {#if !view.plugins.length}<p>No plugins discovered.</p>{/if}
+  {#if view.directory}<p class="path">{t("settings.plugin_directory")} <bdi>{view.directory}</bdi></p>{/if}
+  {#if !view.plugins.length}<p>{t("settings.plugins_empty")}</p>{/if}
   {#each view.plugins as plugin (plugin.id)}
     <article>
-      <h3>{plugin.name} <small>{plugin.version}</small></h3>
+      <h3><bdi>{plugin.name}</bdi> <small>{plugin.version}</small></h3>
       <p>{plugin.id} · {plugin.activation} · {plugin.enabled ? plugin.state : "disabled"}</p>
-      <p>Capabilities: {plugin.capabilities.join(", ")}</p>
-      {#if plugin.activation === "lazy"}<p>Unload after completed work{plugin.idle_timeout_secs ? ` and ${plugin.idle_timeout_secs}s idle` : ""}.</p>{/if}
+      <p>{t("settings.plugin_capabilities")} <bdi>{plugin.capabilities.join(", ")}</bdi></p>
+      {#if plugin.activation === "lazy"}<p>{t("settings.plugin_unload")}{plugin.idle_timeout_secs ? t("settings.plugin_idle", { count: plugin.idle_timeout_secs }) : ""}.</p>{/if}
       {#if plugin.error}<p role="alert">{plugin.error}</p>{/if}
       {#if plugin.enabled}
-        <button class="button" disabled={busy} onclick={() => change(plugin, false)}>Disable {plugin.name}</button>
+        <button class="button" disabled={busy} onclick={() => change(plugin, false)}>{t("settings.plugin_disable", { name: plugin.name })}</button>
       {:else}
-        <button class="button" disabled={busy} onclick={() => { selected = plugin; consent = false; }}>Enable {plugin.name}…</button>
+        <button class="button" disabled={busy} onclick={() => { selected = plugin; consent = false; }}>{t("settings.plugin_enable", { name: plugin.name })}…</button>
       {/if}
     </article>
   {/each}
   {#if selected}
-    <section aria-label="Plugin permission request">
-      <h3>Enable {selected.name}?</h3>
+    <section aria-label={t("settings.plugin_permission")}>
+      <h3>{t("settings.plugin_enable", { name: selected.name })}?</h3>
       {#if selected.capabilities.includes("transcribe")}
-        <p><strong>transcribe</strong> shares audio selected for transcription. Local providers keep audio on this device; cloud providers need separate explicit consent.</p>
+        <p>{t("settings.plugin_transcribe_hint")}</p>
       {:else}
-        <p><strong>events:read</strong> shares message content, message details and service events from every connected account. Pairing QR codes are excluded.</p>
+        <p>{t("settings.plugin_events_hint")}</p>
       {/if}
-      <p>This permission restricts Postal’s plugin API. Native plugins are not sandboxed: they can access files and networks with your operating-system permissions.</p>
-      <label><input type="checkbox" bind:checked={consent} disabled={busy} /> I trust this plugin and grant {selected.capabilities.join(", ")} for all accounts.</label>
+      <p>{t("settings.plugin_security")}</p>
+      <label><input type="checkbox" bind:checked={consent} disabled={busy} /> {t("settings.plugin_trust", { capabilities: selected.capabilities.join(", ") })}</label>
       <div class="actions">
-        <button class="button" disabled={busy || !consent} onclick={() => selected && change(selected, true)}>Grant and enable</button>
-        <button class="button" disabled={busy} onclick={() => { selected = null; consent = false; }}>Cancel</button>
+        <button class="button" disabled={busy || !consent} onclick={() => selected && change(selected, true)}>{t("settings.grant_enable")}</button>
+        <button class="button" disabled={busy} onclick={() => { selected = null; consent = false; }}>{t("ui.cancel")}</button>
       </div>
     </section>
   {/if}
